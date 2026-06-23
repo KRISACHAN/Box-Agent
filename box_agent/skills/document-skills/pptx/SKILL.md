@@ -31,9 +31,9 @@ Use this path by default:
 
 1. **Pass the content & outline gate first (see §1.1 and `references/outline.md`).** Do not write any slide HTML — and do not start image planning — until a slide plan exists whose page-level content is either supplied by the user, carried over from an upstream expert/research step, or grounded by `research-synthesis`. If the material is too thin to build a faithful deck, do not fabricate and do not cold-reject — **ask the user one focused question, or route to `research-synthesis`** (§1.1).
 2. invoke the `html-templates` skill to fetch the Visual DNA profile (see §3.0)
-3. plan slide-level image decisions in `assets/generated/manifest.json`; record the whole deck theme in `deck_context`, and when the image service is available, covers, dividers, campaign/launch/vision pages, and abstract concept pages should normally choose `generate`
+3. plan slide-level image decisions in `assets/generated/manifest.json`; record the whole deck theme in `deck_context`, and when the image service is available, covers, dividers, campaign/launch/vision pages, and abstract concept pages should normally choose `generate`. Investor pitch decks, product launch decks, and premium B2B SaaS-style decks with explicit visual direction (for example "VC", "融资路演", "高端", "贵气", "靠谱", "发布会", "深色背景") are strong visual-asset briefs: use `generate` for at least the cover and one solution/product/vision hero slide unless the user opts out or the image service is unavailable.
 4. call `generate_image` for every `generate` item before writing final slide HTML
-5. for data charts, keep the source dataset/chart spec and use ECharts only as an HTML preview; final PPT must preserve chart data through native PowerPoint chart/table output, not through screenshots
+5. for data charts, keep the source dataset/chart spec and use ECharts as the HTML preview for chart pages; final PPT must preserve chart data through native PowerPoint chart/table output, not through screenshots. If a chart/table dataset is written under `assets/data/*.json`, `deck.html` must reference it from a `data-pptx-chart` root with `data-chart-spec-src` (or embed the same recoverable spec with `data-chart-spec`); do not write a separate static SVG/bar layout with copied numbers.
 6. create the slide HTML using the slide plan, Visual DNA profile, and generated local assets as hard constraints. For decks with **6 or more slides** (or dense source material / likely-large HTML), you **must** use the fragment-drafting workflow in §3.4 — author per-range draft files and combine them with `merge_html_fragments.js`. Smaller decks may write `deck.html` directly in one pass.
 7. when `assets/generated/manifest.json` contains `layout_contract`, run image layout contract validation
 8. when `assets/generated/manifest.json` declares `creative_image_mode`, run image manifest validation before HTML self-check
@@ -87,6 +87,8 @@ fact/evidence-driven decks, not creative/atmospheric ones.
 ### `creative_image_mode`
 
 This mode is activated when the user explicitly asks for a creative/image-rich PPT, when an upstream expert/team instruction says `creative_image_mode`, or when the "Creative PPT / image-generation PPT" expert/team is selected.
+
+Do not require the literal words `creative_image_mode` when the user's brief clearly asks for a polished, visual, pitch-style deck. A VC/investor pitch, launch, brand, or premium B2B SaaS deck with explicit art direction should be treated as image-generation-expected even if the user only says "图", "视觉", "高端", "贵气", "靠谱", "发布会感", "深色背景", or similar. Data charts remain editable charts/tables; the generated images are for hero visuals, product mockups, atmosphere, transformation metaphors, and controlled backgrounds.
 
 Mode contract:
 
@@ -161,7 +163,7 @@ If `html-templates` is unavailable in this session, fall back to authoring the d
 3. For top/middle/bottom layouts, center the main content group in the available middle area. Do not build slides by stacking blocks from the top with repeated `margin-top`; compute the content group's height and balance top/bottom whitespace with flex/grid alignment or explicit `top` values.
 4. Use relative asset paths.
 5. Do not inline large images as data URLs.
-6. Every slide must record an explicit image decision in `assets/generated/manifest.json`; each `generate` prompt must include the whole deck theme/context before the slide-specific visual subject. Covers, dividers, posters, campaign/launch/vision pages, abstract concept pages, and emotionally led closing pages must use `generate` via the `generate_image` tool unless the user opts out, the image service is unavailable, or a real/source-backed asset is required.
+6. Every slide must record an explicit image decision in `assets/generated/manifest.json`; each `generate` prompt must include the whole deck theme/context before the slide-specific visual subject. Covers, dividers, posters, campaign/launch/vision pages, abstract concept pages, investor-pitch/product-demo hero pages, premium B2B SaaS pages, and emotionally led closing pages must use `generate` via the `generate_image` tool unless the user opts out, the image service is unavailable, or a real/source-backed asset is required.
 7. ECharts/canvas charts are allowed only as HTML preview surfaces backed by `data-pptx-chart` and recoverable chart data. They must not be baked into `assets/bg-capture/*.png` or delivered as screenshot-only chart images when the data is available.
 8. Keep page numbers on non-cover slides consistent with slide order.
 9. Read `references/html-first.md` and `references/html-editable.md`.
@@ -175,7 +177,7 @@ For data presentation slides, preserve data first:
 
 1. When a slide contains quantities, rankings, comparisons, trends, proportions, KPIs, financials, market sizing, benchmark results, time-series data, or operational metrics, prefer a visible data display by default: native table, KPI strip, bar/line/area/pie chart, matrix, comparison table, or mini-dashboard. Use plain bullets only when the data is too sparse or the user explicitly asks for text-only slides.
 2. Store chart/table data in `assets/data/*.json` or an equivalent local source file.
-3. In `deck.html`, ECharts may be used for browser preview and layout tuning, but the chart root must be marked with `data-pptx-chart` and must reference or embed a chart spec via `data-chart-spec`, `data-chart-spec-src`, or a child `<script type="application/json" data-chart-spec>`.
+3. In `deck.html`, use ECharts for browser preview and layout tuning when the slide is chart-led or backed by `assets/data/*.json`. The chart root must be marked with `data-pptx-chart` and must reference or embed a chart spec via `data-chart-spec`, `data-chart-spec-src`, or a child `<script type="application/json" data-chart-spec>`. If a dataset exists in `assets/data/`, do not duplicate the numbers into static SVG, absolute-positioned bars, or text-only chart markup without linking the dataset.
 4. When creating the final PPTX, convert available chart data to native PowerPoint charts/tables whenever the recipient may edit numbers. Do not flatten an ECharts canvas/SVG into a screenshot just because it looks correct in HTML.
 5. If native chart conversion is unavailable, report the chart export as `BLOCKED` or switch to the confirmed native `PptxGenJS` chart route; do not silently deliver screenshot-only chart images.
 

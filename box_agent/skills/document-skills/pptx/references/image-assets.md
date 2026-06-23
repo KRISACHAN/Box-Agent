@@ -25,11 +25,12 @@ Rules:
 ## 2. Trigger rules
 
 1. Use `generate` for cover, divider, poster, campaign, launch, vision, abstract concept, future-state, transformation, and emotionally led closing slides.
-2. Use `generate` for realistic/semi-realistic product mockups, environments, textures, human scenes, or hero/card visuals that would be awkward or low-quality if drawn from PowerPoint shapes.
-3. Use `generate` when the user asks for image-rich, illustration, scene, poster, cinematic, magazine, campaign, or visual-metaphor output.
-4. Use `draw_in_html` for dense data, maps, timelines, architecture, process, and tables when editability is more important than bitmap impact.
-5. Use `skip` for data slides only when charts and text are stronger and no local visual frame would help.
-6. Use `use_existing` for supplied product photos, charts, official logos, real locations, screenshots, named people, or source-captured visuals.
+2. Use `generate` for investor pitch, fundraising, product-demo, premium B2B SaaS, executive keynote, or launch-event slides when the user gives visual direction such as high-end, premium, credible, dark, keynote-like, VC-facing, or "贵气/靠谱/发布会感". At minimum, choose `generate` for the cover and one solution/product/vision hero slide unless the user opts out or a real/source-backed asset is required.
+3. Use `generate` for realistic/semi-realistic product mockups, environments, textures, human scenes, or hero/card visuals that would be awkward or low-quality if drawn from PowerPoint shapes.
+4. Use `generate` when the user asks for image-rich, illustration, scene, poster, cinematic, magazine, campaign, or visual-metaphor output.
+5. Use `draw_in_html` for dense data, maps, timelines, architecture, process, and tables when editability is more important than bitmap impact.
+6. Use `skip` for data slides only when charts and text are stronger and no local visual frame would help.
+7. Use `use_existing` for supplied product photos, charts, official logos, real locations, screenshots, named people, or source-captured visuals.
 
 ## 3. Manifest format
 

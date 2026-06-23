@@ -507,6 +507,57 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
   );
 }
 
+function listJsonFiles(dir) {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return [];
+  const files = [];
+  const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (entry.name.startsWith(".")) continue;
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) {
+        files.push(fullPath);
+      }
+    }
+  }
+  return files.sort();
+}
+
+function toHtmlRelPath(filePath, htmlDir) {
+  return path.relative(htmlDir, filePath).split(path.sep).join("/");
+}
+
+function dataSourceIssues(htmlPath, htmlText) {
+  const htmlDir = path.dirname(htmlPath);
+  const dataDir = path.join(htmlDir, "assets", "data");
+  const dataFiles = listJsonFiles(dataDir);
+  if (!dataFiles.length) return [];
+
+  const issues = [];
+  const hasChartRoot = /\bdata-pptx-chart\b/.test(htmlText);
+  const specSrcMatches = Array.from(htmlText.matchAll(/\bdata-chart-spec-src\s*=\s*["']([^"']+)["']/gi));
+  const specSrcs = new Set(specSrcMatches.map(match => match[1].replace(/^\.\//, "")));
+  const relDataFiles = dataFiles.map(file => toHtmlRelPath(file, htmlDir));
+
+  if (!hasChartRoot) {
+    issues.push(
+      `assets/data contains ${relDataFiles.length} JSON file(s), but deck.html has no data-pptx-chart root. Data-backed chart slides must reference the dataset instead of duplicating numbers into static SVG/bars.`
+    );
+    return issues;
+  }
+
+  const unreferenced = relDataFiles.filter(relPath => !specSrcs.has(relPath) && !specSrcs.has(`./${relPath}`));
+  if (unreferenced.length === relDataFiles.length) {
+    issues.push(
+      `assets/data JSON is present but deck.html does not reference it with data-chart-spec-src: ${unreferenced.join(", ")}.`
+    );
+  }
+  return issues;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const htmlPath = path.resolve(opts.html);
@@ -551,6 +602,15 @@ async function main() {
     opts.allowLocalImages
   );
   await browser.close();
+
+  if (opts.domToPptx) {
+    const htmlText = fs.readFileSync(htmlPath, "utf8");
+    const extraIssues = dataSourceIssues(htmlPath, htmlText);
+    if (extraIssues.length) {
+      report.issues.push(...extraIssues);
+      report.ok = false;
+    }
+  }
 
   const reportText = JSON.stringify(report, null, 2);
   if (opts.report) {

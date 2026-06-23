@@ -86,6 +86,9 @@ Required chart authoring pattern:
 3. Link the chart root to recoverable data with `data-chart-spec-src`,
    `data-chart-spec`, or a child `<script type="application/json"
    data-chart-spec>`.
+   If `assets/data/*.json` exists, `deck.html` must reference the relevant file
+   with `data-chart-spec-src` instead of copying values into static SVG,
+   absolute-positioned bars, or plain text.
 4. When exporting to PPTX, convert available chart data to native PowerPoint
    charts/tables whenever the user may edit the numbers.
 5. Never let an ECharts canvas/SVG become part of `assets/bg-capture/*.png`.
