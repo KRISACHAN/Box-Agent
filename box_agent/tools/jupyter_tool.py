@@ -630,7 +630,18 @@ class JupyterKernelSession:
         km._kernel_spec = kernel_spec  # Override the kernel spec
         km.start_kernel()
         self._km = km
-        assign_pid_to_job(getattr(km, "kernel_pid", 0) or 0)
+        # Register the kernel subprocess PID with the Windows kill-on-close Job
+        # Object (no-op off-Windows). jupyter_client 8.x exposes the PID via
+        # km.provisioner.pid (populated after start_kernel); older releases used
+        # km.kernel_pid. Try both so the orphan-cleanup guard actually receives a
+        # real PID instead of silently registering 0.
+        _kernel_pid = 0
+        _provisioner = getattr(km, "provisioner", None)
+        if _provisioner is not None:
+            _kernel_pid = getattr(_provisioner, "pid", 0) or 0
+        if not _kernel_pid:
+            _kernel_pid = getattr(km, "kernel_pid", 0) or 0
+        assign_pid_to_job(_kernel_pid)
         self._kc = km.client()
         self._kc.start_channels()
         self._kc.wait_for_ready(timeout=30)
