@@ -125,6 +125,19 @@ from .debug_logger import acp_logger as log
 # Keep stdlib logger for backward compat with existing log calls
 logger = logging.getLogger(__name__)
 
+_AUTO_LOADED_SKILLS_HEADING = "## Auto-Loaded Skill Instructions"
+_DOCUMENT_SKILL_ARTIFACT_SUFFIXES: dict[str, tuple[str, ...]] = {
+    "pptx": (".pptx", ".ppt"),
+    "docx": (".docx",),
+    "xlsx": (".xlsx", ".xls"),
+    "pdf": (".pdf",),
+}
+_GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES: dict[str, tuple[str, ...]] = {
+    "pptx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["pptx"],
+    "docx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["docx"],
+    "xlsx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["xlsx"],
+}
+
 
 try:
     class InitializeRequestPatch(InitializeRequest):
@@ -330,6 +343,7 @@ class SessionState:
     expert_context: ExpertSessionContext | None = None
     upstream_session_id: str = ""  # caller-owned session id from _meta.session_id; forwarded as X-RACCOON-Session-ID
     force_plan_start: bool = False  # host-controlled deterministic plan skeleton toggle
+    preloaded_skill_names: list[str] = field(default_factory=list)
 
 
 class BoxACPAgent:
@@ -366,6 +380,94 @@ class BoxACPAgent:
         self._skill_loader = skill_loader
         self._mcp_task = mcp_task  # background-loaded MCP tools; awaited on first prompt
         self._mcp_loaded = mcp_task is None  # True once MCP has been injected
+
+    def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
+        """Update all live holders of the current system prompt."""
+        agent.system_prompt = system_prompt
+        if agent.messages and agent.messages[0].role == "system":
+            agent.messages[0] = Message(role="system", content=system_prompt)
+        for tool in agent.tools.values():
+            if hasattr(tool, "set_parent_system_prompt"):
+                tool.set_parent_system_prompt(system_prompt)
+
+    def _strip_auto_loaded_skills(self, system_prompt: str) -> str:
+        marker = f"\n\n{_AUTO_LOADED_SKILLS_HEADING}\n"
+        if marker in system_prompt:
+            return system_prompt.split(marker, 1)[0].rstrip()
+        if system_prompt.startswith(f"{_AUTO_LOADED_SKILLS_HEADING}\n"):
+            return ""
+        return system_prompt
+
+    def _document_preload_skill_names(
+        self,
+        matched_skill_names: tuple[str, ...],
+        completion_gate: CompletionGate | None,
+    ) -> list[str]:
+        if completion_gate is None:
+            return []
+        patterns = tuple(completion_gate.required_changed_artifact_globs)
+        preload: list[str] = []
+        for skill_name, suffixes in _GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES.items():
+            if any(suffix in pattern for pattern in patterns for suffix in suffixes):
+                preload.append(skill_name)
+        for skill_name in matched_skill_names:
+            suffixes = _DOCUMENT_SKILL_ARTIFACT_SUFFIXES.get(skill_name)
+            if (
+                skill_name not in preload
+                and suffixes
+                and any(suffix in pattern for pattern in patterns for suffix in suffixes)
+            ):
+                preload.append(skill_name)
+        return preload
+
+    def _apply_auto_loaded_skills(
+        self,
+        state: SessionState,
+        session_id: str,
+        skill_names: list[str],
+    ) -> None:
+        if not self._skill_loader:
+            return
+        requested_names = list(state.preloaded_skill_names)
+        for skill_name in skill_names:
+            if skill_name not in requested_names:
+                requested_names.append(skill_name)
+        if not requested_names:
+            return
+
+        blocks: list[str] = []
+        loaded_names: list[str] = []
+        for skill_name in requested_names:
+            skill = self._skill_loader.get_skill(
+                skill_name,
+                include_disabled=state.expert_context is not None,
+            )
+            if skill is None:
+                log.warn("skills/preload_missing", session_id=session_id, skill=skill_name)
+                continue
+            loaded_names.append(skill_name)
+            blocks.append(skill.to_prompt())
+        state.preloaded_skill_names = loaded_names
+        if not blocks:
+            return
+
+        base_prompt = self._strip_auto_loaded_skills(state.agent.system_prompt).rstrip()
+        preloaded_prompt = (
+            f"{base_prompt}\n\n{_AUTO_LOADED_SKILLS_HEADING}\n"
+            "The following matched or required document skills are preloaded because this turn "
+            "requires an editable deliverable. Follow their full instructions before "
+            "planning, delegating, or authoring the artifact.\n\n"
+            + "\n\n".join(blocks)
+        )
+        if state.agent.system_prompt == preloaded_prompt:
+            return
+        self._set_agent_system_prompt(state.agent, preloaded_prompt)
+        log.info(
+            "skills/preloaded",
+            session_id=session_id,
+            skills=",".join(state.preloaded_skill_names),
+            prompt_chars=len(preloaded_prompt),
+        )
 
     async def _ensure_mcp_loaded(self) -> None:
         """Await background MCP loading with a soft deadline.
@@ -695,9 +797,7 @@ class BoxACPAgent:
             if expert_context:
                 expert_skill_prompt = selector.update(expert_context.skill_query())
                 if expert_skill_prompt is not None:
-                    agent.system_prompt = expert_skill_prompt
-                    if agent.messages and agent.messages[0].role == "system":
-                        agent.messages[0] = Message(role="system", content=expert_skill_prompt)
+                    self._set_agent_system_prompt(agent, expert_skill_prompt)
             self._sessions[session_id].skill_selector = selector
 
         tool_names = [t.name for t in tools]
@@ -918,11 +1018,11 @@ class BoxACPAgent:
                     state.skill_selector.bind(current_system)
                 new_prompt = state.skill_selector.update(user_text)
                 if new_prompt is not None:
-                    state.agent.messages[0] = Message(role="system", content=new_prompt)
-                    state.agent.system_prompt = new_prompt
+                    self._set_agent_system_prompt(state.agent, new_prompt)
                     log.info(
                         "skills/filtered",
                         session_id=session_id,
+                        matched=",".join(state.skill_selector.matched_skill_names),
                         query_chars=len(state.skill_selector.cumulative_query),
                         prompt_chars=len(new_prompt),
                     )
@@ -945,15 +1045,6 @@ class BoxACPAgent:
             except Exception as exc:
                 log.warn("mcp/lazy_load_error", session_id=session_id, message=str(exc))
 
-        state.agent.add_user_message(user_text)
-
-        # Drain any stale injections from a previous turn
-        while not state.inject_queue.empty():
-            stale = state.inject_queue.get_nowait()
-            log.warn("session/inject_stale", session_id=session_id, text=_inject_item_text(stale)[:80])
-        # Reset per-turn inject dedup — IDs are only meaningful within a turn.
-        state.seen_injection_ids.clear()
-
         completion_gate = (
             None
             if state.artifact_mode == "project"
@@ -965,6 +1056,25 @@ class BoxACPAgent:
                 session_id=session_id,
                 patterns=",".join(completion_gate.required_changed_artifact_globs),
             )
+
+        if state.skill_selector is not None:
+            preload_names = self._document_preload_skill_names(
+                state.skill_selector.matched_skill_names,
+                completion_gate,
+            )
+            if preload_names:
+                self._apply_auto_loaded_skills(state, session_id, preload_names)
+            elif state.preloaded_skill_names:
+                self._apply_auto_loaded_skills(state, session_id, [])
+
+        state.agent.add_user_message(user_text)
+
+        # Drain any stale injections from a previous turn
+        while not state.inject_queue.empty():
+            stale = state.inject_queue.get_nowait()
+            log.warn("session/inject_stale", session_id=session_id, text=_inject_item_text(stale)[:80])
+        # Reset per-turn inject dedup — IDs are only meaningful within a turn.
+        state.seen_injection_ids.clear()
 
         prompt_start = perf_counter()
         state.turn_active = True

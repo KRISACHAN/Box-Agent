@@ -669,6 +669,7 @@ class SkillSelector:
         self._suffix: Optional[str] = None
         self._cumulative: List[str] = []
         self._last_sig: Tuple[str, ...] = ()
+        self._last_matched_names: Tuple[str, ...] = ()
 
     @property
     def bound(self) -> bool:
@@ -682,6 +683,11 @@ class SkillSelector:
         single source of truth for what the session has been about.
         """
         return " ".join(self._cumulative)
+
+    @property
+    def matched_skill_names(self) -> Tuple[str, ...]:
+        """Skill names matched by the most recent update, in rendered order."""
+        return self._last_matched_names
 
     def bind(self, system_prompt_text: str) -> None:
         """Capture the prefix and suffix around the skill slot sentinel.
@@ -714,12 +720,14 @@ class SkillSelector:
         if not query:
             skills_md = ""
             sig: Tuple[str, ...] = ()
+            matched_names: Tuple[str, ...] = ()
         else:
             skills = self._loader.filter_by_query(
                 query,
                 include_disabled=self._include_disabled,
             )
-            sig = tuple(sorted(s.name for s in skills))
+            matched_names = tuple(s.name for s in skills)
+            sig = tuple(sorted(matched_names))
             if skills:
                 skills_md = self._loader.get_skills_metadata_prompt(
                     query=query,
@@ -727,6 +735,7 @@ class SkillSelector:
                 )
             else:
                 skills_md = ""
+        self._last_matched_names = matched_names
         if sig == self._last_sig:
             return None
         self._last_sig = sig

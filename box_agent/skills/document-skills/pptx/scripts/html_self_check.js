@@ -21,6 +21,14 @@ function officeRaccoonPrefix() {
   return path.join(home, ".config", "office-raccoon");
 }
 
+function officeRaccoonBrowserHostPath() {
+  return path.join(os.homedir(), ".box-agent", "browsers");
+}
+
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = officeRaccoonBrowserHostPath();
+}
+
 const managedNodeModules = path.join(officeRaccoonPrefix(), "node_modules");
 process.env.NODE_PATH = process.env.NODE_PATH
   ? `${managedNodeModules}${path.delimiter}${process.env.NODE_PATH}`
@@ -115,8 +123,11 @@ function requireModule(name, installHint) {
 
 function printBrowserInstallHint() {
   const prefix = officeRaccoonPrefix();
+  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH || officeRaccoonBrowserHostPath();
   console.error("Playwright Chromium is not available.");
-  console.error(`Install/download it with: "${path.join(prefix, "node_modules", ".bin", "playwright")}" install chromium`);
+  console.error("Install it in Office Raccoon: Settings -> Plugins -> Web automation (Playwright) -> Download Chromium and enable.");
+  console.error(`Expected browser host under: ${browsersPath}`);
+  console.error(`CLI fallback: PLAYWRIGHT_BROWSERS_PATH="${browsersPath}" "${path.join(prefix, "node_modules", ".bin", "playwright")}" install chromium`);
   console.error("Without a browser host, ask the user to choose HTML delivery or native PptxGenJS PPTX.");
 }
 

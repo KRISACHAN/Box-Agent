@@ -18,6 +18,14 @@ function officeRaccoonPrefix() {
   return path.join(home, ".config", "office-raccoon");
 }
 
+function officeRaccoonBrowserHostPath() {
+  return path.join(os.homedir(), ".box-agent", "browsers");
+}
+
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = officeRaccoonBrowserHostPath();
+}
+
 function addManagedNodePath(prefix) {
   const managedNodeModules = path.join(prefix, "node_modules");
   process.env.NODE_PATH = process.env.NODE_PATH
@@ -77,11 +85,14 @@ function main() {
   if (!bundleOk) {
     console.log("Missing bundled converter. This skill install is incomplete; do not switch generators silently.");
   } else {
+    const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH || officeRaccoonBrowserHostPath();
     console.log("Missing browser export environment. Ask the user to choose:");
     console.log("  HTML: deliver deck.html now; editable PPTX export can run after Playwright/Chromium or a host renderer is available.");
     console.log("  PPTX: switch to native PptxGenJS and create a directly editable PPTX with different HTML/CSS fidelity tradeoffs.");
+    console.log("Install in Office Raccoon: Settings -> Plugins -> Web automation (Playwright) -> Download Chromium and enable.");
+    console.log(`Expected browser host under: ${browsersPath}`);
     console.log(`Install Playwright: \${BOX_AGENT_NPM:-npm} install --prefix "${prefix}" playwright`);
-    console.log(`Download Chromium: "${path.join(prefix, "node_modules", ".bin", "playwright")}" install chromium`);
+    console.log(`Download Chromium: PLAYWRIGHT_BROWSERS_PATH="${browsersPath}" "${path.join(prefix, "node_modules", ".bin", "playwright")}" install chromium`);
   }
   return 1;
 }

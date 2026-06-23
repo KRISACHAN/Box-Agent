@@ -19,6 +19,7 @@ from box_agent.config import (
 from box_agent.memory import MemoryManager
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import Tool, ToolResult
+from box_agent.tools.skill_loader import SKILL_SLOT_SENTINEL, SkillLoader
 from box_agent.tools.setup import SANDBOX_INFO_PROMPT, build_sandbox_info_prompt
 
 
@@ -325,6 +326,29 @@ class FakeMCPTool(Tool):
 
     async def execute(self, url: str):
         return ToolResult(success=True, content=f"opened {url}")
+
+
+class ParentPromptCaptureTool(Tool):
+    def __init__(self):
+        self.parent_system_prompt = ""
+
+    @property
+    def name(self):
+        return "parent_prompt_capture"
+
+    @property
+    def description(self):
+        return "Capture parent prompt updates"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {}}
+
+    def set_parent_system_prompt(self, system_prompt: str) -> None:
+        self.parent_system_prompt = system_prompt
+
+    async def execute(self):
+        return ToolResult(success=True, content="captured")
 
 
 class CaptureMessagesLLM:
@@ -1273,6 +1297,125 @@ async def test_acp_auto_completion_gate_continues_until_ppt_artifact(tmp_path):
     rendered = "\n".join(str(update) for update in conn.updates)
     assert "PPT 已生成" in rendered
     assert "尚未满足完成条件" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_acp_preloads_matched_pptx_skill_for_deliverable(tmp_path):
+    skills_dir = tmp_path / "skills"
+    pptx_dir = skills_dir / "pptx"
+    pptx_dir.mkdir(parents=True)
+    (pptx_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "keywords: [ppt, pptx, powerpoint, slide]\n"
+        "---\n"
+        "# PPTX FULL RULES\n"
+        "Use the editable deck workflow.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = CaptureMessagesLLM()
+    prompt_capture = ParentPromptCaptureTool()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        llm,
+        [prompt_capture],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "做一份 12 页新员工入职培训 PPT，1920×1080 可编辑"}],
+        )
+    )
+
+    first_system_prompt = llm.calls[0][0][1]
+    assert "## Auto-Loaded Skill Instructions" in first_system_prompt
+    assert "# Skill: pptx" in first_system_prompt
+    assert "# PPTX FULL RULES" in first_system_prompt
+    assert prompt_capture.parent_system_prompt == first_system_prompt
+    assert agent._sessions[session.sessionId].preloaded_skill_names == ["pptx"]
+
+
+@pytest.mark.asyncio
+async def test_acp_preloads_pptx_when_catalog_filter_drops_it(tmp_path):
+    skills_dir = tmp_path / "skills"
+    prompt = "做一份 12 页新员工入职培训 PPT，1920×1080 可编辑"
+
+    for index in range(8):
+        noise_dir = skills_dir / f"lark-noise-{index}"
+        noise_dir.mkdir(parents=True)
+        (noise_dir / "SKILL.md").write_text(
+            "---\n"
+            f"name: lark-noise-{index}\n"
+            "description: 做一份 新员工 入职 培训 可编辑 会议室 HR 友好 流程 清单\n"
+            "keywords: [做一份, 新员工, 入职, 培训, 可编辑, 会议室, HR]\n"
+            "---\n"
+            f"# Noise {index}\n",
+            encoding="utf-8",
+        )
+
+    pptx_dir = skills_dir / "pptx"
+    pptx_dir.mkdir()
+    (pptx_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "keywords: [ppt, pptx, powerpoint, slide]\n"
+        "---\n"
+        "# PPTX FULL RULES\n"
+        "Use the editable deck workflow.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+    assert "pptx" not in [skill.name for skill in skill_loader.filter_by_query(prompt)]
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = CaptureMessagesLLM()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        llm,
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": prompt}])
+    )
+
+    state = agent._sessions[session.sessionId]
+    first_system_prompt = llm.calls[0][0][1]
+    assert "pptx" not in state.skill_selector.matched_skill_names
+    assert "## Auto-Loaded Skill Instructions" in first_system_prompt
+    assert "# Skill: pptx" in first_system_prompt
+    assert "# PPTX FULL RULES" in first_system_prompt
+    assert state.preloaded_skill_names == ["pptx"]
 
 
 @pytest.mark.asyncio

@@ -171,14 +171,17 @@ class TestSkillSelector:
 
         out1 = sel.update("hi")
         assert "pptx" not in out1
+        assert sel.matched_skill_names == ("memory-guide",)
 
         out2 = sel.update("帮我做PPT")
         assert "pptx" in out2
+        assert "pptx" in sel.matched_skill_names
 
         # Adding a mail intent on a later turn should keep pptx (cumulative)
         out3 = sel.update("再发个邮件给老板")
         assert "pptx" in out3
         assert "lark-mail" in out3
+        assert "lark-mail" in sel.matched_skill_names
 
     def test_repeated_query_returns_none(self, loader: SkillLoader):
         sel = SkillSelector(loader)
@@ -186,6 +189,7 @@ class TestSkillSelector:
         sel.update("帮我做PPT")
         # No change — nothing new in the cumulative skill set
         assert sel.update("继续做这个PPT") is None
+        assert "pptx" in sel.matched_skill_names
 
     def test_rebind_resets_signature(self, loader: SkillLoader):
         """After session-mode mid-session rewrite, re-binding to a fresh
