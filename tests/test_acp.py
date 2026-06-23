@@ -21,6 +21,7 @@ from box_agent.config import (
 from box_agent.memory import MemoryManager
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import Tool, ToolResult
+from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS
 from box_agent.tools.skill_loader import SKILL_SLOT_SENTINEL, SkillLoader
 from box_agent.tools.setup import SANDBOX_INFO_PROMPT, build_sandbox_info_prompt
 
@@ -101,7 +102,12 @@ def test_sandbox_prompt_requires_execute_code_for_explicit_python_results():
 
 
 def test_sandbox_prompt_limits_single_execute_code_argument_size():
-    assert "每次 `execute_code(code=...)` 控制在 8000 字符以内" in SANDBOX_INFO_PROMPT
+    assert (
+        f"每次 `execute_code(code=...)` 控制在 {MAX_EXECUTE_CODE_CHARS} 字符以内"
+        in SANDBOX_INFO_PROMPT
+    )
+    assert "共享样式/HTML/CSS/JS/JSON manifest/base64/生成文件正文" in SANDBOX_INFO_PROMPT
+    assert "不要等到 `EXECUTE_CODE_TOO_LARGE` 后才拆" in SANDBOX_INFO_PROMPT
     assert "不要把大段内容塞进一个工具参数" in SANDBOX_INFO_PROMPT
 
 
@@ -1418,11 +1424,78 @@ async def test_acp_preloads_matched_pptx_skill_for_deliverable(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_preloads_required_skill_for_document_deliverable(tmp_path):
+    skills_dir = tmp_path / "skills"
+    pptx_dir = skills_dir / "pptx"
+    pptx_dir.mkdir(parents=True)
+    (pptx_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "keywords: [ppt, pptx, powerpoint, slide]\n"
+        "required_skills: [html-templates]\n"
+        "---\n"
+        "# PPTX FULL RULES\n"
+        "Use the editable deck workflow.\n",
+        encoding="utf-8",
+    )
+    html_templates_dir = skills_dir / "html-templates"
+    html_templates_dir.mkdir()
+    (html_templates_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: html-templates\n"
+        "description: Select visual style constraints for HTML slide decks.\n"
+        "keywords: [html, template, visual]\n"
+        "---\n"
+        "# HTML TEMPLATE RULES\n"
+        "Select a Visual DNA profile.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = CaptureMessagesLLM()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        llm,
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "做一份 12 页新员工入职培训 PPT，1920×1080 可编辑"}],
+        )
+    )
+
+    first_system_prompt = llm.calls[0][0][1]
+    assert "# Skill: pptx" in first_system_prompt
+    assert "# Skill: html-templates" in first_system_prompt
+    assert "# HTML TEMPLATE RULES" in first_system_prompt
+    assert agent._sessions[session.sessionId].preloaded_skill_names == [
+        "pptx",
+        "html-templates",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_acp_preloads_pptx_when_catalog_filter_drops_it(tmp_path):
     skills_dir = tmp_path / "skills"
     prompt = "做一份 12 页新员工入职培训 PPT，1920×1080 可编辑"
 
-    for index in range(8):
+    for index in range(16):
         noise_dir = skills_dir / f"lark-noise-{index}"
         noise_dir.mkdir(parents=True)
         (noise_dir / "SKILL.md").write_text(

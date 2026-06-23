@@ -62,6 +62,8 @@ allowed-tools:
 metadata:
   author: Test Author
   version: "1.0"
+required_skills: [html-templates]
+related-skills: "research-synthesis, research-to-deck-outline"
 ---
 
 Skill content here.
@@ -77,6 +79,11 @@ Skill content here.
         assert skill.allowed_tools == ["read_file", "write_file"]
         assert skill.metadata["author"] == "Test Author"
         assert skill.metadata["version"] == "1.0"
+        assert skill.required_skills == ["html-templates"]
+        assert skill.related_skills == [
+            "research-synthesis",
+            "research-to-deck-outline",
+        ]
 
 
 def test_load_invalid_skill():

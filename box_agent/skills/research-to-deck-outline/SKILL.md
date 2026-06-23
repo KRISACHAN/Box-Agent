@@ -1,6 +1,7 @@
 ---
 name: research-to-deck-outline
 description: Convert deep research, long-form source text, reports, notes, or collected evidence into a PPT/deck outline that can be progressively expanded. Use when the user wants a standalone outline, page-by-page deck structure, speaking-prompt outline, or full speaker-script outline from research material. Do not use for creating PPTX files, visual design, slide rendering, or template layout work.
+keywords: [deck outline, slide outline, ppt outline, presentation outline, page-by-page, speaker script, speaking prompts, 大纲, PPT大纲, 页面结构, 逐页大纲, 逐页内容, 讲解提示, 讲解版, 演讲稿, 逐字稿]
 ---
 
 # Research to Deck Outline

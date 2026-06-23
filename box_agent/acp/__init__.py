@@ -465,10 +465,25 @@ class BoxACPAgent:
     ) -> None:
         if not self._skill_loader:
             return
+        include_disabled = state.expert_context is not None
         requested_names = list(state.preloaded_skill_names)
         for skill_name in skill_names:
             if skill_name not in requested_names:
                 requested_names.append(skill_name)
+        expanded_names: list[str] = []
+        for skill_name in requested_names:
+            if skill_name not in expanded_names:
+                expanded_names.append(skill_name)
+            skill = self._skill_loader.get_skill(
+                skill_name,
+                include_disabled=include_disabled,
+            )
+            if skill is None:
+                continue
+            for required_skill_name in skill.required_skills or []:
+                if required_skill_name not in expanded_names:
+                    expanded_names.append(required_skill_name)
+        requested_names = expanded_names
         if not requested_names:
             return
 
@@ -477,7 +492,7 @@ class BoxACPAgent:
         for skill_name in requested_names:
             skill = self._skill_loader.get_skill(
                 skill_name,
-                include_disabled=state.expert_context is not None,
+                include_disabled=include_disabled,
             )
             if skill is None:
                 log.warn("skills/preload_missing", session_id=session_id, skill=skill_name)

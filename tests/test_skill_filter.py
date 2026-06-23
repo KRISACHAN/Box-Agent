@@ -38,6 +38,15 @@ def loader() -> SkillLoader:
             content="",
             source="builtin",
             keywords=["ppt", "pptx", "幻灯片"],
+            required_skills=["html-templates"],
+            related_skills=["research-synthesis", "research-to-deck-outline"],
+        ),
+        "html-templates": Skill(
+            name="html-templates",
+            description="visual style template profiles for HTML and slides",
+            content="",
+            source="builtin",
+            keywords=["template", "visual", "style", "视觉风格"],
         ),
         "xlsx": Skill(
             name="xlsx",
@@ -52,6 +61,13 @@ def loader() -> SkillLoader:
             content="",
             source="builtin",
             keywords=["行业分析", "行业研究", "市场研究", "深度总结", "资料综述"],
+        ),
+        "research-to-deck-outline": Skill(
+            name="research-to-deck-outline",
+            description="turn research into a slide-by-slide PPT outline",
+            content="",
+            source="builtin",
+            keywords=["ppt outline", "页面结构", "逐页大纲"],
         ),
     }
     return inst
@@ -94,6 +110,9 @@ class TestFilterByQuery:
     def test_ppt_query_matches_pptx(self, loader: SkillLoader):
         names = [s.name for s in loader.filter_by_query("帮我做个PPT")]
         assert "pptx" in names
+        assert "html-templates" in names
+        assert "research-synthesis" in names
+        assert "research-to-deck-outline" in names
         assert "memory-guide" in names
         assert "lark-mail" not in names
 
@@ -130,6 +149,25 @@ class TestFilterByQuery:
         out = loader.filter_by_query("数据", max_skills=3)
         # 3 matched + always_on
         assert len(out) == 4
+
+    def test_default_max_skills_is_16(self, loader: SkillLoader):
+        for i in range(20):
+            loader.loaded_skills[f"data-{i:02d}"] = Skill(
+                name=f"data-{i:02d}",
+                description="数据",
+                content="",
+                source="builtin",
+                keywords=["数据"],
+            )
+        out = loader.filter_by_query("数据")
+        # 16 matched + always_on
+        assert len(out) == 17
+
+    def test_required_and_related_skills_expand_one_hop(self, loader: SkillLoader):
+        names = [s.name for s in loader.filter_by_query("PPT")]
+        assert names.index("pptx") < names.index("html-templates")
+        assert "research-synthesis" in names
+        assert "research-to-deck-outline" in names
 
     def test_keywords_outweigh_description(self, loader: SkillLoader):
         # "幻灯片" is in pptx keywords (weight 3) but not in any description

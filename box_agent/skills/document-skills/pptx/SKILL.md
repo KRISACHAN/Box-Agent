@@ -1,7 +1,9 @@
 ---
 name: pptx
 description: Create, inspect, edit, validate, render, and QA PowerPoint decks. Use when the user mentions PowerPoint, PPT, PPTX, slide deck, presentation, template slides, speaker notes, slide images, or asks to read, generate, create, make, design, or modify a .pptx artifact. New decks default to HTML-first editable export through the bundled `dom-to-pptx` exporter.
-keywords: [ppt, pptx, slide, slides, deck, presentation, powerpoint, 幻灯片, 演示文稿, 投影片, 路演, BP, 提案, 路演ppt]
+keywords: [ppt, pptx, slide, slides, deck, presentation, powerpoint, pitch deck, speaker notes, ppt制作, 做ppt, 可编辑ppt, 幻灯片, 演示文稿, 投影片, 演示, 宣讲, 汇报材料, 路演, 路演材料, 融资路演, 商业计划书, BP, 提案, 讲稿, 模板页, 路演ppt]
+required_skills: [html-templates]
+related_skills: [research-synthesis, research-to-deck-outline]
 ---
 
 # PPTX Skill

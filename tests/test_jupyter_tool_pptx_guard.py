@@ -11,7 +11,9 @@ def test_execute_code_schema_exposes_code_size_limit():
     code_schema = JupyterSandboxTool().parameters["properties"]["code"]
 
     assert code_schema["maxLength"] == MAX_EXECUTE_CODE_CHARS
-    assert "split large scripts" in code_schema["description"]
+    assert f"{MAX_EXECUTE_CODE_CHARS:,} characters" in code_schema["description"]
+    assert "split before calling execute_code" in code_schema["description"]
+    assert "JSON manifests" in code_schema["description"]
 
 
 @pytest.mark.asyncio

@@ -97,6 +97,8 @@ class Skill:
     metadata: Optional[Dict[str, str]] = None
     skill_path: Optional[Path] = None
     keywords: Optional[List[str]] = None
+    required_skills: Optional[List[str]] = None
+    related_skills: Optional[List[str]] = None
 
     def to_prompt(self) -> str:
         """Convert skill to prompt format"""
@@ -123,6 +125,8 @@ All files and references in this skill are relative to this directory.
             "description": self.description,
             "source": self.source,
             "path": str(self.skill_path) if self.skill_path else None,
+            "required_skills": self.required_skills or [],
+            "related_skills": self.related_skills or [],
         }
 
 
@@ -180,6 +184,27 @@ class SkillLoader:
         self.loaded_skills: Dict[str, Skill] = {}
         self._all_skills: Dict[str, Skill] = {}
 
+    @staticmethod
+    def _parse_skill_name_list(raw_value: object) -> Optional[List[str]]:
+        """Normalize frontmatter skill-name lists.
+
+        Supports either YAML lists or comma/whitespace-separated strings so
+        skill authors can keep routing metadata lightweight.
+        """
+        if isinstance(raw_value, str):
+            raw_names = re.split(r"[,，\s]+", raw_value)
+        elif isinstance(raw_value, list):
+            raw_names = [str(name) for name in raw_value]
+        else:
+            return None
+
+        names: List[str] = []
+        for raw_name in raw_names:
+            name = raw_name.strip()
+            if name and _SKILL_NAME_RE.match(name) and name not in names:
+                names.append(name)
+        return names or None
+
     # Backward compatibility — expose the first source directory
     @property
     def skills_dir(self) -> Path:
@@ -235,6 +260,13 @@ class SkillLoader:
             else:
                 keywords_list = None
 
+            required_skills = self._parse_skill_name_list(
+                frontmatter.get("required_skills", frontmatter.get("required-skills"))
+            )
+            related_skills = self._parse_skill_name_list(
+                frontmatter.get("related_skills", frontmatter.get("related-skills"))
+            )
+
             return Skill(
                 name=frontmatter["name"],
                 description=frontmatter["description"],
@@ -245,6 +277,8 @@ class SkillLoader:
                 metadata=frontmatter.get("metadata"),
                 skill_path=skill_path,
                 keywords=keywords_list,
+                required_skills=required_skills,
+                related_skills=related_skills,
             )
 
         except Exception as e:
@@ -544,7 +578,7 @@ class SkillLoader:
         query: Optional[str],
         *,
         always_on: frozenset[str] = frozenset({"memory-guide"}),
-        max_skills: int = 8,
+        max_skills: int = 16,
         include_disabled: bool = False,
     ) -> List[Skill]:
         """Return skills relevant to ``query`` plus the always_on set.
@@ -552,7 +586,9 @@ class SkillLoader:
         Matching strategy: tokenize query and each skill's (name, keywords,
         description) via :func:`_tokenize`. Score = name_overlap*5 +
         keywords_overlap*3 + description_overlap*1. Top ``max_skills`` by
-        score (score > 0) plus always_on are returned.
+        score (score > 0) are returned, then each matched skill's
+        required_skills and related_skills are added one hop when available,
+        followed by always_on skills.
 
         Empty / whitespace-only / no-overlap query → only always_on skills.
         This is intentional: greetings like "hi" / "你好" should NOT trigger
@@ -580,8 +616,28 @@ class SkillLoader:
                 scored.append((score, skill))
 
         scored.sort(key=lambda x: (-x[0], x[1].name))
-        matched = [s for _, s in scored[:max_skills]]
-        return matched + always_skills
+        primary_matches = [s for _, s in scored[:max_skills]]
+        matched: List[Skill] = []
+        seen: Set[str] = set()
+
+        def append_skill(skill_name: str) -> None:
+            if skill_name in seen:
+                return
+            skill = skill_pool.get(skill_name)
+            if skill is None:
+                return
+            matched.append(skill)
+            seen.add(skill.name)
+
+        for skill in primary_matches:
+            append_skill(skill.name)
+        for skill in primary_matches:
+            for skill_name in (skill.required_skills or []) + (skill.related_skills or []):
+                append_skill(skill_name)
+
+        for skill in always_skills:
+            append_skill(skill.name)
+        return matched
 
     def get_skills_metadata_prompt(
         self,
@@ -635,7 +691,23 @@ class SkillLoader:
         else:
             prompt_parts.append("**Skill catalog:**")
             for skill in skills_to_render:
-                prompt_parts.append(f"- `{skill.name}` ({skill.source}): {skill.description}")
+                routing_hints = []
+                if skill.required_skills:
+                    routing_hints.append(
+                        f"required: {', '.join(skill.required_skills)}"
+                    )
+                if skill.related_skills:
+                    routing_hints.append(
+                        f"related: {', '.join(skill.related_skills)}"
+                    )
+                routing_suffix = (
+                    f" [{'; '.join(routing_hints)}]"
+                    if routing_hints
+                    else ""
+                )
+                prompt_parts.append(
+                    f"- `{skill.name}` ({skill.source}): {skill.description}{routing_suffix}"
+                )
 
         return "\n".join(prompt_parts)
 

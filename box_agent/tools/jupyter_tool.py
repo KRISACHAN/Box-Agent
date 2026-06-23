@@ -48,9 +48,11 @@ SANDBOX_DEFAULT_PACKAGES = [
 
 SANDBOX_BASE_DIR = Path.home() / ".box-agent" / "sandbox"
 
-# Keep generated tool-call JSON well below common provider completion caps.
-# The kernel is persistent, so long workflows should be split across calls.
-MAX_EXECUTE_CODE_CHARS = 8_000
+# Keep generated tool-call JSON below provider completion caps while allowing
+# normal artifact-generation scripts. The kernel is persistent, so very large
+# static content should still be split across calls.
+MAX_EXECUTE_CODE_CHARS = 24_000
+MAX_EXECUTE_CODE_CHARS_DISPLAY = f"{MAX_EXECUTE_CODE_CHARS:,}"
 
 # User-level directory for packages installed at runtime in frozen mode.
 # Survives across sessions; kept separate from the frozen binary itself.
@@ -1122,7 +1124,7 @@ class JupyterSandboxTool(Tool):
 
     @property
     def description(self) -> str:
-        return """Execute Python code in a persistent Jupyter kernel sandbox.
+        return f"""Execute Python code in a persistent Jupyter kernel sandbox.
 
 This tool runs Python code in a **real Jupyter kernel** with its own isolated environment:
 - Variables, functions, classes, imports all persist between calls
@@ -1143,8 +1145,10 @@ Example workflow:
 
 Best practices:
 - Break complex analysis into steps
-- Keep each code argument under 8000 characters; split large scripts/templates/data
-  across multiple calls or files instead of inlining them in one tool call
+- Keep each code argument under {MAX_EXECUTE_CODE_CHARS_DISPLAY} characters
+- For large generated static content (HTML/CSS/JS, shared styles, JSON manifests,
+  templates, base64, or file bodies), split before calling execute_code: create
+  the target file/variable first, append chunks in later calls, then validate
 - Use print() to see intermediate results
 - Never use the bash tool's `pip install` for sandbox packages — bash runs against the
   host Python and the sandbox kernel will not see those packages
@@ -1164,12 +1168,15 @@ Output formats:
                     "type": "string",
                     "maxLength": MAX_EXECUTE_CODE_CHARS,
                     "description": (
-                        "Python code to execute. Keep this under 8000 characters; "
-                        "split large scripts, templates, data, or generated file "
-                        "content across multiple calls/files instead of inlining "
-                        "one huge argument. Variables and functions from previous "
-                        "calls in the same session are available. Use %pip install "
-                        "<pkg> to install packages."
+                        "Python code to execute. Keep this under "
+                        f"{MAX_EXECUTE_CODE_CHARS_DISPLAY} characters. For large "
+                        "generated static content such as HTML/CSS/JS, shared "
+                        "styles, JSON manifests, templates, base64, or file "
+                        "bodies, split before calling execute_code: create the "
+                        "target file/variable first, append chunks in later "
+                        "calls, then validate. Variables and functions from "
+                        "previous calls in the same session are available. Use "
+                        "%pip install <pkg> to install packages."
                     ),
                 },
                 "session_id": {
@@ -1217,8 +1224,9 @@ Output formats:
                     "EXECUTE_CODE_TOO_LARGE: code is "
                     f"{len(code)} characters; limit is {MAX_EXECUTE_CODE_CHARS}. "
                     "Split the work into multiple execute_code calls because "
-                    "kernel state persists. Do not inline large file content, "
-                    "templates, base64, or data; write/read files in smaller chunks."
+                    "kernel state persists. Do not inline large generated file "
+                    "content, shared styles, JSON manifests, templates, base64, "
+                    "or data; write/read files in smaller chunks."
                 ),
             )
         if self._looks_like_python_pptx_new_deck(code):
