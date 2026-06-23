@@ -1,9 +1,11 @@
 """Integration tests for the Box ACP adapter."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
+from acp import text_block, update_agent_message
 
 from box_agent.acp import BoxACPAgent, _inject_item_id, _tool_result_raw_output
 from box_agent.config import (
@@ -29,6 +31,11 @@ class DummyConn:
 
     async def sessionUpdate(self, payload):
         self.updates.append(payload)
+
+
+class HangingConn:
+    async def sessionUpdate(self, payload):
+        await asyncio.Event().wait()
 
 
 class DummyLLM:
@@ -71,6 +78,20 @@ class DummyLLM:
         else:
             yield StreamEvent(type="text", delta="done")
             yield StreamEvent(type="finish", finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_acp_session_update_send_times_out(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(HangingConn(), config, DummyLLM(), [], "system")
+    agent._SESSION_UPDATE_TIMEOUT_SECONDS = 0.01
+
+    with pytest.raises(TimeoutError, match="ACP session update timed out"):
+        await agent._send("session-1", update_agent_message(text_block("hello")))
 
 
 def test_sandbox_prompt_requires_execute_code_for_explicit_python_results():

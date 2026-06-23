@@ -387,6 +387,9 @@ class BoxACPAgent:
     # Beyond this we proceed without MCP tools and inject them once ready, so a
     # single slow/broken MCP server cannot hang the user's first message.
     _MCP_PROMPT_WAIT_SECONDS: float = 5.0
+    # Session updates are local ACP notifications. If the host stops draining
+    # them, one stuck update must not freeze the agent loop forever.
+    _SESSION_UPDATE_TIMEOUT_SECONDS: float = 15.0
 
     def __init__(
         self,
@@ -2288,7 +2291,21 @@ class BoxACPAgent:
         return "end_turn"
 
     async def _send(self, session_id: str, update: Any) -> None:
-        await self._conn.sessionUpdate(session_notification(session_id, update))
+        try:
+            await asyncio.wait_for(
+                self._conn.sessionUpdate(session_notification(session_id, update)),
+                timeout=self._SESSION_UPDATE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            log.warn(
+                "session/update_timeout",
+                session_id=session_id,
+                timeout_seconds=self._SESSION_UPDATE_TIMEOUT_SECONDS,
+                update_type=getattr(update, "sessionUpdate", type(update).__name__),
+            )
+            raise TimeoutError(
+                f"ACP session update timed out after {self._SESSION_UPDATE_TIMEOUT_SECONDS:g}s"
+            ) from exc
 
 
 class _PermissionNegotiator:
