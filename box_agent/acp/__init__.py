@@ -2488,9 +2488,23 @@ class _MemoryProposalNegotiator:
             message="Sending memory promotion proposals to host",
         )
 
+        # Resolve outbound extension dispatcher across framework versions.
+        # >= 0.6.x exposes ext_method; older releases exposed extMethod.
+        send_ext = getattr(self._conn, "ext_method", None) or getattr(
+            self._conn, "extMethod", None
+        )
+        if send_ext is None:
+            log.warn(
+                "memory/proposal_error",
+                count=len(candidates),
+                message="conn exposes neither ext_method nor extMethod; "
+                "host does not support session/memory_proposal",
+            )
+            return
+
         try:
             response = await asyncio.wait_for(
-                self._conn.extMethod("session/memory_proposal", payload),
+                send_ext("session/memory_proposal", payload),
                 timeout=120.0,
             )
         except asyncio.TimeoutError:
@@ -2504,7 +2518,7 @@ class _MemoryProposalNegotiator:
             log.warn(
                 "memory/proposal_error",
                 count=len(candidates),
-                message=f"extMethod failed (host may not support session/memory_proposal): {exc}",
+                message=f"ext_method failed (host may not support session/memory_proposal): {exc}",
             )
             return
 

@@ -932,9 +932,7 @@ class TestAllowedDirectories:
         eng = PermissionEngine(policy, workspace)
         if home is not None:
             eng._home_dir = home.resolve()
-        # pytest's tmp_path is under /tmp which is in _temp_dirs → auto-allowed.
         # Clear it so deny assertions work correctly in scope-enforcement tests.
-        eng._temp_dirs = ()
         return eng
 
     # ── 1. session_workspace + allowed_directories ──
@@ -1082,7 +1080,6 @@ class TestDirectoryGrants:
         )
         eng = PermissionEngine(policy, ws, grant_store=store)
         eng._home_dir = tmp_path.resolve()  # so escalation is offered
-        eng._temp_dirs = ()  # tmp_path is under /tmp → clear to preserve deny assertions
 
         # Without grant — denied with escalation.
         assert eng.check(FILESYSTEM_READ, {"path": str(f)}).allowed is False
@@ -1196,6 +1193,5 @@ class TestBoxAgentDirAlwaysAllowed:
         eng = self._engine_with_box_dir(workspace, box_dir)
         # Move home outside tmp_path so the sibling doesn't get user_home grant
         eng._home_dir = (tmp_path / "fake-home").resolve()
-        eng._temp_dirs = ()  # tmp_path is under /tmp → clear to preserve deny assertions
         decision = eng.check(FILESYSTEM_READ, {"path": str(sibling)})
         assert decision.allowed is False
