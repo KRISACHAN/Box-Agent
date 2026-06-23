@@ -223,3 +223,13 @@ def test_obsidian_skill_is_discoverable() -> None:
 
     assert loader.get_skill("obsidian") is not None
     assert "obsidian" in loader.list_skills()
+
+
+def test_obsidian_skill_mentions_context_writeback_policy() -> None:
+    skill_path = Path(__file__).resolve().parent.parent / "box_agent" / "skills" / "obsidian" / "SKILL.md"
+    text = skill_path.read_text(encoding="utf-8")
+
+    assert "obsidian_context" in text
+    assert "obsidian_update_note" in text
+    assert "Vault 相对 `path`" in text
+    assert "不要修改 workspace 文件" in text

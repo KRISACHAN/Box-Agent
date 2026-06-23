@@ -64,6 +64,10 @@
       "path": "scheduled-task/SKILL.md"
     },
     {
+      "name": "obsidian",
+      "path": "obsidian/SKILL.md"
+    },
+    {
       "name": "skill-architect",
       "path": "skill-architect/SKILL.md"
     },

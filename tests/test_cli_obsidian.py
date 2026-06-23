@@ -63,6 +63,9 @@ def test_cli_env_context_reads_obsidian_json_and_renders_policy(
     out = build_env_context_prompt(ctx)
     assert "Obsidian 状态" in out
     assert "`obsidian_create_note`" in out
+    assert "obsidian_context" in out
+    assert "`obsidian_update_note`" in out
+    assert "不要修改 workspace 副本" in out
     assert "不要用 bash" in out
 
 

@@ -498,6 +498,9 @@ def _format_obsidian(state: ObsidianState) -> list[str]:
             "- Obsidian 写入/打开策略：当用户要求导出、写入、保存或追加到 Obsidian 时，"
             "必须优先使用 `obsidian_create_note`、`obsidian_update_note` 或 `obsidian_daily_note`；"
             "不要用 bash 直接调用 `obsidian create/append/prepend/open/daily`。"
+            "如果 prompt 中存在 `obsidian_context`，且用户要求修改该引用笔记，"
+            "必须使用 context 里的 Vault 相对 `path` 调用 `obsidian_update_note`；"
+            "不要修改 workspace 副本或 `.data-sources` 文件。"
         )
     return lines
 
