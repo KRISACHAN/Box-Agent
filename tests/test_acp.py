@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from box_agent.acp import BoxACPAgent, _inject_item_id
+from box_agent.acp import BoxACPAgent, _inject_item_id, _tool_result_raw_output
 from box_agent.config import (
     AgentConfig,
     Config,
@@ -1155,6 +1155,50 @@ async def test_acp_default_artifact_mode_creates_output(tmp_path):
     assert state.artifact_mode == "output"
     assert "cwd 已是 `{workspace}/output/`" in state.agent.system_prompt
     assert session.field_meta is None
+
+
+@pytest.mark.asyncio
+async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    agent = BoxACPAgent(conn, config, DoneLLM(), [], "system")
+    artifact_root = tmp_path / "session-a" / "output"
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "session_id": "office-session-a",
+                "workspace_layout": {"artifact_root_dir": str(artifact_root)},
+            },
+        )
+    )
+    state = agent._sessions[session.sessionId]
+    sandbox_tool = state.agent.tools["execute_code"]
+
+    assert artifact_root.is_dir()
+    assert state.output_dir == str(artifact_root.resolve())
+    assert state.upstream_session_id == "office-session-a"
+    assert not (tmp_path / "output").exists()
+    assert sandbox_tool._get_workspace("ignored") == artifact_root.resolve()
+
+
+def test_acp_artifact_raw_output_gets_session_metadata():
+    output = _tool_result_raw_output(
+        {"type": "artifact", "filename": "deck.pptx", "abs_path": "/tmp/deck.pptx"},
+        "[OK] done",
+        None,
+        session_id="office-session-a",
+        output_dir="/tmp/session-a/output",
+    )
+
+    assert output["session_id"] == "office-session-a"
+    assert output["sessionId"] == "office-session-a"
+    assert output["output_dir"] == "/tmp/session-a/output"
 
 
 @pytest.mark.asyncio

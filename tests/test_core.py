@@ -1401,6 +1401,25 @@ def test_artifact_detect_in_output_dir(tmp_path):
     assert a.produced_at != ""
 
 
+def test_artifact_detect_in_explicit_artifact_root(tmp_path):
+    """Host-supplied session output roots are scanned instead of shared output/."""
+    session_out = tmp_path / "session-a" / "output"
+    session_out.mkdir(parents=True)
+    (session_out / "chart.png").write_bytes(b"\x89PNG")
+
+    arts = _detect_artifacts(
+        "t1",
+        "jupyter",
+        "Here is the result [chart.png]",
+        str(tmp_path),
+        artifact_root_dir=session_out,
+    )
+
+    assert len(arts) == 1
+    assert arts[0].rel_path == "session-a/output/chart.png"
+    assert arts[0].abs_path == str(session_out / "chart.png")
+
+
 def test_artifact_detect_data_kind(tmp_path):
     """CSV under output/ is classified as data."""
     out = tmp_path / "output"
@@ -1472,6 +1491,20 @@ def test_detect_new_files_dedupes_against_regex_artifacts(tmp_path):
 
     new_arts = _detect_new_files("tc", pre_files, post_files, already, str(tmp_path))
     assert new_arts == [], "file already emitted by regex pass must not be re-emitted"
+
+
+def test_snapshot_workspace_uses_explicit_artifact_root(tmp_path):
+    session_out = tmp_path / "session-b" / "output"
+    default_out = tmp_path / "output"
+    session_out.mkdir(parents=True)
+    default_out.mkdir()
+    expected = session_out / "deck.pptx"
+    expected.write_bytes(b"ppt")
+    (default_out / "old.png").write_bytes(b"old")
+
+    files = _snapshot_workspace(str(tmp_path), artifact_root_dir=session_out)
+
+    assert files == {expected}
 
 
 @pytest.mark.asyncio
@@ -1820,7 +1853,7 @@ def test_artifact_envelope_shape(tmp_path):
     f = out / "report.xlsx"
     f.write_bytes(b"PK\x03\x04")
     art = _make_artifact("tc-1", f, tmp_path)
-    env = _artifact_envelope(art, str(out))
+    env = _artifact_envelope(art, str(out), session_id="office-session-1")
     assert env["type"] == "artifact"
     assert env["kind"] == "spreadsheet"
     assert env["filename"] == "report.xlsx"
@@ -1832,6 +1865,8 @@ def test_artifact_envelope_shape(tmp_path):
     assert env["produced_at"]
     assert env["tool_call_id"] == "tc-1"
     assert env["output_dir"] == str(out)
+    assert env["session_id"] == "office-session-1"
+    assert env["sessionId"] == "office-session-1"
     # canonical schema only — no legacy aliases
     assert "artifact_type" not in env
     assert "path" not in env

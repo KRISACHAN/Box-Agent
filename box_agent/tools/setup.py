@@ -42,7 +42,8 @@ def build_sandbox_info_prompt(use_output_dir: bool = True) -> str:
     """Build the sandbox prompt block for output or project workspace mode."""
     if use_output_dir:
         location_line = (
-            "沙箱有独立 `sys.executable`，cwd 已是 `{workspace}/output/`，"
+            "沙箱有独立 `sys.executable`，cwd 已是 `{workspace}/output/`"
+            "（或 host 指定的当前会话 output 根），"
             "存盘用相对路径（如 `plt.savefig(\"chart.png\")`）；禁写 `/mnt/data/`、"
             "`sandbox:` 前缀；读用户上传文件用 `../<name>` 回 workspace 根。"
         )
@@ -273,7 +274,9 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         allow_full_access: bool = True, non_interactive: bool = False, output=None,
                         llm=None, permission_engine: PermissionEngine | None = None,
                         skill_runtime_context: SkillRuntimeContext | None = None,
-                        use_output_dir: bool = True, env_context=None):
+                        use_output_dir: bool = True,
+                        artifact_root_dir: str | Path | None = None,
+                        env_context=None):
     """Add workspace-dependent tools
 
     These tools need to know the workspace directory.
@@ -291,10 +294,12 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         permission_engine: If provided, tools use capability-based permission checks
         skill_runtime_context: Runtime env to expose to subprocess-backed tools
         use_output_dir: If True, execute_code chdirs into {workspace}/output.
+        artifact_root_dir: Optional host-supplied output root for this session.
     """
     _out = output or print
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
+    artifact_root = Path(artifact_root_dir).expanduser().resolve() if use_output_dir and artifact_root_dir else None
 
     # Bash tool - needs workspace as cwd for command execution
     runtime_context = skill_runtime_context or build_skill_runtime_context(sandbox_mode=sandbox_mode)
@@ -344,6 +349,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             workspace_dir=str(workspace_dir),
             runtime_env=runtime_context.env(),
             use_output_dir=use_output_dir,
+            output_dir=str(artifact_root) if artifact_root else None,
         )
         tools.append(sandbox_tool)
         # Also add sandbox status tool
@@ -370,6 +376,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     tools.append(
         GenerateImageTool(
             workspace_dir=str(workspace_dir),
+            output_dir=str(artifact_root) if artifact_root else None,
             allow_full_access=allow_full_access,
             permission_engine=permission_engine,
             endpoint=getattr(image_generation_config, "endpoint", "") or None,
@@ -398,6 +405,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             parent_tools=parent_tools,
             workspace_dir=str(workspace_dir),
             artifact_detection_enabled=use_output_dir,
+            artifact_root_dir=str(artifact_root) if artifact_root else None,
         )
         tools.append(sub_agent_tool)
         _out(f"{Colors.GREEN}✅ Loaded sub-agent tool (sub_agent){Colors.RESET}")

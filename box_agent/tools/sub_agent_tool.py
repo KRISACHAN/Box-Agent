@@ -69,6 +69,7 @@ class SubAgentTool(EventEmittingTool):
         parent_system_prompt: str | None = None,
         no_progress_limit: int = 6,
         artifact_detection_enabled: bool = True,
+        artifact_root_dir: str | None = None,
     ):
         super().__init__()
         self._llm = llm
@@ -90,6 +91,7 @@ class SubAgentTool(EventEmittingTool):
         self._parent_system_prompt = parent_system_prompt
         self._no_progress_limit = no_progress_limit
         self._artifact_detection_enabled = artifact_detection_enabled
+        self._artifact_root_dir = artifact_root_dir
 
     def set_parent_system_prompt(self, system_prompt: str) -> None:
         """Attach the finalized parent prompt so child agents inherit constraints."""
@@ -241,6 +243,7 @@ class SubAgentTool(EventEmittingTool):
                 workspace_dir=self._workspace_dir,
                 no_progress_limit=self._no_progress_limit,
                 artifact_detection_enabled=self._artifact_detection_enabled,
+                artifact_root_dir=self._artifact_root_dir,
             ):
                 if isinstance(event, ToolCallStart):
                     pending_child_tc[event.tool_call_id] = event.tool_name

@@ -98,6 +98,37 @@ async def test_generate_image_saves_base64_response(
 
 
 @pytest.mark.asyncio
+async def test_generate_image_saves_relative_paths_under_output_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    artifact_root = tmp_path / "session-a" / "output"
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        output_dir=str(artifact_root),
+        allow_full_access=False,
+        endpoint="https://image.example.test/v1/images/generations",
+        api_key="secret",
+    )
+
+    result = await tool.execute(prompt="hero", output_path="assets/generated/hero.png")
+
+    target = artifact_root / "assets/generated/hero.png"
+    assert result.success
+    assert target.read_bytes() == PNG_BYTES
+    assert not (tmp_path / "assets/generated/hero.png").exists()
+    assert result.raw_output["rel_path"] == "session-a/output/assets/generated/hero.png"
+    assert result.raw_output["abs_path"] == str(target)
+
+
+@pytest.mark.asyncio
 async def test_generate_image_accepts_explicit_size(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

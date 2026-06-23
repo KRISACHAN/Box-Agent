@@ -1050,6 +1050,7 @@ class JupyterSandboxTool(Tool):
         workspace_dir: str | None = None,
         runtime_env: Mapping[str, str] | None = None,
         use_output_dir: bool = True,
+        output_dir: str | None = None,
     ):
         """Initialize sandbox tool.
 
@@ -1057,10 +1058,12 @@ class JupyterSandboxTool(Tool):
             workspace_dir: Base workspace directory for sandbox sessions.
             runtime_env: Host runtime environment exported by env_context.
             use_output_dir: Chdir kernels into {workspace}/output when True.
+            output_dir: Optional explicit artifact output directory.
         """
         self.workspace_dir = workspace_dir
         self.runtime_env = dict(runtime_env or {})
         self.use_output_dir = use_output_dir
+        self.output_dir = output_dir
         self._session_id: Optional[str] = None
 
     def _get_sandbox_env(self) -> SandboxEnvironment:
@@ -1389,6 +1392,10 @@ Output formats:
         the workspace/project root directly.
         """
         from box_agent.core import ensure_output_dir
+        if self.use_output_dir and self.output_dir:
+            root = Path(self.output_dir).expanduser().resolve()
+            root.mkdir(parents=True, exist_ok=True)
+            return root
         if self.workspace_dir:
             root = Path(self.workspace_dir).expanduser().resolve()
             if self.use_output_dir:

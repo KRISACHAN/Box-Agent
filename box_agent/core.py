@@ -260,9 +260,9 @@ def _classify_kind(filename: str, mime: str | None) -> str:
 
 # ── Artifact directory contract ─────────────────────────────────
 #
-# Every artifact lands under ``{workspace}/output/``.  This is the only
-# location hosts and the artifact pipeline trust; sandbox sessions, write
-# tools, sub-agents and PPT exports all chdir or resolve into this path.
+# In output mode artifacts land under the active artifact root. By default
+# that is ``{workspace}/output/``; desktop hosts may pass a per-session root
+# so concurrent sessions do not share one visible output workspace.
 
 OUTPUT_SUBDIR: Final[str] = "output"
 
@@ -363,6 +363,14 @@ def _make_artifact(tool_call_id: str, abs_file: Path, workspace_root: Path) -> A
         sha256=digest,
         produced_at=datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
     )
+
+
+def _artifact_scan_root(workspace_dir: str | None, artifact_root_dir: str | Path | None = None) -> Path | None:
+    if artifact_root_dir:
+        return Path(artifact_root_dir).expanduser().resolve()
+    if not workspace_dir:
+        return None
+    return Path(workspace_dir).expanduser().resolve() / OUTPUT_SUBDIR
 
 # Pattern to match <!--PLOT_DATA:...--> markers embedded by code execution.
 # These carry interactive chart payloads already sent to the frontend via SSE;
@@ -694,14 +702,17 @@ def _detect_artifacts(
     tool_name: str,
     content: str,
     workspace_dir: str | None,
+    artifact_root_dir: str | Path | None = None,
 ) -> list[ArtifactEvent]:
     """Scan tool output for ``[filename.ext]`` references that resolve under
-    ``{workspace}/output/``."""
+    the active artifact output directory."""
     if not workspace_dir or not content:
         return []
 
     ws = Path(workspace_dir).resolve()
-    out = ws / OUTPUT_SUBDIR
+    out = _artifact_scan_root(workspace_dir, artifact_root_dir)
+    if out is None:
+        return []
     if not out.is_dir():
         return []
 
@@ -728,15 +739,16 @@ def _detect_artifacts(
 _IGNORE_DIRS = {".git", "__pycache__", ".venv", "node_modules", ".ipynb_checkpoints"}
 
 
-def _snapshot_workspace(workspace_dir: str) -> set[Path]:
-    """Snapshot files under ``{workspace}/output/`` (recursive).
+def _snapshot_workspace(workspace_dir: str, artifact_root_dir: str | Path | None = None) -> set[Path]:
+    """Snapshot files under the active artifact output directory (recursive).
 
     Only the canonical output directory is scanned — files the user keeps in
     the workspace root are intentionally ignored so they are never re-emitted
     as new artifacts.
     """
-    ws = Path(workspace_dir)
-    out = ws / OUTPUT_SUBDIR
+    out = _artifact_scan_root(workspace_dir, artifact_root_dir)
+    if out is None:
+        return set()
     if not out.is_dir():
         return set()
 
@@ -1425,6 +1437,7 @@ async def run_agent_loop(
     max_parallel_tools: int = 8,
     completion_gate: CompletionGate | None = None,
     artifact_detection_enabled: bool = True,
+    artifact_root_dir: str | Path | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Execute the agent loop, yielding structured events.
 
@@ -1465,6 +1478,8 @@ async def run_agent_loop(
         artifact_detection_enabled: If False, skip output-directory artifact
             snapshotting and detection for sessions that edit an existing
             project tree directly.
+        artifact_root_dir: Optional explicit artifact directory supplied by a
+            host session. Defaults to ``{workspace_dir}/output``.
     """
     cancelled = is_cancelled or (lambda: False)
     hook_mgr = HookManager(hooks)
@@ -2175,7 +2190,7 @@ async def run_agent_loop(
             # Snapshot workspace before tool execution for diff-based artifact detection
             pre_files: set[Path] = set()
             if artifact_detection_enabled and tool_user_visible and workspace_dir:
-                pre_files = _snapshot_workspace(workspace_dir)
+                pre_files = _snapshot_workspace(workspace_dir, artifact_root_dir)
 
             if not allowed_to_execute:
                 result = ToolResult(success=False, content="", error=internal_skip_error or "")
@@ -2385,12 +2400,23 @@ async def run_agent_loop(
             # Detect and yield structured artifacts (images, files) from tool output
             if artifact_detection_enabled and result.success and workspace_dir:
                 # Regex-based: detect [filename.ext] references in output
-                regex_artifacts = _detect_artifacts(tc_id, fn_name, tc_content, workspace_dir)
+                regex_artifacts = _detect_artifacts(
+                    tc_id,
+                    fn_name,
+                    tc_content,
+                    workspace_dir,
+                    artifact_root_dir,
+                )
                 for artifact in regex_artifacts:
                     yield artifact
                 # Diff-based: catch files not referenced in output text
-                post_files = _snapshot_workspace(workspace_dir)
+                post_files = _snapshot_workspace(workspace_dir, artifact_root_dir)
                 already = {a.abs_path for a in regex_artifacts}
+                if isinstance(result.raw_output, dict) and result.raw_output.get("type") == "artifact":
+                    for key in ("abs_path", "absolute_path"):
+                        raw_path = result.raw_output.get(key)
+                        if isinstance(raw_path, str) and raw_path.strip():
+                            already.add(str(Path(raw_path).expanduser().resolve()))
                 for artifact in _detect_new_files(tc_id, pre_files, post_files, already, workspace_dir):
                     yield artifact
 

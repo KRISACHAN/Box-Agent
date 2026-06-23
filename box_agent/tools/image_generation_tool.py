@@ -250,6 +250,7 @@ class GenerateImageTool(Tool):
     def __init__(
         self,
         workspace_dir: str = ".",
+        output_dir: str | None = None,
         allow_full_access: bool = True,
         permission_engine: PermissionEngine | None = None,
         endpoint: str | None = None,
@@ -259,6 +260,7 @@ class GenerateImageTool(Tool):
         timeout: float | None = None,
     ) -> None:
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.output_dir = Path(output_dir).absolute() if output_dir else self.workspace_dir
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
         self.endpoint = endpoint or _first_env(_ENDPOINT_ENV)
@@ -466,7 +468,7 @@ class GenerateImageTool(Tool):
     def _resolve_output_path(self, output_path: str) -> Path:
         path = Path(output_path).expanduser()
         if not path.is_absolute():
-            path = self.workspace_dir / path
+            path = self.output_dir / path
         return path
 
     def _check_write_permission(self, target: Path) -> ToolResult | None:
@@ -613,4 +615,7 @@ class GenerateImageTool(Tool):
         try:
             return str(target.relative_to(self.workspace_dir))
         except ValueError:
-            return str(target)
+            try:
+                return str(target.relative_to(self.output_dir))
+            except ValueError:
+                return str(target)

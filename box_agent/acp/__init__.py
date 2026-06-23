@@ -159,7 +159,11 @@ except Exception:  # pragma: no cover - defensive
     logger.debug("ACP schema patch skipped")
 
 
-def _artifact_envelope(art: ArtifactEvent, output_dir: str | None) -> dict[str, Any]:
+def _artifact_envelope(
+    art: ArtifactEvent,
+    output_dir: str | None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
     """Serialize an ArtifactEvent to the wire envelope hosts dispatch on.
 
     The ``type: "artifact"`` discriminator is stable; downstream consumers
@@ -180,6 +184,9 @@ def _artifact_envelope(art: ArtifactEvent, output_dir: str | None) -> dict[str, 
     }
     if output_dir:
         payload["output_dir"] = output_dir
+    if session_id:
+        payload["session_id"] = session_id
+        payload["sessionId"] = session_id
     return payload
 
 
@@ -282,6 +289,21 @@ def _normalize_artifact_mode(meta: Any) -> str:
     return "output"
 
 
+def _artifact_root_from_meta(meta: Any, workspace: Path, artifact_mode: str) -> Path | None:
+    if artifact_mode == "project" or not isinstance(meta, dict):
+        return None
+    layout = meta.get("workspace_layout") or meta.get("workspaceLayout")
+    if not isinstance(layout, dict):
+        return None
+    raw = layout.get("artifact_root_dir") or layout.get("artifactRootDir")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    root = Path(raw.strip()).expanduser()
+    if not root.is_absolute():
+        root = workspace / root
+    return root.resolve()
+
+
 def _goal_payload(agent: Agent) -> dict[str, Any] | None:
     return goal_payload(agent.goal)
 
@@ -310,11 +332,23 @@ def _tool_result_raw_output(
     raw_output: Any,
     result_text: str,
     policy_decision: dict[str, Any] | None,
+    *,
+    session_id: str | None = None,
+    output_dir: str | None = None,
 ) -> Any:
-    if policy_decision is None:
-        return raw_output if isinstance(raw_output, dict) else result_text
     if isinstance(raw_output, dict):
-        return {**raw_output, "policy_decision": policy_decision}
+        payload = dict(raw_output)
+        if payload.get("type") == "artifact":
+            if output_dir:
+                payload.setdefault("output_dir", output_dir)
+            if session_id:
+                payload.setdefault("session_id", session_id)
+                payload.setdefault("sessionId", session_id)
+        if policy_decision is not None:
+            payload["policy_decision"] = policy_decision
+        return payload
+    if policy_decision is None:
+        return result_text
     return {
         "type": "tool_result",
         "text": result_text,
@@ -581,6 +615,19 @@ class BoxACPAgent:
             if isinstance(raw_upstream, str):
                 upstream_session_id = raw_upstream.strip()
 
+        # Canonical artifact directory is only part of output mode. Existing
+        # project workspaces are edited in place and must not get an implicit
+        # output/ directory. Hosts may supply a per-session artifact root so
+        # concurrent desktop tasks never share a visible output workspace.
+        output_dir: str | None = None
+        artifact_root_dir = _artifact_root_from_meta(meta, workspace, artifact_mode)
+        if artifact_mode != "project":
+            from box_agent.core import ensure_output_dir
+
+            output_path = artifact_root_dir or ensure_output_dir(workspace)
+            output_path.mkdir(parents=True, exist_ok=True)
+            output_dir = str(output_path)
+
         log.info(
             "session/new",
             session_id=session_id,
@@ -588,6 +635,7 @@ class BoxACPAgent:
                 f"Creating session, workspace={workspace}, session_mode={session_mode}, "
                 f"artifact_mode={artifact_mode}, deep_think={deep_think}, "
                 f"force_plan_start={force_plan_start}, "
+                f"artifact_root={output_dir}, "
                 f"expert={expert_context.to_metadata() if expert_context else None}"
             ),
         )
@@ -718,6 +766,7 @@ class BoxACPAgent:
                 permission_engine=perm_engine,
                 skill_runtime_context=skill_runtime_context,
                 use_output_dir=artifact_mode != "project",
+                artifact_root_dir=output_dir,
                 env_context=env_context,
             )
         agent = Agent(
@@ -749,14 +798,6 @@ class BoxACPAgent:
                     session_id=session_id,
                     status=goal_payload.get("status"),
                 )
-
-        # Canonical artifact directory is only part of output mode. Existing
-        # project workspaces are edited in place and must not get an implicit
-        # output/ directory.
-        output_dir: str | None = None
-        if artifact_mode != "project":
-            from box_agent.core import ensure_output_dir
-            output_dir = str(ensure_output_dir(workspace))
 
         # Per-session MemoryExtractor to avoid cross-session state leaks
         session_extractor = None
@@ -1883,6 +1924,7 @@ class BoxACPAgent:
             force_plan_start=force_plan_start,
             completion_gate=completion_gate,
             artifact_detection_enabled=state.artifact_mode != "project",
+            artifact_root_dir=state.output_dir,
         ):
             try:
                 match event:
@@ -2040,7 +2082,13 @@ class BoxACPAgent:
                         status = "completed" if ok else "failed"
                         prefix = "[OK]" if ok else "[ERROR]"
                         result_text = f"{prefix} {text if ok else err or 'Tool execution failed'}"
-                        output = _tool_result_raw_output(raw_output, result_text, policy_decision)
+                        output = _tool_result_raw_output(
+                            raw_output,
+                            result_text,
+                            policy_decision,
+                            session_id=state.upstream_session_id,
+                            output_dir=state.output_dir,
+                        )
                         await self._send(
                             session_id,
                             update_tool_call(tid, status=status, content=[tool_content(text_block(result_text))], raw_output=output),
@@ -2064,7 +2112,11 @@ class BoxACPAgent:
                         # ACP SessionUpdate has no native "artifact" variant —
                         # we ride on tool_call_update.rawOutput, with a stable
                         # ``type: "artifact"`` discriminator the host dispatches on.
-                        artifact_meta = _artifact_envelope(art, state.output_dir)
+                        artifact_meta = _artifact_envelope(
+                            art,
+                            state.output_dir,
+                            session_id=state.upstream_session_id,
+                        )
                         log.debug("artifact/payload", session_id=session_id, tool_call_id=art.tool_call_id, payload=artifact_meta)
                         try:
                             await self._send(
@@ -2171,7 +2223,11 @@ class BoxACPAgent:
                                 progress["success"] = ok
                             case ArtifactEvent() as art:
                                 progress["event"] = "artifact"
-                                progress["artifact"] = _artifact_envelope(art, state.output_dir)
+                                progress["artifact"] = _artifact_envelope(
+                                    art,
+                                    state.output_dir,
+                                    session_id=state.upstream_session_id,
+                                )
                             case ErrorEvent(message=msg):
                                 progress["event"] = "error"
                                 progress["message"] = msg
