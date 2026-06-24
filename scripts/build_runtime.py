@@ -113,8 +113,6 @@ EXTERNAL_PYTHON_SANDBOX_HIDDEN_IMPORTS = {
     "lxml",
     "lxml.etree",
     "lxml.html",
-    "PIL",
-    "PIL.Image",
     "chardet",
     "pip",
     "pip._internal",
@@ -152,7 +150,6 @@ EXTERNAL_PYTHON_SANDBOX_EXCLUDED_MODULES = {
     "pptx",
     "bs4",
     "lxml",
-    "PIL",
     "chardet",
     "pip",
 }
@@ -237,8 +234,9 @@ def pyinstaller_hidden_imports(*, external_python_sandbox: bool = False) -> list
         "lxml",
         "lxml.etree",
         "lxml.html",
-        "PIL",  # pillow imports as 'PIL'
-        "PIL.Image",
+        "PIL",  # pillow imports as 'PIL'; required by the default image watermark
+        "PIL.Image",  # (box_agent/tools/watermark.py) which runs in the ACP main
+        # process — must stay bundled even in external-python-sandbox builds.
         "dateutil",  # python-dateutil imports as 'dateutil'
         "dateutil.parser",
         "chardet",

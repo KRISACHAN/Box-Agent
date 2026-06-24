@@ -71,6 +71,8 @@ def truncate_text_by_tokens(
 _MODEL_CONTEXT_EXTS = {".html", ".htm", ".json", ".md", ".txt", ".log", ".xml"}
 _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_SIZE_THRESHOLD = 8_000
+MAX_FILE_TOOL_CONTENT_CHARS = 8_000
+MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY = f"{MAX_FILE_TOOL_CONTENT_CHARS:,}"
 _MODEL_HISTORY_PLACEHOLDER_PREFIXES = (
     "[Full tool-call argument omitted from model history]",
     "[Full file content omitted from model history]",
@@ -124,6 +126,20 @@ def _model_history_placeholder_error(*values: str) -> str | None:
                 "Regenerate the real file content, or read the existing file with read_file before editing."
             )
     return None
+
+
+def _oversized_file_tool_argument_error(tool_name: str, argument_name: str, value: str) -> str | None:
+    """Reject large generated bodies before they encourage provider-side truncation."""
+    if len(value) <= MAX_FILE_TOOL_CONTENT_CHARS:
+        return None
+    return (
+        f"FILE_TOOL_ARGUMENT_TOO_LARGE: {tool_name}.{argument_name} is "
+        f"{len(value)} characters; limit is {MAX_FILE_TOOL_CONTENT_CHARS}. "
+        "For large generated artifacts such as HTML/CSS/JS, JSON manifests, "
+        "templates, base64, or file bodies, split the work into smaller chunks. "
+        "Use execute_code to create/truncate the target file, append chunks in "
+        "later calls, then validate with read_file or a render check."
+    )
 
 
 def _summarize_json_for_model(raw_text: str) -> list[str]:
@@ -337,7 +353,9 @@ class WriteTool(Tool):
         return (
             "Write content to a file. Will overwrite existing files completely. "
             "For existing files, you should read the file first using read_file. "
-            "Prefer editing existing files over creating new ones unless explicitly needed."
+            "Prefer editing existing files over creating new ones unless explicitly needed. "
+            f"Keep content under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} characters; "
+            "for larger generated artifacts, use execute_code to write the file in chunks."
         )
 
     @property
@@ -351,7 +369,15 @@ class WriteTool(Tool):
                 },
                 "content": {
                     "type": "string",
-                    "description": "Complete content to write (will replace existing content)",
+                    "maxLength": MAX_FILE_TOOL_CONTENT_CHARS,
+                    "description": (
+                        "Complete content to write (will replace existing content). "
+                        f"Keep this under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} "
+                        "characters. For large generated artifacts such as HTML/CSS/JS, "
+                        "JSON manifests, templates, base64, or file bodies, use "
+                        "execute_code to create/truncate the target file, append smaller "
+                        "chunks in later calls, then validate."
+                    ),
                 },
             },
             "required": ["path", "content"],
@@ -386,6 +412,10 @@ class WriteTool(Tool):
             placeholder_error = _model_history_placeholder_error(content)
             if placeholder_error:
                 return ToolResult(success=False, content="", error=placeholder_error)
+
+            size_error = _oversized_file_tool_argument_error(self.name, "content", content)
+            if size_error:
+                return ToolResult(success=False, content="", error=size_error)
 
             bypass_error = detect_pptx_self_check_bypass(str(file_path), content)
             if bypass_error:

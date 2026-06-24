@@ -664,3 +664,158 @@ def test_add_workspace_tools_passes_image_generation_config(tmp_path: Path) -> N
     assert tool.model == "chatgpt-image-latest"
     assert tool.auth_file == str(tmp_path / "auth.json")
     assert tool.timeout == 45.0
+
+
+def _real_png(size=(256, 256), color=(40, 40, 40)) -> bytes:
+    import io as _io
+
+    from PIL import Image as _Image
+
+    buf = _io.BytesIO()
+    _Image.new("RGB", size, color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _b64_handler(payload_bytes: bytes):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"b64_json": base64.b64encode(payload_bytes).decode("ascii")}]},
+        )
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_generate_image_watermarks_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _real_png()
+    patch_async_client(monkeypatch, _b64_handler(source))
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/v1/images/generations",
+        api_key="secret",
+    )
+
+    result = await tool.execute(prompt="hero", output_path="assets/generated/hero.png")
+
+    assert result.success, result.error
+    saved = (tmp_path / "assets/generated/hero.png").read_bytes()
+    assert saved != source  # watermark changed the bytes
+    assert result.raw_output["watermark"]["applied"] is True
+    assert "watermark: applied" in result.content
+
+
+@pytest.mark.asyncio
+async def test_generate_image_watermark_disabled_keeps_original_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _real_png()
+    patch_async_client(monkeypatch, _b64_handler(source))
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/v1/images/generations",
+        api_key="secret",
+    )
+
+    result = await tool.execute(
+        prompt="hero",
+        output_path="assets/generated/plain.png",
+        watermark=False,
+    )
+
+    assert result.success, result.error
+    saved = (tmp_path / "assets/generated/plain.png").read_bytes()
+    assert saved == source  # untouched
+    assert result.raw_output["watermark"]["applied"] is False
+    assert result.raw_output["watermark"]["reason"] == "disabled by caller"
+
+
+@pytest.mark.asyncio
+async def test_generate_image_custom_watermark_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _real_png()
+    patch_async_client(monkeypatch, _b64_handler(source))
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/v1/images/generations",
+        api_key="secret",
+    )
+
+    result = await tool.execute(
+        prompt="hero",
+        output_path="assets/generated/branded.png",
+        watermark_text="网宿科技",
+    )
+
+    assert result.success, result.error
+    saved = (tmp_path / "assets/generated/branded.png").read_bytes()
+    assert saved != source
+    assert result.raw_output["watermark"]["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_generate_image_edit_path_is_also_watermarked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _real_png()
+    (tmp_path / "reference.png").write_bytes(_real_png(color=(10, 10, 10)))
+    patch_async_client(monkeypatch, _b64_handler(source))
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/api/web/llm/v2/images/gen",
+        api_key="secret",
+    )
+
+    result = await tool.execute(
+        prompt="restyle",
+        output_path="assets/generated/edited.png",
+        image_mode="image_to_image",
+        reference_images=["reference.png"],
+    )
+
+    assert result.success, result.error
+    saved = (tmp_path / "assets/generated/edited.png").read_bytes()
+    assert saved != source
+    assert result.raw_output["image_mode"] == "image_to_image"
+    assert result.raw_output["watermark"]["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_generate_image_svg_response_skips_watermark(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    svg_bytes = b"<svg xmlns='http://www.w3.org/2000/svg'><rect/></svg>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=svg_bytes,
+            headers={"content-type": "image/svg+xml"},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/v1/images/generations",
+        api_key="secret",
+    )
+
+    result = await tool.execute(prompt="logo", output_path="assets/generated/logo.svg")
+
+    assert result.success, result.error
+    saved = (tmp_path / "assets/generated/logo.svg").read_bytes()
+    assert saved == svg_bytes  # vector untouched
+    assert result.raw_output["watermark"]["applied"] is False

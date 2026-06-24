@@ -37,6 +37,7 @@
 
 - **目录**：所有交付物落 `{workspace}/output/`。沙箱 cwd 已指向此处，`write_file` 用 `output/<name>` 即可；禁止写到 workspace 根、用户原文件旁、`~/.box-agent/` 子目录。
 - **命名**：描述性小写、`-` 分隔，禁时间戳/UUID/空格/中文（如 `sales-q3.xlsx`）；同名直接覆盖，不手动加 `_v2`。
+- **大文件**：长 HTML/CSS/JS/JSON/base64/模板正文不要一次性塞进单个 `write_file`；优先用 sandbox 分块创建/追加，最后读取或渲染校验。
 - **引用格式**：必须 `local-file://` + 绝对路径——图片 `![名](local-file://<ws>/output/x.png)`，其他 `[名](local-file://<ws>/output/x.pdf)`。`<ws>` 用 user message 提供的工作区绝对路径。Windows 用正斜杠且两个斜杠（`local-file://C:/...`），禁三斜杠。禁用相对路径、`{workspace}` 字面量、`/mnt/data/`、`sandbox:`、裸绝对路径——都会渲染失败。
 - **不重复声明**：不要 `cat` 同一文件或重列绝对路径。
 

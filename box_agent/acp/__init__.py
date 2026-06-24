@@ -1759,6 +1759,10 @@ class BoxACPAgent:
 
         skill_name_by_tool_call_id: dict[str, str] = {}
         used_skill_names: list[str] = []
+        for preloaded_skill_name in state.preloaded_skill_names:
+            preloaded_skill_name = preloaded_skill_name.strip()
+            if preloaded_skill_name and preloaded_skill_name not in used_skill_names:
+                used_skill_names.append(preloaded_skill_name)
         used_tool_counts: dict[str, int] = {}
         used_mcp_tool_counts: dict[tuple[str, str], int] = {}
         turn_token_usage = {

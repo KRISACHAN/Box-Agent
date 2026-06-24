@@ -1488,6 +1488,14 @@ async def test_acp_preloads_required_skill_for_document_deliverable(tmp_path):
         "pptx",
         "html-templates",
     ]
+    turn_usage_outputs = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "rawOutput", None)
+        and isinstance(update.update.rawOutput, dict)
+        and update.update.rawOutput.get("type") == "turn_usage"
+    ]
+    assert turn_usage_outputs[-1]["skills"] == ["pptx", "html-templates"]
 
 
 @pytest.mark.asyncio
@@ -1554,6 +1562,14 @@ async def test_acp_preloads_pptx_when_catalog_filter_drops_it(tmp_path):
     assert "# Skill: pptx" in first_system_prompt
     assert "# PPTX FULL RULES" in first_system_prompt
     assert state.preloaded_skill_names == ["pptx"]
+    turn_usage_outputs = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "rawOutput", None)
+        and isinstance(update.update.rawOutput, dict)
+        and update.update.rawOutput.get("type") == "turn_usage"
+    ]
+    assert turn_usage_outputs[-1]["skills"] == ["pptx"]
 
 
 @pytest.mark.asyncio

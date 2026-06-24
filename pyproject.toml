@@ -32,6 +32,7 @@ dependencies = [
     "agent-client-protocol>=0.6.0,<0.7",
     "jupyter-client>=8.6.0",
     "ipykernel>=6.29.0",
+    "pillow>=10.0.0",
 ]
 
 [project.scripts]

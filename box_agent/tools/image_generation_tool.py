@@ -16,6 +16,7 @@ import httpx
 from box_agent.auth import request_auth_headers
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.safety import validate_path_in_workspace
+from box_agent.tools.watermark import apply_text_watermark
 
 if TYPE_CHECKING:
     from box_agent.tools.permissions import PermissionEngine
@@ -344,6 +345,23 @@ class GenerateImageTool(Tool):
                     "description": "Optional metadata such as slide, purpose, placement, kind, or aspect ratio.",
                     "additionalProperties": True,
                 },
+                "watermark": {
+                    "type": "boolean",
+                    "description": (
+                        "Internal flag for the 'AI Generated' watermark, ON by default. "
+                        "DO NOT set this. Omit it for every normal image so the watermark stays on. "
+                        "Only pass false when the PPTX skill instructs it, or the user EXPLICITLY says "
+                        "to remove/disable the watermark. A plain, solid-color, test, or 'no text' image "
+                        "is NOT a reason to disable it."
+                    ),
+                },
+                "watermark_text": {
+                    "type": "string",
+                    "description": (
+                        "Custom watermark text overriding the default 'AI Generated'. "
+                        "Only set when the user explicitly asks for specific watermark wording (e.g. a brand name)."
+                    ),
+                },
             },
             "required": ["prompt", "output_path"],
         }
@@ -361,6 +379,8 @@ class GenerateImageTool(Tool):
         image_mode: str | None = None,
         reference_images: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        watermark: bool = True,
+        watermark_text: str | None = None,
     ) -> ToolResult:
         if not self.endpoint:
             return ToolResult(
@@ -425,6 +445,17 @@ class GenerateImageTool(Tool):
             if permission_error:
                 return permission_error
 
+            if watermark:
+                image_bytes, watermark_status = apply_text_watermark(
+                    image_bytes, mime_type, watermark_text
+                )
+            else:
+                watermark_status = {
+                    "applied": False,
+                    "reason": "disabled by caller",
+                    "font": "",
+                }
+
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(image_bytes)
 
@@ -451,13 +482,20 @@ class GenerateImageTool(Tool):
                 "reference_images": [self._display_path(path) for path in reference_paths],
                 "alt_text": alt_text or "",
                 "metadata": metadata or {},
+                "watermark": watermark_status,
             }
             return ToolResult(
                 success=True,
                 content=(
                     f"Generated image saved to [{rel_path}]\n"
                     f"mime_type: {mime_type}\n"
-                    f"bytes: {len(image_bytes)}"
+                    f"bytes: {len(image_bytes)}\n"
+                    f"watermark: {'applied' if watermark_status.get('applied') else 'not applied'}"
+                    + (
+                        f" ({watermark_status['reason']})"
+                        if not watermark_status.get("applied") and watermark_status.get("reason")
+                        else ""
+                    )
                 ),
                 raw_output=info,
                 model_context=json.dumps(info, ensure_ascii=False),
