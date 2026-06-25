@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
@@ -337,9 +338,88 @@ class MCPServerConnection:
             traceback.print_exc()
             return False
 
+    def _build_stdio_env(self) -> dict[str, str] | None:
+        """Build the child-process environment for a stdio MCP server.
+
+        On non-Windows we preserve the original behavior exactly: pass the
+        server's own ``env`` (or ``None`` so the SDK applies its default
+        inherited-env allowlist). macOS/Linux stay the untouched baseline.
+
+        On Windows there is a nasty, verified trap. The MCP SDK's default env
+        allowlist (``get_default_environment``) emits the UPPER-case
+        ``SYSTEMROOT`` key. But some Windows binaries — notably ssh.exe and
+        anything else whose Winsock / crypto DLLs resolve ``%SystemRoot%``
+        during early process init — only accept the conventional CamelCase
+        ``SystemRoot``. Measured behavior (each tested 3×):
+
+            env has only ``SYSTEMROOT``            -> ssh dies in 0.03s, 0 bytes
+            env has only ``SystemRoot``            -> ssh starts normally
+            env has BOTH ``SYSTEMROOT``+``SystemRoot`` -> ssh STILL dies
+
+        That last line is the subtle part: when both case variants are in the
+        dict, Windows ``CreateProcess`` keeps the upper-case one and drops the
+        CamelCase, so merely *adding* ``SystemRoot`` is not enough. The child
+        crashes before main() and the parent only sees the stdout pipe close
+        (surfaced as ``Connection closed`` with zero stderr).
+
+        Ordinary tools (node, python, bash, cmd) are unaffected — they don't
+        touch that early DLL path — so this only ever bites network/crypto
+        CLIs spawned as stdio MCP servers.
+
+        Fix: on win32, force the canonical CamelCase spelling for the system
+        variables and STRIP any case-variant duplicate keys, so exactly one
+        correctly-cased entry survives into CreateProcess. Server ``env`` from
+        mcp.json is layered last and also de-duplicated so it cleanly wins.
+        """
+        if sys.platform != "win32":
+            return self.env if self.env else None
+
+        try:
+            from mcp.client.stdio import get_default_environment
+
+            env = get_default_environment()
+        except Exception:  # noqa: BLE001 — never let env-building break a connect
+            env = {}
+
+        def _set_canonical(target: dict[str, str], name: str, value: str) -> None:
+            # Remove every case-variant of ``name`` already present, then set
+            # the canonical spelling — guarantees a single, correctly-cased key.
+            for existing in [k for k in target if k.lower() == name.lower()]:
+                del target[existing]
+            target[name] = value
+
+        # Canonical CamelCase system variables Windows binaries expect at
+        # startup. Pulled live from the host process (correct casing there).
+        for name in (
+            "SystemRoot",
+            "SystemDrive",
+            "windir",
+            "ComSpec",
+            "ProgramData",
+            "ALLUSERSPROFILE",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramW6432",
+            "USERDOMAIN",
+            "USERPROFILE",
+            "HOMEDRIVE",
+            "HOMEPATH",
+        ):
+            value = os.environ.get(name)
+            if value is not None:
+                _set_canonical(env, name, value)
+
+        # Server-specific env from mcp.json takes precedence (also de-duped so
+        # the user's exact key wins instead of colliding with a case variant).
+        if self.env:
+            for name, value in self.env.items():
+                _set_canonical(env, name, value)
+
+        return env or None
+
     async def _connect_stdio(self):
         """Connect via STDIO transport."""
-        server_params = StdioServerParameters(command=self.command, args=self.args, env=self.env if self.env else None)
+        server_params = StdioServerParameters(command=self.command, args=self.args, env=self._build_stdio_env())
         return await self.exit_stack.enter_async_context(stdio_client(server_params))
 
     async def _connect_sse(self):
