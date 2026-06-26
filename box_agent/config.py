@@ -120,6 +120,11 @@ class AgentConfig(BaseModel):
     # against a prompt like "spawn as many sub-agents as possible" exhausting
     # LLM rate limits / processes / memory.
     max_parallel_tools: int = 8
+    # Per-call token budget for sub-agent child contexts before they summarize.
+    # The child runs in an isolated context, so this is independent of the main
+    # loop's context_token_limit. Single source of truth for the value that was
+    # previously hardcoded in SubAgentTool; not surfaced in config-example.yaml.
+    sub_agent_token_limit: int = 40_000
     # Continue an active durable goal after a natural end_turn, bounded so a
     # third-party outage or bad plan cannot loop forever.
     goal_autopilot_enabled: bool = True
@@ -397,6 +402,7 @@ class Config(BaseModel):
             max_steps=data.get("max_steps", 200),
             workspace_dir=data.get("workspace_dir", "./workspace"),
             max_parallel_tools=data.get("max_parallel_tools", 8),
+            sub_agent_token_limit=data.get("sub_agent_token_limit", 40_000),
             goal_autopilot_enabled=data.get("goal_autopilot_enabled", True),
             goal_autopilot_max_turns=data.get("goal_autopilot_max_turns", 3),
             goal_autopilot_max_seconds=data.get("goal_autopilot_max_seconds", 14400.0),

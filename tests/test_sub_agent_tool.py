@@ -507,3 +507,31 @@ async def test_parallel_execution_in_core():
     # Verify parallel execution: both starts happen before both ends
     assert execution_order[0].startswith("start:")
     assert execution_order[1].startswith("start:")
+
+
+def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
+    """config.agent.sub_agent_token_limit flows into the SubAgentTool instance."""
+    from box_agent.config import AgentConfig, ToolsConfig
+    from box_agent.tools.setup import add_workspace_tools
+
+    class Config:
+        agent = AgentConfig(sub_agent_token_limit=12345)
+        tools = ToolsConfig(
+            enable_bash=False,
+            enable_file_tools=False,
+            enable_todo=False,
+            enable_sub_agent=True,
+        )
+
+    tools: list = []
+    add_workspace_tools(
+        tools,
+        Config(),
+        tmp_path,
+        allow_full_access=False,
+        llm=AsyncMock(),
+        output=lambda *_: None,
+    )
+
+    sub_agent = next(t for t in tools if t.name == "sub_agent")
+    assert sub_agent._token_limit == 12345

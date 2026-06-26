@@ -106,6 +106,22 @@ def test_config_parses_goal_autopilot_settings(tmp_path: Path) -> None:
     assert config.agent.goal_autopilot_no_progress_turns == 4
 
 
+def test_config_sub_agent_token_limit_defaults_and_overrides(tmp_path: Path) -> None:
+    # Default when absent from yaml.
+    default_path = tmp_path / "default.yaml"
+    _write_config(default_path)
+    assert cli.Config.from_yaml(default_path).agent.sub_agent_token_limit == 40_000
+
+    # Overridable for advanced/host scenarios even though it is not surfaced
+    # in config-example.yaml.
+    override_path = tmp_path / "override.yaml"
+    _write_config(override_path)
+    with override_path.open("a", encoding="utf-8") as f:
+        f.write("sub_agent_token_limit: 12345\n")
+
+    assert cli.Config.from_yaml(override_path).agent.sub_agent_token_limit == 12345
+
+
 def test_cmd_doctor_json_returns_structured_status(monkeypatch, capsys) -> None:
     async def fake_api_status(_config):
         return cli._doctor_check("ok", "api ok")
