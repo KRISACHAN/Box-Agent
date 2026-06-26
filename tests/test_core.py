@@ -9,6 +9,8 @@ from box_agent.core import (
     _detect_new_files,
     _snapshot_workspace,
     run_agent_loop,
+    text_is_short_acknowledgement,
+    text_is_short_non_task_reply,
     text_requests_plan_start,
 )
 from box_agent.core import FINAL_SUMMARY_TOOL_CALL_THRESHOLD as _FS_THRESHOLD
@@ -51,8 +53,25 @@ def test_text_requests_plan_start_handles_short_plan_phrases():
         "普通聊天，不需要计划",
         "不用 plan，直接执行",
         "planet",
+        "做一份 15 页售前竞标方案 PPT",
+        "ok",
+        "好的",
     ]:
         assert not text_requests_plan_start(text)
+
+
+def test_short_acknowledgement_and_non_task_reply_detection():
+    for text in ["ok", "OK!", "go ahead", "继续执行", "好的", "可以"]:
+        assert text_is_short_acknowledgement(text)
+        assert text_is_short_non_task_reply(text)
+
+    for text in ["hi", "hello", "谢谢"]:
+        assert not text_is_short_acknowledgement(text)
+        assert text_is_short_non_task_reply(text)
+
+    for text in ["ok，继续修 todo bar", "好的，帮我改这个文件", "hello build a page"]:
+        assert not text_is_short_acknowledgement(text)
+        assert not text_is_short_non_task_reply(text)
 
 
 class MockLLM:
@@ -293,6 +312,13 @@ def _msgs():
     ]
 
 
+def _task_msgs():
+    return [
+        Message(role="system", content="sys"),
+        Message(role="user", content="写一个文件并验证结果"),
+    ]
+
+
 def _echo_tool_calls(count: int) -> list[ToolCall]:
     return [
         ToolCall(
@@ -517,7 +543,7 @@ async def test_require_plan_approval_blocks_non_plan_tools_and_marks_plan_pendin
     events = await collect(
         run_agent_loop(
             llm=llm,
-            messages=_msgs(),
+            messages=_task_msgs(),
             tools={"echo": echo, "plan_write": PlanWriteStubTool()},
             max_steps=5,
             require_plan_approval=True,
@@ -545,6 +571,39 @@ async def test_require_plan_approval_blocks_non_plan_tools_and_marks_plan_pendin
     assert done.final_content == "计划已生成，等待用户确认后再执行。"
     assert not any(
         isinstance(event, ContentEvent) and event.content == "should not run"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_require_plan_approval_does_not_force_plan_for_short_acknowledgement():
+    llm = MockLLM([LLMResponse(content="好的，我等你的下一步。", finish_reason="stop")])
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=[
+                Message(role="system", content="sys"),
+                Message(role="user", content="ok"),
+            ],
+            tools={"plan_write": PlanWriteStubTool()},
+            max_steps=5,
+            require_plan_approval=True,
+        )
+    )
+
+    assert not any(isinstance(event, PlanSnapshotEvent) for event in events)
+    assert not any(
+        isinstance(event, InjectedMessageEvent)
+        and "Host UI requires an explicit user approval" in event.content
+        for event in events
+    )
+    assert not any(
+        isinstance(event, ToolCallStart) and event.tool_name == "plan_write"
+        for event in events
+    )
+    assert any(
+        isinstance(event, ContentEvent) and event.content == "好的，我等你的下一步。"
         for event in events
     )
 

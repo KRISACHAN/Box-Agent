@@ -147,8 +147,64 @@ _PLAN_START_NEGATIONS = (
     "without a plan",
 )
 
-_PLAN_START_KEYWORDS = ("计划", "规划", "方案")
+_PLAN_START_KEYWORDS = ("计划", "规划")
 _STANDALONE_PLAN_RE = re.compile(r"(^|[^a-z])plan([^a-z]|$)")
+_SHORT_ACK_STRIP_RE = re.compile(r"[\s,，.。!！?？;；:：\"'“”‘’`]+")
+_SHORT_ACKNOWLEDGEMENTS = {
+    "ok",
+    "okay",
+    "k",
+    "yes",
+    "yeah",
+    "yep",
+    "sure",
+    "approve",
+    "approved",
+    "confirm",
+    "confirmed",
+    "continue",
+    "proceed",
+    "goahead",
+    "execute",
+    "runit",
+    "run",
+    "好",
+    "好的",
+    "可以",
+    "可以的",
+    "行",
+    "行的",
+    "没问题",
+    "收到",
+    "明白",
+    "了解",
+    "嗯",
+    "嗯嗯",
+    "继续",
+    "继续执行",
+    "执行",
+    "确认",
+    "已确认",
+    "同意",
+    "批准",
+    "开始",
+    "开始吧",
+    "开始执行",
+}
+_SHORT_NON_TASK_REPLIES = _SHORT_ACKNOWLEDGEMENTS | {
+    "hi",
+    "hello",
+    "hey",
+    "thanks",
+    "thankyou",
+    "thx",
+    "你好",
+    "您好",
+    "嗨",
+    "哈喽",
+    "谢谢",
+    "谢谢你",
+}
 
 _FORCED_PLAN_GUIDANCE = (
     "Host UI requires a structured execution plan for this turn. "
@@ -167,7 +223,10 @@ _FORCED_PLAN_APPROVAL_GUIDANCE = (
     "Call `plan_write` with action `set` to publish the task objective, scope, "
     "steps, verification, risks, and assumptions. Do not call execution tools "
     "such as file, bash, code, or sub-agent tools in this turn. After publishing "
-    "the plan, stop and wait for the host to approve it."
+    "the plan, stop and wait for the host to approve it. Do not publish a new "
+    "plan when the latest user message is only a greeting, acknowledgement, "
+    "thanks, or approval such as ok, continue, confirmed, 好的, 收到, or 继续 "
+    "without a concrete task."
 )
 
 _PLAN_APPROVAL_SKIP_MESSAGE = (
@@ -283,6 +342,20 @@ def text_requests_plan_start(text: str) -> bool:
         or any(keyword in normalized for keyword in _PLAN_START_KEYWORDS)
         or bool(_STANDALONE_PLAN_RE.search(normalized))
     )
+
+
+def text_is_short_acknowledgement(text: str) -> bool:
+    compact = _SHORT_ACK_STRIP_RE.sub("", text.strip().lower())
+    if not compact or len(compact) > 40:
+        return False
+    return compact in _SHORT_ACKNOWLEDGEMENTS
+
+
+def text_is_short_non_task_reply(text: str) -> bool:
+    compact = _SHORT_ACK_STRIP_RE.sub("", text.strip().lower())
+    if not compact or len(compact) > 40:
+        return False
+    return compact in _SHORT_NON_TASK_REPLIES
 
 
 def _should_emit_plan_start(messages: list[Message], tools: dict[str, Tool]) -> bool:
@@ -1835,8 +1908,13 @@ async def run_agent_loop(
                 yield InjectedMessageEvent(content=injected_text, injection_id=injection_id)
 
         has_plan_tool = "plan_write" in tools
+        latest_user_text = _latest_user_text(messages)
+        latest_user_is_short_non_task = text_is_short_non_task_reply(latest_user_text)
         plan_approval_gate_enabled = (
-            require_plan_approval and not plan_approval_approved and has_plan_tool
+            require_plan_approval
+            and not plan_approval_approved
+            and has_plan_tool
+            and not latest_user_is_short_non_task
         )
         force_plan_for_turn = (force_plan_start or plan_approval_gate_enabled) and has_plan_tool
         if force_plan_for_turn and not forced_plan_guidance_injected:

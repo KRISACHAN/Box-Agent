@@ -76,7 +76,11 @@ from box_agent.tools.setup import (
     register_mcp_tools,
 )
 from box_agent.config import Config
-from box_agent.core import run_agent_loop, text_requests_plan_start
+from box_agent.core import (
+    run_agent_loop,
+    text_is_short_acknowledgement,
+    text_requests_plan_start,
+)
 from box_agent.events import (
     ArtifactEvent,
     ContentEvent,
@@ -315,6 +319,8 @@ def _plan_approval_is_approved(plan_approval: dict[str, Any] | None) -> bool:
 
 
 def _looks_like_plan_approval_text(text: str) -> bool:
+    if text_is_short_acknowledgement(text):
+        return True
     compact = "".join(ch for ch in text.strip().lower() if ch not in " \t\r\n,，.。!！?？;；:：")
     if not compact or len(compact) > 40:
         return False

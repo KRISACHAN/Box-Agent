@@ -89,6 +89,7 @@ def test_plan_write_description_keeps_plan_separate_from_progress(writer):
     assert "user-visible plan" in description
     assert "not an execution progress tracker" in description
     assert "use todo_write separately" in description
+    assert "short messages like" in description
 
 
 def test_openai_schema(writer, reader):

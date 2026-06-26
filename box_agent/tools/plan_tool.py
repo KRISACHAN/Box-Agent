@@ -141,7 +141,10 @@ class PlanWriteTool(Tool):
             "when the user asks for a plan/proposal, when the approach needs to be "
             "shown before substantial work, or when the host UI should render a plan "
             "card. This is not an execution progress tracker; use todo_write "
-            "separately to track completed/in-progress/pending work."
+            "separately to track completed/in-progress/pending work. Do not use this "
+            "for greetings, acknowledgements, approval replies, or short messages like "
+            "ok, continue, confirmed, 好的, 收到, or 继续 unless they also contain a new "
+            "concrete task."
         )
 
     @property

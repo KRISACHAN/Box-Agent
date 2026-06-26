@@ -7,7 +7,12 @@ from types import SimpleNamespace
 import pytest
 from acp import text_block, update_agent_message
 
-from box_agent.acp import BoxACPAgent, _inject_item_id, _tool_result_raw_output
+from box_agent.acp import (
+    BoxACPAgent,
+    _inject_item_id,
+    _looks_like_plan_approval_text,
+    _tool_result_raw_output,
+)
 from box_agent.config import (
     AgentConfig,
     Config,
@@ -117,6 +122,12 @@ def test_project_sandbox_prompt_does_not_point_at_output_dir():
     assert "当前工作区/代码项目根目录" in prompt
     assert "不要默认创建或使用 `output/`" in prompt
     assert "cwd 已是 `{workspace}/output/`" not in prompt
+
+
+def test_acp_plan_approval_text_accepts_short_confirmations():
+    assert _looks_like_plan_approval_text("好的")
+    assert _looks_like_plan_approval_text("可以")
+    assert not _looks_like_plan_approval_text("hello")
 
 
 class TodoLLM:
@@ -1997,7 +2008,9 @@ async def test_acp_emits_todo_snapshot_raw_output(tmp_path):
     agent = BoxACPAgent(conn, config, TodoLLM(), [], "system")
 
     session = await agent.newSession(SimpleNamespace(cwd=None, field_meta={"session_mode": "general"}))
-    response = await agent.prompt(SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "plan"}]))
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "更新 todo 状态"}])
+    )
 
     assert response.stopReason == "end_turn"
     assert any(
