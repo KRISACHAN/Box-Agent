@@ -2181,6 +2181,46 @@ async def test_acp_prompt_text_plan_request_waits_for_approval_without_meta(tmp_
 
 
 @pytest.mark.asyncio
+async def test_acp_prompt_text_plan_request_auto_approves_with_meta(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    conn = DummyConn()
+    llm = PlanApprovalThenEchoLLM()
+    agent = BoxACPAgent(conn, config, llm, [EchoTool()], "system")
+
+    session = await agent.newSession(SimpleNamespace(cwd=None, field_meta={"session_mode": "general"}))
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "使用plan 生成一个内马尔图片"}],
+            field_meta={"autoApprovePlan": True, "skipPlanApproval": True},
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    assert llm.calls == 3
+    state = agent._sessions[session.sessionId]
+    assert state.pending_plan_approval is None
+    plan_outputs = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "rawOutput", None)
+        and isinstance(update.update.rawOutput, dict)
+        and update.update.rawOutput.get("type") == "plan_snapshot"
+    ]
+    assert any(output.get("action") == "set" for output in plan_outputs)
+    assert not any(output.get("approval", {}).get("state") == "pending" for output in plan_outputs)
+    assert any(
+        getattr(update.update, "toolCallId", "") == "echo-after-approval"
+        and getattr(update.update, "status", None) == "completed"
+        for update in conn.updates
+    )
+
+
+@pytest.mark.asyncio
 async def test_acp_organic_plan_write_waits_for_approval_without_meta(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
@@ -2213,6 +2253,37 @@ async def test_acp_organic_plan_write_waits_for_approval_without_meta(tmp_path):
     )
     assert not any(
         getattr(update.update, "toolCallId", "") == "echo-after-approval"
+        for update in conn.updates
+    )
+
+
+@pytest.mark.asyncio
+async def test_acp_organic_plan_write_auto_approves_with_meta(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=10, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    conn = DummyConn()
+    llm = PlanApprovalThenEchoLLM()
+    agent = BoxACPAgent(conn, config, llm, [EchoTool()], "system")
+
+    session = await agent.newSession(SimpleNamespace(cwd=None, field_meta={"session_mode": "general"}))
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "生成一份分析报告"}],
+            field_meta={"autoApprovePlan": True},
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    assert llm.calls >= 3
+    state = agent._sessions[session.sessionId]
+    assert state.pending_plan_approval is None
+    assert any(
+        getattr(update.update, "toolCallId", "") == "echo-after-approval"
+        and getattr(update.update, "status", None) == "completed"
         for update in conn.updates
     )
 

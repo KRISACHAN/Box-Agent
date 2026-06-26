@@ -251,8 +251,8 @@ Box Agent 支持 [Agent Communication Protocol](https://github.com/nichochar/age
 **独立运行时** — 用于 Electron 应用和其他宿主：
 
 ```bash
-# 下载预构建二进制
-gh release download v0.8.70 --repo Raccoon-Office/Box-Agent --pattern "box-agent-runtime-*.tar.gz"
+# 下载预构建二进制（最新发布；省略 tag 即自动取最新版本）
+gh release download --repo Raccoon-Office/Box-Agent --pattern "box-agent-runtime-*.tar.gz"
 
 # 或从源码构建（当前平台）
 uv run box-agent-build-runtime

@@ -1,25 +1,31 @@
-# SkillHub 安装方式建议
+# SkillHub 安装确认模板
 
-候选技能：{{skill_name}}
-SkillHub 链接：{{skillhub_url}}
+## 候选技能
 
-## 可选安装方式
+- 名称：{{skill_name}}
+- 来源：{{source_url}}
+- 解决的问题：{{capability}}
+- 证据状态：{{evidence_status}}
 
-1. Prompt 安装
-   - 适用场景：页面提供“复制 prompt / 将提示词发送给你的 AI 安装该 skills”入口。
-   - 操作建议：复制页面提供的安装 Prompt，交给当前 AI 助手执行。
-   - 风险提示：执行前需要核对安装内容、目标目录、是否覆盖已有技能。
+## 安装前检查
 
-2. ZIP 包安装
-   - 适用场景：页面提供 ZIP 技能包下载入口。
-   - 操作建议：下载 ZIP 后先校验根目录 SKILL.md、YAML front matter、文件结构和可疑脚本，再安装。
-   - 风险提示：覆盖同名技能或执行脚本前必须再次确认。
+- [ ] ZIP 根目录包含 SKILL.md
+- [ ] YAML front matter 可解析
+- [ ] description、触发词、边界说明清楚
+- [ ] 无 .DS_Store、.gitignore、LICENSE、日志、上传态隐藏文件
+- [ ] 用户已确认安装或覆盖
 
-## 推荐话术
+## 确认话术
 
-我找到了一个可能适合你的 SkillHub 技能。这个页面通常可以通过两种方式安装：复制 Prompt，或下载 ZIP 包。
+```text
+我可以继续帮你安装这个技能，但这会写入本地技能目录。
+请确认：是否安装 {{skill_name}}？
+```
 
-你希望我采用哪种方式继续？
-A. 使用 Prompt 安装
-B. 使用 ZIP 包安装
-C. 只查看，不安装
+## 安装后启动
+
+```text
+/{{skill_name}}
+```
+
+如果启动失败，先检查入口名称、SKILL.md 和 YAML。

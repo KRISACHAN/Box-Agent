@@ -1,5 +1,35 @@
 # Release State
 
+## v0.8.71 (2026-06-21)
+
+- **Commit:** `4ffc2a8e53e247cb031a3921545d29384dce4f82` (main, tag `v0.8.71`)
+- **PyPI:** https://pypi.org/project/box-agent/0.8.71/
+- **GitHub release:** https://github.com/Raccoon-Office/Box-Agent/releases/tag/v0.8.71
+- **Compare:** https://github.com/Raccoon-Office/Box-Agent/compare/v0.8.70...v0.8.71
+
+### Artifacts (SHA256)
+
+| File | SHA256 |
+|------|--------|
+| `box_agent-0.8.71-py3-none-any.whl` | `2627dc70f5b26290f2dca826e29fff10c7b9798c6f94b0300694fabd069f6de0` |
+| `box_agent-0.8.71.tar.gz` | `6e6ed72a7dc5b9e1ec5b44d3963042c5e981e1cca1c0a146bba8a2b3eea71c91` |
+| `box-agent-runtime-v0.8.71-darwin-arm64.tar.gz` | `87dd99fcb138e3911b61b05814551a7c680d00d4e2905391ba38d05516387f53` |
+
+### What shipped
+
+- **Obsidian 原生 CLI 工具支持** (`3d473ec`, #4)：env_context 新增 `obsidian` 已知字段，宿主可注入 vault/CLI/app 状态，模型据此规划 Obsidian 工具调用。
+- **ACP turn usage 埋点** (`117f687`)：`PromptResponse._meta.usage.totalTokens` 返回每轮 token 总量（见 `llm/token_meter.py`）。
+- **Playwright 与真实浏览器连接器能力区分** (`6a0a1c3`)：env_context 拆分 `browser_tools`（Playwright MCP）与 `browser_connector`（浏览器扩展 daemon），action_hint 据此分别触发。
+- **goal 实现优化** (`fcd3135`) 与 CLI standalone task 控制改进 (`18579ce`)。
+- **MCP** (`d60bbe0`)：处理已取消的 streamable HTTP 连接。
+- **文档刷新** (`4713062`)：project guides 与示例更新。
+- 内置 skill 数：30（`_manifest.json`，`box_agent_version=0.8.71`）。
+
+### Follow-ups / known gaps
+
+- **Runtime: darwin-arm64 only.** 与 v0.8.70 相同，`darwin-x64` / `linux-*` / Windows runtime 未随本次发布构建。
+- **未发布的后续改动**：tag `v0.8.71` 之后 main 已累积多笔提交（图像水印 `添加水印`、Windows 内核 PID 修复 #5、权限收紧、Obsidian context write-back #6、pptx skill 调整、plan 触发条件优化等），`pyproject.toml` 仍停留在 `0.8.71`，尚未 bump/发新版。当前工作树内置 skill 数已增至 31。下次发版需 bump 版本号并补 SHA256。
+
 ## v0.8.70 (2026-06-16)
 
 - **Commit:** `3160ce3a1ab79d73d9814c5e4688d911810a6a81` (main)

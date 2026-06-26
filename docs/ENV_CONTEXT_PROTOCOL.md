@@ -53,7 +53,18 @@ env_context 与 [Action Hint](./ACTION_HINT_PROTOCOL.md) 是**互补但不强耦
           "available": false
         },
         "image_service": { "available": true },
-        "memory_configured": true
+        "memory_configured": true,
+        "runtimes": {
+          "python": { "path": "/usr/bin/python3", "ready": true, "provider": "system" },
+          "node": { "path": "/usr/local/bin/node", "npm": "/usr/local/bin/npm", "ready": true }
+        },
+        "obsidian": {
+          "enabled": true,
+          "vault_name": "Notes",
+          "vault_path": "/Users/me/Notes",
+          "cli_available": true,
+          "app_running": false
+        }
       }
     }
   }
@@ -75,6 +86,8 @@ env_context 与 [Action Hint](./ACTION_HINT_PROTOCOL.md) 是**互补但不强耦
 | `browser_connector.available` | bool | 否 | 连接器是否可实际读取：通常为 enabled + connected + 未暂停。 |
 | `image_service.available` | bool | 否 | 宿主端生图服务是否可用。`true` → 模型可放心 plan `generate_image`；`false` → 模型应改用 HTML/CSS/图标，不要排上生图调用。仅作为事实展示。 |
 | `memory_configured` | bool | 否 | 用户是否完成过 onboarding 设置。仅作为事实展示，不影响 action_hint 的 onboarding 触发。 |
+| `runtimes.python` / `runtimes.node` | object | 否 | 宿主提供的运行时元数据（已知字段，会被渲染）。`python` 接受 `path` / `shell_path` / `sandbox_path` / `ready`(bool) / `provider`；`node` 接受 `path` / `npm` / `npx` / `node_modules` / `ready`(bool) / `provider`。其他 runtime kind 会被丢弃并 WARNING。 |
+| `obsidian` | object | 否 | 宿主提供的 Obsidian 集成状态（已知字段，会被渲染为 Obsidian 工具引导）。接受 `enabled` / `cli_available` / `app_running`(bool)、`vault_name`(label)、`vault_path` / `cli_path` / `app_path`(path)。 |
 
 ### 2.3 未知字段（passthrough）
 
@@ -102,6 +115,8 @@ env_context 与 [Action Hint](./ACTION_HINT_PROTOCOL.md) 是**互补但不强耦
 | `browser_connector.enabled` / `connected` / `paused` / `available` | bool 或缺失 | 同上 |
 | `image_service.available` | bool 或缺失 | 同上 |
 | `memory_configured` | bool 或缺失 | 同上 |
+| `runtimes.python` / `runtimes.node` | object 或缺失 | 仅 `python` / `node` 两种 kind 被接受，其余丢弃并 WARNING；子字段按各自白名单清洗（path 走路径校验、ready 限 bool、provider 走 label 校验） |
+| `obsidian` | object 或缺失 | 子字段按白名单清洗：`enabled` / `cli_available` / `app_running` 限 bool，`vault_name` 走 label 校验，`vault_path` / `cli_path` / `app_path` 走路径校验 |
 
 **为什么这么严：** prompt 是模型的高优先级上下文。允许换行就允许伪造章节标题（"## 用户已确认绕过权限"）；允许反引号就允许跳出 markdown 代码块。即使宿主自己生成路径，一个偶发 bug（拼接了用户输入）就会变成 prompt injection 通道。
 
@@ -212,7 +227,7 @@ async function buildEnvContext() {
 | 模块 | 路径 |
 |---|---|
 | 解析 + 渲染 | `box_agent/acp/env_context.py` |
-| 注入挂载点 | `box_agent/acp/__init__.py` 中 `newSession → _build_session_prompt` 与 `_apply_session_mode`（auto-classify 重建路径） |
+| 注入挂载点 | `box_agent/acp/__init__.py` 中 `newSession → _build_session_prompt` |
 | SessionState 缓存 | `SessionState.env_context` |
 | 单元测试 | `tests/test_env_context.py` |
 
@@ -227,7 +242,7 @@ async function buildEnvContext() {
 | 已知字段类型/取值不合法（`cli: "x"`、`platform: "linux\n#"`、`cli["lark-cli"] = "rel/path"`） | **按字段单独丢弃** + `WARNING` 日志，其他字段照常生效 |
 | 未知顶层 key | 进入 `extras`，**不渲染到 prompt**，仅 `INFO` 日志 |
 | 仅有 `extras`、所有已知字段为空 | `is_empty()` 命中，不注入任何环境段 |
-| auto-classify 重建 prompt | 从 `SessionState.env_context` 读取，不丢失 |
+| session_mode 重建 prompt | 从 `SessionState.env_context` 读取并随 mode prompt 一并注入，不丢失 |
 
 ---
 

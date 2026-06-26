@@ -38,7 +38,8 @@
 ```
 box-agent/
 ├── box_agent/              # Core source code
-│   ├── agent.py             # Main agent loop
+│   ├── core.py              # Execution core — run_agent_loop() (the agent loop)
+│   ├── agent.py             # Public API wrapper (Agent class)
 │   ├── llm/                 # Provider clients and LLM wrapper
 │   ├── acp/                 # ACP server and host integration
 │   ├── cli.py               # Command-line interface
@@ -255,7 +256,7 @@ Edit `mcp.json` to add a new MCP Server:
 Built-in skills are committed under `box_agent/skills/` and loaded through `box_agent/skills/_manifest.json`.
 No git submodule setup is required for normal development.
 
-The current manifest lists 30 built-in skills, including:
+The current manifest lists 31 built-in skills, including:
 
 - 📄 **Document Processing**: Create and edit PDF, DOCX, XLSX, PPTX
 - 🎨 **Design Creation**: Generate artwork, posters, GIF animations

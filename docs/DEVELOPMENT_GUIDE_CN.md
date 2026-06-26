@@ -38,7 +38,8 @@
 ```
 box-agent/
 ├── box_agent/              # 核心源代码
-│   ├── agent.py             # 主 Agent 循环
+│   ├── core.py              # 执行核心 — run_agent_loop()（Agent 循环本体）
+│   ├── agent.py             # 公共 API 封装（Agent 类）
 │   ├── llm/                 # Provider 客户端和 LLM 包装器
 │   ├── acp/                 # ACP 服务与宿主对接
 │   ├── cli.py               # 命令行接口
@@ -247,7 +248,7 @@ CLI `--task` 模式和 ACP 会话会对持久 goal 启用有边界的自动续�
 内置 skills 已提交在 `box_agent/skills/` 下，并通过 `box_agent/skills/_manifest.json` 加载。
 正常开发不需要执行 git submodule 初始化。
 
-当前 manifest 列出 30 个内置 skills，包括：
+当前 manifest 列出 31 个内置 skills，包括：
 
 - 📄 **文档处理**：轻松创建和编辑 PDF、DOCX、XLSX、PPTX 等格式的文档。
 - 🎨 **设计创作**：生成富有创意的艺术作品、海报和 GIF 动画。

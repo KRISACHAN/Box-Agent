@@ -1166,6 +1166,15 @@ class BoxACPAgent:
         plan_approval_approved = _plan_approval_is_approved(plan_approval)
         if plan_approval_approved:
             state.pending_plan_approval = None
+        auto_approve_plan = _meta_bool(
+            prompt_meta,
+            "auto_approve_plan",
+            "autoApprovePlan",
+            "skip_plan_approval",
+            "skipPlanApproval",
+        )
+        if auto_approve_plan and state.pending_plan_approval is not None and not plan_approval_approved:
+            state.pending_plan_approval = None
         session_force_plan_start = state.force_plan_start
         if session_force_plan_start:
             state.force_plan_start = False
@@ -1186,8 +1195,12 @@ class BoxACPAgent:
                 "require_plan_approval",
                 "requirePlanApproval",
             )
-            or force_plan_start
-            or (state.pending_plan_approval is not None and not plan_approval_approved)
+            or (force_plan_start and not auto_approve_plan)
+            or (
+                state.pending_plan_approval is not None
+                and not plan_approval_approved
+                and not auto_approve_plan
+            )
         )
         prompt_goal_request = _goal_request_from_meta(prompt_meta)
         if prompt_goal_request is not None:
@@ -1212,6 +1225,7 @@ class BoxACPAgent:
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             plan_approval_approved=plan_approval_approved,
+            auto_approve_plan=auto_approve_plan,
         )
 
         # Ensure background-loaded MCP tools are available before running the turn
@@ -1309,6 +1323,7 @@ class BoxACPAgent:
                 force_plan_start=force_plan_start,
                 require_plan_approval=require_plan_approval,
                 plan_approval=plan_approval,
+                auto_approve_plan=auto_approve_plan,
                 completion_gate=completion_gate,
             )
             while (
@@ -1342,6 +1357,7 @@ class BoxACPAgent:
                 stop_reason = await self._run_turn(
                     state,
                     session_id,
+                    auto_approve_plan=auto_approve_plan,
                     completion_gate=completion_gate,
                 )
                 after_signature = goal_autopilot_progress_signature(state.agent.goal)
@@ -1890,6 +1906,7 @@ class BoxACPAgent:
         force_plan_start: bool = False,
         require_plan_approval: bool = False,
         plan_approval: dict[str, Any] | None = None,
+        auto_approve_plan: bool = False,
         completion_gate: CompletionGate | None = None,
     ) -> str:
         """Consume the shared execution core and translate events to ACP updates."""
@@ -2110,7 +2127,7 @@ class BoxACPAgent:
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             plan_approval=plan_approval,
-            pause_after_plan_write=True,
+            pause_after_plan_write=not auto_approve_plan,
             completion_gate=completion_gate,
             artifact_detection_enabled=state.artifact_mode != "project",
             artifact_root_dir=state.output_dir,

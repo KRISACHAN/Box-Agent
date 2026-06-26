@@ -22,22 +22,22 @@
 
 ## 1. 三个交互通道
 
-| 通道 | 方向 | 用途 | 实现状态 |
-|---|---|---|---|
-| **Push**：`session/memory_proposal` | Agent → Host | 每轮 turn 结束前主动推送候选 | ✅ 已实现 |
-| **Pull**：`session/memory_proposal_list` | Host → Agent | 记忆页面打开时主动拉取候选 | ✅ 已实现 |
-| **Apply**：`session/memory_proposal_apply` | Host → Agent | 用户做完决策后回写 | ✅ 已实现 |
+| 通道 | 逻辑名 | 实际 wire 方法名 | 方向 | 用途 | 实现状态 |
+|---|---|---|---|---|---|
+| **Push** | `session/memory_proposal` | `_session/memory_proposal` | Agent → Host | 每轮 turn 结束前主动推送候选 | ✅ 已实现 |
+| **Pull** | `memory_proposal_list` | `_memory_proposal_list` | Host → Agent | 记忆页面打开时主动拉取候选 | ✅ 已实现 |
+| **Apply** | `memory_proposal_apply` | `_memory_proposal_apply` | Host → Agent | 用户做完决策后回写 | ✅ 已实现 |
 
-> 所有方法都走 ACP 的 `extMethod` 扩展通道，JSON-RPC 实际方法名带下划线前缀：`_session/memory_proposal*`。
+> 所有方法都走 ACP 的 `extMethod` 扩展通道。JSON-RPC wire 上的方法名带 `_` 前缀（路由层会剥掉前缀再分发）。**注意**：只有 Push 通道带 `session/` 段（`_session/memory_proposal`）；Pull / Apply 是裸名（`_memory_proposal_list` / `_memory_proposal_apply`，**没有** `session/` 段）。宿主务必按上表的「实际 wire 方法名」调用，否则会拿到 `unknown_method`。
 
 ### 推荐集成模式
 
 记忆页面的体验只依赖 **Pull + Apply**：
 
-1. 用户打开记忆页面 → 宿主调用 `session/memory_proposal_list` → 拿到候选数组
+1. 用户打开记忆页面 → 宿主调用 `memory_proposal_list`（wire `_memory_proposal_list`）→ 拿到候选数组
 2. 在已展示的 core 内容下方加一个区块「待加入核心的记忆 (N)」
 3. 每条候选展示 `content` + `hits` + `confidence` + 三个按钮：**加入核心 / 暂不 / 永不再提议**
-4. 用户做完选择后，宿主调用 `session/memory_proposal_apply`，附上 `{id: decision}` 映射
+4. 用户做完选择后，宿主调用 `memory_proposal_apply`（wire `_memory_proposal_apply`），附上 `{id: decision}` 映射
 5. Agent 完成持久化并返回操作小结，宿主刷新页面状态
 
 Push 通道可选作为「红点提醒」：当 Agent 推来一批新候选时，宿主在记忆入口加徽标，但不必弹出模态——用户进入页面时再用 Pull 拉到完整列表即可。
@@ -101,7 +101,7 @@ Push 通道可选作为「红点提醒」：当 Agent 推来一批新候选时�
 
 ---
 
-## 3. Pull：`session/memory_proposal_list`（Host → Agent）
+## 3. Pull：`memory_proposal_list`（Host → Agent，wire `_memory_proposal_list`）
 
 **用途**：记忆页面打开 / 刷新时主动拉取候选。
 
@@ -149,7 +149,7 @@ Push 通道可选作为「红点提醒」：当 Agent 推来一批新候选时�
 
 ---
 
-## 4. Apply：`session/memory_proposal_apply`（Host → Agent）
+## 4. Apply：`memory_proposal_apply`（Host → Agent，wire `_memory_proposal_apply`）
 
 **用途**：用户在记忆页面做完选择后批量回写。
 
@@ -236,11 +236,11 @@ memory_promotion_cooldown_days: 14        # 冷却天数
 
 宿主侧实施步骤：
 
-- [ ] 在记忆页面 mount 时调用 `session/memory_proposal_list`，渲染候选区块
+- [ ] 在记忆页面 mount 时调用 `memory_proposal_list`（wire `_memory_proposal_list`），渲染候选区块
 - [ ] 用户点击 **加入核心 / 暂不 / 永不再提议**，按钮状态收集到 `decisions` 映射
-- [ ] 用户离开页面或点击「保存」时调用 `session/memory_proposal_apply` 一次性提交
+- [ ] 用户离开页面或点击「保存」时调用 `memory_proposal_apply`（wire `_memory_proposal_apply`）一次性提交
 - [ ] 收到 Apply 响应后，用返回的 `core` 字段刷新核心区块；候选区块从列表里移除被 pin / reject 的条目
-- [ ] （可选）实现 `session/memory_proposal`（Push）接收：仅用于在记忆页面入口显示红点
+- [ ] （可选）实现 `session/memory_proposal`（Push，wire `_session/memory_proposal`）接收：仅用于在记忆页面入口显示红点
   - 不打算用红点时，可以**直接返回 `{decisions: {}}`** 或不实现这个 method（Agent 端 method_not_found 已正确降级）
 
 ---
@@ -254,5 +254,5 @@ ACP 端的「记忆页面」语义与 CLI 一致，确保两侧行为统一（�
 
 ## 10. 兼容性
 
-- 旧版 Box-Agent (< 0.8.32)：所有 `_session/memory_proposal*` 调用会返回 `method_not_found`，宿主侧应当兼容降级（不显示候选区块即可）。
+- 旧版 Box-Agent (< 0.8.32)：所有 `_session/memory_proposal` / `_memory_proposal_list` / `_memory_proposal_apply` 调用会返回 `method_not_found`，宿主侧应当兼容降级（不显示候选区块即可）。
 - 旧版宿主 + 新版 Box-Agent：Push 通道返回 `method_not_found` 后 Agent 静默降级，不会影响 turn 正常结束。

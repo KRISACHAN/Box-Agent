@@ -263,8 +263,8 @@ Box Agent supports the [Agent Communication Protocol](https://github.com/nichoch
 **Standalone Runtime** — for Electron apps and other hosts:
 
 ```bash
-# Download pre-built binary
-gh release download v0.8.70 --repo Raccoon-Office/Box-Agent --pattern "box-agent-runtime-*.tar.gz"
+# Download pre-built binary (latest release; omit the tag to always get the newest)
+gh release download --repo Raccoon-Office/Box-Agent --pattern "box-agent-runtime-*.tar.gz"
 
 # Or build from source (current platform)
 uv run box-agent-build-runtime
