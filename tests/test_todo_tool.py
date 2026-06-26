@@ -61,6 +61,22 @@ async def test_create_with_priority(writer, reader):
 
 
 @pytest.mark.asyncio
+async def test_create_with_initial_status(writer, reader):
+    result = await writer.execute(action="create", task="Draft outline", status="in_progress")
+    assert result.success
+    assert result.raw_output["items"][0]["status"] == "in_progress"
+    assert result.raw_output["summary"] == {
+        "total": 1,
+        "completed": 0,
+        "in_progress": 1,
+        "pending": 0,
+    }
+
+    result = await reader.execute()
+    assert result.raw_output["summary"]["in_progress"] == 1
+
+
+@pytest.mark.asyncio
 async def test_create_requires_task(writer):
     result = await writer.execute(action="create")
     assert not result.success
@@ -228,3 +244,5 @@ def test_todo_write_description_keeps_todo_as_progress_tracker(writer):
     assert "only a progress tracker" in description
     assert "not factual evidence" in description
     assert "not narrow the user's request" in description
+    assert "current item in_progress" in description
+    assert "finished items completed" in description

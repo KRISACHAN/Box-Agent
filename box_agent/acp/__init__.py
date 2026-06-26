@@ -76,7 +76,7 @@ from box_agent.tools.setup import (
     register_mcp_tools,
 )
 from box_agent.config import Config
-from box_agent.core import run_agent_loop
+from box_agent.core import run_agent_loop, text_requests_plan_start
 from box_agent.events import (
     ArtifactEvent,
     ContentEvent,
@@ -281,6 +281,117 @@ def _meta_bool(meta: Any, *keys: str) -> bool:
     return any(bool(meta.get(key, False)) for key in keys)
 
 
+def _plan_approval_from_meta(meta: Any) -> dict[str, Any] | None:
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("planApproval") or meta.get("plan_approval")
+    if isinstance(raw, dict):
+        return dict(raw)
+    decision = meta.get("planApprovalDecision") or meta.get("plan_approval_decision")
+    if isinstance(decision, str) and decision.strip():
+        request_id = meta.get("planApprovalRequestId") or meta.get("plan_approval_request_id")
+        payload: dict[str, Any] = {"decision": decision.strip()}
+        if isinstance(request_id, str) and request_id.strip():
+            payload["request_id"] = request_id.strip()
+        return payload
+    return None
+
+
+def _plan_approval_is_approved(plan_approval: dict[str, Any] | None) -> bool:
+    if not isinstance(plan_approval, dict):
+        return False
+    decision = str(plan_approval.get("decision") or "").strip().lower()
+    return decision in {
+        "approve",
+        "approved",
+        "accept",
+        "accepted",
+        "confirm",
+        "confirmed",
+        "execute",
+        "proceed",
+        "yes",
+    }
+
+
+def _looks_like_plan_approval_text(text: str) -> bool:
+    compact = "".join(ch for ch in text.strip().lower() if ch not in " \t\r\n,，.。!！?？;；:：")
+    if not compact or len(compact) > 40:
+        return False
+    if compact in {
+        "同意",
+        "同意执行",
+        "确认",
+        "确认执行",
+        "继续",
+        "继续执行",
+        "执行",
+        "开始执行",
+        "可以执行",
+        "可以继续",
+        "按计划执行",
+        "按这个计划执行",
+        "就这样执行",
+        "没问题",
+        "没问题继续",
+    }:
+        return True
+    english = " ".join(text.strip().lower().split())
+    return english in {
+        "yes",
+        "ok",
+        "approve",
+        "approved",
+        "confirm",
+        "confirmed",
+        "continue",
+        "proceed",
+        "go ahead",
+        "execute",
+        "run it",
+    }
+
+
+def _plan_approval_from_pending_text(
+    pending: dict[str, Any] | None,
+    text: str,
+) -> dict[str, Any] | None:
+    if not isinstance(pending, dict) or not _looks_like_plan_approval_text(text):
+        return None
+    payload: dict[str, Any] = {
+        "decision": "approved",
+        "source": "text",
+    }
+    for key in ("request_id", "plan_id"):
+        value = pending.get(key)
+        if isinstance(value, str) and value.strip():
+            payload[key] = value.strip()
+    return payload
+
+
+def _update_pending_plan_approval_from_raw(
+    state: "SessionState",
+    raw_output: Any,
+) -> None:
+    if not isinstance(raw_output, dict) or raw_output.get("type") != "plan_snapshot":
+        return
+    approval = raw_output.get("approval")
+    if not isinstance(approval, dict) or not approval.get("required"):
+        return
+    approval_state = str(approval.get("state") or "").strip().lower()
+    if approval_state == "pending":
+        pending = dict(approval)
+        plan = raw_output.get("plan")
+        if isinstance(plan, dict):
+            for source_key, target_key in (("id", "plan_id"), ("title", "title")):
+                value = plan.get(source_key)
+                if isinstance(value, str) and value.strip() and target_key not in pending:
+                    pending[target_key] = value.strip()
+        state.pending_plan_approval = pending
+    elif approval_state in {"approved", "cancelled", "canceled", "rejected", "none"}:
+        state.pending_plan_approval = None
+
+
 def _normalize_artifact_mode(meta: Any) -> str:
     if isinstance(meta, dict):
         value = meta.get("artifact_mode") or meta.get("artifactMode")
@@ -377,6 +488,8 @@ class SessionState:
     expert_context: ExpertSessionContext | None = None
     upstream_session_id: str = ""  # caller-owned session id from _meta.session_id; forwarded as X-RACCOON-Session-ID
     force_plan_start: bool = False  # host-controlled deterministic plan skeleton toggle
+    require_plan_approval: bool = False  # host requires approval after plan_write before execution
+    pending_plan_approval: dict[str, Any] | None = None
     preloaded_skill_names: list[str] = field(default_factory=list)
 
 
@@ -608,6 +721,7 @@ class BoxACPAgent:
         expert_context: ExpertSessionContext | None = None
         upstream_session_id = ""
         force_plan_start = False
+        require_plan_approval = False
         artifact_mode = "output"
         initial_goal_request: dict[str, Any] | None = None
         # Lightweight one-shot utility session (e.g. host-side title/tag
@@ -621,6 +735,11 @@ class BoxACPAgent:
             deep_think = bool(meta.get("deep_think", False))
             utility = bool(meta.get("utility", False))
             force_plan_start = _meta_bool(meta, "force_plan_start", "forcePlanStart")
+            require_plan_approval = _meta_bool(
+                meta,
+                "require_plan_approval",
+                "requirePlanApproval",
+            )
             artifact_mode = _normalize_artifact_mode(meta)
             initial_goal_request = _goal_request_from_meta(meta)
             env_context = EnvContext.from_meta(meta.get("env_context"))
@@ -653,6 +772,7 @@ class BoxACPAgent:
                 f"Creating session, workspace={workspace}, session_mode={session_mode}, "
                 f"artifact_mode={artifact_mode}, deep_think={deep_think}, "
                 f"force_plan_start={force_plan_start}, "
+                f"require_plan_approval={require_plan_approval}, "
                 f"artifact_root={output_dir}, "
                 f"expert={expert_context.to_metadata() if expert_context else None}"
             ),
@@ -841,6 +961,7 @@ class BoxACPAgent:
             expert_context=expert_context,
             upstream_session_id=upstream_session_id,
             force_plan_start=force_plan_start,
+            require_plan_approval=require_plan_approval,
         )
 
         # Skill selector: per-turn keyword-based filter on the skill catalog.
@@ -1030,10 +1151,37 @@ class BoxACPAgent:
         state.cancelled = False
         user_text = "\n".join(block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "") for block in params.prompt)
         prompt_meta = getattr(params, "field_meta", None) or {}
-        force_plan_start = state.force_plan_start or _meta_bool(
-            prompt_meta,
-            "force_plan_start",
-            "forcePlanStart",
+        plan_approval = _plan_approval_from_meta(prompt_meta)
+        if plan_approval is None:
+            plan_approval = _plan_approval_from_pending_text(
+                state.pending_plan_approval,
+                user_text,
+            )
+        plan_approval_approved = _plan_approval_is_approved(plan_approval)
+        if plan_approval_approved:
+            state.pending_plan_approval = None
+        session_force_plan_start = state.force_plan_start
+        if session_force_plan_start:
+            state.force_plan_start = False
+        prompt_requests_plan_start = text_requests_plan_start(user_text)
+        force_plan_start = (
+            False
+            if plan_approval_approved
+            else session_force_plan_start or _meta_bool(
+                prompt_meta,
+                "force_plan_start",
+                "forcePlanStart",
+            ) or prompt_requests_plan_start
+        )
+        require_plan_approval = (
+            state.require_plan_approval
+            or _meta_bool(
+                prompt_meta,
+                "require_plan_approval",
+                "requirePlanApproval",
+            )
+            or force_plan_start
+            or (state.pending_plan_approval is not None and not plan_approval_approved)
         )
         prompt_goal_request = _goal_request_from_meta(prompt_meta)
         if prompt_goal_request is not None:
@@ -1056,6 +1204,8 @@ class BoxACPAgent:
             session_id=session_id,
             message=user_text,
             force_plan_start=force_plan_start,
+            require_plan_approval=require_plan_approval,
+            plan_approval_approved=plan_approval_approved,
         )
 
         # Ensure background-loaded MCP tools are available before running the turn
@@ -1151,9 +1301,15 @@ class BoxACPAgent:
                 state,
                 session_id,
                 force_plan_start=force_plan_start,
+                require_plan_approval=require_plan_approval,
+                plan_approval=plan_approval,
                 completion_gate=completion_gate,
             )
-            while auto_enabled and should_continue_goal_autopilot(state.agent, stop_reason):
+            while (
+                auto_enabled
+                and state.pending_plan_approval is None
+                and should_continue_goal_autopilot(state.agent, stop_reason)
+            ):
                 elapsed = perf_counter() - prompt_start
                 if (
                     auto_continuations >= self._config.agent.goal_autopilot_max_turns
@@ -1726,6 +1882,8 @@ class BoxACPAgent:
         session_id: str,
         *,
         force_plan_start: bool = False,
+        require_plan_approval: bool = False,
+        plan_approval: dict[str, Any] | None = None,
         completion_gate: CompletionGate | None = None,
     ) -> str:
         """Consume the shared execution core and translate events to ACP updates."""
@@ -1944,6 +2102,9 @@ class BoxACPAgent:
             thinking_enabled=agent.thinking_enabled,
             session_id=state.upstream_session_id,
             force_plan_start=force_plan_start,
+            require_plan_approval=require_plan_approval,
+            plan_approval=plan_approval,
+            pause_after_plan_write=True,
             completion_gate=completion_gate,
             artifact_detection_enabled=state.artifact_mode != "project",
             artifact_root_dir=state.output_dir,
@@ -1990,6 +2151,7 @@ class BoxACPAgent:
 
                     case PlanSnapshotEvent(payload=payload):
                         log.debug("plan/snapshot", session_id=session_id, payload=payload)
+                        _update_pending_plan_approval_from_raw(state, payload)
                         plan_call_id = f"plan-snapshot-start-{uuid4().hex[:8]}"
                         title = str((payload.get("plan") or {}).get("title") or "执行方案")
                         await self._send(
@@ -2089,6 +2251,7 @@ class BoxACPAgent:
                             log.info("tool/end", session_id=session_id, tool_call_id=tid, tool_name=tname, result=text, user_visible=user_visible)
                         else:
                             log.warn("tool/fail", session_id=session_id, tool_call_id=tid, tool_name=tname, error=err, user_visible=user_visible)
+                        _update_pending_plan_approval_from_raw(state, raw_output)
                         skill_usage_payload = (
                             _record_skill_usage(skill_name_by_tool_call_id.get(tid))
                             if tname == "get_skill" and ok

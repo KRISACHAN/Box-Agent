@@ -79,12 +79,12 @@ class TodoStore:
 
     # -- public API --------------------------------------------------------
 
-    def create(self, task: str, priority: str = "medium") -> dict:
+    def create(self, task: str, priority: str = "medium", status: str = "pending") -> dict:
         todo_id = self._next_id()
         item = {
             "id": todo_id,
             "task": task,
-            "status": "pending",
+            "status": status,
             "priority": priority,
             "created_at": datetime.now().isoformat(),
         }
@@ -148,7 +148,9 @@ class TodoWriteTool(Tool):
             "Manage a todo list for tracking multi-step tasks. "
             "Actions: 'create' a new item, 'update' an existing item's status or text, "
             "or 'delete' an item. Use this to decompose complex work into trackable steps "
-            "and mark progress as you go. This tool is only a progress tracker: it is not "
+            "and mark progress as you go: keep exactly the current item in_progress, mark "
+            "finished items completed, and move the next item to in_progress before working "
+            "on it. This tool is only a progress tracker: it is not "
             "factual evidence, a search strategy, or a source for final conclusions. Do not "
             "narrow the user's request or lower verification standards because a todo exists."
         )
@@ -174,7 +176,10 @@ class TodoWriteTool(Tool):
                 "status": {
                     "type": "string",
                     "enum": list(_VALID_STATUSES),
-                    "description": "Status to set (for 'update'). One of: pending, in_progress, completed.",
+                    "description": (
+                        "Status to set for 'create' or 'update'. One of: pending, "
+                        "in_progress, completed."
+                    ),
                 },
                 "priority": {
                     "type": "string",
@@ -196,7 +201,7 @@ class TodoWriteTool(Tool):
         if action == "create":
             if not task:
                 return ToolResult(success=False, error="'task' is required for create.")
-            item = self._store.create(task, priority)
+            item = self._store.create(task, priority, status or "pending")
             return self._result(content=f"Created todo #{item['id']}: {task}", action="create", item=item)
 
         if action == "update":

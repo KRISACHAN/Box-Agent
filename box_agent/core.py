@@ -91,18 +91,64 @@ _PLAN_START_TRIGGERS = (
     "先给规划",
     "先给计划",
     "先给方案",
+    "先出计划",
+    "先出一个计划",
     "先出方案",
     "规划一下",
     "计划一下",
     "制定计划",
     "制定方案",
     "执行方案",
+    "任务规划",
+    "任务计划",
+    "出一个计划",
+    "出个计划",
+    "给我一个计划",
+    "给个计划",
+    "做一个计划",
     "做个计划",
     "做个规划",
+    "生成计划",
+    "创建计划",
+    "使用plan",
+    "做一个plan",
+    "做个plan",
+    "生成plan",
+    "创建plan",
     "make a plan",
+    "make plan",
+    "create a plan",
+    "write a plan",
     "plan first",
     "planning first",
+    "use plan",
+    "plan mode",
 )
+
+_PLAN_START_NEGATIONS = (
+    "不需要计划",
+    "无需计划",
+    "不要计划",
+    "不用计划",
+    "别计划",
+    "不需要规划",
+    "无需规划",
+    "不要规划",
+    "不用规划",
+    "不需要方案",
+    "无需方案",
+    "不要方案",
+    "不用方案",
+    "不使用plan",
+    "不用plan",
+    "不要plan",
+    "no plan",
+    "without plan",
+    "without a plan",
+)
+
+_PLAN_START_KEYWORDS = ("计划", "规划", "方案")
+_STANDALONE_PLAN_RE = re.compile(r"(^|[^a-z])plan([^a-z]|$)")
 
 _FORCED_PLAN_GUIDANCE = (
     "Host UI requires a structured execution plan for this turn. "
@@ -115,6 +161,21 @@ _FORCED_PLAN_RETRY_GUIDANCE = (
     "The host is still waiting for the structured plan card. "
     "Call `plan_write` with action `set` now before continuing the answer."
 )
+
+_FORCED_PLAN_APPROVAL_GUIDANCE = (
+    "Host UI requires an explicit user approval before execution. "
+    "Call `plan_write` with action `set` to publish the task objective, scope, "
+    "steps, verification, risks, and assumptions. Do not call execution tools "
+    "such as file, bash, code, or sub-agent tools in this turn. After publishing "
+    "the plan, stop and wait for the host to approve it."
+)
+
+_PLAN_APPROVAL_SKIP_MESSAGE = (
+    "Execution is paused until the user approves the published plan. "
+    "Do not retry this tool yet; publish or revise the plan first."
+)
+
+_PLAN_APPROVAL_DONE_CONTENT = "计划已生成，等待用户确认后再执行。"
 
 FINAL_SUMMARY_TOOL_CALL_THRESHOLD: Final[int] = 50
 
@@ -212,14 +273,97 @@ def _latest_user_text(messages: list[Message]) -> str:
     return ""
 
 
+def text_requests_plan_start(text: str) -> bool:
+    normalized = text.lower()
+    compact = "".join(normalized.split())
+    if any(negation in compact for negation in _PLAN_START_NEGATIONS):
+        return False
+    return (
+        any(trigger in normalized for trigger in _PLAN_START_TRIGGERS)
+        or any(keyword in normalized for keyword in _PLAN_START_KEYWORDS)
+        or bool(_STANDALONE_PLAN_RE.search(normalized))
+    )
+
+
 def _should_emit_plan_start(messages: list[Message], tools: dict[str, Tool]) -> bool:
     if "plan_write" not in tools:
         return False
-    text = _latest_user_text(messages).lower()
-    return any(trigger in text for trigger in _PLAN_START_TRIGGERS)
+    return text_requests_plan_start(_latest_user_text(messages))
 
 
-def _plan_start_payload() -> dict[str, Any]:
+def _plan_approval_is_approved(plan_approval: dict[str, Any] | None) -> bool:
+    if not isinstance(plan_approval, dict):
+        return False
+    decision = str(plan_approval.get("decision") or "").strip().lower()
+    return decision in {
+        "approve",
+        "approved",
+        "accept",
+        "accepted",
+        "confirm",
+        "confirmed",
+        "execute",
+        "proceed",
+        "yes",
+    }
+
+
+def _plan_approval_payload(
+    *,
+    request_id: str,
+    state: str,
+    plan_id: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "required": True,
+        "state": state,
+        "request_id": request_id,
+    }
+    if plan_id:
+        payload["plan_id"] = plan_id
+    return payload
+
+
+def _attach_plan_approval_payload(
+    raw_output: dict[str, Any] | None,
+    *,
+    request_id: str,
+    state: str = "pending",
+) -> dict[str, Any]:
+    output = dict(raw_output or {})
+    if output.get("type") != "plan_snapshot":
+        output = {
+            "type": "plan_snapshot",
+            "version": 1,
+            "action": "set",
+            "plan": None,
+            "summary": {
+                "steps": 0,
+                "verification": 0,
+                "risks": 0,
+                "assumptions": 0,
+            },
+        }
+
+    plan = output.get("plan")
+    plan_id: str | None = None
+    if isinstance(plan, dict):
+        plan = dict(plan)
+        plan["status"] = "draft" if state == "pending" else str(plan.get("status") or "active")
+        output["plan"] = plan
+        raw_plan_id = plan.get("id")
+        if raw_plan_id is not None:
+            plan_id = str(raw_plan_id)
+
+    output["approval"] = _plan_approval_payload(
+        request_id=request_id,
+        state=state,
+        plan_id=plan_id,
+    )
+    return output
+
+
+def _plan_start_payload(approval: dict[str, Any] | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     plan = {
         "id": "pending",
@@ -234,7 +378,7 @@ def _plan_start_payload() -> dict[str, Any]:
         "created_at": now,
         "updated_at": now,
     }
-    return {
+    payload = {
         "type": "plan_snapshot",
         "version": 1,
         "action": "start",
@@ -246,6 +390,9 @@ def _plan_start_payload() -> dict[str, Any]:
             "assumptions": 0,
         },
     }
+    if approval is not None:
+        payload["approval"] = approval
+    return payload
 
 
 def _classify_kind(filename: str, mime: str | None) -> str:
@@ -452,7 +599,7 @@ def _summarize_tool_argument_for_model(
     preview_limit = 12 if (path_obj and path_obj.suffix.lower() in {".html", ".htm"}) else 20
     preview = ""
     is_generated_file_write = (
-        tool_name == "write_file"
+        tool_name in {"write_file", "append_file"}
         and argument_name == "content"
         and path_obj is not None
         and path_obj.suffix.lower() in _MODEL_CONTEXT_PATH_EXTS
@@ -496,7 +643,7 @@ def _tool_argument_needs_compaction(tool_name: str, argument_name: str, value: A
     if not isinstance(value, str):
         return False
 
-    if tool_name == "write_file" and argument_name == "content":
+    if tool_name in {"write_file", "append_file"} and argument_name == "content":
         if path and Path(path).suffix.lower() in _MODEL_CONTEXT_PATH_EXTS:
             return True
         return _path_needs_compact_model_context(path, value)
@@ -1433,6 +1580,9 @@ async def run_agent_loop(
     thinking_enabled: bool = False,
     session_id: str = "",
     force_plan_start: bool = False,
+    require_plan_approval: bool = False,
+    plan_approval: dict[str, Any] | None = None,
+    pause_after_plan_write: bool = False,
     no_progress_limit: int | None = None,
     max_parallel_tools: int = 8,
     completion_gate: CompletionGate | None = None,
@@ -1475,6 +1625,14 @@ async def run_agent_loop(
             When present, queued user messages are drained at each
             step boundary and appended to the conversation before
             the next LLM call.
+        require_plan_approval: If True, the loop must publish a plan and
+            stop before executing non-plan tools unless ``plan_approval``
+            carries an approved decision.
+        plan_approval: Host-supplied decision metadata for a previously
+            published plan.
+        pause_after_plan_write: If True, an organic ``plan_write`` call also
+            becomes an approval boundary: the plan is published with pending
+            approval and the turn ends before sibling or later tools execute.
         artifact_detection_enabled: If False, skip output-directory artifact
             snapshotting and detection for sessions that edit an existing
             project tree directly.
@@ -1632,6 +1790,11 @@ async def run_agent_loop(
     plan_start_emitted = False
     forced_plan_guidance_injected = False
     forced_plan_retry_injected = False
+    plan_approval_approved = _plan_approval_is_approved(plan_approval)
+    plan_approval_gate_completed = False
+    plan_approval_request_id = "plan-" + hashlib.sha1(
+        f"{run_start}:{_latest_user_text(messages)}".encode("utf-8", errors="ignore")
+    ).hexdigest()[:10]
 
     for step in range(max_steps):
         # ── Cancellation check (top of step) ────────────────
@@ -1672,14 +1835,22 @@ async def run_agent_loop(
                 yield InjectedMessageEvent(content=injected_text, injection_id=injection_id)
 
         has_plan_tool = "plan_write" in tools
-        force_plan_for_turn = force_plan_start and has_plan_tool
+        plan_approval_gate_enabled = (
+            require_plan_approval and not plan_approval_approved and has_plan_tool
+        )
+        force_plan_for_turn = (force_plan_start or plan_approval_gate_enabled) and has_plan_tool
         if force_plan_for_turn and not forced_plan_guidance_injected:
             forced_plan_guidance_injected = True
+            guidance = (
+                _FORCED_PLAN_APPROVAL_GUIDANCE
+                if plan_approval_gate_enabled
+                else _FORCED_PLAN_GUIDANCE
+            )
             messages.append(
-                Message(role="user", content=format_injected_message(_FORCED_PLAN_GUIDANCE))
+                Message(role="user", content=format_injected_message(guidance))
             )
             yield InjectedMessageEvent(
-                content=_FORCED_PLAN_GUIDANCE,
+                content=guidance,
                 injection_id=None,
                 user_visible=False,
             )
@@ -1688,7 +1859,16 @@ async def run_agent_loop(
             force_plan_for_turn or _should_emit_plan_start(messages, tools)
         ):
             plan_start_emitted = True
-            yield PlanSnapshotEvent(payload=_plan_start_payload())
+            approval = (
+                _plan_approval_payload(
+                    request_id=plan_approval_request_id,
+                    state="drafting",
+                    plan_id="pending",
+                )
+                if plan_approval_gate_enabled
+                else None
+            )
+            yield PlanSnapshotEvent(payload=_plan_start_payload(approval))
 
         for tool_name, limit in TOOL_CALL_LIMITS.items():
             if (
@@ -2116,6 +2296,20 @@ async def run_agent_loop(
             else:
                 regular_calls.append(tc)
 
+        step_contains_plan_write = any(
+            tc.function.name == "plan_write" for tc in [*regular_calls, *parallel_calls]
+        )
+        organic_plan_approval_gate_enabled = (
+            pause_after_plan_write
+            and not plan_approval_approved
+            and not plan_approval_gate_enabled
+            and has_plan_tool
+            and step_contains_plan_write
+        )
+        plan_approval_gate_active = (
+            plan_approval_gate_enabled or organic_plan_approval_gate_enabled
+        )
+
         # Track whether this step produced any useful tool result, for the
         # no-progress circuit breaker. Set True in either execution branch.
         step_made_progress = False
@@ -2166,7 +2360,10 @@ async def run_agent_loop(
             fn_name = tc.function.name
             fn_args = tc.function.arguments
 
-            if fn_name == WEB_SEARCH_TOOL_NAME:
+            if plan_approval_gate_active and fn_name != "plan_write":
+                allowed_to_execute = False
+                internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
+            elif fn_name == WEB_SEARCH_TOOL_NAME:
                 allowed_to_execute, internal_skip_error = _reserve_web_search_call(fn_args)
             else:
                 allowed_to_execute, internal_skip_error = _reserve_tool_budget(fn_name)
@@ -2246,6 +2443,17 @@ async def run_agent_loop(
                             content="",
                             error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
                         )
+
+            if plan_approval_gate_active and fn_name == "plan_write" and result.success:
+                result = result.model_copy(
+                    update={
+                        "raw_output": _attach_plan_approval_payload(
+                            result.raw_output,
+                            request_id=plan_approval_request_id,
+                        )
+                    }
+                )
+                plan_approval_gate_completed = True
 
             policy_decision: dict[str, Any] | None = None
             # Log tool result
@@ -2436,7 +2644,10 @@ async def run_agent_loop(
             par_user_visible: dict[str, bool] = {}
             for tc in parallel_calls:
                 par_fn_args = tc.function.arguments
-                if tc.function.name == WEB_SEARCH_TOOL_NAME:
+                if plan_approval_gate_active and tc.function.name != "plan_write":
+                    allowed_to_execute = False
+                    internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
+                elif tc.function.name == WEB_SEARCH_TOOL_NAME:
                     allowed_to_execute, internal_skip_error = _reserve_web_search_call(par_fn_args)
                 else:
                     allowed_to_execute, internal_skip_error = _reserve_tool_budget(tc.function.name)
@@ -2577,6 +2788,17 @@ async def run_agent_loop(
                 fn_args = par_args_map[tc_id]
                 tool_user_visible = par_user_visible.get(tc_id, True)
                 policy_decision: dict[str, Any] | None = None
+
+                if plan_approval_gate_active and fn_name == "plan_write" and result.success:
+                    result = result.model_copy(
+                        update={
+                            "raw_output": _attach_plan_approval_payload(
+                                result.raw_output,
+                                request_id=plan_approval_request_id,
+                            )
+                        }
+                    )
+                    plan_approval_gate_completed = True
 
                 if logger:
                     logger.log_tool_result(
@@ -2730,6 +2952,26 @@ async def run_agent_loop(
                     await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 return
+
+        if plan_approval_gate_completed:
+            elapsed = perf_counter() - step_start
+            total = perf_counter() - run_start
+            if hook_mgr.hooks:
+                await hook_mgr.fire_step_end(
+                    step=step + 1,
+                    elapsed_seconds=elapsed,
+                    total_elapsed_seconds=total,
+                )
+                await hook_mgr.fire_done(
+                    stop_reason=StopReason.END_TURN,
+                    final_content=_PLAN_APPROVAL_DONE_CONTENT,
+                )
+            yield StepEnd(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
+            yield DoneEvent(
+                stop_reason=StopReason.END_TURN,
+                final_content=_PLAN_APPROVAL_DONE_CONTENT,
+            )
+            return
 
         if web_search_step_seen:
             if web_search_step_executed > 0 and web_search_step_structured_results > 0:

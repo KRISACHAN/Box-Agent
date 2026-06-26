@@ -137,8 +137,8 @@ def _oversized_file_tool_argument_error(tool_name: str, argument_name: str, valu
         f"{len(value)} characters; limit is {MAX_FILE_TOOL_CONTENT_CHARS}. "
         "For large generated artifacts such as HTML/CSS/JS, JSON manifests, "
         "templates, base64, or file bodies, split the work into smaller chunks. "
-        "Use execute_code to create/truncate the target file, append chunks in "
-        "later calls, then validate with read_file or a render check."
+        "Use write_file for the first chunk and append_file for later chunks, "
+        "then validate with read_file or a render check."
     )
 
 
@@ -355,7 +355,8 @@ class WriteTool(Tool):
             "For existing files, you should read the file first using read_file. "
             "Prefer editing existing files over creating new ones unless explicitly needed. "
             f"Keep content under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} characters; "
-            "for larger generated artifacts, use execute_code to write the file in chunks."
+            "for larger generated artifacts, write the first chunk with write_file "
+            "and continue with append_file."
         )
 
     @property
@@ -375,8 +376,8 @@ class WriteTool(Tool):
                         f"Keep this under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} "
                         "characters. For large generated artifacts such as HTML/CSS/JS, "
                         "JSON manifests, templates, base64, or file bodies, use "
-                        "execute_code to create/truncate the target file, append smaller "
-                        "chunks in later calls, then validate."
+                        "write_file for the first chunk and append_file for later "
+                        "chunks, then validate."
                     ),
                 },
             },
@@ -429,6 +430,98 @@ class WriteTool(Tool):
 
             file_path.write_text(content, encoding="utf-8")
             return ToolResult(success=True, content=f"Successfully wrote to {file_path}")
+        except Exception as e:
+            return ToolResult(success=False, content="", error=str(e))
+
+
+class AppendTool(Tool):
+    """Append content to a file."""
+
+    def __init__(self, workspace_dir: str = ".", allow_full_access: bool = True,
+                 permission_engine: PermissionEngine | None = None):
+        """Initialize AppendTool with workspace directory."""
+        self.workspace_dir = Path(workspace_dir).absolute()
+        self.allow_full_access = allow_full_access
+        self._perm = permission_engine
+
+    @property
+    def name(self) -> str:
+        return "append_file"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Append content to a file, creating it if it does not exist. "
+            f"Keep each content chunk under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} "
+            "characters. Use after write_file for large generated artifacts such "
+            "as HTML/CSS/JS, JSON manifests, templates, base64, or file bodies."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the file",
+                },
+                "content": {
+                    "type": "string",
+                    "maxLength": MAX_FILE_TOOL_CONTENT_CHARS,
+                    "description": (
+                        "Content chunk to append. Keep this under "
+                        f"{MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} characters. "
+                        "For large generated artifacts, split the file into "
+                        "multiple append_file calls and validate the final file."
+                    ),
+                },
+            },
+            "required": ["path", "content"],
+        }
+
+    async def execute(self, path: str, content: str) -> ToolResult:
+        """Execute append file."""
+        try:
+            file_path = Path(path)
+            if not file_path.is_absolute():
+                file_path = self.workspace_dir / file_path
+
+            if self._perm:
+                decision = self._perm.check(
+                    capability="filesystem.write",
+                    resource={"path": str(file_path)},
+                    tool_name=self.name,
+                )
+                if not decision.allowed:
+                    return ToolResult(
+                        success=False,
+                        error=decision.reason,
+                        permission_request=decision.permission_request,
+                    )
+            elif not self.allow_full_access:
+                error = validate_path_in_workspace(file_path, self.workspace_dir)
+                if error:
+                    return ToolResult(success=False, content="", error=error)
+
+            placeholder_error = _model_history_placeholder_error(content)
+            if placeholder_error:
+                return ToolResult(success=False, content="", error=placeholder_error)
+
+            size_error = _oversized_file_tool_argument_error(self.name, "content", content)
+            if size_error:
+                return ToolResult(success=False, content="", error=size_error)
+
+            existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
+            bypass_error = detect_pptx_self_check_bypass(str(file_path), f"{existing}\n{content}")
+            if bypass_error:
+                return ToolResult(success=False, content="", error=bypass_error)
+
+            backup_file(file_path)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with file_path.open("a", encoding="utf-8") as f:
+                f.write(content)
+            return ToolResult(success=True, content=f"Successfully appended to {file_path}")
         except Exception as e:
             return ToolResult(success=False, content="", error=str(e))
 

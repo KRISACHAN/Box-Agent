@@ -1146,9 +1146,10 @@ Example workflow:
 Best practices:
 - Break complex analysis into steps
 - Keep each code argument under {MAX_EXECUTE_CODE_CHARS_DISPLAY} characters
-- For large generated static content (HTML/CSS/JS, shared styles, JSON manifests,
-  templates, base64, or file bodies), split before calling execute_code: create
-  the target file/variable first, append chunks in later calls, then validate
+- Do not inline large generated static artifact bodies (HTML/CSS/JS, shared
+  styles, JSON manifests, templates, base64, or file bodies) in execute_code.
+  Use write_file for the first chunk and append_file for later chunks unless
+  Python processing is actually required.
 - Use print() to see intermediate results
 - Never use the bash tool's `pip install` for sandbox packages — bash runs against the
   host Python and the sandbox kernel will not see those packages
@@ -1172,11 +1173,12 @@ Output formats:
                         f"{MAX_EXECUTE_CODE_CHARS_DISPLAY} characters. For large "
                         "generated static content such as HTML/CSS/JS, shared "
                         "styles, JSON manifests, templates, base64, or file "
-                        "bodies, split before calling execute_code: create the "
-                        "target file/variable first, append chunks in later "
-                        "calls, then validate. Variables and functions from "
-                        "previous calls in the same session are available. Use "
-                        "%pip install <pkg> to install packages."
+                        "bodies, do not inline the body in execute_code; use "
+                        "write_file for the first chunk and append_file for later "
+                        "chunks unless Python processing is actually required. "
+                        "Variables and functions from previous calls in the same "
+                        "session are available. Use %pip install <pkg> to install "
+                        "packages."
                     ),
                 },
                 "session_id": {
@@ -1224,9 +1226,9 @@ Output formats:
                     "EXECUTE_CODE_TOO_LARGE: code is "
                     f"{len(code)} characters; limit is {MAX_EXECUTE_CODE_CHARS}. "
                     "Split the work into multiple execute_code calls because "
-                    "kernel state persists. Do not inline large generated file "
-                    "content, shared styles, JSON manifests, templates, base64, "
-                    "or data; write/read files in smaller chunks."
+                    "kernel state persists. Do not inline large generated static "
+                    "artifact bodies; use write_file for the first chunk and "
+                    "append_file for later chunks."
                 ),
             )
         if self._looks_like_python_pptx_new_deck(code):

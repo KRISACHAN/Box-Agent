@@ -9,6 +9,7 @@ from box_agent.core import (
     _detect_new_files,
     _snapshot_workspace,
     run_agent_loop,
+    text_requests_plan_start,
 )
 from box_agent.core import FINAL_SUMMARY_TOOL_CALL_THRESHOLD as _FS_THRESHOLD
 from box_agent.events import (
@@ -29,10 +30,29 @@ from box_agent.events import (
 )
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.tools.base import Tool, ToolResult
-from box_agent.tools.file_tools import EditTool, ReadTool, WriteTool
+from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
 
 
 # ── Helpers ─────────────────────────────────────────────────────
+
+
+def test_text_requests_plan_start_handles_short_plan_phrases():
+    for text in [
+        "计划 plan",
+        "计划",
+        "plan",
+        "使用plan 生成一个内马尔图片",
+        "出一个计划我看一下",
+        "please make a plan first",
+    ]:
+        assert text_requests_plan_start(text)
+
+    for text in [
+        "普通聊天，不需要计划",
+        "不用 plan，直接执行",
+        "planet",
+    ]:
+        assert not text_requests_plan_start(text)
 
 
 class MockLLM:
@@ -93,6 +113,15 @@ class EchoTool(Tool):
 
     async def execute(self, text: str = ""):
         return ToolResult(success=True, content=f"echo:{text}")
+
+
+class CountingEchoTool(EchoTool):
+    def __init__(self):
+        self.calls = 0
+
+    async def execute(self, text: str = ""):
+        self.calls += 1
+        return await super().execute(text=text)
 
 
 class CountingWebSearchTool(Tool):
@@ -187,7 +216,32 @@ class PlanWriteStubTool(Tool):
         return {"type": "object", "properties": {}}
 
     async def execute(self, **kwargs):
-        return ToolResult(success=True, content="plan set")
+        title = str(kwargs.get("title") or "Test plan")
+        return ToolResult(
+            success=True,
+            content="plan set",
+            raw_output={
+                "type": "plan_snapshot",
+                "version": 1,
+                "action": "set",
+                "plan": {
+                    "id": "plan-test",
+                    "title": title,
+                    "objective": str(kwargs.get("objective") or ""),
+                    "status": "active",
+                    "steps": list(kwargs.get("steps") or []),
+                    "verification": list(kwargs.get("verification") or []),
+                    "risks": [],
+                    "assumptions": [],
+                },
+                "summary": {
+                    "steps": len(kwargs.get("steps") or []),
+                    "verification": len(kwargs.get("verification") or []),
+                    "risks": 0,
+                    "assumptions": 0,
+                },
+            },
+        )
 
 
 class ModelContextTool(Tool):
@@ -433,6 +487,172 @@ async def test_force_plan_start_snapshot_not_emitted_without_plan_tool():
 
 
 @pytest.mark.asyncio
+async def test_require_plan_approval_blocks_non_plan_tools_and_marks_plan_pending():
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="echo1",
+                        type="function",
+                        function=FunctionCall(name="echo", arguments={"text": "write files"}),
+                    ),
+                    ToolCall(
+                        id="plan1",
+                        type="function",
+                        function=FunctionCall(
+                            name="plan_write",
+                            arguments={"action": "set", "title": "Approval plan"},
+                        ),
+                    ),
+                ],
+            ),
+            LLMResponse(content="should not run", finish_reason="stop"),
+        ]
+    )
+    echo = CountingEchoTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": echo, "plan_write": PlanWriteStubTool()},
+            max_steps=5,
+            require_plan_approval=True,
+        )
+    )
+
+    assert echo.calls == 0
+    echo_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_name == "echo"
+    )
+    assert echo_result.success is False
+    assert echo_result.user_visible is False
+    assert "paused until the user approves" in (echo_result.error or "")
+    plan_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_name == "plan_write"
+    )
+    assert plan_result.raw_output["approval"]["required"] is True
+    assert plan_result.raw_output["approval"]["state"] == "pending"
+    assert plan_result.raw_output["plan"]["status"] == "draft"
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert done.final_content == "计划已生成，等待用户确认后再执行。"
+    assert not any(
+        isinstance(event, ContentEvent) and event.content == "should not run"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_pause_after_plan_write_marks_organic_plan_pending_and_stops_siblings():
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="plan1",
+                        type="function",
+                        function=FunctionCall(
+                            name="plan_write",
+                            arguments={"action": "set", "title": "Organic plan"},
+                        ),
+                    ),
+                    ToolCall(
+                        id="echo1",
+                        type="function",
+                        function=FunctionCall(name="echo", arguments={"text": "too soon"}),
+                    ),
+                ],
+            ),
+            LLMResponse(content="should not run", finish_reason="stop"),
+        ]
+    )
+    echo = CountingEchoTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": echo, "plan_write": PlanWriteStubTool()},
+            max_steps=5,
+            pause_after_plan_write=True,
+        )
+    )
+
+    assert echo.calls == 0
+    plan_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_name == "plan_write"
+    )
+    assert plan_result.raw_output["approval"]["required"] is True
+    assert plan_result.raw_output["approval"]["state"] == "pending"
+    echo_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_name == "echo"
+    )
+    assert echo_result.success is False
+    assert echo_result.user_visible is False
+    assert "paused until the user approves" in (echo_result.error or "")
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert done.final_content == "计划已生成，等待用户确认后再执行。"
+    assert not any(
+        isinstance(event, ContentEvent) and event.content == "should not run"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_require_plan_approval_approved_decision_allows_execution():
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="echo1",
+                        type="function",
+                        function=FunctionCall(name="echo", arguments={"text": "go"}),
+                    )
+                ],
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+    echo = CountingEchoTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": echo, "plan_write": PlanWriteStubTool()},
+            max_steps=5,
+            require_plan_approval=True,
+            plan_approval={"decision": "approved", "request_id": "plan-test"},
+        )
+    )
+
+    assert echo.calls == 1
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_name == "echo"
+    )
+    assert result.success is True
+    assert result.content == "echo:go"
+
+
+@pytest.mark.asyncio
 async def test_short_visible_text_streams_immediately_without_duplicate():
     llm = MockLLM([LLMResponse(content="短回复", finish_reason="stop")])
 
@@ -667,6 +887,53 @@ async def test_write_file_qa_json_arguments_are_compacted_even_when_small(tmp_pa
     stored_args = assistant_msg.tool_calls[0].function.arguments
     assert "[Full tool-call argument omitted from model history]" in stored_args["content"]
     assert "qa.json" in stored_args["content"]
+    assert marker not in stored_args["content"]
+
+
+@pytest.mark.asyncio
+async def test_append_file_large_artifact_arguments_are_compacted_in_model_history(tmp_path):
+    marker = "APPENDED_HTML_SHOULD_NOT_STAY_IN_ASSISTANT_TOOL_ARGS"
+    html = "\n".join(
+        ["<!doctype html>", "<html>", "<body>"]
+        + [f"<section>chunk {i}</section>" for i in range(20)]
+        + [marker, "</body>", "</html>"]
+    )
+    msgs = _msgs()
+    llm = MockLLM([
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="t1",
+                    type="function",
+                    function=FunctionCall(name="append_file", arguments={"path": "deck.html", "content": html}),
+                )
+            ],
+            finish_reason="tool",
+        ),
+        LLMResponse(content="done", finish_reason="stop"),
+    ])
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=msgs,
+            tools={"append_file": AppendTool(workspace_dir=str(tmp_path))},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    start = next(e for e in events if isinstance(e, ToolCallStart))
+    llm_output = next(e for e in events if isinstance(e, LLMOutputEvent))
+    assert marker in llm_output.tool_calls[0]["function"]["arguments"]["content"]
+    assert marker in start.arguments["content"]
+    assert (tmp_path / "deck.html").read_text(encoding="utf-8") == html
+
+    assistant_msg = next(m for m in msgs if m.role == "assistant" and m.tool_calls)
+    stored_args = assistant_msg.tool_calls[0].function.arguments
+    assert "[Full tool-call argument omitted from model history]" in stored_args["content"]
+    assert "deck.html" in stored_args["content"]
     assert marker not in stored_args["content"]
 
 

@@ -624,6 +624,9 @@ class Agent:
         cancel_event: Optional[asyncio.Event] = None,
         *,
         force_plan_start: bool = False,
+        require_plan_approval: bool = False,
+        plan_approval: dict | None = None,
+        pause_after_plan_write: bool = False,
         completion_gate: CompletionGate | None = None,
         artifact_detection_enabled: bool = True,
     ) -> AsyncIterator[AgentEvent]:
@@ -655,6 +658,9 @@ class Agent:
             thinking_enabled=self.thinking_enabled,
             max_parallel_tools=self.max_parallel_tools,
             force_plan_start=force_plan_start,
+            require_plan_approval=require_plan_approval,
+            plan_approval=plan_approval,
+            pause_after_plan_write=pause_after_plan_write,
             completion_gate=completion_gate,
             artifact_detection_enabled=artifact_detection_enabled,
         ):
@@ -670,6 +676,9 @@ class Agent:
         cancel_event: Optional[asyncio.Event] = None,
         *,
         force_plan_start: bool = False,
+        require_plan_approval: bool = False,
+        plan_approval: dict | None = None,
+        pause_after_plan_write: bool = False,
         completion_gate: CompletionGate | None = None,
         artifact_detection_enabled: bool = True,
     ) -> str:
@@ -683,6 +692,9 @@ class Agent:
         async for event in self.run_events(
             cancel_event,
             force_plan_start=force_plan_start,
+            require_plan_approval=require_plan_approval,
+            plan_approval=plan_approval,
+            pause_after_plan_write=pause_after_plan_write,
             completion_gate=completion_gate,
             artifact_detection_enabled=artifact_detection_enabled,
         ):
