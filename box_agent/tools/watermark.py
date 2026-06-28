@@ -1,6 +1,6 @@
 """Text watermark rendering for generated bitmap images.
 
-This module overlays a small text watermark (default ``AI Generated``) onto a
+This module overlays a small text watermark (default ``AI 生成``) onto a
 generated image before it is written to disk. It is shared by both the
 text-to-image and image-to-image paths of :class:`GenerateImageTool`, so a
 single call site covers CLI and ACP runtimes alike.
@@ -24,7 +24,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from PIL import ImageFont
 
 
-_DEFAULT_TEXT = "AI Generated"
+_DEFAULT_TEXT = "AI 生成"
 _OPACITY = 0.45  # watermark fill alpha, 0.0–1.0
 _COLOR = "#FFFFFF"  # watermark text color (hex)
 _FONT_SIZE_RATIO = 0.022  # font size = short_edge * ratio
@@ -68,7 +68,7 @@ def apply_text_watermark(
     Args:
         image_bytes: Raw encoded image bytes.
         mime_type: MIME type of ``image_bytes`` (e.g. ``image/png``).
-        text: Watermark text; ``None``/empty falls back to ``AI Generated``.
+        text: Watermark text; ``None``/empty falls back to ``AI 生成``.
 
     Returns:
         ``(out_bytes, status)`` where ``status`` is

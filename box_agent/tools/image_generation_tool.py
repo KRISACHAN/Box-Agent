@@ -348,7 +348,7 @@ class GenerateImageTool(Tool):
                 "watermark": {
                     "type": "boolean",
                     "description": (
-                        "Internal flag for the 'AI Generated' watermark, ON by default. "
+                        "Internal flag for the 'AI 生成' watermark, ON by default. "
                         "DO NOT set this. Omit it for every normal image so the watermark stays on. "
                         "Only pass false when the PPTX skill instructs it, or the user EXPLICITLY says "
                         "to remove/disable the watermark. A plain, solid-color, test, or 'no text' image "
@@ -358,7 +358,7 @@ class GenerateImageTool(Tool):
                 "watermark_text": {
                     "type": "string",
                     "description": (
-                        "Custom watermark text overriding the default 'AI Generated'. "
+                        "Custom watermark text overriding the default 'AI 生成'. "
                         "Only set when the user explicitly asks for specific watermark wording (e.g. a brand name)."
                     ),
                 },

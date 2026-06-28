@@ -96,6 +96,6 @@ Rules:
 
 1. Store generated files under `assets/generated/`.
 1. Reference files with relative paths inside HTML.
-1. Always call `generate_image` with `watermark: false` for PPT assets. The deck supplies its own branding/watermark and the `avoid` field already steers the model away from in-image watermarks, so the tool's default "AI Generated" stamp must be suppressed.
+1. Always call `generate_image` with `watermark: false` for PPT assets. The deck supplies its own branding/watermark and the `avoid` field already steers the model away from in-image watermarks, so the tool's default "AI 生成" stamp must be suppressed.
 1. If generation tooling is unavailable, mark appropriate image-plan entries as `blocked` or choose `draw_in_html`; do not silently convert strong `generate` candidates to `skip` just to avoid the missing tool.
 1. In `creative_image_mode`, the previous fallback rule is stricter: if the required generated image is unavailable, the overall deck is blocked even if some slides can be drawn in HTML.
