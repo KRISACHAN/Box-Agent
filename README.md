@@ -170,6 +170,66 @@ uv sync
 uv run python -m box_agent.cli
 ```
 
+## Contributor Quickstart
+
+If you are joining the project as a collaborator, start here before changing
+code:
+
+```bash
+git clone https://github.com/Raccoon-Office/Box-Agent.git
+cd Box-Agent
+git submodule update --init --recursive   # needed for bundled skills
+uv sync
+uv run python -m box_agent.cli --help
+uv run pytest tests/test_core.py -q
+```
+
+Read these files first:
+
+- `AGENTS.md` — repo-local engineering rules and verification expectations.
+- `CONTRIBUTING.md` — contribution flow, PR checklist, and commit style.
+- `docs/DEVELOPMENT_GUIDE.md` — deeper architecture and development notes.
+- `docs/INTEGRATION.md` — ACP/runtime integration details for host apps.
+
+Project map:
+
+| Area | Where to start |
+| ---- | -------------- |
+| Agent execution loop | `box_agent/core.py`, `box_agent/agent.py`, `box_agent/events.py` |
+| CLI and config | `box_agent/cli.py`, `box_agent/config.py`, `box_agent/config/` |
+| LLM providers | `box_agent/llm/` |
+| Built-in tools | `box_agent/tools/` |
+| ACP server/runtime embedding | `box_agent/acp/`, `box_agent/build_runtime_cli.py` |
+| Skills | `box_agent/skills/`, `box_agent/tools/skill_loader.py` |
+| Tests | `tests/test_<area>.py` |
+
+Common development loop:
+
+```bash
+# Run the smallest relevant test while iterating
+uv run pytest tests/test_bash_tool.py -q
+
+# Run the broader suite before handing off
+uv run pytest tests/ -q
+
+# Catch whitespace/patch formatting issues
+git diff --check
+```
+
+Use focused tests for the area you touched: tools in `tests/test_*_tool.py`,
+LLM behavior in `tests/test_llm*.py` / `tests/test_error_messages.py`, ACP in
+`tests/test_acp*.py`, memory in `tests/test_memory*.py`, and runtime packaging
+in `tests/test_build_runtime.py` / `tests/test_cli_runtime.py`. Tests that need
+real provider credentials are skipped unless the required API keys are present.
+
+When a change affects the standalone runtime used by a host app, source changes
+are not enough: rebuild the runtime, install it into the host, restart the
+running ACP process, then probe the installed runtime. For local packaging:
+
+```bash
+uv run box-agent-build-runtime
+```
+
 ### Configuration
 
 After running `box-agent setup`, your config lives at `~/.box-agent/config/config.yaml`:

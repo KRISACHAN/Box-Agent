@@ -3,6 +3,11 @@ const fs = require("fs");
 const Module = require("module");
 const os = require("os");
 const path = require("path");
+const {
+  chromiumLaunchOptions,
+  ensurePlaywrightBrowsersPath,
+  officeRaccoonBrowserHostPath,
+} = require("./playwright_host");
 
 function officeRaccoonPrefix() {
   if (process.env.BOX_AGENT_NODE_PREFIX) return process.env.BOX_AGENT_NODE_PREFIX;
@@ -21,13 +26,7 @@ function officeRaccoonPrefix() {
   return path.join(home, ".config", "office-raccoon");
 }
 
-function officeRaccoonBrowserHostPath() {
-  return path.join(os.homedir(), ".box-agent", "browsers");
-}
-
-if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = officeRaccoonBrowserHostPath();
-}
+ensurePlaywrightBrowsersPath();
 
 const managedNodeModules = path.join(officeRaccoonPrefix(), "node_modules");
 process.env.NODE_PATH = process.env.NODE_PATH
@@ -122,12 +121,11 @@ function requireModule(name, installHint) {
 }
 
 function printBrowserInstallHint() {
-  const prefix = officeRaccoonPrefix();
   const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH || officeRaccoonBrowserHostPath();
   console.error("Playwright Chromium is not available.");
   console.error("Install it in Office Raccoon: Settings -> Plugins -> Web automation (Playwright) -> Download Chromium and enable.");
   console.error(`Expected browser host under: ${browsersPath}`);
-  console.error(`CLI fallback: PLAYWRIGHT_BROWSERS_PATH="${browsersPath}" "${path.join(prefix, "node_modules", ".bin", "playwright")}" install chromium`);
+  console.error("If Playwright itself is missing, reinstall or repair Office Raccoon's managed runtime.");
   console.error("Without a browser host, ask the user to choose HTML delivery or native PptxGenJS PPTX.");
 }
 
@@ -568,12 +566,13 @@ async function main() {
 
   const { chromium } = requireModule(
     "playwright",
-    'Install in Office Raccoon with: ${BOX_AGENT_NPM:-npm} install --prefix "$HOME/Library/Application Support/office-raccoon" playwright; then download Chromium with "$HOME/Library/Application Support/office-raccoon/node_modules/.bin/playwright" install chromium'
+    "Repair Office Raccoon's managed runtime, then install Chromium in Settings -> Plugins -> Web automation (Playwright)."
   );
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    const launch = chromiumLaunchOptions(chromium, { headless: true });
+    browser = await chromium.launch(launch.options);
   } catch (error) {
     printBrowserInstallHint();
     throw error;

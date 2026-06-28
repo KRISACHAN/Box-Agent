@@ -170,6 +170,64 @@ uv sync
 uv run python -m box_agent.cli
 ```
 
+## 新协作者快速开始
+
+如果你是新加入的协作者，改代码前先从这里开始：
+
+```bash
+git clone https://github.com/Raccoon-Office/Box-Agent.git
+cd Box-Agent
+git submodule update --init --recursive   # 使用内置 skills 时需要
+uv sync
+uv run python -m box_agent.cli --help
+uv run pytest tests/test_core.py -q
+```
+
+建议先读这几个文件：
+
+- `AGENTS.md` — 仓库本地开发规则、范围控制和验证要求。
+- `CONTRIBUTING_CN.md` — 贡献流程、PR checklist 和提交信息格式。
+- `docs/DEVELOPMENT_GUIDE_CN.md` — 更完整的架构与开发说明。
+- `docs/INTEGRATION.md` — ACP / 独立运行时与宿主应用集成说明。
+
+项目地图：
+
+| 模块 | 入口文件 |
+| ---- | -------- |
+| Agent 执行循环 | `box_agent/core.py`、`box_agent/agent.py`、`box_agent/events.py` |
+| CLI 与配置 | `box_agent/cli.py`、`box_agent/config.py`、`box_agent/config/` |
+| LLM Provider | `box_agent/llm/` |
+| 内置工具 | `box_agent/tools/` |
+| ACP 服务与运行时嵌入 | `box_agent/acp/`、`box_agent/build_runtime_cli.py` |
+| Skills | `box_agent/skills/`、`box_agent/tools/skill_loader.py` |
+| 测试 | `tests/test_<area>.py` |
+
+日常开发循环：
+
+```bash
+# 迭代时先跑最小相关测试
+uv run pytest tests/test_bash_tool.py -q
+
+# 交付前跑更宽的测试
+uv run pytest tests/ -q
+
+# 检查空白字符和 patch 格式问题
+git diff --check
+```
+
+按改动范围选择测试：工具改动看 `tests/test_*_tool.py`，LLM 行为看
+`tests/test_llm*.py` / `tests/test_error_messages.py`，ACP 看
+`tests/test_acp*.py`，memory 看 `tests/test_memory*.py`，运行时打包看
+`tests/test_build_runtime.py` / `tests/test_cli_runtime.py`。需要真实 provider
+凭据的 integration 测试在没有对应 API key 时会跳过。
+
+如果改动会影响宿主应用使用的独立运行时，只改源码还不够：需要重新打包运行时、
+安装到宿主应用、重启正在运行的 ACP 进程，然后探测已安装的运行时。本地打包命令：
+
+```bash
+uv run box-agent-build-runtime
+```
+
 ### 配置
 
 运行 `box-agent setup` 后，配置文件位于 `~/.box-agent/config/config.yaml`：

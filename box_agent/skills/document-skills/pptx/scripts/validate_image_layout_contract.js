@@ -4,6 +4,7 @@ const Module = require("module");
 const os = require("os");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const { chromiumLaunchOptions } = require("./playwright_host");
 
 function officeRaccoonPrefix() {
   if (process.env.BOX_AGENT_NODE_PREFIX) return process.env.BOX_AGENT_NODE_PREFIX;
@@ -134,7 +135,8 @@ async function main() {
 
   if (contractItems.length) {
     const { chromium } = requireModule("playwright");
-    const browser = await chromium.launch({ headless: true });
+    const launch = chromiumLaunchOptions(chromium, { headless: true });
+    const browser = await chromium.launch(launch.options);
     try {
       const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
       await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "networkidle" });

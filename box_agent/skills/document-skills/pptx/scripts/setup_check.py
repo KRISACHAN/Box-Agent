@@ -52,11 +52,135 @@ def managed_node_modules() -> Path:
 
 
 def playwright_install_cmd() -> str:
-    return f'${{BOX_AGENT_NPM:-npm}} install --prefix "{managed_node_prefix()}" playwright'
+    return "reinstall or repair Office Raccoon's managed runtime"
 
 
 def playwright_chromium_cmd() -> str:
-    return f'"{managed_node_prefix() / "node_modules" / ".bin" / "playwright"}" install chromium'
+    return "Office Raccoon Settings -> Plugins -> Web automation (Playwright) -> Download Chromium and enable"
+
+
+def playwright_browsers_path() -> Path:
+    configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if configured:
+        return Path(configured)
+    return Path.home() / ".box-agent" / "browsers"
+
+
+def usable_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def configured_playwright_executable() -> Path | None:
+    for name in [
+        "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH",
+        "BOX_AGENT_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH",
+        "PLAYWRIGHT_EXECUTABLE_PATH",
+    ]:
+        value = os.environ.get(name)
+        if value and usable_file(Path(value)):
+            return Path(value)
+    return None
+
+
+def browser_revision(path: Path) -> int:
+    try:
+        return int(path.name.rsplit("-", 1)[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def executable_candidates(browser_dir: Path, headless: bool) -> list[Path]:
+    system = platform.system()
+    if headless:
+        if system == "Darwin":
+            return [
+                browser_dir / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell",
+                browser_dir / "chrome-headless-shell-mac" / "chrome-headless-shell",
+            ]
+        if system == "Windows":
+            return [
+                browser_dir / "chrome-headless-shell-win64" / "chrome-headless-shell.exe",
+                browser_dir / "chrome-headless-shell-win" / "chrome-headless-shell.exe",
+            ]
+        return [
+            browser_dir / "chrome-headless-shell-linux64" / "chrome-headless-shell",
+            browser_dir / "chrome-headless-shell-linux" / "chrome-headless-shell",
+        ]
+
+    if system == "Darwin":
+        return [
+            browser_dir
+            / "chrome-mac-arm64"
+            / "Google Chrome for Testing.app"
+            / "Contents"
+            / "MacOS"
+            / "Google Chrome for Testing",
+            browser_dir
+            / "chrome-mac"
+            / "Google Chrome for Testing.app"
+            / "Contents"
+            / "MacOS"
+            / "Google Chrome for Testing",
+            browser_dir / "chrome-mac-arm64" / "Chromium.app" / "Contents" / "MacOS" / "Chromium",
+            browser_dir / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium",
+        ]
+    if system == "Windows":
+        return [
+            browser_dir / "chrome-win64" / "chrome.exe",
+            browser_dir / "chrome-win" / "chrome.exe",
+        ]
+    return [
+        browser_dir / "chrome-linux64" / "chrome",
+        browser_dir / "chrome-linux" / "chrome",
+    ]
+
+
+def managed_playwright_executable() -> Path | None:
+    root = playwright_browsers_path()
+    if not root.exists():
+        return None
+    for prefix, headless in [
+        ("chromium_headless_shell-", True),
+        ("chromium-", False),
+    ]:
+        dirs = sorted(
+            [entry for entry in root.iterdir() if entry.is_dir() and entry.name.startswith(prefix)],
+            key=browser_revision,
+            reverse=True,
+        )
+        for browser_dir in dirs:
+            for candidate in executable_candidates(browser_dir, headless):
+                if usable_file(candidate):
+                    return candidate
+    return None
+
+
+def playwright_registry_executable() -> tuple[Path | None, bool]:
+    node_path = os.environ.get("NODE_PATH", "")
+    managed = str(managed_node_modules())
+    merged_node_path = managed if not node_path else os.pathsep.join([managed, node_path])
+    result = subprocess.run(
+        [
+            node_command(),
+            "-e",
+            (
+                "process.env.NODE_PATH = "
+                + repr(merged_node_path)
+                + "; require('module').Module._initPaths(); "
+                "const {chromium}=require('playwright'); "
+                "process.stdout.write(chromium.executablePath());"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None, False
+    expected = Path(result.stdout.strip())
+    return (expected if usable_file(expected) else None), True
 
 
 def find_binary(candidates: list[str]) -> str | None:
@@ -134,26 +258,12 @@ def has_node_package(package: str) -> bool:
 
 
 def has_playwright_chromium() -> bool:
-    node_path = os.environ.get("NODE_PATH", "")
-    managed = str(managed_node_modules())
-    merged_node_path = managed if not node_path else os.pathsep.join([managed, node_path])
-    result = subprocess.run(
-        [
-            node_command(),
-            "-e",
-            (
-                "process.env.NODE_PATH = "
-                + repr(merged_node_path)
-                + "; require('module').Module._initPaths(); "
-                "const fs=require('fs'); "
-                "const {chromium}=require('playwright'); "
-                "process.exit(fs.existsSync(chromium.executablePath()) ? 0 : 1);"
-            ),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    if configured_playwright_executable():
+        return True
+    executable, registry_available = playwright_registry_executable()
+    if registry_available:
+        return executable is not None
+    return managed_playwright_executable() is not None
 
 
 def main() -> int:

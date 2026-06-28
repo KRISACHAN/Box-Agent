@@ -3,6 +3,11 @@ const fs = require("fs");
 const Module = require("module");
 const os = require("os");
 const path = require("path");
+const {
+  ensurePlaywrightBrowsersPath,
+  officeRaccoonBrowserHostPath,
+  resolveChromiumExecutablePath,
+} = require("./playwright_host");
 
 function officeRaccoonPrefix() {
   if (process.env.BOX_AGENT_NODE_PREFIX) return process.env.BOX_AGENT_NODE_PREFIX;
@@ -18,13 +23,7 @@ function officeRaccoonPrefix() {
   return path.join(home, ".config", "office-raccoon");
 }
 
-function officeRaccoonBrowserHostPath() {
-  return path.join(os.homedir(), ".box-agent", "browsers");
-}
-
-if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = officeRaccoonBrowserHostPath();
-}
+ensurePlaywrightBrowsersPath();
 
 function addManagedNodePath(prefix) {
   const managedNodeModules = path.join(prefix, "node_modules");
@@ -48,15 +47,16 @@ function checkPlaywright() {
 }
 
 function checkChromium(playwright) {
-  try {
-    const chromiumPath = playwright.chromium.executablePath();
-    if (fs.existsSync(chromiumPath)) {
-      return { ok: true, path: chromiumPath };
-    }
-    return { ok: false, reason: `Chromium executable not found at ${chromiumPath}` };
-  } catch (error) {
-    return { ok: false, reason: error.message || String(error) };
+  const resolved = resolveChromiumExecutablePath(playwright);
+  if (resolved.ok) {
+    return { ok: true, path: resolved.path, source: resolved.source };
   }
+  return {
+    ok: false,
+    reason: resolved.expectedPath
+      ? `Chromium executable not found at ${resolved.expectedPath}`
+      : `Chromium executable not found under ${resolved.browsersPath}`,
+  };
 }
 
 function main() {
@@ -73,7 +73,7 @@ function main() {
   console.log("HTML editable PPTX export environment:");
   console.log(`  ${bundleOk ? "ok  " : "miss"} bundled converter -> ${bundlePath}`);
   console.log(`  ${playwrightResult.ok ? "ok  " : "miss"} playwright (${playwrightResult.reason || "available"})`);
-  console.log(`  ${chromiumResult.ok ? "ok  " : "miss"} playwright chromium${chromiumResult.path ? ` -> ${chromiumResult.path}` : ` (${chromiumResult.reason})`}`);
+  console.log(`  ${chromiumResult.ok ? "ok  " : "miss"} playwright chromium${chromiumResult.path ? ` -> ${chromiumResult.path}${chromiumResult.source ? ` (${chromiumResult.source})` : ""}` : ` (${chromiumResult.reason})`}`);
   console.log(`  info managed node_modules -> ${managedNodeModules}`);
 
   if (bundleOk && playwrightResult.ok && chromiumResult.ok) {
@@ -91,8 +91,7 @@ function main() {
     console.log("  PPTX: switch to native PptxGenJS and create a directly editable PPTX with different HTML/CSS fidelity tradeoffs.");
     console.log("Install in Office Raccoon: Settings -> Plugins -> Web automation (Playwright) -> Download Chromium and enable.");
     console.log(`Expected browser host under: ${browsersPath}`);
-    console.log(`Install Playwright: \${BOX_AGENT_NPM:-npm} install --prefix "${prefix}" playwright`);
-    console.log(`Download Chromium: PLAYWRIGHT_BROWSERS_PATH="${browsersPath}" "${path.join(prefix, "node_modules", ".bin", "playwright")}" install chromium`);
+    console.log("If Playwright itself is missing, reinstall or repair Office Raccoon's managed runtime.");
   }
   return 1;
 }

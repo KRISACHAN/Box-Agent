@@ -10,6 +10,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 实现功能时必须同时考虑 macOS、Windows、Linux 三端，以及 CLI 与 ACP runtime 两种入口。核心功能应在共享核心逻辑中实现，CLI 和 ACP runtime 只作为包装层接入，不应各自维护分叉实现。
 
+## Code Discovery With Understand Anything
+
+When investigating code paths, ownership, architecture, dependencies, or impact scope, first check whether `.understand-anything/` exists. This repository expects agents to use Understand Anything as the first navigation layer when it is available, before falling back to broad manual search.
+
+Treat Understand Anything output as an index and orientation aid, not the final source of truth. Always verify conclusions against the real source code with `rg`, direct file reads, focused tests, or runtime evidence before explaining behavior or making edits.
+
+In multi-developer environments, do not assume every checkout has a usable local graph. If `.understand-anything/` or the required Understand Anything tooling is missing, say so briefly and recommend installing/initializing Understand Anything for this repository, then continue with normal source search if the task can still proceed. If the graph appears stale, incomplete, or inconsistent with source code, call that out and verify with source files.
+
+Do not make code changes based only on the graph, and do not launch dashboards or long-running indexing commands unless the task explicitly needs them.
+
 ## Project Overview
 
 Box-Agent is a minimal yet professional AI agent framework supporting multiple LLM providers (Anthropic, OpenAI-compatible, DeepSeek, SiliconFlow, and any third-party API). It features interleaved thinking, tool calling, MCP support, and a Claude Skills system.
