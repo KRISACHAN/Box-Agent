@@ -246,8 +246,9 @@ def final_summary_wrapup_text(tool_call_count: int) -> str:
     return (
         "This turn has used many visible tool calls "
         f"({tool_call_count}, threshold {FINAL_SUMMARY_TOOL_CALL_THRESHOLD}). "
-        "Keep continuing only if a required deliverable is still incomplete. "
-        "When you are ready to stop, the final user-visible response must be a concise conclusion, "
+        "Stop calling tools now unless a single, clearly required verification step is impossible to skip. "
+        "If a deliverable is still incomplete, state the concrete gap and next action instead of continuing tool work. "
+        "The final user-visible response must be a concise conclusion, "
         "not a process log: state the result, list created/changed files or concrete outputs when relevant, "
         "mention only important caveats, and give the next action if one is needed. "
         "Do not enumerate every tool call."
@@ -1078,6 +1079,10 @@ def _detect_tool_artifacts(
 # ── Token estimation helpers ────────────────────────────────────
 
 
+def _count_tiktoken_tokens(encoding: Any, text: Any) -> int:
+    return len(encoding.encode(str(text), disallowed_special=()))
+
+
 def _estimate_tokens(messages: list[Message]) -> int:
     """Estimate token count using tiktoken (cl100k_base)."""
     try:
@@ -1088,15 +1093,15 @@ def _estimate_tokens(messages: list[Message]) -> int:
     total = 0
     for msg in messages:
         if isinstance(msg.content, str):
-            total += len(encoding.encode(msg.content))
+            total += _count_tiktoken_tokens(encoding, msg.content)
         elif isinstance(msg.content, list):
             for block in msg.content:
                 if isinstance(block, dict):
-                    total += len(encoding.encode(str(block)))
+                    total += _count_tiktoken_tokens(encoding, block)
         if msg.thinking:
-            total += len(encoding.encode(msg.thinking))
+            total += _count_tiktoken_tokens(encoding, msg.thinking)
         if msg.tool_calls:
-            total += len(encoding.encode(str(msg.tool_calls)))
+            total += _count_tiktoken_tokens(encoding, msg.tool_calls)
         total += 4  # per-message overhead
     return total
 
@@ -1278,7 +1283,7 @@ def _approx_tokens_for_content(content: Any) -> int:
         text = str(content)
     try:
         encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
+        return _count_tiktoken_tokens(encoding, text)
     except Exception:
         return max(1, len(text) // 4)
 

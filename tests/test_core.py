@@ -2364,6 +2364,32 @@ def test_micro_compact_token_budget_shrinks_keep_window_when_recent_oversized():
     assert last_tool.content == big_payload
 
 
+def test_token_estimators_treat_special_token_text_as_plain_text():
+    from box_agent.core import _approx_tokens_for_content, _estimate_tokens
+
+    special_text = "search result contains literal <|endoftext|> text"
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content=special_text),
+        Message(
+            role="assistant",
+            content=[{"type": "text", "text": special_text}],
+            thinking=special_text,
+            tool_calls=[
+                ToolCall(
+                    id="call_1",
+                    type="function",
+                    function=FunctionCall(name="echo", arguments={"text": special_text}),
+                )
+            ],
+        ),
+        Message(role="tool", content=special_text, tool_call_id="call_1", name="echo"),
+    ]
+
+    assert _estimate_tokens(msgs) > 0
+    assert _approx_tokens_for_content({"text": special_text}) > 0
+
+
 def test_micro_compact_preserves_at_least_one_recent_when_single_giant():
     """Single giant tool result must not be compacted (keep_count never < 1)."""
     from box_agent.core import _micro_compact

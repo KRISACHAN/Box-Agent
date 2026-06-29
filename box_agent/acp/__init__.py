@@ -1352,7 +1352,10 @@ class BoxACPAgent:
         completion_gate = (
             None
             if state.artifact_mode == "project"
-            else build_auto_completion_gate(user_text, state.agent.workspace_dir)
+            else build_auto_completion_gate(
+                plan_detection_text,
+                state.agent.workspace_dir,
+            )
         )
         if completion_gate is not None:
             log.info(

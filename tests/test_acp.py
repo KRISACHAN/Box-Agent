@@ -305,7 +305,11 @@ class PlanApprovalThenEchoLLM:
 
 
 class DoneLLM:
+    def __init__(self):
+        self.calls = 0
+
     async def generate_stream(self, messages, tools=None, **_):
+        self.calls += 1
         yield StreamEvent(type="text", delta="done")
         yield StreamEvent(type="finish", finish_reason="stop")
 
@@ -1451,6 +1455,42 @@ async def test_acp_auto_completion_gate_continues_until_ppt_artifact(tmp_path):
     assert (tmp_path / "output" / "bid-proposal.pptx").read_text() == "fake pptx payload"
     rendered = "\n".join(str(update) for update in conn.updates)
     assert "PPT 已生成" in rendered
+    assert "尚未满足完成条件" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_acp_completion_gate_ignores_historical_deliverable_on_plain_continue(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=5, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = DoneLLM()
+    agent = BoxACPAgent(conn, config, llm, [], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[
+                {
+                    "text": (
+                        "以下是当前会话最近的上下文，请在此基础上继续回答：\n"
+                        "用户:\ntext: 做一份 15 页售前竞标方案 PPT\n\n"
+                        "助手:\ngenerate: 我已经完成了初稿。\n\n"
+                        "用户问题：继续"
+                    )
+                }
+            ],
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    assert llm.calls == 1
+    rendered = "\n".join(str(update) for update in conn.updates)
     assert "尚未满足完成条件" not in rendered
 
 
