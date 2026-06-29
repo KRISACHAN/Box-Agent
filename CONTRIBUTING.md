@@ -48,10 +48,48 @@ If you have an idea for a new feature, please create an Issue first to discuss i
    uv sync
    ```
 
+5. Run a quick local check:
+   ```bash
+   uv run pytest tests/ -q
+   ```
+
+6. Start the development CLI when you need a manual smoke test:
+   ```bash
+   uv run python -m box_agent.cli
+   ```
+
+#### Team Collaboration Baseline
+
+- Prefer small PRs that change one behavior or one subsystem.
+- Keep shared behavior in shared core logic. If a behavior must work in both CLI and ACP runtime, implement it in the shared core and keep CLI/ACP code as adapters.
+- Before changing code paths, use `.understand-anything/` as the first navigation aid when it is available, then verify the path with source reads, `rg`, tests, logs, or runtime probes.
+- Commit only shared Understand Anything configuration (`.understand-anything/.understandignore` and `.understand-anything/config.json`). Do not commit generated graph, fingerprint, intermediate, trash, or cache files.
+- Do not include local credentials or user config. `config.yaml`, `mcp.json`, logs, and `workspace/` are local runtime files.
+- If a change affects officev3 or any packaged runtime, say whether you verified only source behavior or also rebuilt/installed/probed the runtime artifact.
+
+#### Ownership Boundaries
+
+- Agent-loop behavior, event semantics, tool orchestration, cancellation, completion gates, artifact detection, and memory lifecycle belong in shared core modules such as `box_agent/core.py`, `box_agent/events.py`, and related shared helpers.
+- CLI code should handle terminal interaction, rendering, slash commands, and local prompts. It should not fork core behavior that ACP also needs.
+- ACP code should translate shared events into ACP protocol updates and host extension methods. Keep stdout protocol-clean; diagnostics belong on stderr or structured logs.
+- Provider-specific wire behavior belongs in `box_agent/llm/`; do not spread provider assumptions into tools, skills, CLI, or ACP.
+- Tool behavior belongs in `box_agent/tools/` and should return structured `ToolResult` data. Add direct regression tests for new tool semantics.
+- Built-in skill loading is controlled by `box_agent/skill_loader.py`, `box_agent/skills/`, and `box_agent/skills/_manifest.json`. When built-in skills change, regenerate the manifest before review.
+- PPT/document capabilities are skill-driven unless there is an explicit core contract change. Do not add hidden PPT-specific modes to the core loop.
+- Packaged runtime behavior is not proven by source edits alone. If officev3 or a standalone runtime depends on the change, document the runtime rebuild/install/probe status.
+
+#### TPR Pull Request Standard
+
+Every non-trivial PR should be reviewable through TPR:
+
+- **Task**: what behavior changed, why, affected entry points, and what is out of scope.
+- **Proof**: exact commands, tests, probes, screenshots, logs, regenerated manifests, or runtime checks.
+- **Risk**: compatibility, packaging/runtime impact, migration, config/secrets, rollback plan, and cross-repository follow-up.
+
 #### Development Process
 
 1. **Write Code**
-   - Follow the project's code style (see the [Development Guide](docs/DEVELOPMENT.md#code-style-guide)).
+   - Follow the project's code style (see the [Development Guide](docs/DEVELOPMENT_GUIDE.md)).
    - Add necessary comments and docstrings.
    - Keep your code clean and concise.
 
@@ -97,21 +135,29 @@ If you have an idea for a new feature, please create an Issue first to discuss i
 
 Before submitting a PR, please ensure:
 
-- [ ] The code follows the project's style guide.
-- [ ] All tests pass.
-- [ ] Necessary tests have been added.
-- [ ] Relevant documentation has been updated.
-- [ ] The commit message is clear and concise.
-- [ ] There are no unrelated changes.
+- [ ] The PR description includes Task, Proof, and Risk.
+- [ ] The code follows the project's style guide and existing architecture.
+- [ ] Focused tests were run for the changed behavior.
+- [ ] Broader tests were run when shared core, tools, MCP, memory, CLI, ACP, skills, or packaging behavior changed.
+- [ ] Necessary regression tests were added or an explicit reason is given.
+- [ ] Relevant documentation was updated.
+- [ ] Generated manifests were regenerated when built-in skills changed.
+- [ ] Runtime rebuild/install/probe status is stated when packaged runtime behavior is affected.
+- [ ] No unrelated changes, local config, logs, workspace files, or generated Understand Anything graph/cache files are included.
+- [ ] The commit message is clear and follows the conventional style used in this repository.
 
 ### Code Review
 
-All Pull Requests will be reviewed:
+All Pull Requests will be reviewed. Maintainers use the detailed
+[Maintainer Review Guide](docs/REVIEW_GUIDE.md) for review order, blockers, and
+proof expectations:
 
-- We will review your code as soon as possible.
-- We may request some changes.
-- Please be patient and responsive to feedback.
-- Once approved, your PR will be merged into the main branch.
+- Review starts from the TPR evidence. Missing proof is treated as incomplete work, not as a reviewer task.
+- Reviewers should check behavior, ownership boundaries, tests, packaging/runtime implications, and documentation before style details.
+- For shared behavior, reviewers should confirm the change is not implemented separately in CLI and ACP unless there is a clear entry-point-specific reason.
+- For skill changes, reviewers should check `box_agent/skills/_manifest.json` and any officev3 recommendation-card impact.
+- For packaged runtime changes, reviewers should check whether source tests are enough or a runtime rebuild/install/probe is required.
+- Once approved, the PR will be merged into the main branch.
 
 ## Code Style Guide
 

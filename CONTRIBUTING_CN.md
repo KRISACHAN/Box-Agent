@@ -48,10 +48,48 @@
    uv sync
    ```
 
+5. 运行一次快速本地检查：
+   ```bash
+   uv run pytest tests/ -q
+   ```
+
+6. 需要手动冒烟测试时，启动开发版 CLI：
+   ```bash
+   uv run python -m box_agent.cli
+   ```
+
+#### 团队协作基线
+
+- 优先提交小 PR，一次只修改一个行为或一个子系统。
+- 共享行为应放在共享核心逻辑中。如果一个行为需要同时支持 CLI 和 ACP runtime，应优先在共享核心实现，CLI/ACP 只作为适配层。
+- 修改代码路径前，如果 `.understand-anything/` 可用，应先用它做代码导航，再用源码阅读、`rg`、测试、日志或运行探针验证。
+- 只提交 Understand Anything 的共享配置（`.understand-anything/.understandignore` 和 `.understand-anything/config.json`）。不要提交生成图谱、fingerprint、intermediate、trash 或 cache 文件。
+- 不要提交本地凭据或用户配置。`config.yaml`、`mcp.json`、日志和 `workspace/` 都属于本地运行文件。
+- 如果改动会影响 officev3 或任何 packaged runtime，需要说明本次只验证了源码行为，还是也完成了 runtime rebuild/install/probe。
+
+#### 归属边界
+
+- Agent 循环行为、事件语义、工具编排、取消、completion gate、产物检测和 memory 生命周期属于共享核心模块，例如 `box_agent/core.py`、`box_agent/events.py` 以及相关共享 helper。
+- CLI 代码负责终端交互、渲染、slash commands 和本地提示，不应复制 ACP 也需要的核心行为。
+- ACP 代码负责把共享事件翻译成 ACP protocol updates 和 host extension methods。stdout 必须保持协议纯净；诊断信息应走 stderr 或结构化日志。
+- Provider 特定的 wire 行为属于 `box_agent/llm/`，不要把 provider 假设散落到 tools、skills、CLI 或 ACP。
+- Tool 行为属于 `box_agent/tools/`，应返回结构化 `ToolResult`。新增工具语义需要直接回归测试。
+- 内置 skill 加载由 `box_agent/skill_loader.py`、`box_agent/skills/` 和 `box_agent/skills/_manifest.json` 控制。内置 skills 变化时，review 前必须重新生成 manifest。
+- PPT/文档能力默认由 skill 驱动，除非有明确的核心 contract 变化，不要向核心循环加入隐藏的 PPT 专用模式。
+- Packaged runtime 行为不能只靠源码改动证明。如果 officev3 或 standalone runtime 依赖本次改动，需要说明 runtime rebuild/install/probe 状态。
+
+#### TPR Pull Request 标准
+
+每个非平凡 PR 都要能通过 TPR 被审查：
+
+- **Task**：改了什么行为、为什么改、影响哪些入口、哪些内容明确不在本次范围内。
+- **Proof**：具体命令、测试、探针、截图、日志、重新生成的 manifest 或 runtime 验证。
+- **Risk**：兼容性、打包/runtime 影响、迁移、配置/密钥、回滚方案和跨仓库后续事项。
+
 #### 开发流程
 
 1. **编写代码**
-   - 遵循项目的代码风格（参考 [开发指南](docs/DEVELOPMENT.md#代码规范)）
+   - 遵循项目的代码风格（参考 [开发指南](docs/DEVELOPMENT_GUIDE_CN.md)）
    - 添加必要的注释和文档字符串
    - 保持代码简洁清晰
 
@@ -97,21 +135,29 @@
 
 在提交 PR 之前，请确保：
 
-- [ ] 代码遵循项目规范
-- [ ] 所有测试通过
-- [ ] 添加了必要的测试
-- [ ] 更新了相关文档
-- [ ] 提交消息清晰明确
-- [ ] 没有不相关的更改
+- [ ] PR 描述包含 Task、Proof、Risk。
+- [ ] 代码遵循项目规范和现有架构。
+- [ ] 针对本次行为改动运行了聚焦测试。
+- [ ] 改动共享核心、工具、MCP、memory、CLI、ACP、skills 或打包行为时，运行了更广的验证。
+- [ ] 添加了必要的回归测试，或明确说明未添加的原因。
+- [ ] 更新了相关文档。
+- [ ] 内置 skills 发生变化时，重新生成了 manifest。
+- [ ] 影响 packaged runtime 行为时，说明了 runtime rebuild/install/probe 状态。
+- [ ] 没有包含不相关改动、本地配置、日志、workspace 文件或 Understand Anything 生成图谱/cache。
+- [ ] 提交消息清晰，并遵循本仓库现有 conventional 风格。
 
 ### 代码审查
 
-所有 Pull Request 需要经过代码审查：
+所有 Pull Request 需要经过代码审查。维护者使用详细的
+[维护者 Review 指南](docs/REVIEW_GUIDE_CN.md) 来确定 review 顺序、阻塞项和
+proof 要求：
 
-- 我们会尽快审查你的代码
-- 可能会要求一些修改
-- 请保持耐心并及时响应反馈
-- 审查通过后会被合并到主分支
+- 审查从 TPR 证据开始。缺少 proof 视为工作未完成，而不是让 reviewer 代为确认。
+- Reviewer 应先检查行为、归属边界、测试、打包/runtime 影响和文档，再看代码风格细节。
+- 对共享行为，Reviewer 需要确认改动没有在 CLI 和 ACP 中各自实现一份，除非有明确的入口特异性原因。
+- 对 skill 改动，Reviewer 需要检查 `box_agent/skills/_manifest.json` 以及是否影响 officev3 推荐卡片。
+- 对 packaged runtime 改动，Reviewer 需要判断源码测试是否足够，还是必须 rebuild/install/probe runtime。
+- 审查通过后会合并到主分支。
 
 ## 代码规范
 
@@ -198,4 +244,3 @@ async def test_my_tool():
 ---
 
 再次感谢你的贡献！ 🎉
-

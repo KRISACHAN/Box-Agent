@@ -188,6 +188,7 @@ Read these files first:
 
 - `AGENTS.md` — repo-local engineering rules and verification expectations.
 - `CONTRIBUTING.md` — contribution flow, PR checklist, and commit style.
+- `docs/REVIEW_GUIDE.md` — maintainer review order, blockers, and proof requirements.
 - `docs/DEVELOPMENT_GUIDE.md` — deeper architecture and development notes.
 - `docs/INTEGRATION.md` — ACP/runtime integration details for host apps.
 

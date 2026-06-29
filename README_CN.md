@@ -187,6 +187,7 @@ uv run pytest tests/test_core.py -q
 
 - `AGENTS.md` — 仓库本地开发规则、范围控制和验证要求。
 - `CONTRIBUTING_CN.md` — 贡献流程、PR checklist 和提交信息格式。
+- `docs/REVIEW_GUIDE_CN.md` — 维护者 review 顺序、阻塞项和 proof 要求。
 - `docs/DEVELOPMENT_GUIDE_CN.md` — 更完整的架构与开发说明。
 - `docs/INTEGRATION.md` — ACP / 独立运行时与宿主应用集成说明。
 

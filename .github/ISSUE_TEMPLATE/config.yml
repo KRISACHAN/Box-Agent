@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contribution guide
+    url: https://github.com/Raccoon-Office/Box-Agent/blob/main/CONTRIBUTING.md
+    about: Read the collaboration, TPR, and PR review rules before submitting code.
+  - name: Development guide
+    url: https://github.com/Raccoon-Office/Box-Agent/blob/main/docs/DEVELOPMENT_GUIDE.md
+    about: Architecture notes and local development workflow.

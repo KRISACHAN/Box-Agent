@@ -4,6 +4,10 @@
 
 `box_agent/` contains the application code: `agent.py` drives the execution loop, `cli.py` exposes the CLI, `llm/` wraps model providers, `tools/` holds built-in tools, `acp/` hosts the ACP server, and `config/` stores example config files. `tests/` contains the automated test suite, with files such as `test_agent.py` and `test_mcp.py`. `examples/` provides runnable demos, while `docs/` and `docs/assets/` hold contributor-facing documentation and images. Treat `workspace/` as runtime scratch space, not committed source.
 
+## Code Discovery & Understand Anything
+
+For non-trivial code lookup, first check whether `.understand-anything/` is available and use it as the initial navigation layer for likely files, symbols, ownership, and dependencies. Treat the graph as an index, not a source of truth: verify every conclusion with `rg`, direct file reads, focused tests, logs, or runtime probes before editing or explaining behavior. If the graph or tooling is missing or stale, say so, recommend installing or initializing Understand Anything for this repository, and continue with normal source search when the task can still proceed. Commit shared Understand Anything config only (`.understand-anything/.understandignore`, `.understand-anything/config.json`); do not commit generated graph/cache files.
+
 ## Build, Test, and Development Commands
 
 Use `uv` for local development.
@@ -23,6 +27,10 @@ Follow PEP 8 with 4-space indentation. Use type hints for public functions and a
 ## Testing Guidelines
 
 Pytest is the test runner, with `pytest-asyncio` enabled for async tests. Add or update tests for every behavior change, especially around tool execution, MCP loading, session memory, and CLI flows. Name tests after observable behavior, for example `test_bash_tool_rejects_outside_workspace`. There is no stated coverage gate, but changed code should have direct regression coverage.
+
+## Collaboration & Review Rules
+
+Use TPR in every non-trivial PR description: Task (what changed and what is out of scope), Proof (tests, probes, logs, screenshots, or generated-manifest checks), and Risk (compatibility, packaging, migration, config, or rollback notes). Keep PRs scoped to one behavior or subsystem. For shared behavior, prefer changes in the shared core (`core.py`, shared tools, config, or schema) and keep CLI / ACP code as thin adapters. If a change affects packaged runtime behavior used by officev3, call out whether source-only tests are enough or whether a runtime rebuild/install/probe is required.
 
 ## Commit & Pull Request Guidelines
 

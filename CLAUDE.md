@@ -20,6 +20,16 @@ In multi-developer environments, do not assume every checkout has a usable local
 
 Do not make code changes based only on the graph, and do not launch dashboards or long-running indexing commands unless the task explicitly needs them.
 
+## Collaboration and Review Rules
+
+For every non-trivial change, keep the TPR frame explicit:
+
+- Task: what behavior is changing, which entry points are affected, and what is intentionally out of scope.
+- Proof: the exact tests, probes, logs, screenshots, generated manifests, or runtime checks that prove the change.
+- Risk: compatibility, packaging/runtime, migration, config/secrets, rollback, and cross-repository impacts.
+
+Prefer small PRs with one behavioral purpose. Shared behavior belongs in shared core logic; CLI and ACP should stay thin adapters unless the request is entry-point-specific. If a source change affects officev3 or any packaged runtime path, explicitly state whether the runtime was rebuilt/installed/probed or whether verification is source-only.
+
 ## Project Overview
 
 Box-Agent is a minimal yet professional AI agent framework supporting multiple LLM providers (Anthropic, OpenAI-compatible, DeepSeek, SiliconFlow, and any third-party API). It features interleaved thinking, tool calling, MCP support, and a Claude Skills system.
