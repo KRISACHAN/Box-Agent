@@ -27,10 +27,11 @@ import threading
 from asyncio import transports as aio_transports
 from typing import cast
 
-# 4 MiB. Default asyncio limit (64 KiB) is too small for ACP frames that may
-# include base64-inlined images. 4 MiB comfortably fits a few screenshots plus
-# JSON overhead without giving up the safety net entirely.
-_READ_LIMIT = 4 * 1024 * 1024
+# 32 MiB. Default asyncio limit (64 KiB) is too small for ACP frames that may
+# include restored conversation context, generated artifacts, or base64-inlined
+# images. Keep an explicit ceiling, but leave enough room for large officev3
+# resume prompts so the ACP receive loop does not die before it can respond.
+_READ_LIMIT = 32 * 1024 * 1024
 
 
 class _WritePipeProtocol(asyncio.BaseProtocol):

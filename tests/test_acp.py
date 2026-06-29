@@ -14,6 +14,7 @@ from box_agent.acp import (
     _looks_like_plan_approval_text,
     _tool_result_raw_output,
 )
+from box_agent.acp.stdio_compat import _READ_LIMIT
 from box_agent.config import (
     AgentConfig,
     Config,
@@ -85,6 +86,10 @@ class DummyLLM:
         else:
             yield StreamEvent(type="text", delta="done")
             yield StreamEvent(type="finish", finish_reason="stop")
+
+
+def test_acp_stdio_reader_allows_large_resume_frames():
+    assert _READ_LIMIT >= 16 * 1024 * 1024
 
 
 @pytest.mark.asyncio
