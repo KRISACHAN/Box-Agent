@@ -2414,7 +2414,6 @@ async def run_agent(
                 f"{Colors.DIM}Thinking... (Esc to cancel){Colors.RESET}\n"
             )
             _apply_skill_filter(user_input)
-            await _apply_mcp_lazy()
             agent.add_user_message(user_input)
 
             # Create cancellation event

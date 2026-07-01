@@ -416,6 +416,11 @@ class McpServerStatus:
 _mcp_status: dict[str, McpServerStatus] = {}
 _mcp_loading: bool = False
 _mcp_config_path: str | None = None
+# Auth inputs from the last load_mcp_tools_async() call — reused by
+# reconnect_mcp_server() so a single-server hot reconnect gets the same
+# DynamicBearer / Authorization headers the cold-start path would build.
+_mcp_auth_file: str = ""
+_mcp_auth_token: str = ""
 
 
 def is_mcp_loading() -> bool:
@@ -554,18 +559,21 @@ async def load_mcp_tools_async(
     Returns:
         List of Tool objects representing MCP tools
     """
-    global _mcp_connections, _mcp_status, _mcp_loading, _mcp_config_path
+    global _mcp_connections, _mcp_status, _mcp_loading, _mcp_config_path, _mcp_auth_file, _mcp_auth_token
     _mcp_loading = True
-
-    config_file = _resolve_mcp_config_path(config_path)
-    if config_file is not None:
-        _mcp_config_path = str(config_file)
-
-    if config_file is None:
-        _warn(f"MCP config not found: {config_path}")
-        return []
-
+    # Remember the auth inputs so reconnect_mcp_server() can rebuild the same
+    # dynamic bearer / Authorization headers it would have used on cold start.
+    _mcp_auth_file = auth_file
+    _mcp_auth_token = auth_token
     try:
+        config_file = _resolve_mcp_config_path(config_path)
+        if config_file is not None:
+            _mcp_config_path = str(config_file)
+
+        if config_file is None:
+            _warn(f"MCP config not found: {config_path}")
+            return []
+
         with open(config_file, encoding="utf-8") as f:
             config = json.load(f)
 
@@ -728,6 +736,28 @@ async def reconnect_mcp_server(name: str) -> dict:
     command = server_config.get("command")
     transport_label = url or command or ""
 
+    # Mirror cold-start auth logic in load_mcp_tools_async(): compute a dynamic
+    # bearer if applicable, otherwise fold static Authorization headers in via
+    # request_auth_headers(). Without this a hot reconnect drops the token and
+    # hosted MCP endpoints (e.g. mcp.xiaohuanxiong.com) return 401 forever.
+    configured_headers = server_config.get("headers", {})
+    auth = _dynamic_bearer_auth_for_url(
+        url=url,
+        headers=configured_headers,
+        auth_file=_mcp_auth_file,
+        auth_token=_mcp_auth_token,
+    )
+    connection_headers = (
+        configured_headers
+        if auth is not None
+        else request_auth_headers(
+            auth_file=_mcp_auth_file,
+            explicit_token=_mcp_auth_token,
+            existing=configured_headers,
+            url=url,
+        )
+    )
+
     conn = MCPServerConnection(
         name=name,
         connection_type=conn_type,
@@ -735,7 +765,8 @@ async def reconnect_mcp_server(name: str) -> dict:
         args=server_config.get("args", []),
         env=server_config.get("env", {}),
         url=url,
-        headers=server_config.get("headers", {}),
+        headers=connection_headers,
+        auth=auth,
         connect_timeout=server_config.get("connect_timeout"),
         execute_timeout=server_config.get("execute_timeout"),
         sse_read_timeout=server_config.get("sse_read_timeout"),

@@ -611,6 +611,10 @@ class BoxACPAgent:
         self._skill_loader = skill_loader
         self._mcp_task = mcp_task  # background-loaded MCP tools; awaited on first prompt
         self._mcp_loaded = mcp_task is None  # True once MCP has been injected
+        # Guards against re-scheduling the deferred finalize task on subsequent
+        # prompts while the first one is still awaiting the background load.
+        # Distinct from `_mcp_loaded` — see `_ensure_mcp_loaded` for why.
+        self._mcp_finalize_scheduled = False
 
     def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
         """Update all live holders of the current system prompt."""
@@ -766,8 +770,13 @@ class BoxACPAgent:
             return
         if not self._mcp_task.done():
             # Don't block the prompt; inject tools in background when ready.
-            asyncio.create_task(self._finalize_mcp_load(), name="mcp-finalize")
-            self._mcp_loaded = True
+            # NOTE: do NOT flip _mcp_loaded here — the finalize task needs it
+            # to stay False so it can actually merge when the load completes.
+            # We use a separate scheduled flag to prevent re-arming on later
+            # prompts that also arrive before the load returns.
+            if not self._mcp_finalize_scheduled:
+                self._mcp_finalize_scheduled = True
+                asyncio.create_task(self._finalize_mcp_load(), name="mcp-finalize")
             return
         mcp_tools = await await_mcp_tools(self._mcp_task)
         merge_mcp_tools(self._base_tools, mcp_tools)
