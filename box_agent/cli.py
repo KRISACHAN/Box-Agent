@@ -370,6 +370,7 @@ def _config_summary(config: Config, config_path: Path, show_secrets: bool = Fals
             "max_steps": config.agent.max_steps,
             "workspace_dir": config.agent.workspace_dir,
             "max_parallel_tools": config.agent.max_parallel_tools,
+            "parallel_tool_timeout_seconds": config.agent.parallel_tool_timeout_seconds,
             "goal_autopilot_enabled": config.agent.goal_autopilot_enabled,
             "goal_autopilot_max_turns": config.agent.goal_autopilot_max_turns,
             "goal_autopilot_max_seconds": config.agent.goal_autopilot_max_seconds,
@@ -426,6 +427,7 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
     print(f"  workspace_dir     : {agent['workspace_dir']}")
     print(f"  max_steps         : {agent['max_steps']}")
     print(f"  max_parallel_tools: {agent['max_parallel_tools']}")
+    print(f"  parallel_timeout  : {agent['parallel_tool_timeout_seconds']}s")
     print(f"  goal_autopilot    : {agent['goal_autopilot_enabled']} ({agent['goal_autopilot_max_turns']} turns, {agent['goal_autopilot_max_seconds']}s, no-progress {agent['goal_autopilot_no_progress_turns']})")
     print(f"  enable_memory     : {agent['enable_memory']}")
 
@@ -2026,6 +2028,7 @@ async def run_agent(
         hooks=hooks,
         thinking_enabled=deep_think,
         max_parallel_tools=config.agent.max_parallel_tools,
+        parallel_tool_timeout_seconds=config.agent.parallel_tool_timeout_seconds,
         memory_promotion_enabled=config.agent.memory_promotion_proposal_enabled,
         memory_promotion_hit_threshold=config.agent.memory_promotion_hit_threshold,
         memory_promotion_cooldown_days=config.agent.memory_promotion_cooldown_days,

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "box_agent_version": "0.8.71",
-  "generated_at": "2026-06-26T10:02:42Z",
+  "generated_at": "2026-06-30T03:05:11Z",
   "skills": [
     {
       "name": "artifacts-builder",
@@ -38,6 +38,10 @@
     {
       "name": "html-templates",
       "path": "html-templates/SKILL.md"
+    },
+    {
+      "name": "hyperframes-video",
+      "path": "hyperframes-video/SKILL.md"
     },
     {
       "name": "internal-comms",

@@ -28,6 +28,15 @@ def test_from_meta_parses_known_fields() -> None:
             "paused": False,
             "available": False,
         },
+        "hyperframes": {
+            "installed": True,
+            "available": True,
+            "version": "0.7.20",
+            "browser": "managed-headless-shell",
+            "template": True,
+            "ffmpeg": True,
+            "ffprobe": True,
+        },
         "memory_configured": True,
     }
     ctx = EnvContext.from_meta(raw)
@@ -43,6 +52,14 @@ def test_from_meta_parses_known_fields() -> None:
     assert ctx.browser_connector.connected is False
     assert ctx.browser_connector.paused is False
     assert ctx.browser_connector.available is False
+    assert ctx.hyperframes is not None
+    assert ctx.hyperframes.installed is True
+    assert ctx.hyperframes.available is True
+    assert ctx.hyperframes.version == "0.7.20"
+    assert ctx.hyperframes.browser == "managed-headless-shell"
+    assert ctx.hyperframes.template is True
+    assert ctx.hyperframes.ffmpeg is True
+    assert ctx.hyperframes.ffprobe is True
     assert ctx.memory_configured is True
     assert ctx.extras == {}
 
@@ -286,6 +303,77 @@ def test_prompt_renders_image_service_unavailable() -> None:
     assert "不可用" in out
 
 
+def test_prompt_renders_hyperframes_available_policy() -> None:
+    ctx = EnvContext.from_meta(
+        {
+            "hyperframes": {
+                "installed": True,
+                "available": True,
+                "version": "0.7.20",
+                "browser": "managed-headless-shell",
+                "template": True,
+                "ffmpeg": True,
+                "ffprobe": True,
+            }
+        }
+    )
+    assert ctx is not None
+    assert ctx.hyperframes is not None
+    assert ctx.hyperframes.available is True
+
+    out = build_env_context_prompt(ctx)
+
+    assert "视频生成（HyperFrames）状态" in out
+    assert "available=true" in out
+    assert "version=0.7.20" in out
+    assert "browser=managed-headless-shell" in out
+    assert "不要否认视频工具" in out
+    assert "`hyperframes-video`" in out
+    assert "`HYPERFRAMES_RUNNER_PATH`" in out
+    assert "`HYPERFRAMES_CLI_PATH`" in out
+    assert "`HYPERFRAMES_TEMPLATE_DIR`" in out
+    assert "`$BOX_AGENT_NODE" in out
+    assert "StaticGuard stderr 当作失败" in out
+    assert 'cp -R "$HYPERFRAMES_TEMPLATE_DIR"/. <project-dir>/' in out
+    assert "`data-start`" in out
+    assert "`window.__timelines[...]`" in out
+    assert "`window.hyperframesReady` 必须等待资源 load/decode" in out
+    assert "contact sheet 做视觉验收" in out
+    assert "不要用 `rm -rf` 清理帧目录" in out
+    assert "npx --yes" in out
+    assert "7600 字符以内" in out
+    assert "Full tool-call argument omitted from model history" in out
+
+
+def test_prompt_renders_hyperframes_unavailable_policy() -> None:
+    ctx = EnvContext.from_meta(
+        {
+            "hyperframes": {
+                "installed": True,
+                "available": False,
+                "template": True,
+                "ffmpeg": False,
+                "ffprobe": True,
+            }
+        }
+    )
+
+    out = build_env_context_prompt(ctx)
+
+    assert "视频生成（HyperFrames）状态" in out
+    assert "available=false" in out
+    assert "ffmpeg=false" in out
+    assert "已安装但当前不可用" in out
+
+
+def test_hyperframes_absent_fields_skipped() -> None:
+    ctx = EnvContext.from_meta({"hyperframes": {}})
+    assert ctx is not None
+    assert ctx.hyperframes is not None
+    out = build_env_context_prompt(ctx)
+    assert "视频生成（HyperFrames）状态" not in out
+
+
 def test_image_service_absent_field_skipped() -> None:
     ctx = EnvContext.from_meta({"image_service": {}})
     assert ctx is not None
@@ -429,6 +517,29 @@ def test_runtimes_unknown_fields_do_not_enter_env_prompt() -> None:
     assert "secret" not in out
     assert "/should/not/render" not in out
     assert "/opt/node" not in out
+
+
+def test_hyperframes_drops_unsafe_labels() -> None:
+    ctx = EnvContext.from_meta(
+        {
+            "hyperframes": {
+                "installed": True,
+                "available": True,
+                "version": "0.7.20\n## injected",
+                "browser": "managed`bad`",
+            }
+        }
+    )
+    assert ctx is not None
+    assert ctx.hyperframes is not None
+    assert ctx.hyperframes.version is None
+    assert ctx.hyperframes.browser is None
+
+    out = build_env_context_prompt(ctx)
+
+    assert "0.7.20" not in out
+    assert "managed`bad`" not in out
+    assert "available=true" in out
 
 
 def test_cli_accepts_windows_absolute_path() -> None:

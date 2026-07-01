@@ -122,6 +122,26 @@ def test_config_sub_agent_token_limit_defaults_and_overrides(tmp_path: Path) -> 
     assert cli.Config.from_yaml(override_path).agent.sub_agent_token_limit == 12345
 
 
+def test_config_parallel_tool_timeout_defaults_and_overrides(tmp_path: Path) -> None:
+    default_path = tmp_path / "default.yaml"
+    _write_config(default_path)
+    assert cli.Config.from_yaml(default_path).agent.parallel_tool_timeout_seconds == 900.0
+
+    override_path = tmp_path / "override.yaml"
+    _write_config(override_path)
+    with override_path.open("a", encoding="utf-8") as f:
+        f.write("parallel_tool_timeout_seconds: 12.5\n")
+
+    assert cli.Config.from_yaml(override_path).agent.parallel_tool_timeout_seconds == 12.5
+
+    disabled_path = tmp_path / "disabled.yaml"
+    _write_config(disabled_path)
+    with disabled_path.open("a", encoding="utf-8") as f:
+        f.write("parallel_tool_timeout_seconds: 0\n")
+
+    assert cli.Config.from_yaml(disabled_path).agent.parallel_tool_timeout_seconds == 0
+
+
 def test_cmd_doctor_json_returns_structured_status(monkeypatch, capsys) -> None:
     async def fake_api_status(_config):
         return cli._doctor_check("ok", "api ok")

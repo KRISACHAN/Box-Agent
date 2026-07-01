@@ -80,6 +80,7 @@ from .loop_guards import (
 __all__ = ["run_agent_loop", "CompletionGate"]
 
 _log = logging.getLogger(__name__)
+PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import EventEmittingTool, Tool, ToolResult
 
@@ -1731,6 +1732,7 @@ async def run_agent_loop(
     pause_after_plan_write: bool = False,
     no_progress_limit: int | None = None,
     max_parallel_tools: int = 8,
+    parallel_tool_timeout_seconds: float | None = 900.0,
     completion_gate: CompletionGate | None = None,
     truncation_continuation_enabled: bool = True,
     max_truncation_continuations: int = 1,
@@ -1783,6 +1785,10 @@ async def run_agent_loop(
         pause_after_plan_write: If True, an organic ``plan_write`` call also
             becomes an approval boundary: the plan is published with pending
             approval and the turn ends before sibling or later tools execute.
+        parallel_tool_timeout_seconds: Wall-clock cap for one batch of
+            parallel_safe tool calls. When exceeded, completed results are kept
+            and unfinished calls receive synthetic timeout failures so the
+            parent turn can continue.
         artifact_detection_enabled: If False, skip output-directory artifact
             snapshotting and detection for sessions that edit an existing
             project tree directly.
@@ -2623,8 +2629,6 @@ async def run_agent_loop(
                 if isinstance(tool, EventEmittingTool):
                     # Wire queue, run in background, drain in foreground
                     event_queue: asyncio.Queue = asyncio.Queue()
-                    tool._event_queue = event_queue
-                    tool._parent_tool_call_id = tc_id
 
                     exec_done = asyncio.Event()
                     exec_result: ToolResult | None = None
@@ -2632,7 +2636,11 @@ async def run_agent_loop(
                     async def _seq_exec(t=tool, a=fn_args):
                         nonlocal exec_result
                         try:
-                            exec_result = await t.execute(**a)
+                            exec_result = await t.execute_with_event_context(
+                                event_queue=event_queue,
+                                parent_tool_call_id=tc_id,
+                                **a,
+                            )
                         except Exception as exc:
                             detail = f"{type(exc).__name__}: {exc!s}"
                             trace = traceback.format_exc()
@@ -2654,8 +2662,6 @@ async def run_agent_loop(
                     while not event_queue.empty():
                         yield event_queue.get_nowait()
                     await exec_task
-                    tool._event_queue = None
-                    tool._parent_tool_call_id = ""
                     result = exec_result  # type: ignore[assignment]
                 else:
                     try:
@@ -2891,15 +2897,10 @@ async def run_agent_loop(
                 if not allowed_to_execute:
                     par_budget_errors[tc.id] = internal_skip_error or ""
 
-            # Wire a shared event queue onto EventEmittingTool instances
+            # Shared event queue for EventEmittingTool progress. Parent call ids
+            # are passed per execution so parallel sub-agents do not race on
+            # shared mutable state.
             par_event_queue: asyncio.Queue[SubAgentEvent] = asyncio.Queue()
-            emitting_tools: list[EventEmittingTool] = []
-            for tc in parallel_calls:
-                tool = tools.get(tc.function.name)
-                if isinstance(tool, EventEmittingTool):
-                    tool._event_queue = par_event_queue
-                    tool._parent_tool_call_id = tc.id
-                    emitting_tools.append(tool)
 
             # Hard concurrency cap: even if the model emits dozens of
             # parallel_safe calls in one step, only max_parallel_tools run at
@@ -2916,7 +2917,17 @@ async def run_agent_loop(
                     return tc, ToolResult(success=False, content="", error=f"Unknown tool: {fn_name}")
                 try:
                     async with par_semaphore:
-                        r = await tools[fn_name].execute(**fn_args)
+                        tool = tools[fn_name]
+                        if isinstance(tool, EventEmittingTool):
+                            r = await tool.execute_with_event_context(
+                                event_queue=par_event_queue,
+                                parent_tool_call_id=tc.id,
+                                **fn_args,
+                            )
+                        else:
+                            r = await tool.execute(**fn_args)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
                     detail = f"{type(exc).__name__}: {exc!s}"
                     trace = traceback.format_exc()
@@ -2927,62 +2938,109 @@ async def run_agent_loop(
                     )
                 return tc, r
 
-            # Run gather in a background task; drain the queue in the
-            # foreground generator loop so events are yielded in real-time.
-            gather_done = asyncio.Event()
-            per_tc_tasks: dict[str, asyncio.Task] = {}
+            # Start each call independently. This lets us keep completed sibling
+            # results and synthesize failures for only the calls that overrun.
+            per_tc_tasks: dict[str, asyncio.Task] = {
+                tc.id: asyncio.create_task(_run_parallel(tc))
+                for tc in parallel_calls
+            }
 
-            async def _gather_wrapper():
+            def _consume_late_parallel_task(task: asyncio.Task) -> None:
                 try:
-                    coros = []
-                    for tc in parallel_calls:
-                        t = asyncio.ensure_future(_run_parallel(tc))
-                        per_tc_tasks[tc.id] = t
-                        coros.append(t)
-                    return await asyncio.gather(*coros, return_exceptions=True)
-                finally:
-                    gather_done.set()
+                    task.result()
+                except BaseException:
+                    pass
 
-            gather_task = asyncio.create_task(_gather_wrapper())
-
-            # Yield progress events as they arrive (real-time). Bail out early
-            # on cooperative cancellation so the in-flight tools don't block
-            # progress reporting back to the host.
+            timeout_seconds = (
+                parallel_tool_timeout_seconds
+                if parallel_tool_timeout_seconds is not None and parallel_tool_timeout_seconds > 0
+                else None
+            )
+            timeout_deadline = perf_counter() + timeout_seconds if timeout_seconds else None
+            timed_out = False
             cancel_observed = False
-            while not gather_done.is_set() or not par_event_queue.empty():
+            while True:
+                all_done = all(task.done() for task in per_tc_tasks.values())
+                if all_done and par_event_queue.empty():
+                    break
+                if timeout_deadline is not None and not all_done and perf_counter() >= timeout_deadline:
+                    timed_out = True
+                    _log.warning(
+                        "parallel tool batch timed out after %.1fs; continuing with partial results",
+                        timeout_seconds,
+                    )
+                    for task in per_tc_tasks.values():
+                        if not task.done():
+                            task.cancel()
+                    break
+                if cancelled() and not cancel_observed:
+                    cancel_observed = True
+                    for task in per_tc_tasks.values():
+                        if not task.done():
+                            task.cancel()
+                    break
                 try:
                     evt = await asyncio.wait_for(par_event_queue.get(), timeout=0.1)
                     yield evt
                 except (asyncio.TimeoutError, TimeoutError):
-                    if cancelled() and not cancel_observed:
-                        cancel_observed = True
-                        for t in per_tc_tasks.values():
-                            if not t.done():
-                                t.cancel()
                     continue
             # Drain any stragglers enqueued between the last get() and now
             while not par_event_queue.empty():
                 yield par_event_queue.get_nowait()
-
-            try:
-                gathered_raw = await gather_task  # already done
-            except Exception:
-                gathered_raw = []
+            if timed_out or cancel_observed:
+                _done, pending_tasks = await asyncio.wait(
+                    per_tc_tasks.values(),
+                    timeout=PARALLEL_TOOL_CANCEL_GRACE_SECONDS,
+                )
+                for task in pending_tasks:
+                    task.add_done_callback(_consume_late_parallel_task)
+                    task.cancel()
+                while not par_event_queue.empty():
+                    yield par_event_queue.get_nowait()
 
             # Build {tc_id: (tc, ToolResult)} mapping from gather output.
-            # asyncio.gather(..., return_exceptions=True) hands back the
-            # exception object for any task that raised — including
-            # CancelledError from cooperative cancellation above.
             results_by_id: dict[str, tuple[Any, ToolResult]] = {}
-            for tc_obj, raw in zip(parallel_calls, gathered_raw or []):
-                if isinstance(raw, BaseException):
-                    if isinstance(raw, asyncio.CancelledError):
+            for tc_obj in parallel_calls:
+                task = per_tc_tasks[tc_obj.id]
+                if not task.done():
+                    if timed_out and timeout_seconds:
+                        err = (
+                            f"Tool execution timed out after {timeout_seconds:g}s; "
+                            "continuing with partial parallel results."
+                        )
+                    elif cancel_observed:
                         err = "Tool execution cancelled before completion."
                     else:
-                        err = f"Tool execution failed: {type(raw).__name__}: {raw!s}"
-                    results_by_id[tc_obj.id] = (tc_obj, ToolResult(success=False, content="", error=err))
-                elif isinstance(raw, tuple) and len(raw) == 2:
-                    results_by_id[raw[0].id] = (raw[0], raw[1])
+                        err = "Tool execution interrupted — no result returned."
+                    results_by_id[tc_obj.id] = (
+                        tc_obj,
+                        ToolResult(success=False, content="", error=err),
+                    )
+                    continue
+
+                try:
+                    raw = task.result()
+                except asyncio.CancelledError:
+                    if timed_out and timeout_seconds:
+                        err = (
+                            f"Tool execution timed out after {timeout_seconds:g}s; "
+                            "continuing with partial parallel results."
+                        )
+                    else:
+                        err = "Tool execution cancelled before completion."
+                    results_by_id[tc_obj.id] = (
+                        tc_obj,
+                        ToolResult(success=False, content="", error=err),
+                    )
+                except BaseException as exc:
+                    err = f"Tool execution failed: {type(exc).__name__}: {exc!s}"
+                    results_by_id[tc_obj.id] = (
+                        tc_obj,
+                        ToolResult(success=False, content="", error=err),
+                    )
+                else:
+                    if isinstance(raw, tuple) and len(raw) == 2:
+                        results_by_id[raw[0].id] = (raw[0], raw[1])
 
             # Ensure every parallel tc has a result entry — synthesize a stub
             # if gather returned short for any reason. This guarantees one
@@ -2999,11 +3057,6 @@ async def run_agent_loop(
                     )
 
             gathered = [results_by_id[tc.id] for tc in parallel_calls]
-
-            # Clean up queue references
-            for tool in emitting_tools:
-                tool._event_queue = None
-                tool._parent_tool_call_id = ""
 
             # Accumulates absolute paths surfaced by the per-result regex layer
             # (and artifact raw_outputs), so the single post-batch diff pass

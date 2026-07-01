@@ -194,7 +194,27 @@ class SubAgentTool(EventEmittingTool):
         ErrorEvent,
     )
 
-    async def execute(self, task: str, title: str | None = None) -> ToolResult:  # type: ignore[override]
+    async def execute_with_event_context(
+        self,
+        *,
+        event_queue: asyncio.Queue,
+        parent_tool_call_id: str,
+        **kwargs: Any,
+    ) -> ToolResult:
+        return await self.execute(
+            **kwargs,
+            _event_queue=event_queue,
+            _parent_tool_call_id=parent_tool_call_id,
+        )
+
+    async def execute(  # type: ignore[override]
+        self,
+        task: str,
+        title: str | None = None,
+        *,
+        _event_queue: asyncio.Queue | None = None,
+        _parent_tool_call_id: str | None = None,
+    ) -> ToolResult:
         # Import here to avoid circular dependency (core → tools → core).
         from ..core import run_agent_loop
 
@@ -218,7 +238,12 @@ class SubAgentTool(EventEmittingTool):
         # late-loaded tools (e.g. MCP web_search) are inherited.
         child_tools = self._resolve_child_tools()
 
-        queue = self._event_queue
+        queue = _event_queue if _event_queue is not None else self._event_queue
+        parent_tool_call_id = (
+            _parent_tool_call_id
+            if _parent_tool_call_id is not None
+            else self._parent_tool_call_id
+        )
         # Single-line preview: collapse whitespace, truncate
         task_preview = " ".join(task.split())[:50]
         # Short, distinct label provided by the parent model. Falls back to the
@@ -255,7 +280,7 @@ class SubAgentTool(EventEmittingTool):
                 elif queue is not None and isinstance(event, self._FORWARD_TYPES):
                     queue.put_nowait(
                         SubAgentEvent(
-                            parent_tool_call_id=self._parent_tool_call_id,
+                            parent_tool_call_id=parent_tool_call_id,
                             task_preview=task_preview,
                             event=event,
                             sub_agent_id=sub_agent_id,
@@ -267,7 +292,7 @@ class SubAgentTool(EventEmittingTool):
                 for tc_id, tool_name in pending_child_tc.items():
                     queue.put_nowait(
                         SubAgentEvent(
-                            parent_tool_call_id=self._parent_tool_call_id,
+                            parent_tool_call_id=parent_tool_call_id,
                             task_preview=task_preview,
                             event=ToolCallResult(
                                 tool_call_id=tc_id,

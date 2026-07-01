@@ -76,3 +76,25 @@ class EventEmittingTool(Tool):
         # Set by core.py before execution to collect progress events.
         self._event_queue: asyncio.Queue | None = None
         self._parent_tool_call_id: str = ""
+
+    async def execute_with_event_context(
+        self,
+        *,
+        event_queue: asyncio.Queue,
+        parent_tool_call_id: str,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """Execute with progress events routed to a parent tool call.
+
+        Subclasses that are truly parallel-safe should override this if they
+        need per-call context without shared mutable state.
+        """
+        previous_queue = self._event_queue
+        previous_parent_tool_call_id = self._parent_tool_call_id
+        self._event_queue = event_queue
+        self._parent_tool_call_id = parent_tool_call_id
+        try:
+            return await self.execute(**kwargs)
+        finally:
+            self._event_queue = previous_queue
+            self._parent_tool_call_id = previous_parent_tool_call_id

@@ -120,6 +120,10 @@ class AgentConfig(BaseModel):
     # against a prompt like "spawn as many sub-agents as possible" exhausting
     # LLM rate limits / processes / memory.
     max_parallel_tools: int = 8
+    # Wall-clock cap for one batch of parallel_safe tool calls. Completed
+    # sibling results are kept; unfinished siblings get synthetic timeout
+    # failures so the parent can continue instead of waiting forever.
+    parallel_tool_timeout_seconds: float = 900.0
     # Per-call token budget for sub-agent child contexts before they summarize.
     # The child runs in an isolated context, so this is independent of the main
     # loop's context_token_limit. Single source of truth for the value that was
@@ -405,10 +409,16 @@ class Config(BaseModel):
         )
 
         # Parse Agent configuration
+        parallel_tool_timeout_raw = data.get("parallel_tool_timeout_seconds", 900.0)
         agent_config = AgentConfig(
             max_steps=data.get("max_steps", 200),
             workspace_dir=data.get("workspace_dir", "./workspace"),
             max_parallel_tools=data.get("max_parallel_tools", 8),
+            parallel_tool_timeout_seconds=float(
+                parallel_tool_timeout_raw
+                if parallel_tool_timeout_raw is not None
+                else 900.0
+            ),
             sub_agent_token_limit=data.get("sub_agent_token_limit", 40_000),
             goal_autopilot_enabled=data.get("goal_autopilot_enabled", True),
             goal_autopilot_max_turns=data.get("goal_autopilot_max_turns", 3),

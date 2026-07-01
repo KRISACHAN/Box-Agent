@@ -141,6 +141,7 @@ _GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES: dict[str, tuple[str, ...]] = {
     "docx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["docx"],
     "xlsx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["xlsx"],
 }
+_HOST_RUNTIME_PRELOAD_SKILLS: frozenset[str] = frozenset({"hyperframes-video"})
 
 
 try:
@@ -650,6 +651,42 @@ class BoxACPAgent:
                 preload.append(skill_name)
         return preload
 
+    def _host_runtime_preload_skill_names(
+        self,
+        matched_skill_names: tuple[str, ...],
+        env_context: EnvContext | None,
+    ) -> list[str]:
+        if env_context is None or env_context.hyperframes is None:
+            return []
+        if env_context.hyperframes.available is not True:
+            return []
+        return [
+            skill_name
+            for skill_name in matched_skill_names
+            if skill_name in _HOST_RUNTIME_PRELOAD_SKILLS
+        ]
+
+    def _turn_preload_skill_names(
+        self,
+        matched_skill_names: tuple[str, ...],
+        completion_gate: CompletionGate | None,
+        env_context: EnvContext | None,
+    ) -> list[str]:
+        preload: list[str] = []
+        for skill_name in self._document_preload_skill_names(
+            matched_skill_names,
+            completion_gate,
+        ):
+            if skill_name not in preload:
+                preload.append(skill_name)
+        for skill_name in self._host_runtime_preload_skill_names(
+            matched_skill_names,
+            env_context,
+        ):
+            if skill_name not in preload:
+                preload.append(skill_name)
+        return preload
+
     def _apply_auto_loaded_skills(
         self,
         state: SessionState,
@@ -699,9 +736,10 @@ class BoxACPAgent:
         base_prompt = self._strip_auto_loaded_skills(state.agent.system_prompt).rstrip()
         preloaded_prompt = (
             f"{base_prompt}\n\n{_AUTO_LOADED_SKILLS_HEADING}\n"
-            "The following matched or required document skills are preloaded because this turn "
-            "requires an editable deliverable. Follow their full instructions before "
-            "planning, delegating, or authoring the artifact.\n\n"
+            "The following matched or required skills are preloaded because this turn "
+            "requires a concrete deliverable or host-provided runtime workflow. Follow "
+            "their full instructions before planning, delegating, or authoring the "
+            "artifact.\n\n"
             + "\n\n".join(blocks)
         )
         if state.agent.system_prompt == preloaded_prompt:
@@ -996,6 +1034,7 @@ class BoxACPAgent:
             token_limit=self._config.llm.context_token_limit,
             thinking_enabled=deep_think,
             max_parallel_tools=self._config.agent.max_parallel_tools,
+            parallel_tool_timeout_seconds=self._config.agent.parallel_tool_timeout_seconds,
             memory_promotion_enabled=self._config.agent.memory_promotion_proposal_enabled,
             memory_promotion_hit_threshold=self._config.agent.memory_promotion_hit_threshold,
             memory_promotion_cooldown_days=self._config.agent.memory_promotion_cooldown_days,
@@ -1365,9 +1404,10 @@ class BoxACPAgent:
             )
 
         if state.skill_selector is not None:
-            preload_names = self._document_preload_skill_names(
+            preload_names = self._turn_preload_skill_names(
                 state.skill_selector.matched_skill_names,
                 completion_gate,
+                state.env_context,
             )
             if preload_names:
                 self._apply_auto_loaded_skills(state, session_id, preload_names)
@@ -2205,6 +2245,7 @@ class BoxACPAgent:
             inject_queue=state.inject_queue,
             thinking_enabled=agent.thinking_enabled,
             session_id=state.upstream_session_id,
+            parallel_tool_timeout_seconds=agent.parallel_tool_timeout_seconds,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             plan_approval=plan_approval,

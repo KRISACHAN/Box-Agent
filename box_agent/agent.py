@@ -423,6 +423,7 @@ class Agent:
         memory_promotion_hit_threshold: int = 5,
         memory_promotion_cooldown_days: int = 14,
         max_parallel_tools: int = 8,
+        parallel_tool_timeout_seconds: float | None = 900.0,
         truncation_continuation_enabled: bool = True,
         max_truncation_continuations: int = 1,
     ):
@@ -430,6 +431,7 @@ class Agent:
         self.tools = {tool.name: tool for tool in tools}
         self.max_steps = max_steps
         self.max_parallel_tools = max_parallel_tools
+        self.parallel_tool_timeout_seconds = parallel_tool_timeout_seconds
         self.truncation_continuation_enabled = truncation_continuation_enabled
         self.max_truncation_continuations = max_truncation_continuations
         self.token_limit = token_limit
@@ -661,6 +663,7 @@ class Agent:
             inject_queue=self.inject_queue,
             thinking_enabled=self.thinking_enabled,
             max_parallel_tools=self.max_parallel_tools,
+            parallel_tool_timeout_seconds=self.parallel_tool_timeout_seconds,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             plan_approval=plan_approval,

@@ -1664,6 +1664,74 @@ async def test_max_parallel_tools_caps_concurrency():
 
 
 @pytest.mark.asyncio
+async def test_parallel_tool_timeout_keeps_completed_siblings():
+    class PartlyHangingTool(Tool):
+        parallel_safe = True
+
+        def __init__(self):
+            self.cancelled = False
+
+        @property
+        def name(self):
+            return "probe"
+
+        @property
+        def description(self):
+            return "probe"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"task": {"type": "string"}}}
+
+        async def execute(self, task: str):
+            if task == "hang":
+                try:
+                    await asyncio.sleep(10)
+                finally:
+                    self.cancelled = True
+            await asyncio.sleep(0.01)
+            return ToolResult(success=True, content=f"ok:{task}")
+
+    probe = PartlyHangingTool()
+    responses = [
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(id="fast", type="function", function=FunctionCall(name="probe", arguments={"task": "fast"})),
+                ToolCall(id="hang", type="function", function=FunctionCall(name="probe", arguments={"task": "hang"})),
+            ],
+            finish_reason="tool",
+        ),
+        LLMResponse(content="merged", finish_reason="stop"),
+    ]
+
+    events = await collect(
+        run_agent_loop(
+            llm=MockLLM(responses),
+            messages=_msgs(),
+            tools={"probe": probe},
+            max_steps=5,
+            max_parallel_tools=2,
+            parallel_tool_timeout_seconds=0.03,
+        )
+    )
+
+    results = [
+        e
+        for e in events
+        if isinstance(e, ToolCallResult) and e.tool_name == "probe"
+    ]
+    assert len(results) == 2
+    by_id = {result.tool_call_id: result for result in results}
+    assert by_id["fast"].success is True
+    assert by_id["fast"].content == "ok:fast"
+    assert by_id["hang"].success is False
+    assert "timed out" in (by_id["hang"].error or "")
+    assert probe.cancelled is True
+    assert any(isinstance(e, ContentEvent) and e.content == "merged" for e in events)
+
+
+@pytest.mark.asyncio
 async def test_llm_error():
     """LLM exception yields ErrorEvent + Done(ERROR)."""
 

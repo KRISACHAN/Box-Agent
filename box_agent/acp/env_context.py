@@ -40,6 +40,7 @@ _KNOWN_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "platform",
         "browser_tools",
         "browser_connector",
+        "hyperframes",
         "image_service",
         "memory_configured",
         "runtimes",
@@ -211,6 +212,27 @@ def _sanitize_obsidian(raw: Any) -> dict[str, Any]:
     return cleaned
 
 
+def _sanitize_hyperframes(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+
+    cleaned: dict[str, Any] = {}
+    for field_name in ("installed", "available", "template", "ffmpeg", "ffprobe"):
+        value = raw.get(field_name)
+        if isinstance(value, bool):
+            cleaned[field_name] = value
+
+    version = _sanitize_label(raw.get("version"), max_len=32)
+    if version is not None:
+        cleaned["version"] = version
+
+    browser = _sanitize_label(raw.get("browser"), max_len=64)
+    if browser is not None:
+        cleaned["browser"] = browser
+
+    return cleaned
+
+
 class BrowserToolsState(BaseModel):
     """Whether host-side browser tooling is installed/enabled.
 
@@ -253,6 +275,20 @@ class ImageServiceState(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     available: bool | None = None
+
+
+class HyperFramesState(BaseModel):
+    """Whether the host-side HyperFrames video runtime is usable."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    installed: bool | None = None
+    available: bool | None = None
+    version: str | None = None
+    browser: str | None = None
+    template: bool | None = None
+    ffmpeg: bool | None = None
+    ffprobe: bool | None = None
 
 
 class HostRuntime(BaseModel):
@@ -299,6 +335,7 @@ class EnvContext(BaseModel):
     platform: str | None = None
     browser_tools: BrowserToolsState | None = None
     browser_connector: BrowserConnectorState | None = None
+    hyperframes: HyperFramesState | None = None
     image_service: ImageServiceState | None = None
     memory_configured: bool | None = None
     runtimes: dict[str, HostRuntime] = Field(default_factory=dict)
@@ -332,6 +369,8 @@ class EnvContext(BaseModel):
             known["runtimes"] = _sanitize_runtimes(known["runtimes"])
         if "obsidian" in known:
             known["obsidian"] = _sanitize_obsidian(known["obsidian"])
+        if "hyperframes" in known:
+            known["hyperframes"] = _sanitize_hyperframes(known["hyperframes"])
 
         try:
             ctx = cls.model_validate(known)
@@ -348,6 +387,7 @@ class EnvContext(BaseModel):
             or self.platform
             or self.browser_tools is not None
             or self.browser_connector is not None
+            or self.hyperframes is not None
             or self.image_service is not None
             or self.memory_configured is not None
             or self.obsidian is not None
@@ -473,6 +513,70 @@ def _format_image_service(state: ImageServiceState) -> list[str]:
     return [f"- 生图服务状态：{label}"]
 
 
+def _format_hyperframes(state: HyperFramesState) -> list[str]:
+    if (
+        state.installed is None
+        and state.available is None
+        and state.version is None
+        and state.browser is None
+        and state.template is None
+        and state.ffmpeg is None
+        and state.ffprobe is None
+    ):
+        return []
+
+    parts = []
+    if state.installed is not None:
+        parts.append(f"installed={str(state.installed).lower()}")
+    if state.available is not None:
+        parts.append(f"available={str(state.available).lower()}")
+    if state.version is not None:
+        parts.append(f"version={state.version}")
+    if state.browser is not None:
+        parts.append(f"browser={state.browser}")
+    if state.template is not None:
+        parts.append(f"template={str(state.template).lower()}")
+    if state.ffmpeg is not None:
+        parts.append(f"ffmpeg={str(state.ffmpeg).lower()}")
+    if state.ffprobe is not None:
+        parts.append(f"ffprobe={str(state.ffprobe).lower()}")
+
+    lines = [f"- 视频生成（HyperFrames）状态：{', '.join(parts)}"]
+    if state.available is True:
+        lines.append(
+            "  - 用户要求生成视频、动画、MP4/GIF、motion graphics、短片或可渲染 HTML 动画时，"
+            "不要否认视频工具；优先加载 `hyperframes-video` skill。"
+        )
+        lines.append(
+            "  - 宿主已注入 `HYPERFRAMES_RUNNER_PATH`、`HYPERFRAMES_CLI_PATH`、`HYPERFRAMES_TEMPLATE_DIR`、"
+            "`HYPERFRAMES_BROWSER_PATH`、`HYPERFRAMES_FFMPEG_PATH`、`HYPERFRAMES_FFPROBE_PATH` "
+            "等环境变量。优先用 bash 通过 `$BOX_AGENT_NODE \"$HYPERFRAMES_RUNNER_PATH\" ...` "
+            "执行 inspect/render；runner 会把 StaticGuard stderr 当作失败、解析实际 MP4 输出并用 ffprobe 验收。"
+            "`HYPERFRAMES_TEMPLATE_DIR` 指向模板根目录本身，可能已经是 `templates/basic-composition`，"
+            "复制时使用 `cp -R \"$HYPERFRAMES_TEMPLATE_DIR\"/. <project-dir>/`，不要再拼一层 `/basic-composition`。"
+            "inspect/render 参数传项目目录 `.`，不要传 `index.html`；render 不要把 composition id 当作 "
+            "`--composition` 文件路径；项目根只保留一个带 `data-composition-id` 的 HTML。不要使用 `npx --yes` 或临时安装。"
+        )
+        lines.append(
+            "  - 生成 HyperFrames HTML 时，单次 `write_file`/`append_file` 的 content 控制在 7600 字符以内；"
+            "首版优先写一个完整、紧凑、可严格渲染的小 composition，并保留根节点 "
+            "`data-composition-id`、`data-start`、`data-duration`、`data-width`、`data-height` "
+            "和匹配的 `window.__timelines[...]` 注册，再迭代丰富。"
+            "使用本地图片/截图/视频/字体时，`window.hyperframesReady` 必须等待资源 load/decode；"
+            "渲染后必须抽帧或生成 contact sheet 做视觉验收，不能只凭 ffprobe 通过就宣布完成。"
+            "生成 contact sheet 时不要用 `rm -rf` 清理帧目录，改用新的子目录或覆盖固定帧文件，避免触发危险命令确认。"
+            "不要复制 `[Full tool-call argument omitted from model history]` 这类历史占位文本。"
+        )
+    elif state.installed is True:
+        lines.append(
+            "  - HyperFrames 已安装但当前不可用：先检查模板、浏览器、ffmpeg/ffprobe 状态；"
+            "不要承诺已完成视频渲染。"
+        )
+    else:
+        lines.append("- HyperFrames 不可用：不要计划调用视频渲染链路，除非用户先启用/安装相关运行时。")
+    return lines
+
+
 def _format_obsidian(state: ObsidianState) -> list[str]:
     parts: list[str] = []
     if state.enabled is not None:
@@ -524,6 +628,8 @@ def build_env_context_prompt(ctx: EnvContext | None) -> str:
     if ctx.browser_connector is not None:
         lines.extend(_format_browser_connector(ctx.browser_connector))
     lines.extend(_format_browser_capability_policy(ctx.browser_tools, ctx.browser_connector))
+    if ctx.hyperframes is not None:
+        lines.extend(_format_hyperframes(ctx.hyperframes))
     if ctx.image_service is not None:
         lines.extend(_format_image_service(ctx.image_service))
     if ctx.obsidian is not None:

@@ -48,6 +48,23 @@ def loader() -> SkillLoader:
             source="builtin",
             keywords=["template", "visual", "style", "视觉风格"],
         ),
+        "hyperframes-video": Skill(
+            name="hyperframes-video",
+            description="create render export short video animation MP4 motion graphics",
+            content="",
+            source="builtin",
+            keywords=[
+                "video",
+                "mp4",
+                "animation",
+                "hyperframes",
+                "视频",
+                "动画",
+                "生成视频",
+                "做视频",
+            ],
+            related_skills=["html-templates"],
+        ),
         "xlsx": Skill(
             name="xlsx",
             description="Excel spreadsheet 表格",
@@ -124,6 +141,16 @@ class TestFilterByQuery:
     def test_excel_query_matches_xlsx(self, loader: SkillLoader):
         names = [s.name for s in loader.filter_by_query("分析excel数据")]
         assert "xlsx" in names
+
+    def test_video_query_matches_hyperframes_video(self, loader: SkillLoader):
+        names = [s.name for s in loader.filter_by_query("帮我做一个方块掉落的视频")]
+        assert "hyperframes-video" in names
+        assert "html-templates" in names
+        assert "pptx" not in names
+
+    def test_mp4_query_matches_hyperframes_video(self, loader: SkillLoader):
+        names = [s.name for s in loader.filter_by_query("render this animation as mp4")]
+        assert "hyperframes-video" in names
 
     def test_industry_research_query_matches_research_synthesis(
         self, loader: SkillLoader

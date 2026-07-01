@@ -1553,6 +1553,149 @@ async def test_acp_preloads_matched_pptx_skill_for_deliverable(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_preloads_hyperframes_skill_when_runtime_available(tmp_path):
+    skills_dir = tmp_path / "skills"
+    hyperframes_dir = skills_dir / "hyperframes-video"
+    hyperframes_dir.mkdir(parents=True)
+    (hyperframes_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: hyperframes-video\n"
+        "description: Create and render MP4 videos with the host HyperFrames runtime.\n"
+        "keywords: [video, mp4, animation, hyperframes, 生成视频, 做视频]\n"
+        "---\n"
+        "# HYPERFRAMES VIDEO FULL RULES\n"
+        "Use the bundled HyperFrames runtime and render with strict validation.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = CaptureMessagesLLM()
+    prompt_capture = ParentPromptCaptureTool()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        llm,
+        [prompt_capture],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=None,
+            field_meta={
+                "session_mode": "general",
+                "env_context": {
+                    "hyperframes": {
+                        "installed": True,
+                        "available": True,
+                        "template": True,
+                        "ffmpeg": True,
+                        "ffprobe": True,
+                    }
+                },
+            },
+        )
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "把这张图做成一个 8 秒 MP4 视频动画"}],
+        )
+    )
+
+    state = agent._sessions[session.sessionId]
+    first_system_prompt = llm.calls[0][0][1]
+    assert "hyperframes-video" in state.skill_selector.matched_skill_names
+    assert "## Auto-Loaded Skill Instructions" in first_system_prompt
+    assert "# Skill: hyperframes-video" in first_system_prompt
+    assert "# HYPERFRAMES VIDEO FULL RULES" in first_system_prompt
+    assert prompt_capture.parent_system_prompt == first_system_prompt
+    assert state.preloaded_skill_names == ["hyperframes-video"]
+    turn_usage_outputs = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "rawOutput", None)
+        and isinstance(update.update.rawOutput, dict)
+        and update.update.rawOutput.get("type") == "turn_usage"
+    ]
+    assert turn_usage_outputs[-1]["skills"] == ["hyperframes-video"]
+
+
+@pytest.mark.asyncio
+async def test_acp_does_not_preload_hyperframes_skill_when_runtime_unavailable(tmp_path):
+    skills_dir = tmp_path / "skills"
+    hyperframes_dir = skills_dir / "hyperframes-video"
+    hyperframes_dir.mkdir(parents=True)
+    (hyperframes_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: hyperframes-video\n"
+        "description: Create and render MP4 videos with the host HyperFrames runtime.\n"
+        "keywords: [video, mp4, animation, hyperframes, 生成视频, 做视频]\n"
+        "---\n"
+        "# HYPERFRAMES VIDEO FULL RULES\n"
+        "Use the bundled HyperFrames runtime and render with strict validation.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = CaptureMessagesLLM()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        llm,
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=None,
+            field_meta={
+                "session_mode": "general",
+                "env_context": {
+                    "hyperframes": {
+                        "installed": True,
+                        "available": False,
+                        "template": True,
+                        "ffmpeg": True,
+                        "ffprobe": True,
+                    }
+                },
+            },
+        )
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "把这张图做成一个 8 秒 MP4 视频动画"}],
+        )
+    )
+
+    state = agent._sessions[session.sessionId]
+    first_system_prompt = llm.calls[0][0][1]
+    assert "hyperframes-video" in state.skill_selector.matched_skill_names
+    assert "## Auto-Loaded Skill Instructions" not in first_system_prompt
+    assert "# HYPERFRAMES VIDEO FULL RULES" not in first_system_prompt
+    assert state.preloaded_skill_names == []
+
+
+@pytest.mark.asyncio
 async def test_acp_preloads_required_skill_for_document_deliverable(tmp_path):
     skills_dir = tmp_path / "skills"
     pptx_dir = skills_dir / "pptx"

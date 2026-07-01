@@ -509,6 +509,57 @@ async def test_parallel_execution_in_core():
     assert execution_order[1].startswith("start:")
 
 
+@pytest.mark.asyncio
+async def test_parallel_sub_agent_progress_keeps_parent_tool_call_id():
+    class TaskEchoLLM:
+        async def generate(self, messages, tools=None):
+            return LLMResponse(content=f"done {messages[-1].content}", finish_reason="stop")
+
+        async def generate_stream(self, messages, tools=None, **kwargs):
+            task = messages[-1].content
+            await asyncio.sleep(0.02 if task == "A" else 0.01)
+            yield StreamEvent(type="text", delta=f"done {task}")
+            yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
+
+    tool = SubAgentTool(llm=TaskEchoLLM(), parent_tools={}, max_steps=1)
+    queue: asyncio.Queue[SubAgentEvent] = asyncio.Queue()
+
+    result_a, result_b = await asyncio.gather(
+        tool.execute_with_event_context(
+            event_queue=queue,
+            parent_tool_call_id="parent-a",
+            task="A",
+            title="A",
+        ),
+        tool.execute_with_event_context(
+            event_queue=queue,
+            parent_tool_call_id="parent-b",
+            task="B",
+            title="B",
+        ),
+    )
+
+    assert result_a.success is True
+    assert result_b.success is True
+
+    events: list[SubAgentEvent] = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+
+    assert events
+    assert {event.title for event in events} == {"A", "B"}
+    assert {
+        event.parent_tool_call_id
+        for event in events
+        if event.title == "A"
+    } == {"parent-a"}
+    assert {
+        event.parent_tool_call_id
+        for event in events
+        if event.title == "B"
+    } == {"parent-b"}
+
+
 def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
     """config.agent.sub_agent_token_limit flows into the SubAgentTool instance."""
     from box_agent.config import AgentConfig, ToolsConfig
