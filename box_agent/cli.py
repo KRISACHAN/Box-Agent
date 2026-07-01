@@ -1457,7 +1457,8 @@ def _doctor_sandbox_status() -> dict[str, Any]:
 
 
 def _doctor_mcp_status() -> dict[str, Any]:
-    mcp_path = Config.find_config_file("mcp.json")
+    _user_mcp = Path.home() / ".box-agent" / "config" / "mcp.json"
+    mcp_path = _user_mcp if _user_mcp.exists() else Config.find_config_file("mcp.json")
     if mcp_path:
         return _doctor_check("ok", str(mcp_path), config_file=str(mcp_path))
     return _doctor_check("warning", "mcp.json not found (optional)")
@@ -2070,21 +2071,6 @@ async def run_agent(
         if new_prompt is not None:
             agent.messages[0].content = new_prompt
 
-    async def _apply_mcp_lazy() -> None:
-        """Load lazy MCP servers matching the cumulative skill-selector query.
-
-        Re-uses ``SkillSelector.cumulative_query`` so the lazy-MCP gating
-        decision tracks the same intent signal as skill filtering. Newly
-        loaded tools are merged into ``agent.tools`` via the existing
-        ``register_mcp_tools`` helper (same semantics as the startup load).
-        """
-        if skill_selector is None:
-            return
-        from box_agent.tools.mcp_loader import ensure_lazy_mcp_loaded
-        new_tools = await ensure_lazy_mcp_loaded(skill_selector.cumulative_query)
-        if new_tools:
-            register_mcp_tools(agent.tools, new_tools)
-
     # 8. Display welcome information
     if not task:
         print_banner()
@@ -2098,7 +2084,6 @@ async def run_agent(
         # Block on MCP only when user is actually about to run
         register_mcp_tools(agent.tools, await await_mcp_tools(mcp_task))
         _apply_skill_filter(task)
-        await _apply_mcp_lazy()
         agent.add_user_message(task)
         completion_gate = (
             build_auto_completion_gate(task, workspace_dir)

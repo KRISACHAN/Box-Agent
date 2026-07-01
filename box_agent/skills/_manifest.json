@@ -126,6 +126,10 @@
     {
       "name": "writing-workflow",
       "path": "writing-workflow/SKILL.md"
+    },
+    {
+      "name": "mcp-config",
+      "path": "mcp-config/SKILL.md"
     }
   ]
 }
