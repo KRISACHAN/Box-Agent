@@ -1,7 +1,7 @@
 ---
 name: hyperframes-video
-description: Use when the user asks to create, render, export, or preview a short video, animation, MP4/GIF, motion graphic, title card, explainer clip, or frame-accurate HTML animation using the host-provided HyperFrames runtime.
-keywords: [video, videos, animation, mp4, gif, render, hyperframes, motion, motion-graphics, explainer, title-card, 视频, 动画, 短片, 渲染, 生成视频, 做视频, 导出视频]
+description: Use when the user asks to create, render, export, preview, or faithfully convert a short video, animation, MP4/GIF, motion graphic, title card, explainer clip, existing HTML page, or frame-accurate HTML animation using the host-provided HyperFrames runtime.
+keywords: [video, videos, animation, mp4, gif, render, hyperframes, motion, motion-graphics, explainer, title-card, html-to-video, webpage-to-video, 视频, 动画, 短片, 渲染, 生成视频, 做视频, 导出视频, HTML转视频, 网页转视频, 页面转视频]
 related_skills: [html-templates]
 ---
 
@@ -20,6 +20,19 @@ Use the host-provided HyperFrames runtime for video deliverables when it is avai
 - Start from `$HYPERFRAMES_TEMPLATE_DIR` when it exists; it contains the stable composition contract. Treat it as the template root itself, not a templates parent. It may already end in `templates/basic-composition`, so copy it with `cp -R "$HYPERFRAMES_TEMPLATE_DIR"/. <project-dir>/` and use vendor assets from `"$HYPERFRAMES_TEMPLATE_DIR/vendor"`; do not append another `/basic-composition`.
 - Write generated videos under the workspace output/artifact directory unless the user named another path.
 - Render with `--strict` first. If strict fails, fix the composition and retry rather than handing raw CLI errors to the user.
+
+## Existing HTML / Webpage to Video
+
+Use this branch when the user asks to convert an existing HTML file, folder, webpage, landing page, or "这里面的 html" into video. The goal is fidelity, not redesign.
+
+- Preserve the original page's text, layout, assets, colors, and existing CSS/JS animation. Do not rewrite the page into a new creative composition, change button copy, invent new titles, or create a lookalike page.
+- First inspect the real entry file (`index.html`, linked CSS/JS, and local assets), then open that exact page in a browser at the target viewport. If the original page renders, capture that page; do not rebuild it from memory.
+- Prefer recording or screenshotting the original page with the managed Chromium/Playwright environment and encoding frames with the managed ffmpeg. This is the right fallback for normal CSS transitions, DOM animations, and non-seekable JavaScript effects.
+- For direct capture, use the host-managed Node/Playwright already exposed through `NODE_PATH`; do not install anything. Launch Chromium with `process.env.BOX_AGENT_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.HYPERFRAMES_BROWSER_PATH`, record the source `file://.../index.html` with Playwright `recordVideo`, then convert the recorded WebM to MP4 with `$HYPERFRAMES_FFMPEG_PATH`.
+- Use HyperFrames only as a thin capture wrapper when it preserves the original page. If an iframe/wrapper capture shows a blank page, missing fonts/images, wrong text, or only a background color, treat it as a failed render and switch to direct browser frame capture of the original HTML.
+- Keep generated files small and purposeful: final MP4, a contact sheet, and minimal capture scaffolding. Do not copy an entire site tree into the final artifact unless relative asset paths require a local staging copy.
+- Before reporting success, compare sampled frames against the original browser rendering. Key text, logo, buttons, hero image, and visible animation state must match the source page. A readable MP4 with changed copy/layout, blank frames, or a fake recreated scene is a failure.
+- If the user explicitly asks to create new video effects from scratch, remix a still image, or design a motion graphic rather than convert an existing page, use the composition workflow below.
 
 ## Artifact Size Guardrails
 

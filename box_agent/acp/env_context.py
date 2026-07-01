@@ -548,6 +548,11 @@ def _format_hyperframes(state: HyperFramesState) -> list[str]:
             "不要否认视频工具；优先加载 `hyperframes-video` skill。"
         )
         lines.append(
+            "  - 用户要求把现有 HTML、网页、页面或站点转成视频时，优先保真录制原页面的真实渲染结果；"
+            "不要重写文案、重做布局或生成相似页面。若 HyperFrames wrapper/iframe 抽帧为空白或内容不一致，"
+            "改用托管 Chromium/Playwright 直接采集原 HTML 帧并用 ffmpeg 编码。"
+        )
+        lines.append(
             "  - 宿主已注入 `HYPERFRAMES_RUNNER_PATH`、`HYPERFRAMES_CLI_PATH`、`HYPERFRAMES_TEMPLATE_DIR`、"
             "`HYPERFRAMES_BROWSER_PATH`、`HYPERFRAMES_FFMPEG_PATH`、`HYPERFRAMES_FFPROBE_PATH` "
             "等环境变量。优先用 bash 通过 `$BOX_AGENT_NODE \"$HYPERFRAMES_RUNNER_PATH\" ...` "

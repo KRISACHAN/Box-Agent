@@ -328,6 +328,9 @@ def test_prompt_renders_hyperframes_available_policy() -> None:
     assert "version=0.7.20" in out
     assert "browser=managed-headless-shell" in out
     assert "不要否认视频工具" in out
+    assert "优先保真录制原页面的真实渲染结果" in out
+    assert "不要重写文案、重做布局或生成相似页面" in out
+    assert "直接采集原 HTML 帧并用 ffmpeg 编码" in out
     assert "`hyperframes-video`" in out
     assert "`HYPERFRAMES_RUNNER_PATH`" in out
     assert "`HYPERFRAMES_CLI_PATH`" in out
