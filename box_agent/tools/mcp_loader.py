@@ -338,82 +338,74 @@ class MCPServerConnection:
             traceback.print_exc()
             return False
 
+    # Windows system variables that non-trivial CLIs (ssh.exe, git.exe, etc.)
+    # rely on during early process init but that the MCP SDK's default env
+    # allowlist (``mcp.client.stdio.DEFAULT_INHERITED_ENV_VARS``) does not
+    # include. Supplementing these fixed sshmcp startup on Windows; the SDK's
+    # allowlist covers PATH / APPDATA / SYSTEMROOT / ... but omits e.g.
+    # ``ComSpec`` and ``ProgramData``, which ssh's DLL init path resolves.
+    #
+    # Casing note: Windows itself treats env-var names case-insensitively, so
+    # the exact spelling below is only a readability convention — we do NOT
+    # depend on any casing invariant surviving into CreateProcess. An earlier
+    # revision of this code tried to enforce single-casing on both sides of
+    # the SDK's merge; that was found to be unnecessary and has been removed.
+    _WINDOWS_ENV_SUPPLEMENT = (
+        "windir",
+        "ComSpec",
+        "ProgramData",
+        "ALLUSERSPROFILE",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        "USERDOMAIN",
+    )
+
     def _build_stdio_env(self) -> dict[str, str] | None:
-        """Build the child-process environment for a stdio MCP server.
+        """Build the ``env`` argument passed to ``StdioServerParameters``.
 
-        On non-Windows we preserve the original behavior exactly: pass the
-        server's own ``env`` (or ``None`` so the SDK applies its default
-        inherited-env allowlist). macOS/Linux stay the untouched baseline.
+        Windows-only fix. On macOS and Linux the behavior is unchanged: we
+        return the server's own ``env`` (or ``None`` so the SDK applies its
+        default inherited-env allowlist).
 
-        On Windows there is a nasty, verified trap. The MCP SDK's default env
-        allowlist (``get_default_environment``) emits the UPPER-case
-        ``SYSTEMROOT`` key. But some Windows binaries — notably ssh.exe and
-        anything else whose Winsock / crypto DLLs resolve ``%SystemRoot%``
-        during early process init — only accept the conventional CamelCase
-        ``SystemRoot``. Measured behavior (each tested 3×):
+        On Windows the MCP SDK's ``get_default_environment()`` allowlist is
+        conservative and omits several variables that non-trivial CLIs read
+        at startup — see ``_WINDOWS_ENV_SUPPLEMENT`` above. Without them,
+        ssh.exe (as launched by sshmcp) exits before emitting any output and
+        the MCP loader only sees the stdout pipe close. We supplement those
+        variables from the host process's own environment; ``os.environ``
+        lookups on Windows are case-insensitive, so we don't chase casing.
 
-            env has only ``SYSTEMROOT``            -> ssh dies in 0.03s, 0 bytes
-            env has only ``SystemRoot``            -> ssh starts normally
-            env has BOTH ``SYSTEMROOT``+``SystemRoot`` -> ssh STILL dies
+        Important interaction with the SDK: ``stdio_client()`` re-merges the
+        env we return as ``{**get_default_environment(), **server.env}``
+        (see ``mcp/client/stdio/__init__.py``). That means:
 
-        That last line is the subtle part: when both case variants are in the
-        dict, Windows ``CreateProcess`` keeps the upper-case one and drops the
-        CamelCase, so merely *adding* ``SystemRoot`` is not enough. The child
-        crashes before main() and the parent only sees the stdout pipe close
-        (surfaced as ``Connection closed`` with zero stderr).
+          1. Server-specific ``env`` entries from ``mcp.json`` win over both
+             the SDK defaults and our supplement (Python dict merge order).
+          2. Supplemented variables end up in the final env because the SDK
+             defaults don't declare them, so nothing overrides them.
 
-        Ordinary tools (node, python, bash, cmd) are unaffected — they don't
-        touch that early DLL path — so this only ever bites network/crypto
-        CLIs spawned as stdio MCP servers.
-
-        Fix: on win32, force the canonical CamelCase spelling for the system
-        variables and STRIP any case-variant duplicate keys, so exactly one
-        correctly-cased entry survives into CreateProcess. Server ``env`` from
-        mcp.json is layered last and also de-duplicated so it cleanly wins.
+        The regression test in ``tests/test_mcp.py`` exercises the SDK's
+        merge and asserts the final env shape, so future SDK changes to
+        that merge order are caught in CI.
         """
         if sys.platform != "win32":
             return self.env if self.env else None
 
-        try:
-            from mcp.client.stdio import get_default_environment
+        # Start from the server's env from mcp.json — its keys will remain
+        # ours to override once the SDK re-merges with its defaults.
+        env: dict[str, str] = dict(self.env or {})
 
-            env = get_default_environment()
-        except Exception:  # noqa: BLE001 — never let env-building break a connect
-            env = {}
-
-        def _set_canonical(target: dict[str, str], name: str, value: str) -> None:
-            # Remove every case-variant of ``name`` already present, then set
-            # the canonical spelling — guarantees a single, correctly-cased key.
-            for existing in [k for k in target if k.lower() == name.lower()]:
-                del target[existing]
-            target[name] = value
-
-        # Canonical CamelCase system variables Windows binaries expect at
-        # startup. Pulled live from the host process (correct casing there).
-        for name in (
-            "SystemRoot",
-            "SystemDrive",
-            "windir",
-            "ComSpec",
-            "ProgramData",
-            "ALLUSERSPROFILE",
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-            "ProgramW6432",
-            "USERDOMAIN",
-            "USERPROFILE",
-            "HOMEDRIVE",
-            "HOMEPATH",
-        ):
+        for name in self._WINDOWS_ENV_SUPPLEMENT:
             value = os.environ.get(name)
-            if value is not None:
-                _set_canonical(env, name, value)
-
-        # Server-specific env from mcp.json takes precedence (also de-duped so
-        # the user's exact key wins instead of colliding with a case variant).
-        if self.env:
-            for name, value in self.env.items():
-                _set_canonical(env, name, value)
+            if value is None:
+                continue
+            # Respect a case-variant already supplied via mcp.json; users
+            # who set ``PROGRAMDATA=...`` explicitly should not be shadowed
+            # by our CamelCase copy.
+            if any(k.lower() == name.lower() for k in env):
+                continue
+            env[name] = value
 
         return env or None
 
