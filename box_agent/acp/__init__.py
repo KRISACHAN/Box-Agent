@@ -611,6 +611,10 @@ class BoxACPAgent:
         self._skill_loader = skill_loader
         self._mcp_task = mcp_task  # background-loaded MCP tools; awaited on first prompt
         self._mcp_loaded = mcp_task is None  # True once MCP has been injected
+        # Guards against re-scheduling the deferred finalize task on subsequent
+        # prompts while the first one is still awaiting the background load.
+        # Distinct from `_mcp_loaded` — see `_ensure_mcp_loaded` for why.
+        self._mcp_finalize_scheduled = False
 
     def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
         """Update all live holders of the current system prompt."""
@@ -753,33 +757,28 @@ class BoxACPAgent:
         )
 
     async def _ensure_mcp_loaded(self) -> None:
-        """Await background MCP loading with a soft deadline.
+        """Merge startup MCP tools into the agent on first prompt.
 
-        First caller waits up to ``_MCP_PROMPT_WAIT_SECONDS``; on timeout we
-        let the prompt proceed without MCP tools and inject them later via
-        ``_finalize_mcp_load``. One slow/broken MCP server can no longer
-        block the user's first message.
+        If the background task is already done, merge immediately (zero wait).
+        If it is still running, fire a background finalize task and proceed
+        without blocking — tools arrive once they are ready.
         """
         if self._mcp_loaded:
             return
         if self._mcp_task is None:
             self._mcp_loaded = True
             return
-        try:
-            mcp_tools = await asyncio.wait_for(
-                asyncio.shield(self._mcp_task),
-                timeout=self._MCP_PROMPT_WAIT_SECONDS,
-            )
-        except asyncio.TimeoutError:
-            log.warn(
-                "mcp/slow_load",
-                message=(
-                    f"MCP load exceeded {self._MCP_PROMPT_WAIT_SECONDS}s; "
-                    "proceeding without MCP tools, will inject on completion"
-                ),
-            )
-            asyncio.create_task(self._finalize_mcp_load(), name="mcp-finalize")
+        if not self._mcp_task.done():
+            # Don't block the prompt; inject tools in background when ready.
+            # NOTE: do NOT flip _mcp_loaded here — the finalize task needs it
+            # to stay False so it can actually merge when the load completes.
+            # We use a separate scheduled flag to prevent re-arming on later
+            # prompts that also arrive before the load returns.
+            if not self._mcp_finalize_scheduled:
+                self._mcp_finalize_scheduled = True
+                asyncio.create_task(self._finalize_mcp_load(), name="mcp-finalize")
             return
+        mcp_tools = await await_mcp_tools(self._mcp_task)
         merge_mcp_tools(self._base_tools, mcp_tools)
         for state in self._sessions.values():
             register_mcp_tools(state.agent.tools, mcp_tools)
@@ -1173,7 +1172,8 @@ class BoxACPAgent:
         memory_scarce = is_memory_scarce(self._memory.read_core() if self._memory else None)
 
         try:
-            mcp_path = Config.find_config_file(self._config.tools.mcp_config_path)
+            _user_mcp = Path.home() / ".box-agent" / "config" / "mcp.json"
+            mcp_path = _user_mcp if _user_mcp.exists() else Config.find_config_file(self._config.tools.mcp_config_path)
         except Exception:
             mcp_path = None
         playwright_unavailable = is_playwright_unavailable(
@@ -1371,22 +1371,6 @@ class BoxACPAgent:
                     )
             except Exception as exc:
                 log.warn("skills/filter_error", session_id=session_id, message=str(exc))
-
-            try:
-                from box_agent.tools.mcp_loader import ensure_lazy_mcp_loaded
-                new_tools = await ensure_lazy_mcp_loaded(state.skill_selector.cumulative_query)
-                if new_tools:
-                    merge_mcp_tools(self._base_tools, new_tools)
-                    for other in self._sessions.values():
-                        register_mcp_tools(other.agent.tools, new_tools)
-                    log.info(
-                        "mcp/lazy_loaded",
-                        session_id=session_id,
-                        count=len(new_tools),
-                        tools=",".join(t.name for t in new_tools),
-                    )
-            except Exception as exc:
-                log.warn("mcp/lazy_load_error", session_id=session_id, message=str(exc))
 
         completion_gate = (
             None
@@ -1714,6 +1698,40 @@ class BoxACPAgent:
             return self._memory_proposal_apply(params)
         if method == "llm/prompt":
             return await self._llm_prompt(params)
+        if method == "mcp/status":
+            from box_agent.tools.mcp_loader import get_mcp_status, is_mcp_loading, get_mcp_config_path
+            servers = get_mcp_status()
+            loading = is_mcp_loading()
+            log.info("mcp/status", count=len(servers), loading=loading)
+            return {"servers": servers, "loading": loading, "configPath": get_mcp_config_path()}
+        if method == "mcp/reconnect":
+            name = params.get("name", "")
+            if not name:
+                return {"success": False, "error": "name is required"}
+            from box_agent.tools.mcp_loader import reconnect_mcp_server, get_mcp_tools_for_server
+            result = await reconnect_mcp_server(name)
+            if result.get("success"):
+                new_tools = get_mcp_tools_for_server(name)
+                if new_tools:
+                    merge_mcp_tools(self._base_tools, new_tools)
+                    for state in self._sessions.values():
+                        register_mcp_tools(state.agent.tools, new_tools)
+            log.info("mcp/reconnect", server=name, success=result.get("success"), error=result.get("error"))
+            return result
+        if method == "mcp/disconnect":
+            name = params.get("name", "")
+            if not name:
+                return {"success": False, "error": "name is required"}
+            from box_agent.tools.mcp_loader import disconnect_mcp_server
+            result = await disconnect_mcp_server(name)
+            removed = set(result.get("removedTools", []))
+            if removed:
+                self._base_tools[:] = [t for t in self._base_tools if t.name not in removed]
+                for state in self._sessions.values():
+                    for tool_name in removed:
+                        state.agent.tools.pop(tool_name, None)
+            log.info("mcp/disconnect", server=name, removed=len(removed))
+            return result
         return {"error": f"unknown_method: {method}"}
 
     ext_method = extMethod

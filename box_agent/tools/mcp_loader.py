@@ -4,8 +4,9 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -225,9 +226,6 @@ class MCPServerConnection:
         connect_timeout: float | None = None,
         execute_timeout: float | None = None,
         sse_read_timeout: float | None = None,
-        # Lazy loading: skip connect at startup; load on query match
-        lazy: bool = False,
-        keywords: list[str] | None = None,
     ):
         self.name = name
         self.connection_type = connection_type
@@ -243,10 +241,8 @@ class MCPServerConnection:
         self.connect_timeout = connect_timeout
         self.execute_timeout = execute_timeout
         self.sse_read_timeout = sse_read_timeout
-        # Lazy loading state
-        self.lazy = lazy
-        self.keywords = keywords or []
         # Connection state
+        self.last_error: str | None = None
         self.session: ClientSession | None = None
         self.exit_stack: AsyncExitStack | None = None
         self.tools: list[MCPTool] = []
@@ -318,19 +314,23 @@ class MCPServerConnection:
             for tool in self.tools:
                 desc = tool.description[:60] if len(tool.description) > 60 else tool.description
                 _warn(f"  - {tool.name}: {desc}...")
+            self.last_error = None
             return True
 
         except TimeoutError:
+            self.last_error = f"Connection timed out after {connect_timeout}s"
             _warn(f"✗ Connection to MCP server '{self.name}' timed out after {connect_timeout}s")
             await _close_exit_stack()
             return False
 
         except asyncio.CancelledError as e:
+            self.last_error = f"Connection cancelled: {e}"
             _warn(f"✗ Connection to MCP server '{self.name}' was cancelled during initialization: {e}")
             await _close_exit_stack()
             return False
 
         except Exception as e:
+            self.last_error = str(e)
             _warn(f"✗ Failed to connect to MCP server '{self.name}': {e}")
             await _close_exit_stack()
             import traceback
@@ -410,8 +410,18 @@ class MCPServerConnection:
         return env or None
 
     async def _connect_stdio(self):
-        """Connect via STDIO transport."""
-        server_params = StdioServerParameters(command=self.command, args=self.args, env=self._build_stdio_env())
+        """Connect via STDIO transport.
+
+        Force a writable cwd (system temp) so child processes (e.g.
+        @playwright/mcp) can create working directories without hitting
+        permission errors on protected paths like ``C:\\Program Files\\``.
+        """
+        server_params = StdioServerParameters(
+            command=self.command,
+            args=self.args,
+            env=self._build_stdio_env(),
+            cwd=tempfile.gettempdir(),
+        )
         return await self.exit_stack.enter_async_context(stdio_client(server_params))
 
     async def _connect_sse(self):
@@ -463,28 +473,84 @@ class MCPServerConnection:
 
 # Global connections registry
 _mcp_connections: list[MCPServerConnection] = []
-# Lazy MCP servers parsed at startup but NOT yet connected. Keyed by server
-# name. ``ensure_lazy_mcp_loaded(query)`` connects matching servers on demand
-# and pops them out of this dict.
-_lazy_mcp_pending: dict[str, MCPServerConnection] = {}
 
-# Built-in keyword presets for well-known heavy MCP servers. Used when an
-# mcp.json entry omits the ``keywords`` field — the server name is looked up
-# here and the preset is applied. This lets hosts ship a stock mcp.json (no
-# keywords field) and still get smart lazy gating for the big-ticket servers.
-# Keywords are bilingual on purpose so Chinese queries can match.
-DEFAULT_MCP_KEYWORDS: dict[str, list[str]] = {
-    "playwright": [
-        "browser", "playwright", "chromium", "screenshot", "scrape", "crawl",
-        "automation", "url", "html", "dom",
-        "浏览器", "网页", "截图", "抓取", "爬虫", "自动化",
-        "打开网址", "访问网页", "网址", "链接",
-    ],
-    "puppeteer": [
-        "browser", "puppeteer", "chromium", "screenshot", "scrape", "automation",
-        "浏览器", "网页", "截图", "抓取", "自动化",
-    ],
-}
+
+@dataclass
+class McpServerStatus:
+    name: str
+    state: str  # connecting | connected | failed | disabled
+    transport: str = ""
+    tool_count: int = 0
+    tools: list = field(default_factory=list)
+    error: str | None = None
+
+
+_mcp_status: dict[str, McpServerStatus] = {}
+_mcp_loading: bool = False
+_mcp_config_path: str | None = None
+# Auth inputs from the last load_mcp_tools_async() call — reused by
+# reconnect_mcp_server() so a single-server hot reconnect gets the same
+# DynamicBearer / Authorization headers the cold-start path would build.
+_mcp_auth_file: str = ""
+_mcp_auth_token: str = ""
+
+
+def is_mcp_loading() -> bool:
+    return _mcp_loading
+
+
+def get_mcp_config_path() -> str | None:
+    return _mcp_config_path
+
+
+def get_mcp_tools_for_server(name: str) -> list:
+    """Return the Tool objects currently held by a connected server."""
+    conn = next((c for c in _mcp_connections if c.name == name), None)
+    return list(conn.tools) if conn else []
+
+
+async def disconnect_mcp_server(name: str) -> dict:
+    """Disconnect a named MCP server and return its removed tool names."""
+    global _mcp_connections
+    conn = next((c for c in _mcp_connections if c.name == name), None)
+    removed_tools: list[str] = []
+    if conn:
+        removed_tools = [t.name for t in conn.tools]
+        try:
+            await conn.disconnect()
+        except Exception:
+            pass
+        _mcp_connections = [c for c in _mcp_connections if c.name != name]
+    _record_status(name, "disabled")
+    return {"success": True, "removedTools": removed_tools}
+
+
+def _record_status(
+    name: str,
+    state: str,
+    transport: str = "",
+    tool_count: int = 0,
+    tools: list | None = None,
+    error: str | None = None,
+) -> None:
+    _mcp_status[name] = McpServerStatus(
+        name=name, state=state, transport=transport,
+        tool_count=tool_count, tools=tools or [], error=error,
+    )
+
+
+def get_mcp_status() -> list[dict]:
+    return [
+        {
+            "name": s.name,
+            "state": s.state,
+            "transport": s.transport,
+            "toolCount": s.tool_count,
+            "tools": s.tools,
+            "error": s.error,
+        }
+        for s in _mcp_status.values()
+    ]
 
 
 def _determine_connection_type(server_config: dict) -> ConnectionType:
@@ -565,15 +631,21 @@ async def load_mcp_tools_async(
     Returns:
         List of Tool objects representing MCP tools
     """
-    global _mcp_connections
-
-    config_file = _resolve_mcp_config_path(config_path)
-
-    if config_file is None:
-        _warn(f"MCP config not found: {config_path}")
-        return []
-
+    global _mcp_connections, _mcp_status, _mcp_loading, _mcp_config_path, _mcp_auth_file, _mcp_auth_token
+    _mcp_loading = True
+    # Remember the auth inputs so reconnect_mcp_server() can rebuild the same
+    # dynamic bearer / Authorization headers it would have used on cold start.
+    _mcp_auth_file = auth_file
+    _mcp_auth_token = auth_token
     try:
+        config_file = _resolve_mcp_config_path(config_path)
+        if config_file is not None:
+            _mcp_config_path = str(config_file)
+
+        if config_file is None:
+            _warn(f"MCP config not found: {config_path}")
+            return []
+
         with open(config_file, encoding="utf-8") as f:
             config = json.load(f)
 
@@ -590,6 +662,7 @@ async def load_mcp_tools_async(
         for server_name, server_config in mcp_servers.items():
             if server_config.get("disabled", False):
                 _warn(f"Skipping disabled server: {server_name}")
+                _record_status(server_name, "disabled")
                 continue
 
             conn_type = _determine_connection_type(server_config)
@@ -636,54 +709,46 @@ async def load_mcp_tools_async(
                     connect_timeout=server_config.get("connect_timeout"),
                     execute_timeout=server_config.get("execute_timeout"),
                     sse_read_timeout=server_config.get("sse_read_timeout"),
-                    lazy=False,  # final lazy decision applied below
-                    keywords=list(server_config.get("keywords", []) or []),
                 )
             )
 
-        # Resolve final lazy + keywords for each connection.
-        #   1. If mcp.json sets explicit ``keywords``, use them as-is.
-        #   2. Else fall back to ``DEFAULT_MCP_KEYWORDS`` by server name.
-        #   3. Lazy default: explicit ``lazy`` wins; otherwise auto-lazy when
-        #      the server ends up with non-empty keywords. Servers with no
-        #      keywords stay eager so they don't get silently stranded.
-        for conn, server_config in zip(connections, [
-            config["mcpServers"][c.name] for c in connections
-        ]):
-            if not conn.keywords:
-                conn.keywords = list(DEFAULT_MCP_KEYWORDS.get(conn.name.lower(), []))
-            explicit_lazy = server_config.get("lazy")
-            if explicit_lazy is None:
-                conn.lazy = bool(conn.keywords)
-            else:
-                conn.lazy = bool(explicit_lazy)
-
-        # Split eager vs lazy. Lazy servers are deferred to
-        # ``ensure_lazy_mcp_loaded(query)`` — they keep their config but skip
-        # the connect() round-trip.
-        eager_connections: list[MCPServerConnection] = []
-        for conn in connections:
-            if conn.lazy:
-                _lazy_mcp_pending[conn.name] = conn
-                _warn(f"Deferred lazy MCP server: {conn.name} (keywords={conn.keywords})")
-            else:
-                eager_connections.append(conn)
-
-        # Connect to all eager servers in parallel — one slow/broken server no
+        # Connect to all servers in parallel — one slow/broken server no
         # longer blocks the others. Each connection has its own timeout.
+
+        # Seed connecting state before gather so UI shows spinner during window
+        for conn in connections:
+            _record_status(conn.name, "connecting", transport=conn.url or conn.command or "")
+
         results = await asyncio.gather(
-            *(conn.connect() for conn in eager_connections),
+            *(conn.connect() for conn in connections),
             return_exceptions=True,
         )
 
         all_tools = []
-        for conn, success in zip(eager_connections, results):
+        for conn, success in zip(connections, results):
             if isinstance(success, BaseException):
                 _warn(f"✗ MCP server '{conn.name}' raised during connect: {success}")
+                _record_status(
+                    conn.name, "failed",
+                    transport=conn.url or conn.command or "",
+                    error=str(success),
+                )
                 continue
             if success:
                 _mcp_connections.append(conn)
                 all_tools.extend(conn.tools)
+                _record_status(
+                    conn.name, "connected",
+                    transport=conn.url or conn.command or "",
+                    tool_count=len(conn.tools),
+                    tools=[t.name for t in conn.tools],
+                )
+            else:
+                _record_status(
+                    conn.name, "failed",
+                    transport=conn.url or conn.command or "",
+                    error=conn.last_error or "connect() returned False",
+                )
 
         _warn(f"Total MCP tools loaded: {len(all_tools)}")
 
@@ -696,6 +761,9 @@ async def load_mcp_tools_async(
         traceback.print_exc()
         return []
 
+    finally:
+        _mcp_loading = False
+
 
 async def cleanup_mcp_connections():
     """Clean up all MCP connections."""
@@ -703,75 +771,95 @@ async def cleanup_mcp_connections():
     for connection in _mcp_connections:
         await connection.disconnect()
     _mcp_connections.clear()
-    _lazy_mcp_pending.clear()
 
 
-def get_pending_lazy_mcp_servers() -> dict[str, list[str]]:
-    """Return ``{server_name: keywords}`` for lazy MCP servers not yet loaded.
+async def reconnect_mcp_server(name: str) -> dict:
+    """Re-read mcp.json and reconnect a single named MCP server in-place."""
+    global _mcp_connections
 
-    Useful for diagnostics / tests. The dict is a snapshot; mutating it has no
-    effect on the underlying registry.
-    """
-    return {name: list(conn.keywords) for name, conn in _lazy_mcp_pending.items()}
+    if not _mcp_config_path:
+        return {"success": False, "error": "mcp.json path unknown; box-agent not yet initialized"}
 
+    try:
+        with open(_mcp_config_path, encoding="utf-8") as f:
+            config = json.load(f)
+    except Exception as e:
+        return {"success": False, "error": f"Cannot read {_mcp_config_path}: {e}", "configPath": _mcp_config_path}
 
-async def ensure_lazy_mcp_loaded(query: str) -> list[Tool]:
-    """Connect lazy MCP servers whose keywords overlap the cumulative query.
+    server_config = config.get("mcpServers", {}).get(name)
+    if not server_config:
+        return {"success": False, "error": f"Server '{name}' not found in mcp.json", "configPath": _mcp_config_path}
 
-    Tokenizes ``query`` the same way ``SkillSelector`` does (English length>=2
-    + Chinese 2-char sliding window) so callers can pass the cumulative query
-    string straight through. A lazy server matches when ANY of its declared
-    keywords token-overlaps the query. Matched servers are connected and
-    moved from ``_lazy_mcp_pending`` into ``_mcp_connections``.
+    if server_config.get("disabled"):
+        _record_status(name, "disabled")
+        return {"success": False, "error": "Server is disabled", "configPath": _mcp_config_path}
 
-    Returns the list of newly-loaded MCPTool instances (empty if no match).
-    Caller is responsible for merging them into the agent's tool list.
-    """
-    if not _lazy_mcp_pending or not query or not query.strip():
-        return []
+    # Drop any existing connection for this server.
+    old_conn = next((c for c in _mcp_connections if c.name == name), None)
+    if old_conn:
+        try:
+            await old_conn.disconnect()
+        except Exception:
+            pass
+        _mcp_connections = [c for c in _mcp_connections if c.name != name]
 
-    # Reuse the skill loader's tokenizer for consistent semantics.
-    from box_agent.tools.skill_loader import _tokenize
+    conn_type = _determine_connection_type(server_config)
+    url = server_config.get("url")
+    command = server_config.get("command")
+    transport_label = url or command or ""
 
-    query_tokens = _tokenize(query)
-    if not query_tokens:
-        return []
-
-    matched: list[MCPServerConnection] = []
-    for name, conn in list(_lazy_mcp_pending.items()):
-        if not conn.keywords:
-            continue
-        kw_tokens: set[str] = set()
-        for kw in conn.keywords:
-            kw_tokens |= _tokenize(kw)
-        if kw_tokens & query_tokens:
-            matched.append(conn)
-
-    if not matched:
-        return []
-
-    results = await asyncio.gather(
-        *(conn.connect() for conn in matched),
-        return_exceptions=True,
+    # Mirror cold-start auth logic in load_mcp_tools_async(): compute a dynamic
+    # bearer if applicable, otherwise fold static Authorization headers in via
+    # request_auth_headers(). Without this a hot reconnect drops the token and
+    # hosted MCP endpoints (e.g. mcp.xiaohuanxiong.com) return 401 forever.
+    configured_headers = server_config.get("headers", {})
+    auth = _dynamic_bearer_auth_for_url(
+        url=url,
+        headers=configured_headers,
+        auth_file=_mcp_auth_file,
+        auth_token=_mcp_auth_token,
+    )
+    connection_headers = (
+        configured_headers
+        if auth is not None
+        else request_auth_headers(
+            auth_file=_mcp_auth_file,
+            explicit_token=_mcp_auth_token,
+            existing=configured_headers,
+            url=url,
+        )
     )
 
-    new_tools: list[Tool] = []
-    for conn, success in zip(matched, results):
-        if isinstance(success, BaseException):
-            # Connection raised — keep in _lazy_mcp_pending so a later session
-            # (or the same session on a later turn) can retry. Without this,
-            # a transient failure (or a title-gen session burning the slot)
-            # would permanently blind the agent to this MCP server.
-            _warn(f"✗ Lazy MCP server '{conn.name}' raised during connect: {success}")
-            continue
-        if not success:
-            # Connect returned False — same reasoning: leave pending for retry.
-            _warn(f"✗ Lazy MCP server '{conn.name}' failed to connect")
-            continue
-        # Success: move from pending to live registry.
-        _lazy_mcp_pending.pop(conn.name, None)
-        _mcp_connections.append(conn)
-        new_tools.extend(conn.tools)
-        _warn(f"✓ Lazy MCP server '{conn.name}' loaded ({len(conn.tools)} tools)")
+    conn = MCPServerConnection(
+        name=name,
+        connection_type=conn_type,
+        command=command,
+        args=server_config.get("args", []),
+        env=server_config.get("env", {}),
+        url=url,
+        headers=connection_headers,
+        auth=auth,
+        connect_timeout=server_config.get("connect_timeout"),
+        execute_timeout=server_config.get("execute_timeout"),
+        sse_read_timeout=server_config.get("sse_read_timeout"),
+    )
 
-    return new_tools
+    _record_status(name, "connecting", transport=transport_label)
+    try:
+        success = await conn.connect()
+    except Exception as e:
+        _record_status(name, "failed", transport=transport_label, error=str(e))
+        return {"success": False, "error": str(e), "configPath": _mcp_config_path}
+
+    if success:
+        _mcp_connections.append(conn)
+        _record_status(
+            name, "connected",
+            transport=transport_label,
+            tool_count=len(conn.tools),
+            tools=[t.name for t in conn.tools],
+        )
+        return {"success": True, "toolCount": len(conn.tools), "tools": [t.name for t in conn.tools], "configPath": _mcp_config_path}
+
+    _record_status(name, "failed", transport=transport_label, error=conn.last_error)
+    return {"success": False, "error": conn.last_error or "connect() returned False", "configPath": _mcp_config_path}

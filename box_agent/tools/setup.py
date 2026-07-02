@@ -34,6 +34,7 @@ from box_agent.tools.memory_tool import MemoryReadTool, MemorySearchTool, Memory
 from box_agent.tools.obsidian_tool import create_obsidian_tools
 from box_agent.tools.plan_tool import PlanReadTool, PlanStore, PlanWriteTool
 from box_agent.tools.runtime import SkillRuntimeContext, build_skill_runtime_context
+from box_agent.tools.mcp_config_tool import McpConfigTool
 from box_agent.tools.schedule_tool import CreateScheduledTaskTool
 from box_agent.tools.skill_tool import create_skill_tools
 from box_agent.tools.sub_agent_tool import SubAgentTool
@@ -155,6 +156,9 @@ async def initialize_base_tools(config: Config, output=None, memory_manager=None
     tools.append(CreateScheduledTaskTool())
     _out(f"{Colors.GREEN}✅ Loaded Scheduled Task tool (create_scheduled_task){Colors.RESET}")
 
+    tools.append(McpConfigTool())
+    _out(f"{Colors.GREEN}✅ Loaded MCP Config tool (mcp_config){Colors.RESET}")
+
     # 2. Claude Skills (loaded from package directory)
     if config.tools.enable_skills:
         _out(f"{Colors.BRIGHT_CYAN}Loading Claude Skills...{Colors.RESET}")
@@ -211,7 +215,10 @@ async def initialize_base_tools(config: Config, output=None, memory_manager=None
             execute_timeout=mcp_config.execute_timeout,
             sse_read_timeout=mcp_config.sse_read_timeout,
         )
-        mcp_config_path = Config.find_config_file(config.tools.mcp_config_path)
+        # Always prefer user config dir (~/.box-agent/config/mcp.json) so dev and
+        # packaged modes read from the same place.
+        _user_mcp = Path.home() / ".box-agent" / "config" / "mcp.json"
+        mcp_config_path = _user_mcp if _user_mcp.exists() else Config.find_config_file(config.tools.mcp_config_path)
         if mcp_config_path:
             _out(f"{Colors.BRIGHT_CYAN}Loading MCP tools in background (from: {mcp_config_path})...{Colors.RESET}")
             _out(
