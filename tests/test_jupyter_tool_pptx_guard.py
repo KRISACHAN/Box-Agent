@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from box_agent.tools.file_tools import MAX_FILE_TOOL_CONTENT_CHARS
 from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS, JupyterSandboxTool
 
 
@@ -15,6 +16,10 @@ def test_execute_code_schema_exposes_code_size_limit():
     assert "do not inline the body in execute_code" in code_schema["description"]
     assert "append_file for later chunks" in code_schema["description"]
     assert "JSON manifests" in code_schema["description"]
+
+
+def test_execute_code_limit_is_not_looser_than_file_chunk_limit():
+    assert MAX_EXECUTE_CODE_CHARS <= MAX_FILE_TOOL_CONTENT_CHARS
 
 
 @pytest.mark.asyncio

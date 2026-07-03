@@ -55,10 +55,9 @@ SANDBOX_DEFAULT_PACKAGES = [
 
 SANDBOX_BASE_DIR = Path.home() / ".box-agent" / "sandbox"
 
-# Keep generated tool-call JSON below provider completion caps while allowing
-# normal artifact-generation scripts. The kernel is persistent, so very large
-# static content should still be split across calls.
-MAX_EXECUTE_CODE_CHARS = 24_000
+# Keep generated tool-call JSON below provider completion caps. Match the file
+# chunk size so large static bodies do not migrate into Python string literals.
+MAX_EXECUTE_CODE_CHARS = 8_000
 MAX_EXECUTE_CODE_CHARS_DISPLAY = f"{MAX_EXECUTE_CODE_CHARS:,}"
 
 # User-level directory for packages installed at runtime in frozen mode.
