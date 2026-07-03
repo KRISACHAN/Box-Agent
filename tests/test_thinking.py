@@ -271,6 +271,7 @@ async def test_acp_run_turn_forwards_thinking_to_core(tmp_path, monkeypatch):
             field_meta={"session_mode": "general", "deep_think": True},
         )
     )
+    state = agent._sessions[session.sessionId]
 
     captured: dict = {}
 
@@ -290,3 +291,5 @@ async def test_acp_run_turn_forwards_thinking_to_core(tmp_path, monkeypatch):
     assert captured.get("thinking_enabled") is True, (
         "ACP dropped thinking_enabled on the way to run_agent_loop"
     )
+    assert captured.get("cache_fingerprint_context") is state.agent.cache_fingerprint_context
+    assert callable(captured.get("cache_fingerprint_sink"))

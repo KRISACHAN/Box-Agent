@@ -16,6 +16,7 @@ from box_agent.llm.debug_logging import (
 from box_agent.llm.openai_client import OpenAIClient
 from box_agent.logger import AgentLogger
 from box_agent.schema import FunctionCall, Message, StreamEvent, ToolCall
+from box_agent.tools.base import Tool, ToolResult
 
 
 def test_sanitize_for_logging_redacts_auth_headers() -> None:
@@ -112,6 +113,47 @@ def test_agent_logger_summarizes_large_records_by_default(tmp_path, monkeypatch)
     assert long_text not in log_text
     assert '"characters": 2000' in log_text
     assert '"mode": "summary"' in log_text
+
+
+def test_agent_logger_records_cache_fingerprint(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("BOX_AGENT_LOG_FULL_PAYLOAD", raising=False)
+    monkeypatch.delenv("BOX_AGENT_LLM_DEBUG_FULL_PAYLOAD", raising=False)
+    agent_logger = AgentLogger()
+    agent_logger.log_dir = tmp_path
+    agent_logger.start_new_run()
+
+    agent_logger.log_request(
+        [Message(role="system", content="system"), Message(role="user", content="hi")],
+        tools=[],
+        cache_fingerprint={
+            "system_prompt_hash": "sha256:system",
+            "tool_schema_hash": "sha256:tools",
+            "mcp_tool_schema_hash": "sha256:mcp",
+            "filtered_skill_names": ["pptx"],
+            "preloaded_skill_names": ["pptx"],
+        },
+    )
+
+    log_text = agent_logger.get_log_file_path().read_text(encoding="utf-8")
+    assert '"cache_fingerprint"' in log_text
+    assert '"system_prompt_hash": "sha256:system"' in log_text
+    assert '"tool_schema_hash": "sha256:tools"' in log_text
+    assert '"mcp_tool_schema_hash": "sha256:mcp"' in log_text
+    assert '"pptx"' in log_text
+
+
+def test_agent_logger_uses_unique_run_files_within_one_second(tmp_path) -> None:
+    agent_logger = AgentLogger()
+    agent_logger.log_dir = tmp_path
+
+    agent_logger.start_new_run()
+    first = agent_logger.get_log_file_path()
+    agent_logger.start_new_run()
+    second = agent_logger.get_log_file_path()
+
+    assert first != second
+    assert first.exists()
+    assert second.exists()
 
 
 @pytest.mark.asyncio
@@ -211,3 +253,55 @@ async def test_run_agent_loop_writes_llm_debug_records_to_agent_log(tmp_path, mo
     assert "req-logger-123" in log_text
     assert "Bearer secret" not in log_text
     assert "<redacted>" in log_text
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_logs_cache_fingerprint_context(tmp_path) -> None:
+    class OneShotLLM:
+        async def generate_stream(self, *, messages, tools, thinking_enabled=False, session_id="", **_):
+            yield StreamEvent(type="text", delta="ok")
+            yield StreamEvent(type="finish", finish_reason="stop")
+
+    class DemoTool(Tool):
+        @property
+        def name(self) -> str:
+            return "demo"
+
+        @property
+        def description(self) -> str:
+            return "Demo"
+
+        @property
+        def parameters(self) -> dict:
+            return {"type": "object", "properties": {}}
+
+        async def execute(self) -> ToolResult:
+            return ToolResult(success=True, content="ok")
+
+    agent_logger = AgentLogger()
+    agent_logger.log_dir = tmp_path
+    seen_fingerprints: list[dict] = []
+
+    async for _event in run_agent_loop(
+        llm=OneShotLLM(),
+        messages=[Message(role="system", content="system"), Message(role="user", content="hi")],
+        tools={"demo": DemoTool()},
+        max_steps=1,
+        logger=agent_logger,
+        cache_fingerprint_context={
+            "filtered_skill_names": ["pptx"],
+            "preloaded_skill_names": ["pptx"],
+        },
+        cache_fingerprint_sink=seen_fingerprints.append,
+    ):
+        pass
+
+    log_text = agent_logger.get_log_file_path().read_text(encoding="utf-8")
+    assert '"cache_fingerprint"' in log_text
+    assert '"system_prompt_hash": "sha256:' in log_text
+    assert '"tool_schema_hash": "sha256:' in log_text
+    assert '"mcp_tool_schema_hash": "sha256:' in log_text
+    assert '"filtered_skill_names": [' in log_text
+    assert '"preloaded_skill_names": [' in log_text
+    assert seen_fingerprints
+    assert seen_fingerprints[0]["filtered_skill_names"] == ["pptx"]

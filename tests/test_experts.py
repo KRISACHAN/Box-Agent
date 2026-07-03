@@ -175,6 +175,75 @@ async def test_acp_session_injects_expert_prompt_and_returns_meta(tmp_path) -> N
 
 
 @pytest.mark.asyncio
+async def test_acp_expert_context_is_session_scoped(tmp_path) -> None:
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_mcp=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "base system")
+
+    expert_session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "session_mode": "general",
+                "expert": {
+                    "id": "ppt-designer",
+                    "name": "PPT 设计师",
+                    "defaultSkills": ["pptx"],
+                },
+            },
+        )
+    )
+    expert_state = agent._sessions[expert_session.sessionId]
+    assert "## Expert Profile" in expert_state.agent.system_prompt
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=expert_session.sessionId,
+            prompt=[{"text": "普通下一轮，不再传 expert meta"}],
+            field_meta={},
+        )
+    )
+    assert "## Expert Profile" in expert_state.agent.system_prompt
+
+    team_session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "session_mode": "general",
+                "expert_team": {
+                    "id": "deck-team",
+                    "name": "Deck 专家团",
+                    "leader": {"id": "lead", "name": "负责人"},
+                    "members": [{"id": "designer", "name": "设计专家"}],
+                },
+            },
+        )
+    )
+    team_state = agent._sessions[team_session.sessionId]
+    assert "## Expert Team" in team_state.agent.system_prompt
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=team_session.sessionId,
+            prompt=[{"text": "普通下一轮，不再传 expert_team meta"}],
+            field_meta={},
+        )
+    )
+    assert "## Expert Team" in team_state.agent.system_prompt
+
+    normal_session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"session_mode": "general"})
+    )
+    normal_state = agent._sessions[normal_session.sessionId]
+    assert normal_state.expert_context is None
+    assert "## Expert Profile" not in normal_state.agent.system_prompt
+    assert "## Expert Team" not in normal_state.agent.system_prompt
+
+
+@pytest.mark.asyncio
 async def test_acp_expert_session_can_select_disabled_skill(tmp_path) -> None:
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()

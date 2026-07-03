@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .llm.debug_logging import (
     full_payload_logging_enabled,
@@ -33,7 +33,7 @@ class AgentLogger:
 
     def start_new_run(self):
         """Start new run, create new log file"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_filename = f"agent_run_{timestamp}.log"
         self.log_file = self.log_dir / log_filename
         self.log_index = 0
@@ -44,12 +44,18 @@ class AgentLogger:
             f.write(f"Agent Run Log - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 80 + "\n\n")
 
-    def log_request(self, messages: list[Message], tools: list[Any] | None = None):
+    def log_request(
+        self,
+        messages: list[Message],
+        tools: list[Any] | None = None,
+        cache_fingerprint: Mapping[str, Any] | None = None,
+    ):
         """Log LLM request
 
         Args:
             messages: Message list
             tools: Tool list (optional)
+            cache_fingerprint: Cache-sensitive request fingerprint (optional)
         """
         self.log_index += 1
 
@@ -79,6 +85,9 @@ class AgentLogger:
         # Only record tool names
         if tools:
             request_data["tools"] = [tool.name for tool in tools]
+
+        if cache_fingerprint is not None:
+            request_data["cache_fingerprint"] = dict(cache_fingerprint)
 
         if not full_payload_logging_enabled():
             request_data = summarize_request_payload_for_logging(request_data)

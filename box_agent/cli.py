@@ -44,10 +44,14 @@ from box_agent.agent import (
 )
 from box_agent.config import Config
 from box_agent.loop_guards import build_auto_completion_gate
-from box_agent.schema import LLMProvider
+from box_agent.schema import LLMProvider, Message
 from box_agent.tools.base import Tool
 from box_agent.tools.jupyter_tool import JupyterSandboxTool, SandboxStatusTool
 from box_agent.tools.mcp_loader import cleanup_mcp_connections
+from box_agent.tools.skill_preload import (
+    build_auto_loaded_skills_prompt,
+    turn_preload_skill_names,
+)
 from box_agent.tools.setup import (
     SANDBOX_INFO_PROMPT,
     add_workspace_tools,
@@ -2057,19 +2061,73 @@ async def run_agent(
         from box_agent.cli_memory_proposal import CLIMemoryProposalNegotiator
         agent._proposal_negotiator = CLIMemoryProposalNegotiator(memory_mgr)
 
+    def _set_agent_system_prompt(system_prompt: str) -> None:
+        agent.system_prompt = system_prompt
+        if agent.messages and agent.messages[0].role == "system":
+            agent.messages[0] = Message(role="system", content=system_prompt)
+        for tool in agent.tools.values():
+            if hasattr(tool, "set_parent_system_prompt"):
+                tool.set_parent_system_prompt(system_prompt)
+
     # 7.5 Skill selector: filter skill metadata per turn based on cumulative user query
     skill_selector = None
     if skill_loader:
-        from box_agent.tools.skill_loader import SkillSelector
+        from box_agent.tools.skill_loader import SkillSelector, move_skill_slot_to_end
+
+        relocated_prompt = move_skill_slot_to_end(agent.messages[0].content)
+        if relocated_prompt != agent.messages[0].content:
+            _set_agent_system_prompt(relocated_prompt)
         skill_selector = SkillSelector(skill_loader)
         skill_selector.bind(agent.messages[0].content)
+    cli_preloaded_skill_names: list[str] = []
 
-    def _apply_skill_filter(user_input: str) -> None:
+    def _sync_cli_cache_fingerprint_context() -> None:
+        agent.cache_fingerprint_context["filtered_skill_names"] = (
+            list(skill_selector.matched_skill_names) if skill_selector is not None else []
+        )
+        agent.cache_fingerprint_context["preloaded_skill_names"] = list(
+            cli_preloaded_skill_names
+        )
+
+    def _apply_skill_filter(user_input: str) -> tuple[str, ...]:
         if skill_selector is None:
-            return
+            _sync_cli_cache_fingerprint_context()
+            return ()
         new_prompt = skill_selector.update(user_input)
         if new_prompt is not None:
-            agent.messages[0].content = new_prompt
+            _set_agent_system_prompt(new_prompt)
+        _sync_cli_cache_fingerprint_context()
+        return skill_selector.matched_skill_names
+
+    def _apply_cli_auto_loaded_skills(completion_gate) -> None:
+        if skill_loader is None or skill_selector is None:
+            _sync_cli_cache_fingerprint_context()
+            return
+        preload_names = turn_preload_skill_names(
+            skill_selector.matched_skill_names,
+            completion_gate,
+            cli_env_context,
+        )
+        if not preload_names and not cli_preloaded_skill_names:
+            _sync_cli_cache_fingerprint_context()
+            return
+        result = build_auto_loaded_skills_prompt(
+            skill_loader,
+            agent.system_prompt,
+            preload_names,
+            existing_skill_names=cli_preloaded_skill_names,
+        )
+        cli_preloaded_skill_names[:] = list(result.loaded_names)
+        _sync_cli_cache_fingerprint_context()
+        for missing_name in result.missing_names:
+            print(f"{Colors.YELLOW}⚠️  Skill preload target not found: {missing_name}{Colors.RESET}")
+        if not result.loaded_names or not result.changed:
+            return
+        _set_agent_system_prompt(result.system_prompt)
+        print(
+            f"{Colors.DIM}Auto-loaded skills: "
+            f"{', '.join(result.loaded_names)}{Colors.RESET}"
+        )
 
     # 8. Display welcome information
     if not task:
@@ -2083,13 +2141,14 @@ async def run_agent(
         print(f"\n{Colors.BRIGHT_BLUE}Agent{Colors.RESET} {Colors.DIM}›{Colors.RESET} {Colors.DIM}Executing task...{Colors.RESET}\n")
         # Block on MCP only when user is actually about to run
         register_mcp_tools(agent.tools, await await_mcp_tools(mcp_task))
-        _apply_skill_filter(task)
-        agent.add_user_message(task)
         completion_gate = (
             build_auto_completion_gate(task, workspace_dir)
             if completion_gate_enabled
             else None
         )
+        _apply_skill_filter(task)
+        _apply_cli_auto_loaded_skills(completion_gate)
+        agent.add_user_message(task)
         if completion_gate is not None:
             patterns = ", ".join(completion_gate.required_changed_artifact_globs)
             print(f"{Colors.DIM}Completion gate enabled for deliverable artifacts: {patterns}{Colors.RESET}")
@@ -2413,7 +2472,13 @@ async def run_agent(
                 f"\n{Colors.BRIGHT_BLUE}Agent{Colors.RESET} {Colors.DIM}›{Colors.RESET} "
                 f"{Colors.DIM}Thinking... (Esc to cancel){Colors.RESET}\n"
             )
+            preload_gate = (
+                build_auto_completion_gate(user_input, workspace_dir)
+                if completion_gate_enabled
+                else None
+            )
             _apply_skill_filter(user_input)
+            _apply_cli_auto_loaded_skills(preload_gate)
             agent.add_user_message(user_input)
 
             # Create cancellation event

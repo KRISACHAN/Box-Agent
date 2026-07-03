@@ -123,26 +123,18 @@ from box_agent.tools.runtime import (
     build_skill_runtime_context,
     build_skill_runtime_prompt,
 )
+from box_agent.tools.skill_preload import (
+    build_auto_loaded_skills_prompt,
+    document_preload_skill_names,
+    host_runtime_preload_skill_names,
+    strip_auto_loaded_skills,
+    turn_preload_skill_names,
+)
 
 from .debug_logger import acp_logger as log
 
 # Keep stdlib logger for backward compat with existing log calls
 logger = logging.getLogger(__name__)
-
-_AUTO_LOADED_SKILLS_HEADING = "## Auto-Loaded Skill Instructions"
-_DOCUMENT_SKILL_ARTIFACT_SUFFIXES: dict[str, tuple[str, ...]] = {
-    "pptx": (".pptx", ".ppt"),
-    "docx": (".docx",),
-    "xlsx": (".xlsx", ".xls"),
-    "pdf": (".pdf",),
-}
-_GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES: dict[str, tuple[str, ...]] = {
-    "pptx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["pptx"],
-    "docx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["docx"],
-    "xlsx": _DOCUMENT_SKILL_ARTIFACT_SUFFIXES["xlsx"],
-}
-_HOST_RUNTIME_PRELOAD_SKILLS: frozenset[str] = frozenset({"hyperframes-video"})
-
 
 try:
     class InitializeRequestPatch(InitializeRequest):
@@ -626,49 +618,55 @@ class BoxACPAgent:
                 tool.set_parent_system_prompt(system_prompt)
 
     def _strip_auto_loaded_skills(self, system_prompt: str) -> str:
-        marker = f"\n\n{_AUTO_LOADED_SKILLS_HEADING}\n"
-        if marker in system_prompt:
-            return system_prompt.split(marker, 1)[0].rstrip()
-        if system_prompt.startswith(f"{_AUTO_LOADED_SKILLS_HEADING}\n"):
-            return ""
-        return system_prompt
+        return strip_auto_loaded_skills(system_prompt)
+
+    def _sync_cache_fingerprint_context(self, state: SessionState) -> None:
+        state.agent.cache_fingerprint_context["filtered_skill_names"] = (
+            list(state.skill_selector.matched_skill_names)
+            if state.skill_selector is not None
+            else []
+        )
+        state.agent.cache_fingerprint_context["preloaded_skill_names"] = list(
+            state.preloaded_skill_names
+        )
+
+    def _log_cache_fingerprint(
+        self,
+        session_id: str,
+        fingerprint: dict[str, Any],
+    ) -> None:
+        log.info(
+            "llm/cache_fingerprint",
+            session_id=session_id,
+            system_prompt_hash=fingerprint.get("system_prompt_hash"),
+            system_prompt_chars=fingerprint.get("system_prompt_chars"),
+            tool_schema_hash=fingerprint.get("tool_schema_hash"),
+            tool_names_hash=fingerprint.get("tool_names_hash"),
+            tool_count=fingerprint.get("tool_count"),
+            mcp_tool_schema_hash=fingerprint.get("mcp_tool_schema_hash"),
+            mcp_tool_count=fingerprint.get("mcp_tool_count"),
+            mcp_tool_names_hash=fingerprint.get("mcp_tool_names_hash"),
+            filtered_skill_names_hash=fingerprint.get("filtered_skill_names_hash"),
+            filtered_skill_count=fingerprint.get("filtered_skill_count"),
+            preloaded_skill_names_hash=fingerprint.get("preloaded_skill_names_hash"),
+            preloaded_skill_count=fingerprint.get("preloaded_skill_count"),
+            filtered_skills=",".join(fingerprint.get("filtered_skill_names") or []),
+            preloaded_skills=",".join(fingerprint.get("preloaded_skill_names") or []),
+        )
 
     def _document_preload_skill_names(
         self,
         matched_skill_names: tuple[str, ...],
         completion_gate: CompletionGate | None,
     ) -> list[str]:
-        if completion_gate is None:
-            return []
-        patterns = tuple(completion_gate.required_changed_artifact_globs)
-        preload: list[str] = []
-        for skill_name, suffixes in _GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES.items():
-            if any(suffix in pattern for pattern in patterns for suffix in suffixes):
-                preload.append(skill_name)
-        for skill_name in matched_skill_names:
-            suffixes = _DOCUMENT_SKILL_ARTIFACT_SUFFIXES.get(skill_name)
-            if (
-                skill_name not in preload
-                and suffixes
-                and any(suffix in pattern for pattern in patterns for suffix in suffixes)
-            ):
-                preload.append(skill_name)
-        return preload
+        return document_preload_skill_names(matched_skill_names, completion_gate)
 
     def _host_runtime_preload_skill_names(
         self,
         matched_skill_names: tuple[str, ...],
         env_context: EnvContext | None,
     ) -> list[str]:
-        if env_context is None or env_context.hyperframes is None:
-            return []
-        if env_context.hyperframes.available is not True:
-            return []
-        return [
-            skill_name
-            for skill_name in matched_skill_names
-            if skill_name in _HOST_RUNTIME_PRELOAD_SKILLS
-        ]
+        return host_runtime_preload_skill_names(matched_skill_names, env_context)
 
     def _turn_preload_skill_names(
         self,
@@ -676,20 +674,7 @@ class BoxACPAgent:
         completion_gate: CompletionGate | None,
         env_context: EnvContext | None,
     ) -> list[str]:
-        preload: list[str] = []
-        for skill_name in self._document_preload_skill_names(
-            matched_skill_names,
-            completion_gate,
-        ):
-            if skill_name not in preload:
-                preload.append(skill_name)
-        for skill_name in self._host_runtime_preload_skill_names(
-            matched_skill_names,
-            env_context,
-        ):
-            if skill_name not in preload:
-                preload.append(skill_name)
-        return preload
+        return turn_preload_skill_names(matched_skill_names, completion_gate, env_context)
 
     def _apply_auto_loaded_skills(
         self,
@@ -698,62 +683,30 @@ class BoxACPAgent:
         skill_names: list[str],
     ) -> None:
         if not self._skill_loader:
+            self._sync_cache_fingerprint_context(state)
             return
         include_disabled = state.expert_context is not None
-        requested_names = list(state.preloaded_skill_names)
-        for skill_name in skill_names:
-            if skill_name not in requested_names:
-                requested_names.append(skill_name)
-        expanded_names: list[str] = []
-        for skill_name in requested_names:
-            if skill_name not in expanded_names:
-                expanded_names.append(skill_name)
-            skill = self._skill_loader.get_skill(
-                skill_name,
-                include_disabled=include_disabled,
-            )
-            if skill is None:
-                continue
-            for required_skill_name in skill.required_skills or []:
-                if required_skill_name not in expanded_names:
-                    expanded_names.append(required_skill_name)
-        requested_names = expanded_names
-        if not requested_names:
-            return
-
-        blocks: list[str] = []
-        loaded_names: list[str] = []
-        for skill_name in requested_names:
-            skill = self._skill_loader.get_skill(
-                skill_name,
-                include_disabled=include_disabled,
-            )
-            if skill is None:
-                log.warn("skills/preload_missing", session_id=session_id, skill=skill_name)
-                continue
-            loaded_names.append(skill_name)
-            blocks.append(skill.to_prompt())
-        state.preloaded_skill_names = loaded_names
-        if not blocks:
-            return
-
-        base_prompt = self._strip_auto_loaded_skills(state.agent.system_prompt).rstrip()
-        preloaded_prompt = (
-            f"{base_prompt}\n\n{_AUTO_LOADED_SKILLS_HEADING}\n"
-            "The following matched or required skills are preloaded because this turn "
-            "requires a concrete deliverable or host-provided runtime workflow. Follow "
-            "their full instructions before planning, delegating, or authoring the "
-            "artifact.\n\n"
-            + "\n\n".join(blocks)
+        result = build_auto_loaded_skills_prompt(
+            self._skill_loader,
+            state.agent.system_prompt,
+            skill_names,
+            existing_skill_names=state.preloaded_skill_names,
+            include_disabled=include_disabled,
         )
-        if state.agent.system_prompt == preloaded_prompt:
+        for skill_name in result.missing_names:
+            log.warn("skills/preload_missing", session_id=session_id, skill=skill_name)
+        state.preloaded_skill_names = list(result.loaded_names)
+        self._sync_cache_fingerprint_context(state)
+        if not result.loaded_names:
             return
-        self._set_agent_system_prompt(state.agent, preloaded_prompt)
+        if not result.changed:
+            return
+        self._set_agent_system_prompt(state.agent, result.system_prompt)
         log.info(
             "skills/preloaded",
             session_id=session_id,
             skills=",".join(state.preloaded_skill_names),
-            prompt_chars=len(preloaded_prompt),
+            prompt_chars=len(result.system_prompt),
         )
 
     async def _ensure_mcp_loaded(self) -> None:
@@ -1085,10 +1038,14 @@ class BoxACPAgent:
         )
 
         # Skill selector: per-turn keyword-based filter on the skill catalog.
-        # Bound after Agent.__init__ has appended the workspace footer so the
-        # captured prefix/suffix include all surrounding system-prompt content.
+        # Agent.__init__ appends session/runtime/workspace context first; then
+        # the skill slot is moved to the tail to keep catalog churn localized.
         if self._skill_loader:
-            from box_agent.tools.skill_loader import SkillSelector
+            from box_agent.tools.skill_loader import SkillSelector, move_skill_slot_to_end
+
+            relocated_prompt = move_skill_slot_to_end(agent.messages[0].content)
+            if relocated_prompt != agent.messages[0].content:
+                self._set_agent_system_prompt(agent, relocated_prompt)
             selector = SkillSelector(
                 self._skill_loader,
                 include_disabled=expert_context is not None,
@@ -1369,6 +1326,7 @@ class BoxACPAgent:
                         query_chars=len(state.skill_selector.cumulative_query),
                         prompt_chars=len(new_prompt),
                     )
+                self._sync_cache_fingerprint_context(state)
             except Exception as exc:
                 log.warn("skills/filter_error", session_id=session_id, message=str(exc))
 
@@ -1397,6 +1355,8 @@ class BoxACPAgent:
                 self._apply_auto_loaded_skills(state, session_id, preload_names)
             elif state.preloaded_skill_names:
                 self._apply_auto_loaded_skills(state, session_id, [])
+            else:
+                self._sync_cache_fingerprint_context(state)
 
         state.agent.add_user_message(user_text)
 
@@ -2274,6 +2234,11 @@ class BoxACPAgent:
             max_truncation_continuations=agent.max_truncation_continuations,
             artifact_detection_enabled=state.artifact_mode != "project",
             artifact_root_dir=state.output_dir,
+            cache_fingerprint_context=agent.cache_fingerprint_context,
+            cache_fingerprint_sink=lambda fingerprint: self._log_cache_fingerprint(
+                session_id,
+                fingerprint,
+            ),
         ):
             try:
                 match event:

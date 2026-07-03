@@ -26,6 +26,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import tiktoken
 
+from .cache_fingerprint import build_cache_fingerprint
 from .events import (
     AgentEvent,
     ArtifactEvent,
@@ -1738,6 +1739,8 @@ async def run_agent_loop(
     max_truncation_continuations: int = 1,
     artifact_detection_enabled: bool = True,
     artifact_root_dir: str | Path | None = None,
+    cache_fingerprint_context: dict[str, Any] | None = None,
+    cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Execute the agent loop, yielding structured events.
 
@@ -1800,6 +1803,10 @@ async def run_agent_loop(
             continuations (loop guard against repeated false positives).
         artifact_root_dir: Optional explicit artifact directory supplied by a
             host session. Defaults to ``{workspace_dir}/output``.
+        cache_fingerprint_context: Optional stable metadata to include with
+            cache-sensitive request fingerprints, such as selected skill names.
+        cache_fingerprint_sink: Optional callback that receives each fingerprint
+            before the LLM request, for hosts that do not use ``AgentLogger``.
     """
     cancelled = is_cancelled or (lambda: False)
     hook_mgr = HookManager(hooks)
@@ -2112,8 +2119,22 @@ async def run_agent_loop(
 
         # ── LLM call (streaming) ──────────────────────────────
         tool_list = list(tools.values())
+        cache_fingerprint = build_cache_fingerprint(
+            messages=messages,
+            tools=tool_list,
+            context=cache_fingerprint_context,
+        )
+        if cache_fingerprint_sink is not None:
+            try:
+                cache_fingerprint_sink(cache_fingerprint)
+            except Exception:
+                _log.debug("cache fingerprint sink failed", exc_info=True)
         if logger:
-            logger.log_request(messages=messages, tools=tool_list)
+            logger.log_request(
+                messages=messages,
+                tools=tool_list,
+                cache_fingerprint=cache_fingerprint,
+            )
 
         llm_debug_sink_token = (
             set_llm_debug_sink(logger.log_llm_debug_record) if logger else None

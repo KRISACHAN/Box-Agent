@@ -470,6 +470,7 @@ class Agent:
         self.messages: list[Message] = [Message(role="system", content=system_prompt)]
         self.logger = AgentLogger()
         self.api_total_tokens: int = 0
+        self.cache_fingerprint_context: dict[str, object] = {}
         self._streaming_active: bool = False  # Track if streaming output needs trailing newline
         self.last_stop_reason: str | None = None
         self.goal: GoalState | None = None
@@ -672,6 +673,7 @@ class Agent:
             truncation_continuation_enabled=self.truncation_continuation_enabled,
             max_truncation_continuations=self.max_truncation_continuations,
             artifact_detection_enabled=artifact_detection_enabled,
+            cache_fingerprint_context=self.cache_fingerprint_context,
         ):
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):

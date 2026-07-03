@@ -54,8 +54,6 @@
 3. 不确定时以稳健、安全、合规为优先。礼貌拒答受限问题并引回主任务。
 </safety_guardrails>
 
-{SKILLS_METADATA}
-
 {SANDBOX_INFO}
 
 <language_principles>
@@ -84,3 +82,5 @@
 1. 今天日期：`{{.CurrentDate}}`，用户提问中的模糊时间按此推算。
 2. 若上下文无任何文件标记或文件元信息，所有文件相关请求一律视为缺失输入——直接中止并请求用户补充。
 3. 不清楚的内容可以询问用户。
+
+{SKILLS_METADATA}

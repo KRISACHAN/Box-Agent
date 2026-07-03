@@ -58,6 +58,16 @@ SKILL_SETTINGS_PATH = Path.home() / ".box-agent" / "config" / "skill-settings.js
 _SKILL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
+def move_skill_slot_to_end(system_prompt_text: str) -> str:
+    """Move the progressive skill metadata slot to the final prompt position."""
+    if SKILL_SLOT_SENTINEL not in system_prompt_text:
+        return system_prompt_text
+    without_slot = system_prompt_text.replace(SKILL_SLOT_SENTINEL, "").rstrip()
+    if not without_slot:
+        return SKILL_SLOT_SENTINEL
+    return f"{without_slot}\n\n{SKILL_SLOT_SENTINEL}"
+
+
 def _read_disabled_skill_names(settings_path: Optional[Path]) -> Set[str]:
     """Read officev3 skill enable/disable state.
 
