@@ -101,6 +101,19 @@ class MockLLM:
         )
 
 
+class CapturingStreamLLM(MockLLM):
+    """Mock LLM that keeps a snapshot of each message list it receives."""
+
+    def __init__(self, responses: list[LLMResponse]):
+        super().__init__(responses)
+        self.message_calls: list[list[Message]] = []
+
+    async def generate_stream(self, messages, tools=None, **_):
+        self.message_calls.append([msg.model_copy(deep=True) for msg in messages])
+        async for event in super().generate_stream(messages, tools=tools, **_):
+            yield event
+
+
 class ChunkedStreamLLM:
     """LLM test double that emits visible text in multiple stream chunks."""
 
@@ -196,6 +209,40 @@ class JsonWebSearchTool(Tool):
                         }
                     ]
                 }
+            ),
+        )
+
+
+class LargeJsonWebSearchTool(Tool):
+    @property
+    def name(self):
+        return "web_search"
+
+    @property
+    def description(self):
+        return "Searches the web"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {"query": {"type": "string"}}}
+
+    async def execute(self, query: str = ""):
+        return ToolResult(
+            success=True,
+            content=json.dumps(
+                {
+                    "Query": query,
+                    "ResultCount": 1,
+                    "Results": [
+                        {
+                            "Title": "Official policy result",
+                            "Url": "https://example.gov/policy",
+                            "Snippet": "A concise summary of the policy.",
+                            "Content": "RAW_SEARCH_BODY_" + ("x" * 20000),
+                        }
+                    ],
+                },
+                ensure_ascii=False,
             ),
         )
 
@@ -1512,6 +1559,49 @@ async def test_web_search_skips_duplicate_queries_and_dedupes_result_urls():
     injected = [e for e in events if isinstance(e, InjectedMessageEvent) and not e.user_visible]
     assert any("Duplicate queries skipped this batch: 1" in e.content for e in injected)
     assert any("duplicate structured results this batch: 1" in e.content for e in injected)
+
+
+@pytest.mark.asyncio
+async def test_web_search_tool_result_is_compacted_only_for_model_history():
+    tool_call = ToolCall(
+        id="web-large",
+        type="function",
+        function=FunctionCall(name="web_search", arguments={"query": "policy 400g"}),
+    )
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(content="", tool_calls=[tool_call], finish_reason="tool"),
+            LLMResponse(content="final", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"web_search": LargeJsonWebSearchTool()},
+            max_steps=5,
+        )
+    )
+
+    visible_result = next(
+        e for e in events if isinstance(e, ToolCallResult) and e.tool_call_id == "web-large"
+    )
+    assert "RAW_SEARCH_BODY_" in visible_result.content
+
+    assert len(llm.message_calls) >= 2
+    tool_message = next(
+        m
+        for m in llm.message_calls[1]
+        if m.role == "tool" and m.name == "web_search" and m.tool_call_id == "web-large"
+    )
+    assert "compacted evidence retained" in tool_message.content
+    assert "query=policy 400g" in tool_message.content
+    assert "Official policy result" in tool_message.content
+    assert "https://example.gov/policy" in tool_message.content
+    assert "A concise summary of the policy" in tool_message.content
+    assert "RAW_SEARCH_BODY_" not in tool_message.content
+    assert len(tool_message.content) < 1000
 
 
 @pytest.mark.asyncio

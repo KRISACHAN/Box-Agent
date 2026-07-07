@@ -651,6 +651,20 @@ def _compact_visible_tool_content_for_model(
     content: str,
 ) -> str:
     """Fallback compaction for tool content before it is appended to history."""
+    if tool_name == WEB_SEARCH_TOOL_NAME:
+        compacted = _compact_web_search_result_for_model(content)
+        if compacted is not None:
+            return compacted
+        if len(content) > _MODEL_CONTEXT_CONTENT_THRESHOLD:
+            first_line = _short_tool_text(content.split("\n", 1)[0], 240)
+            return (
+                "[web_search result omitted from model history]\n"
+                f"Characters returned: {len(content)}\n"
+                "Reason: large search output can bloat future LLM turns; "
+                "rerun a narrower web_search if exact raw output is needed.\n\n"
+                f"Preview: {first_line}"
+            )
+
     if tool_name != "read_file" or not _path_needs_compact_model_context(arguments.get("path"), content):
         return content
 
