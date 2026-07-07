@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import mimetypes
@@ -14,6 +15,11 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from box_agent.auth import request_auth_headers
+from box_agent.llm.debug_logging import (
+    log_image_generation_error_meta,
+    log_image_generation_request,
+    log_image_generation_response_meta,
+)
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.safety import validate_path_in_workspace
 from box_agent.tools.watermark import apply_text_watermark
@@ -559,6 +565,48 @@ class GenerateImageTool(Tool):
             return headers
         return request_auth_headers(auth_file=self.auth_file, existing=headers, url=self.endpoint)
 
+    def _log_response_meta(self, mode: str, endpoint: str, response: httpx.Response) -> None:
+        log_image_generation_response_meta(
+            mode=mode,
+            endpoint=endpoint,
+            status_code=response.status_code,
+            headers=response.headers,
+        )
+
+    def _log_error_meta(
+        self,
+        mode: str,
+        endpoint: str,
+        *,
+        response: httpx.Response | None = None,
+        exc: BaseException | None = None,
+    ) -> None:
+        body: str | None = None
+        if response is not None:
+            try:
+                body = response.text
+            except Exception:
+                body = None
+        log_image_generation_error_meta(
+            mode=mode,
+            endpoint=endpoint,
+            status_code=response.status_code if response is not None else None,
+            headers=response.headers if response is not None else None,
+            response_body=body,
+            error=str(exc) if exc is not None else None,
+        )
+
+    def _file_log_entry(self, field: str, path: Path, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+        return {
+            "field": field,
+            "filename": path.name,
+            "path": self._display_path(path),
+            "mime_type": mime_type,
+            "size_bytes": len(image_bytes),
+            "sha256": hashlib.sha256(image_bytes).hexdigest(),
+            "content": "<binary omitted>",
+        }
+
     @staticmethod
     def _raise_status(response: httpx.Response) -> None:
         try:
@@ -610,8 +658,34 @@ class GenerateImageTool(Tool):
 
         timeout = self.timeout if self.timeout is not None else float(os.environ.get(_TIMEOUT_ENV, _DEFAULT_TIMEOUT))
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.post(self.endpoint, json=payload, headers=self._request_headers())
-            return await self._image_from_response(client, response)
+            request = client.build_request(
+                "POST",
+                self.endpoint,
+                json=payload,
+                headers=self._request_headers(),
+            )
+            log_image_generation_request(
+                mode="text_to_image",
+                endpoint=str(request.url),
+                method=request.method,
+                headers=request.headers,
+                json_payload=payload,
+                configured_model=self.model,
+                timeout=timeout,
+            )
+            response: httpx.Response | None = None
+            try:
+                response = await client.send(request)
+                self._log_response_meta("text_to_image", str(request.url), response)
+                return await self._image_from_response(client, response)
+            except Exception as exc:
+                self._log_error_meta(
+                    "text_to_image",
+                    str(request.url),
+                    response=response,
+                    exc=exc,
+                )
+                raise
 
     async def _request_image_edit(
         self,
@@ -623,26 +697,52 @@ class GenerateImageTool(Tool):
         reference_paths: list[Path],
     ) -> tuple[bytes, str]:
         files: list[tuple[str, tuple[str, bytes, str]]] = []
+        file_log_entries: list[dict[str, Any]] = []
         for path in reference_paths:
             image_bytes = path.read_bytes()
             mime_type = mimetypes.guess_type(str(path))[0] or _guess_mime_from_bytes(image_bytes)
             if not mime_type.startswith("image/"):
                 raise ValueError(f"Unsupported reference image type: {self._display_path(path)}")
             files.append(("image", (path.name, image_bytes, mime_type)))
+            file_log_entries.append(self._file_log_entry("image", path, image_bytes, mime_type))
 
         data = {
             "prompt": _compose_openai_prompt(prompt, style, negative_prompt),
             "size": size,
         }
         timeout = self.timeout if self.timeout is not None else float(os.environ.get(_TIMEOUT_ENV, _DEFAULT_TIMEOUT))
+        endpoint = _derive_edit_endpoint(self.endpoint or "")
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.post(
-                _derive_edit_endpoint(self.endpoint or ""),
+            request = client.build_request(
+                "POST",
+                endpoint,
                 data=data,
                 files=files,
                 headers=self._request_headers(),
             )
-            return await self._image_from_response(client, response)
+            log_image_generation_request(
+                mode="image_to_image",
+                endpoint=str(request.url),
+                method=request.method,
+                headers=request.headers,
+                multipart_fields=data,
+                files=file_log_entries,
+                configured_model=self.model,
+                timeout=timeout,
+            )
+            response: httpx.Response | None = None
+            try:
+                response = await client.send(request)
+                self._log_response_meta("image_to_image", str(request.url), response)
+                return await self._image_from_response(client, response)
+            except Exception as exc:
+                self._log_error_meta(
+                    "image_to_image",
+                    str(request.url),
+                    response=response,
+                    exc=exc,
+                )
+                raise
 
     def _ensure_extension(self, target: Path, mime_type: str) -> Path:
         if target.suffix:

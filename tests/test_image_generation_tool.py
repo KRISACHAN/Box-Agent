@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import httpx
 import pytest
 
 from box_agent.config import ImageGenerationConfig, ToolsConfig
+from box_agent.llm.debug_logging import reset_llm_debug_sink, set_llm_debug_sink
 from box_agent.tools.image_generation_tool import GenerateImageTool
 from box_agent.tools.setup import add_workspace_tools
 
@@ -95,6 +97,56 @@ async def test_generate_image_saves_base64_response(
     assert result.raw_output["size"] == "1536x1024"
     assert result.raw_output["requested_height"] == 900
     assert "assets/generated/hero.png" in result.content
+
+
+@pytest.mark.asyncio
+async def test_generate_image_logs_full_json_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: list[dict] = []
+    long_prompt = "deep brand scene " + ("with detailed lighting " * 80)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/v1/images/generations",
+        api_key="secret",
+    )
+
+    token = set_llm_debug_sink(records.append)
+    try:
+        result = await tool.execute(
+            prompt=long_prompt,
+            output_path="assets/generated/full-log.png",
+            style="cinematic",
+            negative_prompt="text",
+        )
+    finally:
+        reset_llm_debug_sink(token)
+
+    assert result.success
+    request_record = next(record for record in records if record["event"] == "image_generation/request")
+    response_record = next(record for record in records if record["event"] == "image_generation/response_meta")
+    assert request_record["mode"] == "text_to_image"
+    assert request_record["method"] == "POST"
+    assert request_record["endpoint"] == "https://image.example.test/v1/images/generations"
+    assert request_record["configured_model"] == "gpt-image-1"
+    assert request_record["payload"]["json"]["model"] == "gpt-image-1"
+    assert request_record["payload"]["json"]["prompt"] == (
+        f"{long_prompt.strip()}\n\nStyle: cinematic\n\nAvoid: text"
+    )
+    assert request_record["payload"]["json"]["size"] == "1024x1024"
+    assert "<redacted>" in json.dumps(request_record, ensure_ascii=False)
+    assert "secret" not in json.dumps(request_record, ensure_ascii=False)
+    assert response_record["status_code"] == 200
 
 
 @pytest.mark.asyncio
@@ -535,6 +587,112 @@ async def test_generate_image_edits_reference_image_with_multipart(
     assert result.raw_output
     assert result.raw_output["image_mode"] == "image_to_image"
     assert result.raw_output["reference_images"] == ["reference.png"]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_edit_logs_full_multipart_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: list[dict] = []
+    reference = tmp_path / "reference.png"
+    reference.write_bytes(PNG_BYTES)
+    prompt = "把参考图改成深色版本，保留构图和主体。" + (" 背景降低亮度但保留细节。" * 50)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"b64_json": base64.b64encode(JPEG_BYTES).decode("ascii")},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/api/web/llm/v2/images/gen",
+        api_key="secret",
+    )
+
+    token = set_llm_debug_sink(records.append)
+    try:
+        result = await tool.execute(
+            prompt=prompt,
+            output_path="assets/generated/edited.jpg",
+            size="1366x768",
+            image_mode="image_to_image",
+            reference_images=["reference.png"],
+        )
+    finally:
+        reset_llm_debug_sink(token)
+
+    assert result.success
+    request_record = next(record for record in records if record["event"] == "image_generation/request")
+    assert request_record["mode"] == "image_to_image"
+    assert request_record["endpoint"] == "https://image.example.test/api/web/llm/v2/images/edits"
+    assert request_record["configured_model"] == "gpt-image-1"
+    assert "multipart/form-data" in request_record["headers"]["content-type"]
+    assert request_record["payload"]["multipart_fields"] == {
+        "prompt": prompt,
+        "size": "1366x768",
+    }
+    assert "model" not in request_record["payload"]["multipart_fields"]
+    assert request_record["payload"]["files"] == [
+        {
+            "field": "image",
+            "filename": "reference.png",
+            "path": "reference.png",
+            "mime_type": "image/png",
+            "size_bytes": len(PNG_BYTES),
+            "sha256": hashlib.sha256(PNG_BYTES).hexdigest(),
+            "content": "<binary omitted>",
+        }
+    ]
+    serialized = json.dumps(request_record, ensure_ascii=False)
+    assert "secret" not in serialized
+    assert str(PNG_BYTES) not in serialized
+
+
+@pytest.mark.asyncio
+async def test_generate_image_error_log_keeps_full_response_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: list[dict] = []
+    reference = tmp_path / "reference.png"
+    reference.write_bytes(PNG_BYTES)
+    error_body = {
+        "error": {
+            "message": "/images/edits: Invalid model name passed in model=openai/gpt-image-1-full-tail"
+        }
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=error_body)
+
+    patch_async_client(monkeypatch, handler)
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/api/web/llm/v2/images/gen",
+        api_key="secret",
+    )
+
+    token = set_llm_debug_sink(records.append)
+    try:
+        result = await tool.execute(
+            prompt="深色版本",
+            output_path="assets/generated/edited.jpg",
+            image_mode="image_to_image",
+            reference_images=["reference.png"],
+        )
+    finally:
+        reset_llm_debug_sink(token)
+
+    assert not result.success
+    error_record = next(record for record in records if record["event"] == "image_generation/error_meta")
+    assert error_record["status_code"] == 400
+    assert "openai/gpt-image-1-full-tail" in error_record["response_body"]
+    assert "secret" not in json.dumps(error_record, ensure_ascii=False)
 
 
 @pytest.mark.asyncio

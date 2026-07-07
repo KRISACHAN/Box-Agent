@@ -144,6 +144,101 @@ def log_llm_error_meta(*, provider: str, mode: str, exc: BaseException) -> None:
     )
 
 
+def log_image_generation_request(
+    *,
+    mode: str,
+    endpoint: str,
+    method: str,
+    headers: Any = None,
+    json_payload: Mapping[str, Any] | None = None,
+    multipart_fields: Mapping[str, Any] | None = None,
+    files: list[Mapping[str, Any]] | None = None,
+    configured_model: str | None = None,
+    timeout: float | None = None,
+) -> None:
+    """Log the exact image-generation request fields sent to the HTTP service.
+
+    Text fields are intentionally kept in full even when normal LLM payload
+    logging is summarized; binary file contents are represented by metadata.
+    """
+
+    if not llm_debug_enabled():
+        return
+
+    payload: dict[str, Any] = {}
+    if json_payload is not None:
+        payload["json"] = sanitize_for_logging(json_payload)
+    if multipart_fields is not None:
+        payload["multipart_fields"] = sanitize_for_logging(multipart_fields)
+    if files is not None:
+        payload["files"] = sanitize_for_logging(files)
+
+    _emit(
+        {
+            "event": "image_generation/request",
+            "mode": mode,
+            "method": method,
+            "endpoint": _sanitize_url(endpoint),
+            "configured_model": configured_model,
+            "timeout": timeout,
+            "headers": sanitize_for_logging(_mapping_from_headers(headers)),
+            "payload": payload,
+        }
+    )
+
+
+def log_image_generation_response_meta(
+    *,
+    mode: str,
+    endpoint: str,
+    status_code: int | None = None,
+    headers: Any = None,
+) -> None:
+    """Log image-generation response metadata."""
+
+    if not llm_debug_enabled():
+        return
+
+    _emit(
+        {
+            "event": "image_generation/response_meta",
+            "mode": mode,
+            "endpoint": _sanitize_url(endpoint),
+            "status_code": status_code,
+            "request_id": request_id_from_headers(headers),
+            "headers": sanitize_for_logging(_mapping_from_headers(headers)),
+        }
+    )
+
+
+def log_image_generation_error_meta(
+    *,
+    mode: str,
+    endpoint: str,
+    status_code: int | None = None,
+    headers: Any = None,
+    response_body: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Log image-generation error details, keeping the backend body intact."""
+
+    if not llm_debug_enabled():
+        return
+
+    _emit(
+        {
+            "event": "image_generation/error_meta",
+            "mode": mode,
+            "endpoint": _sanitize_url(endpoint),
+            "status_code": status_code,
+            "request_id": request_id_from_headers(headers),
+            "headers": sanitize_for_logging(_mapping_from_headers(headers)),
+            "response_body": response_body,
+            "error": error,
+        }
+    )
+
+
 def sanitize_for_logging(value: Any) -> Any:
     """Return a JSON-serializable copy with credentials redacted."""
 
