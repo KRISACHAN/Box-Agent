@@ -66,7 +66,12 @@ def _escape_invalid_chars_in_json_strings(raw: str) -> str:
     return "".join(out)
 
 
-def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str | None:
+def _repair_tool_call_arguments(
+    raw_args: str,
+    tool_name: str = "?",
+    *,
+    allow_structural_closure: bool = True,
+) -> str | None:
     """Attempt to repair malformed tool_call argument JSON.
 
     Returns the repaired JSON string on success, or ``None`` when the input
@@ -75,8 +80,18 @@ def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str | No
     * unescaped control chars inside string values (llama.cpp / GLM);
     * ``None`` python-literal instead of ``{}``;
     * trailing commas before ``}`` / ``]``;
-    * unclosed ``{`` / ``[`` — appended;
+    * unclosed ``{`` / ``[`` — appended, but *only* when
+      ``allow_structural_closure`` is True;
     * excess trailing ``}`` / ``]`` — trimmed (bounded to 50 iterations).
+
+    ``allow_structural_closure`` guards the one pass that can synthesize
+    executable semantics from a half-delivered payload. When the upstream
+    stream is known to have been cut short (``finish_reason`` was ``None``,
+    ``"length"`` or ``"max_tokens"``), the caller passes ``False`` so a
+    truncated ``"content":"partial`` cannot be turned into a valid
+    ``{"content":"partial"}`` and handed to a filesystem/shell tool. All the
+    other passes are byte-conservative (they only delete or escape existing
+    chars) and stay enabled regardless.
     """
     raw_stripped = raw_args.strip() if isinstance(raw_args, str) else ""
 
@@ -100,12 +115,13 @@ def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str | No
 
     fixed = raw_stripped
     fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
-    open_curly = fixed.count("{") - fixed.count("}")
-    open_bracket = fixed.count("[") - fixed.count("]")
-    if open_curly > 0:
-        fixed += "}" * open_curly
-    if open_bracket > 0:
-        fixed += "]" * open_bracket
+    if allow_structural_closure:
+        open_curly = fixed.count("{") - fixed.count("}")
+        open_bracket = fixed.count("[") - fixed.count("]")
+        if open_curly > 0:
+            fixed += "}" * open_curly
+        if open_bracket > 0:
+            fixed += "]" * open_bracket
     for _ in range(50):
         try:
             json.loads(fixed)
@@ -700,6 +716,15 @@ class OpenAIClient(LLMClientBase):
         # control chars, trailing commas, missing brackets, Python-``None``);
         # only genuinely unparseable payloads flip ``truncated_tool`` on so
         # the agent loop can decide whether to retry.
+        #
+        # When the upstream stream was cut short (``finish_reason`` is None /
+        # length / max_tokens), we deliberately disable the one repair pass
+        # that can synthesize new semantics — auto-closing unbalanced ``{`` /
+        # ``[``. Otherwise a payload like ``{"path":"/tmp/a","content":"part``
+        # would get "fixed" to a valid-looking ``{"path":"/tmp/a","content":"part"}``
+        # and get executed against write_file / bash. In that case we route
+        # it through the truncation retry path instead.
+        allow_closure = finish_reason not in (None, "length", "max_tokens")
         tool_calls: list[ToolCall] = []
         truncated_tool = False
         truncated_info: list[dict[str, Any]] = []
@@ -709,7 +734,11 @@ class OpenAIClient(LLMClientBase):
             try:
                 arguments = json.loads(raw) if raw else {}
             except json.JSONDecodeError as exc:
-                repaired = _repair_tool_call_arguments(raw, entry["name"] or "?")
+                repaired = _repair_tool_call_arguments(
+                    raw,
+                    entry["name"] or "?",
+                    allow_structural_closure=allow_closure,
+                )
                 if repaired is not None:
                     try:
                         arguments = json.loads(repaired)
