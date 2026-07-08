@@ -87,7 +87,9 @@ Skill content here.
 
 
 def test_load_invalid_skill():
-    """Test loading an invalid skill (missing frontmatter)"""
+    """A malformed SKILL.md returns a Hermes-style directory-name placeholder
+    (broken=True) instead of dropping silently — otherwise the skill author
+    can't tell why their skill vanished from ``## Available Skills``."""
     with tempfile.TemporaryDirectory() as tmpdir:
         skill_dir = Path(tmpdir) / "invalid-skill"
         skill_dir.mkdir()
@@ -98,7 +100,10 @@ def test_load_invalid_skill():
         loader = SkillLoader(tmpdir)
         skill = loader.load_skill(skill_file)
 
-        assert skill is None
+        assert skill is not None
+        assert skill.name == "invalid-skill"
+        assert skill.broken is True
+        assert skill.content == ""
 
 
 def test_discover_skills():

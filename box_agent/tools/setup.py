@@ -107,7 +107,7 @@ class Colors:
     RESET = "\033[0m"
 
 
-async def initialize_base_tools(config: Config, output=None, memory_manager=None, llm=None):
+async def initialize_base_tools(config: Config, output=None, memory_manager=None, llm=None, defer_skills: bool = False):
     """Initialize base tools (independent of workspace)
 
     These tools are loaded from package configuration and don't depend on workspace.
@@ -119,17 +119,27 @@ async def initialize_base_tools(config: Config, output=None, memory_manager=None
                 writer when stdout must stay clean (e.g. ACP mode).
         memory_manager: Optional MemoryManager instance for memory tools.
         llm: Optional LLM client used to model-merge context memory writes.
+        defer_skills: If True (ACP path), skill discovery is moved off the
+            critical path and returned as an asyncio.Task in ``skill_task``.
+            The returned ``skill_loader`` is still valid immediately — its
+            ``loaded_skills`` dict just stays empty until the task completes.
+            Callers must ``await skill_task`` (or its completion) before
+            they need the skill catalog. CLI keeps the default (False) so
+            users still see the "Loading Claude Skills..." status inline.
 
     Returns:
-        Tuple of (tools, skill_loader, mcp_task). The MCP task loads in the
-        background — call ``await_mcp_tools(mcp_task)`` before running an
-        agent turn to ensure MCP tools are available. ``mcp_task`` is
-        ``None`` when MCP is disabled.
+        Tuple of (tools, skill_loader, mcp_task, skill_task). The MCP task
+        loads in the background — call ``await_mcp_tools(mcp_task)`` before
+        running an agent turn to ensure MCP tools are available. ``mcp_task``
+        is ``None`` when MCP is disabled. ``skill_task`` is a discovery task
+        when ``defer_skills=True``, otherwise ``None`` (discovery already ran
+        inline). See :func:`await_skill_discovery`.
     """
     _out = output or print
 
     tools = []
     skill_loader = None
+    skill_task: Optional[asyncio.Task] = None
 
     # 0. Memory tools (cross-session, workspace-independent)
     if memory_manager is not None:
@@ -194,15 +204,49 @@ async def initialize_base_tools(config: Config, output=None, memory_manager=None
                 (builtin_dir, "builtin"),
             ]
 
-            skill_tools, skill_loader = create_skill_tools(sources=sources)
-            if skill_tools:
-                tools.extend(skill_tools)
-                _out(
-                    f"{Colors.GREEN}✅ Loaded Skill tool (get_skill) — "
-                    f"user: {user_skills_dir}, builtin: {builtin_dir}{Colors.RESET}"
+            # ACP path: defer discovery to a background task so a directory
+            # full of malformed SKILL.md files can't block stdio setup and
+            # trip the host's `initialize` timeout. The loader object is
+            # returned right away; its ``loaded_skills`` dict fills in when
+            # the task completes. `SkillSelector` runs on the first user
+            # turn — well after the discovery task has finished on any real
+            # skill catalog.
+            if defer_skills:
+                skill_tools, skill_loader = create_skill_tools(
+                    sources=sources, defer_discovery=True
                 )
+                if skill_tools:
+                    tools.extend(skill_tools)
+
+                async def _discover() -> int:
+                    # Offload the sync rglob + YAML parse to a thread so a
+                    # slow disk (or a directory with many broken skills)
+                    # never blocks the event loop.
+                    try:
+                        skills = await asyncio.to_thread(skill_loader.discover_skills)
+                    except Exception as exc:  # pragma: no cover — defensive
+                        _out(
+                            f"{Colors.YELLOW}⚠️  Failed to discover Skills: {exc}{Colors.RESET}"
+                        )
+                        return 0
+                    _out(
+                        f"{Colors.GREEN}✅ Loaded Skill tool (get_skill) — "
+                        f"user: {user_skills_dir}, builtin: {builtin_dir} "
+                        f"({len(skills)} skills){Colors.RESET}"
+                    )
+                    return len(skills)
+
+                skill_task = asyncio.create_task(_discover(), name="skills-background-load")
             else:
-                _out(f"{Colors.YELLOW}⚠️  No available Skills found{Colors.RESET}")
+                skill_tools, skill_loader = create_skill_tools(sources=sources)
+                if skill_tools:
+                    tools.extend(skill_tools)
+                    _out(
+                        f"{Colors.GREEN}✅ Loaded Skill tool (get_skill) — "
+                        f"user: {user_skills_dir}, builtin: {builtin_dir}{Colors.RESET}"
+                    )
+                else:
+                    _out(f"{Colors.YELLOW}⚠️  No available Skills found{Colors.RESET}")
         except Exception as e:
             _out(f"{Colors.YELLOW}⚠️  Failed to load Skills: {e}{Colors.RESET}")
 
@@ -243,7 +287,25 @@ async def initialize_base_tools(config: Config, output=None, memory_manager=None
             _out(f"{Colors.YELLOW}⚠️  MCP config file not found: {config.tools.mcp_config_path}{Colors.RESET}")
 
     _out("")  # Empty line separator
-    return tools, skill_loader, mcp_task
+    return tools, skill_loader, mcp_task, skill_task
+
+
+async def await_skill_discovery(skill_task: Optional[asyncio.Task]) -> None:
+    """Await the background skill-discovery task, if any.
+
+    ACP callers invoke this before they need a populated skill catalog
+    (e.g. before the first turn's SkillSelector filter). Safe to call
+    multiple times — asyncio.Task caches its result — and safe to call
+    with ``None`` when discovery ran inline.
+    """
+    if skill_task is None:
+        return
+    try:
+        await skill_task
+    except Exception:
+        # Discovery already logs its own failure; swallow so the caller
+        # can proceed with whatever partial catalog the loader has.
+        return
 
 
 async def await_mcp_tools(mcp_task: Optional[asyncio.Task]) -> List[Tool]:

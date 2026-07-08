@@ -182,7 +182,7 @@ def test_cli_task_preloads_pptx_even_when_filter_drops_it(tmp_path: Path, monkey
     )
 
     async def fake_initialize_base_tools(*args, **kwargs):
-        return [], skill_loader, None
+        return [], skill_loader, None, None
 
     monkeypatch.setattr(cli.Config, "get_default_config_path", staticmethod(lambda: config_path))
     monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))

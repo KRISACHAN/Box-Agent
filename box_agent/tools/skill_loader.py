@@ -96,7 +96,19 @@ def _read_disabled_skill_names(settings_path: Optional[Path]) -> Set[str]:
 
 @dataclass
 class Skill:
-    """Skill data structure"""
+    """Skill data structure.
+
+    A skill can be ``broken`` — meaning the SKILL.md file was present but
+    couldn't be parsed (bad YAML, missing name/description, unreadable file,
+    frontmatter that isn't a mapping). In that case Hermes-style directory
+    name is used as ``name``, ``description`` explains the failure, and
+    ``content`` is empty. Broken skills stay in the catalog on purpose:
+    users who authored the skill deserve to see that it exists but is
+    misconfigured — the alternative (silently dropping it) sends them
+    hunting for a skill they can't find. Loading the full content via
+    ``get_skill`` returns a diagnostic instead of pushing empty content
+    into the model.
+    """
 
     name: str
     description: str
@@ -109,10 +121,31 @@ class Skill:
     keywords: Optional[List[str]] = None
     required_skills: Optional[List[str]] = None
     related_skills: Optional[List[str]] = None
+    broken: bool = False
+    broken_reason: Optional[str] = None
 
     def to_prompt(self) -> str:
-        """Convert skill to prompt format"""
+        """Convert skill to prompt format.
+
+        For a broken skill, return an unmistakable diagnostic instead of an
+        empty content block so the model doesn't waste a turn trying to
+        "follow the skill" that isn't there.
+        """
         skill_root = str(self.skill_path.parent) if self.skill_path else "unknown"
+
+        if self.broken:
+            reason = self.broken_reason or "unknown parse failure"
+            return f"""
+# Skill: {self.name}  ⚠️  UNAVAILABLE
+
+This skill's SKILL.md exists but could not be loaded: **{reason}**
+
+**Skill Root Directory:** `{skill_root}`
+
+Ask the user to fix the SKILL.md frontmatter (`name`, `description` and
+valid YAML) before using this skill. Do NOT invent guidance based on the
+directory name — you have no reliable content for this skill.
+"""
 
         return f"""
 # Skill: {self.name}
@@ -137,6 +170,8 @@ All files and references in this skill are relative to this directory.
             "path": str(self.skill_path) if self.skill_path else None,
             "required_skills": self.required_skills or [],
             "related_skills": self.related_skills or [],
+            "broken": self.broken,
+            "broken_reason": self.broken_reason,
         }
 
 
@@ -157,7 +192,16 @@ class _SourceEntry:
 
 
 class SkillLoader:
-    """Skill loader supporting multiple prioritized sources."""
+    """Skill loader supporting multiple prioritized sources.
+
+    Parse errors from individual SKILL.md files are accumulated in
+    ``self.parse_errors`` and summarized once at the end of
+    :meth:`discover_skills`. This matters on ACP startup: a downstream host
+    that drops in dozens of malformed skills used to spam stderr per file
+    (each ``sys.stderr.write`` is a real syscall on Windows) and blow the
+    host's ``initialize`` timeout. Aggregating keeps the boot path fast and
+    still surfaces the count for diagnostics.
+    """
 
     def __init__(
         self,
@@ -193,6 +237,10 @@ class SkillLoader:
         self._skill_settings_signature: tuple[str, int, int] | None = None
         self.loaded_skills: Dict[str, Skill] = {}
         self._all_skills: Dict[str, Skill] = {}
+        # Accumulated (path, reason) pairs from the most recent discover_skills
+        # run. Reset at the start of each discovery so callers can react to a
+        # single pass without seeing stale data from earlier reloads.
+        self.parse_errors: List[Tuple[Path, str]] = []
 
     @staticmethod
     def _parse_skill_name_list(raw_value: object) -> Optional[List[str]]:
@@ -236,15 +284,55 @@ class SkillLoader:
                     return SKILL_SETTINGS_PATH
         return None
 
+    def _broken_placeholder(
+        self,
+        skill_path: Path,
+        source: SkillSource,
+        reason: str,
+    ) -> Skill:
+        """Build a directory-name placeholder for a SKILL.md that failed to load.
+
+        Mirrors Hermes' fallback behavior — a broken skill stays visible so
+        the author knows it exists but is misconfigured, instead of silently
+        vanishing from ``## Available Skills`` and confusing them.
+        The record is also appended to ``self.parse_errors`` so operators
+        still get the aggregate stderr summary.
+        """
+        self.parse_errors.append((skill_path, reason))
+        return Skill(
+            name=skill_path.parent.name,
+            description=f"(SKILL.md malformed — {reason})",
+            content="",
+            source=source,
+            skill_path=skill_path,
+            broken=True,
+            broken_reason=reason,
+        )
+
     def load_skill(self, skill_path: Path, source: SkillSource = "builtin") -> Optional[Skill]:
-        """Load a single skill from a SKILL.md file."""
+        """Load a single skill from a SKILL.md file.
+
+        On a parse failure the return value is a *broken placeholder*: a
+        Skill built from the directory name with an empty content block
+        and ``broken=True`` set. Callers can filter with ``skill.broken``
+        when they want to hide malformed entries. The parse reason is also
+        recorded in ``self.parse_errors`` so ``discover_skills`` can emit
+        one aggregate summary line. Returns ``None`` only when we can't
+        even determine a placeholder name (e.g. path outside a directory).
+        """
         try:
             content = skill_path.read_text(encoding="utf-8")
+        except OSError as e:
+            return self._broken_placeholder(skill_path, source, f"unreadable file: {e}")
+        except Exception as e:  # pragma: no cover — defensive
+            return self._broken_placeholder(skill_path, source, f"unexpected read error: {e}")
 
+        try:
             frontmatter_match = re.match(r"^---\n(.*?)\n---\n(.*)$", content, re.DOTALL)
             if not frontmatter_match:
-                _warn(f"⚠️  {skill_path} missing YAML frontmatter")
-                return None
+                return self._broken_placeholder(
+                    skill_path, source, "missing YAML frontmatter"
+                )
 
             frontmatter_text = frontmatter_match.group(1)
             skill_content = frontmatter_match.group(2).strip()
@@ -252,12 +340,21 @@ class SkillLoader:
             try:
                 frontmatter = yaml.safe_load(frontmatter_text)
             except yaml.YAMLError as e:
-                _warn(f"❌ Failed to parse YAML frontmatter: {e}")
-                return None
+                return self._broken_placeholder(
+                    skill_path, source, f"YAML parse error: {e}"
+                )
+
+            if not isinstance(frontmatter, dict):
+                return self._broken_placeholder(
+                    skill_path, source, "frontmatter is not a YAML mapping"
+                )
 
             if "name" not in frontmatter or "description" not in frontmatter:
-                _warn(f"⚠️  {skill_path} missing required fields (name or description)")
-                return None
+                return self._broken_placeholder(
+                    skill_path,
+                    source,
+                    "missing required fields (name or description)",
+                )
 
             skill_dir = skill_path.parent
             processed_content = self._process_skill_paths(skill_content, skill_dir)
@@ -292,8 +389,7 @@ class SkillLoader:
             )
 
         except Exception as e:
-            _warn(f"❌ Failed to load skill ({skill_path}): {e}")
-            return None
+            return self._broken_placeholder(skill_path, source, f"unexpected error: {e}")
 
     def _process_skill_paths(self, content: str, skill_dir: Path) -> str:
         """Replace relative paths in skill content with absolute paths."""
@@ -344,6 +440,9 @@ class SkillLoader:
         """Discover skills from all sources; user overrides builtin on name conflict."""
         self.loaded_skills = {}
         self._all_skills = {}
+        # Reset per-run parse errors so callers always see the current pass only.
+        self.parse_errors = []
+        orphan_count = 0
         discovered: List[Skill] = []
         disabled_skill_names = _read_disabled_skill_names(self._skill_settings_path)
 
@@ -369,13 +468,9 @@ class SkillLoader:
                     and entry.manifest_names is not None
                     and skill.name not in entry.manifest_names
                 ):
-                    _warn(
-                        f"⚠️  Ignoring orphan builtin skill '{skill.name}' at "
-                        f"{skill_file} (not listed in {MANIFEST_FILENAME}). "
-                        f"This usually means a previous box-agent version "
-                        f"shipped the skill and the current installer left "
-                        f"the files behind."
-                    )
+                    # Orphan builtin skill (installer left old files behind).
+                    # Silent by default; the aggregate count is logged below.
+                    orphan_count += 1
                     continue
 
                 self._all_skills[skill.name] = skill
@@ -393,6 +488,29 @@ class SkillLoader:
 
         self._skill_settings_signature = self._file_signature(self._skill_settings_path)
         discovered = list(self.loaded_skills.values())
+
+        # Aggregate diagnostics: one line total, not one per broken file. The
+        # first few offending paths are attached to help operators locate them
+        # without spamming the log on directories with dozens of broken skills.
+        if self.parse_errors:
+            sample = "; ".join(
+                f"{path.name}: {reason}" for path, reason in self.parse_errors[:3]
+            )
+            more = (
+                f" (+{len(self.parse_errors) - 3} more)"
+                if len(self.parse_errors) > 3
+                else ""
+            )
+            _warn(
+                f"⚠️  Skipped {len(self.parse_errors)} malformed SKILL.md file(s): "
+                f"{sample}{more}"
+            )
+        if orphan_count:
+            _warn(
+                f"⚠️  Ignored {orphan_count} orphan builtin skill(s) not listed in "
+                f"{MANIFEST_FILENAME} (leftovers from a previous installer)."
+            )
+
         return discovered
 
     def _skill_pool(self, include_disabled: bool = False) -> Dict[str, Skill]:
@@ -619,9 +737,19 @@ class SkillLoader:
             if skill.name in always_on:
                 continue
             name_overlap = len(query_tokens & _tokenize(skill.name))
-            kw_overlap = len(query_tokens & _tokenize(" ".join(skill.keywords or [])))
-            desc_overlap = len(query_tokens & _tokenize(skill.description))
-            score = name_overlap * 5 + kw_overlap * 3 + desc_overlap
+            if skill.broken:
+                # A broken skill's description is a diagnostic string
+                # ("(SKILL.md malformed — YAML parse error: ...)") which
+                # contains generic english tokens (error, parse, scanning)
+                # that would incorrectly match unrelated user queries.
+                # Only surface it when the query hits its directory name,
+                # so the author who wrote the broken skill can still see
+                # it in ## Available Skills by asking about it by name.
+                score = name_overlap * 5
+            else:
+                kw_overlap = len(query_tokens & _tokenize(" ".join(skill.keywords or [])))
+                desc_overlap = len(query_tokens & _tokenize(skill.description))
+                score = name_overlap * 5 + kw_overlap * 3 + desc_overlap
             if score > 0:
                 scored.append((score, skill))
 
@@ -715,8 +843,13 @@ class SkillLoader:
                     if routing_hints
                     else ""
                 )
+                # Broken skill (SKILL.md present but malformed) is rendered
+                # with an unmistakable prefix so the model knows not to try
+                # to use it. `get_skill` returns a diagnostic when called on
+                # one of these.
+                broken_prefix = "⚠️ " if skill.broken else ""
                 prompt_parts.append(
-                    f"- `{skill.name}` ({skill.source}): {skill.description}{routing_suffix}"
+                    f"- {broken_prefix}`{skill.name}` ({skill.source}): {skill.description}{routing_suffix}"
                 )
 
         return "\n".join(prompt_parts)

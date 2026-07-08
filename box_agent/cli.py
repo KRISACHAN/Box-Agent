@@ -1923,7 +1923,11 @@ async def run_agent(
         )
 
     # 3.5 Initialize base tools (independent of workspace). MCP loads in the background.
-    tools, skill_loader, mcp_task = await initialize_base_tools(config, memory_manager=memory_mgr, llm=llm_client)
+    # CLI keeps skill discovery inline so users still see the "Loading Claude Skills..."
+    # status line; the ACP path defers it (see run_acp_server).
+    tools, skill_loader, mcp_task, _skill_task = await initialize_base_tools(
+        config, memory_manager=memory_mgr, llm=llm_client
+    )
 
     # 4. Add workspace-dependent tools
     non_interactive = task is not None
