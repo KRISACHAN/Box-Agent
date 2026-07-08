@@ -425,7 +425,9 @@ class Agent:
         max_parallel_tools: int = 8,
         parallel_tool_timeout_seconds: float | None = 900.0,
         truncation_continuation_enabled: bool = True,
-        max_truncation_continuations: int = 1,
+        max_truncation_continuations: int = 3,
+        max_truncated_tool_call_retries: int = 3,
+        truncated_tool_call_boost_cap: int = 32768,
     ):
         self.llm = llm_client
         self.tools = {tool.name: tool for tool in tools}
@@ -434,6 +436,8 @@ class Agent:
         self.parallel_tool_timeout_seconds = parallel_tool_timeout_seconds
         self.truncation_continuation_enabled = truncation_continuation_enabled
         self.max_truncation_continuations = max_truncation_continuations
+        self.max_truncated_tool_call_retries = max_truncated_tool_call_retries
+        self.truncated_tool_call_boost_cap = truncated_tool_call_boost_cap
         self.token_limit = token_limit
         self.workspace_dir = Path(workspace_dir)
         self.cancel_event: Optional[asyncio.Event] = None
@@ -672,6 +676,8 @@ class Agent:
             completion_gate=completion_gate,
             truncation_continuation_enabled=self.truncation_continuation_enabled,
             max_truncation_continuations=self.max_truncation_continuations,
+            max_truncated_tool_call_retries=self.max_truncated_tool_call_retries,
+            truncated_tool_call_boost_cap=self.truncated_tool_call_boost_cap,
             artifact_detection_enabled=artifact_detection_enabled,
             cache_fingerprint_context=self.cache_fingerprint_context,
         ):

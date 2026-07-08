@@ -992,6 +992,8 @@ class BoxACPAgent:
             memory_promotion_cooldown_days=self._config.agent.memory_promotion_cooldown_days,
             truncation_continuation_enabled=self._config.agent.retry_on_suspected_truncation,
             max_truncation_continuations=self._config.agent.max_truncation_continuations,
+            max_truncated_tool_call_retries=self._config.agent.max_truncated_tool_call_retries,
+            truncated_tool_call_boost_cap=self._config.agent.truncated_tool_call_boost_cap,
         )
 
         if initial_goal_request is not None:
@@ -2232,6 +2234,8 @@ class BoxACPAgent:
             completion_gate=completion_gate,
             truncation_continuation_enabled=agent.truncation_continuation_enabled,
             max_truncation_continuations=agent.max_truncation_continuations,
+            max_truncated_tool_call_retries=agent.max_truncated_tool_call_retries,
+            truncated_tool_call_boost_cap=agent.truncated_tool_call_boost_cap,
             artifact_detection_enabled=state.artifact_mode != "project",
             artifact_root_dir=state.output_dir,
             cache_fingerprint_context=agent.cache_fingerprint_context,
