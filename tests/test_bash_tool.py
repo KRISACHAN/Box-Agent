@@ -525,3 +525,66 @@ async def test_foreground_timeout_reaps_process_no_zombie():
     assert proc is not None
     # Reaped: returncode is set (not None) after _kill_process_tree awaited wait().
     assert proc.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_foreground_timeout_kills_grandchild_windows(tmp_path):
+    """Windows regression: a foreground timeout must recurse the subtree.
+
+    Mirrors the Unix grandchild tests but for the ``taskkill /T /F`` path.
+    Reproduces the ``find | xargs grep``-style hang: bash or PowerShell
+    spawns a child that appends to a sentinel every 200 ms, and we assert
+    the sentinel stops growing after the timeout. Before the fix,
+    ``process.kill()`` on Windows only killed the wrapper — the grandchild
+    kept writing and ``communicate()`` never returned because it held the
+    stdout pipe open.
+    """
+    import platform
+
+    if platform.system() != "Windows":
+        pytest.skip("Windows subtree-kill semantics; Windows-only test")
+
+    import time as _time
+
+    sentinel = tmp_path / "ticks.txt"
+    sentinel_str = str(sentinel).replace("\\", "/")
+
+    # Use PowerShell (default on Windows without bundled Git-bash). The child
+    # process appends a line every 200 ms; the outer command waits on it, so
+    # the wrapper is alive when the timeout fires. If subtree kill fails, the
+    # background job would keep writing after we kill the wrapper.
+    command = (
+        f"$job = Start-Job {{ while ($true) {{ "
+        f"Add-Content -Path '{sentinel_str}' -Value 'tick'; "
+        f"Start-Sleep -Milliseconds 200 }} }}; "
+        f"Wait-Job $job"
+    )
+
+    bash_tool = BashTool()
+    start = _time.monotonic()
+    result = await bash_tool.execute(command=command, timeout=2)
+    elapsed = _time.monotonic() - start
+
+    assert not result.success
+    assert "timed out" in (result.error or "").lower()
+    # taskkill /T /F must return in ~10s or less; the whole call must not
+    # sit at communicate() forever. Give generous slack for Start-Job spinup.
+    assert elapsed < 25.0, f"timeout path took {elapsed:.1f}s (expected < 25s)"
+
+    # Give any orphan a chance to keep writing, then confirm it stopped.
+    await asyncio.sleep(1.5)
+    count_after_kill = (
+        len(sentinel.read_text(encoding="utf-8").splitlines())
+        if sentinel.exists() else 0
+    )
+    await asyncio.sleep(1.5)
+    count_later = (
+        len(sentinel.read_text(encoding="utf-8").splitlines())
+        if sentinel.exists() else 0
+    )
+
+    # If the Start-Job worker were orphaned it would have written ~7 more lines.
+    assert count_later == count_after_kill, (
+        f"Windows grandchild kept writing after timeout kill: "
+        f"{count_after_kill} -> {count_later}"
+    )
