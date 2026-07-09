@@ -40,6 +40,14 @@ formality:       low | medium | high
 
 Keep this extraction internal — do not surface it to the user.
 
+For business, product, launch, scenario-demo, consulting, board, investor,
+training, enterprise enablement, or implementation decks, infer
+`density_hint: Medium-High` by default. Use `Low` or `Medium-Low` only when the
+user explicitly asks for sparse, cinematic, manifesto, quote-led, gallery-like,
+or atmospheric slides. A dark/tech/launch mood is not by itself a reason to
+choose a low-density template; the deck still needs enough visible structure to
+carry the message.
+
 ### 2. Match
 
 Read `references/visual_dna.json` and score every one of the 32 entries against the signal block. Weights:

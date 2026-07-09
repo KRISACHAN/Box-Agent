@@ -36,7 +36,7 @@ Use this path by default:
 3. plan slide-level image decisions in `assets/generated/manifest.json`; record the whole deck theme in `deck_context`, and when the image service is available, covers, dividers, campaign/launch/vision pages, and abstract concept pages should normally choose `generate`. Investor pitch decks, product launch decks, and premium B2B SaaS-style decks with explicit visual direction (for example "VC", "融资路演", "高端", "贵气", "靠谱", "发布会", "深色背景") are strong visual-asset briefs: use `generate` for at least the cover and one solution/product/vision hero slide unless the user opts out or the image service is unavailable.
 4. call `generate_image` for every `generate` item before writing final slide HTML. Always pass `watermark: false` for PPT image generation — slides carry their own branding/watermark and the prompt already steers the model away from in-image watermarks, so the tool's default "AI 生成" stamp must be suppressed.
 5. for data charts, keep the source dataset/chart spec and use ECharts as the HTML preview for chart pages; final PPT must preserve chart data through native PowerPoint chart/table output, not through screenshots. If a chart/table dataset is written under `assets/data/*.json`, `deck.html` must reference it from a `data-pptx-chart` root with `data-chart-spec-src` (or embed the same recoverable spec with `data-chart-spec`); do not write a separate static SVG/bar layout with copied numbers.
-6. create the slide HTML using the slide plan, Visual DNA profile, and generated local assets as hard constraints. For decks with **6 or more slides** (or dense source material / likely-large HTML), you **must** use the fragment-drafting workflow in §3.4 — author per-range draft files and combine them with `merge_html_fragments.js`. Smaller decks may write `deck.html` directly in one pass.
+6. create the slide HTML using the slide plan, Visual DNA profile, generated local assets, and the density/composition rules in §3.1 as hard constraints. For decks with **6 or more slides** (or dense source material / likely-large HTML), you **must** use the fragment-drafting workflow in §3.4 — author per-range draft files and combine them with `merge_html_fragments.js`. Smaller decks may write `deck.html` directly in one pass.
 7. when `assets/generated/manifest.json` contains `layout_contract`, run image layout contract validation
 8. when `assets/generated/manifest.json` declares `creative_image_mode`, run image manifest validation before HTML self-check
 9. run HTML self-check
@@ -151,10 +151,17 @@ Always invoke the `html-templates` skill first to obtain the visual style constr
 
 ```
 Skill(skill="html-templates",
-      args="<the user's original brief verbatim>")
+      args="<the user's original brief verbatim + deck goal/audience + intended density from the outline>")
 ```
 
 That skill returns a structured Visual DNA profile (palette, typography, decoration tokens, style rules). Treat its output as **hard constraints** when writing the HTML. Do not generate slide HTML without running this step — model defaults to "stay in the current skill" and will not auto-route to `html-templates` unless explicitly called from here.
+
+Pass an explicit density target in the args whenever the deck is a business,
+product, launch, scenario-demo, consulting, board, investor, training, or
+enterprise enablement deck. Default those decks to `Medium-High` unless the user
+explicitly asks for sparse, manifesto, cinematic, or quote-led slides. This
+keeps the style matcher from selecting an atmospheric low-density profile when
+the page still needs working presentation substance.
 
 If `html-templates` is unavailable in this session, fall back to authoring the deck with the existing palette/typography conventions and note the absence in `Limitations`.
 
@@ -163,15 +170,17 @@ If `html-templates` is unavailable in this session, fall back to authoring the d
 1. `.slide` must be exactly `1920px × 1080px` — copy `references/starter/common.css` rather than authoring the dimensions (see §0 rule 7; `--width/--height` are rejected, use `--canvas WxH` only for an opt-in non-standard deck).
 2. Leave 16-24px text slack to reduce PowerPoint wrap drift.
 3. For top/middle/bottom layouts, center the main content group in the available middle area. Do not build slides by stacking blocks from the top with repeated `margin-top`; compute the content group's height and balance top/bottom whitespace with flex/grid alignment or explicit `top` values.
-4. Use relative asset paths.
-5. Do not inline large images as data URLs.
-6. Every slide must record an explicit image decision in `assets/generated/manifest.json`; each `generate` prompt must include the whole deck theme/context before the slide-specific visual subject. Covers, dividers, posters, campaign/launch/vision pages, abstract concept pages, investor-pitch/product-demo hero pages, premium B2B SaaS pages, and emotionally led closing pages must use `generate` via the `generate_image` tool unless the user opts out, the image service is unavailable, or a real/source-backed asset is required.
-7. ECharts/canvas charts are allowed only as HTML preview surfaces backed by `data-pptx-chart` and recoverable chart data. They must not be baked into `assets/bg-capture/*.png` or delivered as screenshot-only chart images when the data is available.
-8. Keep page numbers on non-cover slides consistent with slide order.
-9. Read `references/html-first.md` and `references/html-editable.md`.
-10. Keep image generation rules in `references/image-assets.md`.
-11. For generated full-slide/background slides, text-bearing HTML elements that correspond to `layout_contract.text_regions` must carry `data-layout-region="<region name>"`, and `scripts/validate_image_layout_contract.js` must pass before HTML self-check. Small/medium hero images in fixed frames do not require this contract unless they overlap text-safe areas.
-12. In `creative_image_mode`, `assets/generated/manifest.json` must include `"mode": "creative_image_mode"` and at least one image-plan entry with `decision: "generate"`, `status: "generated"` (or equivalent success marker), and an existing `output_path`.
+4. Do not leave a content slide as "short cards on the top half + decorative empty background" unless the slide is intentionally a divider, quote, cover, or cinematic pause. For normal business/product/demo/training pages, the primary content plus primary visual should occupy the main body area. If the supplied text is sparse, convert the remaining canvas into substance: workflow arrows, before/after comparison, role swimlanes, demo steps, KPI strip, decision matrix, architecture/process schematic, or editable diagram. Decorative glow, texture, or grid alone does not count as content.
+5. Scenario, use-case, capability, and "four cards" pages need a second composition layer when each card only has a title and 1-2 short lines. Add one of: a bottom flow from trigger → agent action → business outcome, a per-card icon/metric/owner row, a horizontal journey line, a mini demo storyboard, or a capability matrix. Keep it editable HTML/CSS/SVG unless an actual bitmap visual is required.
+6. Use relative asset paths.
+7. Do not inline large images as data URLs.
+8. Every slide must record an explicit image decision in `assets/generated/manifest.json`; each `generate` prompt must include the whole deck theme/context before the slide-specific visual subject. Covers, dividers, posters, campaign/launch/vision pages, abstract concept pages, investor-pitch/product-demo hero pages, premium B2B SaaS pages, and emotionally led closing pages must use `generate` via the `generate_image` tool unless the user opts out, the image service is unavailable, or a real/source-backed asset is required.
+9. ECharts/canvas charts are allowed only as HTML preview surfaces backed by `data-pptx-chart` and recoverable chart data. They must not be baked into `assets/bg-capture/*.png` or delivered as screenshot-only chart images when the data is available.
+10. Keep page numbers on non-cover slides consistent with slide order.
+11. Read `references/html-first.md` and `references/html-editable.md`.
+12. Keep image generation rules in `references/image-assets.md`.
+13. For generated full-slide/background slides, text-bearing HTML elements that correspond to `layout_contract.text_regions` must carry `data-layout-region="<region name>"`, and `scripts/validate_image_layout_contract.js` must pass before HTML self-check. Small/medium hero images in fixed frames do not require this contract unless they overlap text-safe areas.
+14. In `creative_image_mode`, `assets/generated/manifest.json` must include `"mode": "creative_image_mode"` and at least one image-plan entry with `decision: "generate"`, `status: "generated"` (or equivalent success marker), and an existing `output_path`.
 
 ### 3.2 Data charts and ECharts previews
 

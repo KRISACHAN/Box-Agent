@@ -128,7 +128,12 @@ details into `outline.json`.
    market sizing, financials, benchmarks, or operational metrics, the `visual`
    should normally name a concrete data display such as `KPI strip`, `bar
    chart`, `line chart`, `matrix`, `comparison table`, `heatmap`, or
-   `mini-dashboard`, not just `cards` or `text layout`.
+   `mini-dashboard`, not just `cards` or `text layout`. For scenario,
+   use-case, capability, or demo pages, a plain `cards` layout is acceptable only
+   when the cards are content-rich. If each card has just a title and 1-2 short
+   lines, the `visual` must name a second layer such as a demo flow, journey
+   line, role swimlane, before/after comparison, KPI strip, icon/owner row, or
+   capability matrix.
 6. Run `scripts/validate_outline.js outline.json` and fix failures before
    creating `deck.html`.
 
@@ -141,6 +146,11 @@ details into `outline.json`.
 - `bullets` should have 2-5 items; each supports `message` and maps to
   distinct content on the slide. Avoid restating the title.
 - Avoid repetitive slides with the same title, message, layout, or visual.
+- Avoid sparse content slides that leave the lower half of the canvas empty.
+  Divider, cover, quote, and cinematic pause slides may use intentional
+  whitespace; normal business/product/demo/training slides should turn spare
+  space into a chart, flow, matrix, process schematic, role lane, or other
+  message-bearing visual.
 - Use a section-divider slide only when it helps pacing.
 - Put source assumptions in `evidence` or `notes`; do not hide missing data.
 - For data-heavy slides, prefer chart/table/KPI/dashboard visuals over plain
