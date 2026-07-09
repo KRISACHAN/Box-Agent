@@ -70,6 +70,7 @@ from box_agent.agent import (
 from box_agent.tools.setup import (
     add_workspace_tools,
     await_mcp_tools,
+    await_skill_discovery,
     build_sandbox_info_prompt,
     initialize_base_tools,
     merge_mcp_tools,
@@ -588,6 +589,7 @@ class BoxACPAgent:
         hooks: list | None = None,
         skill_loader: Any | None = None,
         mcp_task: asyncio.Task | None = None,
+        skill_task: asyncio.Task | None = None,
         *,
         lite_llm: LLMClient | None = None,
     ):
@@ -607,6 +609,12 @@ class BoxACPAgent:
         # prompts while the first one is still awaiting the background load.
         # Distinct from `_mcp_loaded` — see `_ensure_mcp_loaded` for why.
         self._mcp_finalize_scheduled = False
+        # Background skill discovery: awaited before the first turn's
+        # SkillSelector runs. See `_ensure_skills_loaded`. When None,
+        # discovery ran inline in initialize_base_tools (CLI path only —
+        # ACP always defers).
+        self._skill_task = skill_task
+        self._skills_loaded = skill_task is None
 
     def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
         """Update all live holders of the current system prompt."""
@@ -751,9 +759,37 @@ class BoxACPAgent:
         self._mcp_loaded = True
         log.info("mcp/ready", count=len(mcp_tools), source="deferred")
 
+    async def _ensure_skills_loaded(self) -> None:
+        """Await the background skill-discovery task before it's needed.
+
+        SkillSelector runs at newSession + first-turn boundary; both call
+        this. The task normally finishes long before then (skill parse ~ tens
+        of ms per skill, agent startup is dominated by LLM cold-connect), but
+        under a large / broken skills directory we still want to guarantee
+        the catalog is present before the model sees the sentinel — the
+        alternative is an empty ``## Available Skills`` block on turn 1.
+        """
+        if self._skills_loaded:
+            return
+        try:
+            await await_skill_discovery(self._skill_task)
+        finally:
+            # Flip regardless of outcome — discovery failures are logged
+            # inside the task; retrying on every turn would just repeat them.
+            self._skills_loaded = True
+
     def _skills_meta(self) -> list[dict] | None:
-        """Return current skills metadata for ACP _meta payload, reloading if changed."""
+        """Return current skills metadata for ACP _meta payload, reloading if changed.
+
+        Returns ``None`` (rather than an empty list) while background
+        discovery is still running so the initialize RPC never blocks on
+        skill parsing. Hosts that need the catalog can read
+        ``session/new._meta.skills`` — by newSession time the task has been
+        awaited via ``_ensure_skills_loaded``.
+        """
         if not self._skill_loader:
+            return None
+        if not self._skills_loaded:
             return None
         try:
             self._skill_loader.maybe_reload()
@@ -778,6 +814,12 @@ class BoxACPAgent:
         return resp
 
     async def newSession(self, params: NewSessionRequest) -> NewSessionResponse:
+        # Skill discovery ran in the background so stdio came up fast; make
+        # sure the catalog is present before we build the session's system
+        # prompt (SkillSelector.bind reads the sentinel; the metadata block
+        # is populated on the first turn). This is a no-op after the first
+        # session — the task caches its result.
+        await self._ensure_skills_loaded()
         session_id = f"sess-{len(self._sessions)}-{uuid4().hex[:8]}"
         workspace = Path(params.cwd or self._config.agent.workspace_dir).expanduser()
         if not workspace.is_absolute():
@@ -992,6 +1034,8 @@ class BoxACPAgent:
             memory_promotion_cooldown_days=self._config.agent.memory_promotion_cooldown_days,
             truncation_continuation_enabled=self._config.agent.retry_on_suspected_truncation,
             max_truncation_continuations=self._config.agent.max_truncation_continuations,
+            max_truncated_tool_call_retries=self._config.agent.max_truncated_tool_call_retries,
+            truncated_tool_call_boost_cap=self._config.agent.truncated_tool_call_boost_cap,
         )
 
         if initial_goal_request is not None:
@@ -1301,6 +1345,12 @@ class BoxACPAgent:
 
         # Ensure background-loaded MCP tools are available before running the turn
         await self._ensure_mcp_loaded()
+
+        # Skills should already be ready (newSession awaited them), but
+        # short-circuit any edge case where a session was created before
+        # the task finished (e.g. host called newSession within the same
+        # event-loop iteration as run_acp_server's setup).
+        await self._ensure_skills_loaded()
 
         # Refresh skills so officev3-authored skills are available mid-session
         if self._skill_loader:
@@ -2232,6 +2282,8 @@ class BoxACPAgent:
             completion_gate=completion_gate,
             truncation_continuation_enabled=agent.truncation_continuation_enabled,
             max_truncation_continuations=agent.max_truncation_continuations,
+            max_truncated_tool_call_retries=agent.max_truncated_tool_call_retries,
+            truncated_tool_call_boost_cap=agent.truncated_tool_call_boost_cap,
             artifact_detection_enabled=state.artifact_mode != "project",
             artifact_root_dir=state.output_dir,
             cache_fingerprint_context=agent.cache_fingerprint_context,
@@ -3093,7 +3145,15 @@ async def run_acp_server(config: Config | None = None) -> None:
 
             memory_bootstrap_task = asyncio.create_task(_memory_bootstrap(), name="memory-bootstrap")
 
-        base_tools, skill_loader, mcp_task = await initialize_base_tools(config, output=_stderr_print, memory_manager=memory_mgr, llm=llm)
+        # Skills discovery is deferred: a directory full of malformed
+        # SKILL.md (a downstream host regularly ships dozens) used to run
+        # a synchronous rglob + yaml.safe_load per file *before* stdio was
+        # set up, so the host's `initialize` timeout fired before we could
+        # answer. The task fills the loader's catalog in the background;
+        # BoxACPAgent awaits it before the first turn's SkillSelector runs.
+        base_tools, skill_loader, mcp_task, skill_task = await initialize_base_tools(
+            config, output=_stderr_print, memory_manager=memory_mgr, llm=llm, defer_skills=True,
+        )
         prompt_path = Config.find_config_file(config.agent.system_prompt_path)
         if prompt_path and prompt_path.exists():
             system_prompt = prompt_path.read_text(encoding="utf-8")
@@ -3150,7 +3210,7 @@ async def run_acp_server(config: Config | None = None) -> None:
         _hooks = load_hooks(config.hooks.hooks) if config.hooks.hooks else None
 
         sys.stdout = sys.stderr
-        AgentSideConnection(lambda conn: BoxACPAgent(conn, config, llm, base_tools, system_prompt, memory_manager=memory_mgr, hooks=_hooks, skill_loader=skill_loader, mcp_task=mcp_task, lite_llm=lite_llm), writer, reader)
+        AgentSideConnection(lambda conn: BoxACPAgent(conn, config, llm, base_tools, system_prompt, memory_manager=memory_mgr, hooks=_hooks, skill_loader=skill_loader, mcp_task=mcp_task, skill_task=skill_task, lite_llm=lite_llm), writer, reader)
 
         log.info("server/ready", message="ACP server ready, listening on stdio")
         await asyncio.Event().wait()

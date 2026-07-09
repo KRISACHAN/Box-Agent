@@ -12,6 +12,7 @@ import platform
 import re
 import shlex
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -276,13 +277,17 @@ class BackgroundShell:
             self.status = "running"
 
     async def terminate(self):
-        """Terminate the background process."""
+        """Terminate the background process and its whole subtree.
+
+        Delegates to ``BashTool._kill_process_tree`` — same tree-kill logic
+        used by the foreground timeout path. Without this, a Windows
+        background command whose wrapper spawned children (e.g. a Python
+        server that forked workers) would leave orphans holding the merged
+        stdout pipe alive after ``bash_kill``; on Unix ``terminate()`` alone
+        (SIGTERM to the wrapper) misses grandchildren the same way.
+        """
         if self.process.returncode is None:
-            self.process.terminate()
-            try:
-                await asyncio.wait_for(self.process.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                self.process.kill()
+            await BashTool._kill_process_tree(self.process)
         self.status = "terminated"
         self.exit_code = self.process.returncode
 
@@ -589,45 +594,155 @@ class BashTool(Tool):
 
     @staticmethod
     async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
-        """Kill a foreground process group and reap the shell.
+        """Kill a foreground process tree/group and reap the shell.
 
-        On Unix the child was spawned with ``start_new_session=True``, so it is
-        a process-group leader whose pgid equals its pid. We signal that group
-        directly with ``os.killpg(process.pid, SIGKILL)`` so any grandchildren
-        (e.g. a backgrounded ``python server.py``) are killed too.
+        The shell can outlive its own foreground command in two ways that
+        both leave ``communicate()`` waiting on a never-closed pipe:
 
-        Crucially we do this **even if the shell itself already exited**
-        (``returncode`` set): a foreground command can launch a background child
-        and let the shell return while the child keeps the stdout pipe open,
-        which is exactly what makes ``communicate()`` time out. The group still
-        contains the live grandchild, so killpg(pid) reaps it. We don't use
-        ``os.getpgid(pid)`` — once the leader is reaped that raises, defeating
-        the purpose. On Windows there is no such group; fall back to killing the
-        process directly. Always ``await process.wait()`` to avoid a zombie.
+        - Backgrounded grandchild inside the command (``foo &`` or
+          ``find | xargs grep`` where the xargs-spawned grep still holds the
+          write end of the pipe when its parent dies).
+        - Windows Git-Bash ``bash.exe`` spawning native ``find.exe``/``grep.exe``
+          grandchildren that survive the wrapper's TerminateProcess.
+
+        In both cases point-killing only the wrapper leaves the grandchild
+        alive, keeps the pipe open, and hangs the tool call. So we kill the
+        whole tree.
+
+        Unix (two-beat, mirrors Hermes' ``LocalEnvironment._kill_process``):
+          1. ``killpg(pgid, SIGTERM)`` — give trap handlers a chance.
+          2. Poll the group up to 1s; return if empty.
+          3. ``killpg(pgid, SIGKILL)`` — unconditional reap.
+          4. Poll up to 2s so ``process.wait()`` actually sees exits.
+
+        Windows: ``taskkill /PID <pid> /T /F`` — ``/T`` recurses the whole
+        subtree, ``/F`` force-terminates every descendant. Falls back to
+        ``process.kill()`` if ``taskkill`` is missing or times out.
+
+        Always ``await process.wait()`` at the end to avoid a zombie.
         """
         if not sys.platform.startswith("win"):
-            try:
-                # pgid == pid by the start_new_session convention. Signal the
-                # whole group; this works whether or not the leader is alive.
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                # Group already fully gone, or we cannot signal it — fall back
-                # to killing the process if it is still tracked as running.
-                if process.returncode is None:
-                    try:
-                        process.kill()
-                    except ProcessLookupError:
-                        pass
-        elif process.returncode is None:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
+            await BashTool._kill_process_tree_unix(process)
+        else:
+            await BashTool._kill_process_tree_windows(process)
         try:
             await process.wait()
         except Exception:
             # Reaping is best-effort; never let cleanup mask the timeout error.
             pass
+
+    @staticmethod
+    async def _kill_process_tree_unix(process: asyncio.subprocess.Process) -> None:
+        """Unix two-beat: SIGTERM → wait → SIGKILL → wait, on the process group.
+
+        The process was spawned with ``start_new_session=True`` so its pgid
+        equals its pid. We signal ``process.pid`` directly rather than calling
+        ``os.getpgid`` — once the group leader is reaped ``getpgid`` raises,
+        which would defeat the purpose in exactly the case that matters
+        (wrapper already dead, grandchild still alive holding the pipe).
+        """
+        pgid = process.pid
+
+        def _group_alive() -> bool:
+            try:
+                os.killpg(pgid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                # Group exists even if we cannot signal it.
+                return True
+            except OSError:
+                return False
+
+        async def _wait_for_group_exit(timeout: float) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if not _group_alive():
+                    return True
+                await asyncio.sleep(0.05)
+            return not _group_alive()
+
+        # Beat 1: SIGTERM the whole group.
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except (PermissionError, OSError):
+            # Cannot signal the group — fall through to point-kill the wrapper.
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            return
+
+        if await _wait_for_group_exit(1.0):
+            return
+
+        # Beat 2: SIGKILL — unconditional.
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except (PermissionError, OSError):
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            return
+
+        await _wait_for_group_exit(2.0)
+
+    @staticmethod
+    async def _kill_process_tree_windows(process: asyncio.subprocess.Process) -> None:
+        """Windows subtree kill via ``taskkill /T /F``.
+
+        ``process.kill()`` on Windows maps to ``TerminateProcess(pid)`` which
+        does NOT touch child processes. When a Git-for-Windows ``bash.exe``
+        launches ``find | xargs grep``, killing bash leaves ``find.exe`` and
+        ``grep.exe`` alive — they keep the stdout pipe open and the caller's
+        ``communicate()`` never returns. ``taskkill /T /F`` walks the child
+        tree by parent-PID and force-terminates every descendant.
+        """
+        if process.returncode is not None:
+            return  # already reaped by the OS
+
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill", "/PID", str(process.pid), "/T", "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        except (FileNotFoundError, OSError):
+            # taskkill missing (unusual — it's a Windows built-in). Point-kill.
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            return
+
+        try:
+            await asyncio.wait_for(killer.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            try:
+                killer.kill()
+            except ProcessLookupError:
+                pass
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+        except Exception:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
 
     @property
     def name(self) -> str:

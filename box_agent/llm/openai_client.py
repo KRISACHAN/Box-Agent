@@ -3,6 +3,7 @@
 import inspect
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -27,6 +28,135 @@ logger = logging.getLogger(__name__)
 # cutting JSON mid-string and triggering empty-arguments retry loops). Pin a
 # generous default; users can override via ``LLMConfig.max_output_tokens``.
 _DEFAULT_MAX_TOKENS = 64000
+
+
+def _escape_invalid_chars_in_json_strings(raw: str) -> str:
+    """Escape unescaped control characters that appear inside JSON strings.
+
+    Some model backends emit literal newlines/tabs (or other control chars)
+    inside a string value without escaping them. ``json.loads(strict=False)``
+    accepts a subset of these, but not all — so we do a second pass that
+    scans the raw text and \\uXXXX-escapes every control char it finds
+    inside an open string.
+    """
+    out: list[str] = []
+    in_string = False
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if in_string:
+            if ch == "\\" and i + 1 < n:
+                out.append(ch)
+                out.append(raw[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+                out.append(ch)
+            elif ord(ch) < 0x20:
+                out.append(f"\\u{ord(ch):04x}")
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _repair_tool_call_arguments(
+    raw_args: str,
+    tool_name: str = "?",
+    *,
+    allow_structural_closure: bool = True,
+) -> str | None:
+    """Attempt to repair malformed tool_call argument JSON.
+
+    Returns the repaired JSON string on success, or ``None`` when the input
+    is unrepairable. Common failure modes handled:
+
+    * unescaped control chars inside string values (llama.cpp / GLM);
+    * ``None`` python-literal instead of ``{}``;
+    * trailing commas before ``}`` / ``]``;
+    * unclosed ``{`` / ``[`` — appended, but *only* when
+      ``allow_structural_closure`` is True;
+    * excess trailing ``}`` / ``]`` — trimmed (bounded to 50 iterations).
+
+    ``allow_structural_closure`` guards the one pass that can synthesize
+    executable semantics from a half-delivered payload. When the upstream
+    stream is known to have been cut short (``finish_reason`` was ``None``,
+    ``"length"`` or ``"max_tokens"``), the caller passes ``False`` so a
+    truncated ``"content":"partial`` cannot be turned into a valid
+    ``{"content":"partial"}`` and handed to a filesystem/shell tool. All the
+    other passes are byte-conservative (they only delete or escape existing
+    chars) and stay enabled regardless.
+    """
+    raw_stripped = raw_args.strip() if isinstance(raw_args, str) else ""
+
+    if not raw_stripped:
+        return "{}"
+
+    if raw_stripped == "None":
+        return "{}"
+
+    try:
+        parsed = json.loads(raw_stripped, strict=False)
+        reserialised = json.dumps(parsed, separators=(",", ":"))
+        if reserialised != raw_stripped:
+            logger.warning(
+                "Repaired unescaped control chars in tool_call arguments for %r",
+                tool_name,
+            )
+        return reserialised
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    fixed = raw_stripped
+    fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
+    if allow_structural_closure:
+        open_curly = fixed.count("{") - fixed.count("}")
+        open_bracket = fixed.count("[") - fixed.count("]")
+        if open_curly > 0:
+            fixed += "}" * open_curly
+        if open_bracket > 0:
+            fixed += "]" * open_bracket
+    for _ in range(50):
+        try:
+            json.loads(fixed)
+            break
+        except json.JSONDecodeError:
+            if fixed.endswith("}") and fixed.count("}") > fixed.count("{"):
+                fixed = fixed[:-1]
+            elif fixed.endswith("]") and fixed.count("]") > fixed.count("["):
+                fixed = fixed[:-1]
+            else:
+                break
+
+    try:
+        json.loads(fixed)
+        logger.warning(
+            "Repaired malformed tool_call arguments for %r: %s -> %s",
+            tool_name, raw_stripped[:80], fixed[:80],
+        )
+        return fixed
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        escaped = _escape_invalid_chars_in_json_strings(fixed)
+        if escaped != fixed:
+            json.loads(escaped)
+            logger.warning(
+                "Repaired control-char-laced tool_call arguments for %r",
+                tool_name,
+            )
+            return escaped
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    return None
 
 
 async def _await_if_needed(value: Any) -> Any:
@@ -73,6 +203,11 @@ class OpenAIClient(LLMClientBase):
             auth_token=auth_token, auth_file=auth_file, timeout=timeout,
         )
         self.max_output_tokens = max_output_tokens
+        # One-shot override applied to the next request only. The agent loop
+        # sets this before retrying a truncated turn so the model has more
+        # room to finish tool-call JSON, then it clears itself after the
+        # next generate/generate_stream call.
+        self._ephemeral_max_output_tokens: int | None = None
 
         # Initialize OpenAI client
         self.client = AsyncOpenAI(
@@ -80,6 +215,23 @@ class OpenAIClient(LLMClientBase):
             base_url=api_base,
             timeout=timeout,
         )
+
+    def set_ephemeral_max_output_tokens(self, value: int | None) -> None:
+        """Override ``max_tokens`` for the very next request.
+
+        Cleared automatically after the next ``generate`` / ``generate_stream``
+        completes so the boost never leaks into unrelated turns.
+        """
+        self._ephemeral_max_output_tokens = value if value and value > 0 else None
+
+    def _consume_effective_max_tokens(self) -> int:
+        # Test doubles instantiate the client via factory helpers that skip
+        # ``__init__``; tolerate a missing attribute rather than exploding.
+        cap = getattr(self, "_ephemeral_max_output_tokens", None)
+        self._ephemeral_max_output_tokens = None
+        if cap is not None:
+            return max(cap, self.max_output_tokens)
+        return self.max_output_tokens
 
     async def _make_api_request(
         self,
@@ -105,7 +257,7 @@ class OpenAIClient(LLMClientBase):
         """
         params: dict[str, Any] = {
             "messages": api_messages,
-            "max_tokens": self.max_output_tokens,
+            "max_tokens": self._consume_effective_max_tokens(),
         }
         if self.model:
             params["model"] = self.model
@@ -390,7 +542,7 @@ class OpenAIClient(LLMClientBase):
 
         params: dict[str, Any] = {
             "messages": request_params["api_messages"],
-            "max_tokens": self.max_output_tokens,
+            "max_tokens": self._consume_effective_max_tokens(),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -558,12 +710,21 @@ class OpenAIClient(LLMClientBase):
                 # Successful consume — break out of the retry loop.
                 break
 
-        # Build tool calls. If a relay truncates output mid-arguments
-        # (`finish_reason="length"`), the accumulated string is invalid JSON
-        # and used to silently fall back to ``{}``, which fed an empty-args
-        # retry loop back to the model. Now we hard-fail: drop broken
-        # tool_calls and force ``finish_reason="length"`` so core.py
-        # terminates the turn with a clear MAX_TOKENS stop reason.
+        # Build tool calls. When a relay truncates output mid-arguments the
+        # accumulated ``arguments_str`` is invalid JSON. First try to repair
+        # the common malformations that don't imply truncation (unescaped
+        # control chars, trailing commas, missing brackets, Python-``None``);
+        # only genuinely unparseable payloads flip ``truncated_tool`` on so
+        # the agent loop can decide whether to retry.
+        #
+        # When the upstream stream was cut short (``finish_reason`` is None /
+        # length / max_tokens), we deliberately disable the one repair pass
+        # that can synthesize new semantics — auto-closing unbalanced ``{`` /
+        # ``[``. Otherwise a payload like ``{"path":"/tmp/a","content":"part``
+        # would get "fixed" to a valid-looking ``{"path":"/tmp/a","content":"part"}``
+        # and get executed against write_file / bash. In that case we route
+        # it through the truncation retry path instead.
+        allow_closure = finish_reason not in (None, "length", "max_tokens")
         tool_calls: list[ToolCall] = []
         truncated_tool = False
         truncated_info: list[dict[str, Any]] = []
@@ -573,13 +734,30 @@ class OpenAIClient(LLMClientBase):
             try:
                 arguments = json.loads(raw) if raw else {}
             except json.JSONDecodeError as exc:
-                truncated_tool = True
-                truncated_info.append({"name": entry["name"], "arguments_len": len(raw)})
-                logger.warning(
-                    "Truncated tool_call arguments for %r (idx=%d, len=%d): %s",
-                    entry["name"], idx, len(raw), exc,
+                repaired = _repair_tool_call_arguments(
+                    raw,
+                    entry["name"] or "?",
+                    allow_structural_closure=allow_closure,
                 )
-                continue
+                if repaired is not None:
+                    try:
+                        arguments = json.loads(repaired)
+                    except json.JSONDecodeError:
+                        truncated_tool = True
+                        truncated_info.append({"name": entry["name"], "arguments_len": len(raw)})
+                        logger.warning(
+                            "Truncated tool_call arguments for %r (idx=%d, len=%d): %s",
+                            entry["name"], idx, len(raw), exc,
+                        )
+                        continue
+                else:
+                    truncated_tool = True
+                    truncated_info.append({"name": entry["name"], "arguments_len": len(raw)})
+                    logger.warning(
+                        "Truncated tool_call arguments for %r (idx=%d, len=%d): %s",
+                        entry["name"], idx, len(raw), exc,
+                    )
+                    continue
             if not entry["name"]:
                 truncated_tool = True
                 truncated_info.append({"name": "", "arguments_len": len(raw)})
@@ -600,6 +778,7 @@ class OpenAIClient(LLMClientBase):
         # diagnostics distinguish "gateway clipped tool args" (length, set here)
         # from "gateway ended a text turn" (stop / end_turn / None from upstream).
         raw_finish_reason = finish_reason
+        stream_dropped_mid_tool = truncated_tool and raw_finish_reason is None
         if truncated_tool:
             finish_reason = "length"
 
@@ -624,4 +803,6 @@ class OpenAIClient(LLMClientBase):
             tool_calls=tool_calls if tool_calls else None,
             provider_request_id=provider_request_id,
             truncated_tool_calls=truncated_info or None,
+            raw_finish_reason=raw_finish_reason,
+            stream_dropped_mid_tool=stream_dropped_mid_tool,
         )

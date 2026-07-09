@@ -61,13 +61,27 @@ class GetSkillTool(Tool):
                 error=f"Skill '{skill_name}' does not exist. Available skills: {available}",
             )
 
+        # A broken skill (SKILL.md present but unparseable) returns a
+        # diagnostic prompt so the model doesn't invent guidance from a
+        # directory name it can't verify. Success is True — this is a real
+        # answer to "give me the skill", not a tool failure that should be
+        # retried. The rendered content clearly tells the model to ask the
+        # user to fix SKILL.md instead of proceeding.
         result = skill.to_prompt()
-        return ToolResult(success=True, content=result)
+        raw_output = None
+        if skill.broken:
+            raw_output = {
+                "broken": True,
+                "broken_reason": skill.broken_reason,
+                "skill_path": str(skill.skill_path) if skill.skill_path else None,
+            }
+        return ToolResult(success=True, content=result, raw_output=raw_output)
 
 
 def create_skill_tools(
     skills_dir: Optional[str] = None,
     sources: Optional[List[Tuple[str | Path, SkillSource]]] = None,
+    defer_discovery: bool = False,
 ) -> tuple[List[Tool], Optional[SkillLoader]]:
     """Create skill tool for Progressive Disclosure.
 
@@ -75,6 +89,12 @@ def create_skill_tools(
         skills_dir: Legacy single-directory entry (treated as builtin).
         sources: Ordered list of (directory, source_label) tuples. Earlier entries
             win on name conflicts (e.g. user → builtin).
+        defer_discovery: If True, skip the inline ``discover_skills()`` call
+            and let the caller schedule discovery on a background task. The
+            returned ``GetSkillTool`` still binds to the loader — once the
+            background task fills ``loaded_skills``, the tool sees the
+            catalog. Used by the ACP path to keep stdio setup off the skill
+            file-parse critical path.
 
     Returns:
         Tuple of (list of tools, skill loader).
@@ -84,10 +104,11 @@ def create_skill_tools(
     else:
         loader = SkillLoader(skills_dir=skills_dir or "./skills")
 
-    skills = loader.discover_skills()
-    import sys as _sys
+    if not defer_discovery:
+        skills = loader.discover_skills()
+        import sys as _sys
 
-    _sys.stderr.write(f"✅ Discovered {len(skills)} Claude Skills\n")
+        _sys.stderr.write(f"✅ Discovered {len(skills)} Claude Skills\n")
 
     tools: List[Tool] = [GetSkillTool(loader)]
     return tools, loader

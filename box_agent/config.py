@@ -141,7 +141,14 @@ class AgentConfig(BaseModel):
     # conservatively (loop_guards.looks_like_truncated_output) and injects a
     # one-shot continuation so the reply finishes within the same message.
     retry_on_suspected_truncation: bool = True
-    max_truncation_continuations: int = 1
+    max_truncation_continuations: int = 3
+    # Truncated tool-call retry: a broken tool_call JSON stream can be
+    # recovered by retrying the same turn (with the SAME messages) and
+    # boosting the per-request max_tokens on genuine output-cap truncations.
+    # ``max_truncated_tool_call_retries`` caps the attempts; the boosted
+    # per-request cap never exceeds ``truncated_tool_call_boost_cap``.
+    max_truncated_tool_call_retries: int = 3
+    truncated_tool_call_boost_cap: int = 32768
     system_prompt_path: str = "system_prompt.md"
     analysis_prompt_path: str = "analysis_prompt.md"
     code_prompt_path: str = "code_prompt.md"
@@ -425,7 +432,9 @@ class Config(BaseModel):
             goal_autopilot_max_seconds=data.get("goal_autopilot_max_seconds", 14400.0),
             goal_autopilot_no_progress_turns=data.get("goal_autopilot_no_progress_turns", 2),
             retry_on_suspected_truncation=data.get("retry_on_suspected_truncation", True),
-            max_truncation_continuations=data.get("max_truncation_continuations", 1),
+            max_truncation_continuations=data.get("max_truncation_continuations", 3),
+            max_truncated_tool_call_retries=data.get("max_truncated_tool_call_retries", 3),
+            truncated_tool_call_boost_cap=data.get("truncated_tool_call_boost_cap", 32768),
             system_prompt_path=data.get("system_prompt_path", "system_prompt.md"),
             analysis_prompt_path=data.get("analysis_prompt_path", "analysis_prompt.md"),
             code_prompt_path=data.get("code_prompt_path", "code_prompt.md"),

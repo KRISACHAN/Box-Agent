@@ -32,6 +32,13 @@ class StreamEvent(BaseModel):
     # mid-flight (relay/provider hit max_tokens). Each entry: {"name", "arguments_len"}.
     # Surfaced so the agent loop can report *what* was being written when cut off.
     truncated_tool_calls: "list[dict[str, Any]] | None" = None
+    # Upstream ``finish_reason`` before local truncation-detection overrides it.
+    # ``None`` distinguishes "gateway never sent one" from "gateway said stop".
+    raw_finish_reason: str | None = None
+    # True when tool_call arguments are unparseable AND the upstream stream
+    # ended without a ``finish_reason`` — i.e. the connection dropped mid
+    # tool-call rather than the model hitting an output cap.
+    stream_dropped_mid_tool: bool = False
 
 
 class FunctionCall(BaseModel):
@@ -79,3 +86,7 @@ class LLMResponse(BaseModel):
     # See StreamEvent.truncated_tool_calls — propagated for diagnostics on
     # finish_reason in ("length", "max_tokens").
     truncated_tool_calls: list[dict[str, Any]] | None = None
+    # See StreamEvent.raw_finish_reason / stream_dropped_mid_tool — propagated
+    # so the agent loop can pick a repair strategy per truncation cause.
+    raw_finish_reason: str | None = None
+    stream_dropped_mid_tool: bool = False
