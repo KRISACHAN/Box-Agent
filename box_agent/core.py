@@ -2340,21 +2340,82 @@ async def run_agent_loop(
         )
 
         # ── Output truncated by provider token limit ────────
-        # finish_reason="length" splits into three cases:
-        #   1. tool_call args truncated + upstream sent no finish_reason →
-        #      the SSE stream dropped mid tool-call (network / peer close).
-        #      Boosting max_tokens is pointless; retry the same request.
-        #   2. tool_call args truncated + upstream said "length" → a genuine
-        #      output-cap truncation. Boost max_tokens and retry.
-        #   3. no tool calls, model actually hit the output cap → fall through
-        #      to the retry ladder with a boost.
-        # Only after the retries are exhausted do we surface a user-visible
-        # error — the goal is to make truncation invisible when it can be
-        # transparently recovered.
+        # finish_reason="length" splits into four cases, distinguished by
+        # (a) whether visible text was already streamed to the host and
+        # (b) whether the tool_call arguments came back parseable:
+        #
+        #   1. NO visible text + broken tool_call + stream_dropped_mid_tool →
+        #      SSE stream died mid tool-call (network / peer close). Boosting
+        #      max_tokens is pointless. SAME-messages retry is safe because
+        #      nothing user-visible was emitted.
+        #   2. NO visible text + broken tool_call + upstream said "length" →
+        #      genuine output-cap on tool_call JSON. Boost max_tokens and
+        #      SAME-messages retry. Still safe: no double-render.
+        #   3. Visible text present (with or without broken tool_call) →
+        #      the host has already rendered the partial via ContentEvent.
+        #      SAME-messages retry would re-stream the SAME (or similar) text
+        #      and the user sees it twice. Instead: append the partial as
+        #      an assistant turn and hand off to the truncation_continuation
+        #      machinery — the next LLM call CONTINUES the reply rather than
+        #      restarting it.
+        #   4. No tool_calls, no visible text, but finish_reason="length" →
+        #      degenerate case (model spent tokens on hidden thinking or the
+        #      relay lied). SAME-messages retry with a boost.
+        #
+        # Only after the retry / continuation budget is exhausted do we
+        # surface a user-visible error.
         if response.finish_reason in ("length", "max_tokens"):
             stream_dropped = getattr(response, "stream_dropped_mid_tool", False)
             has_broken_tool_call = bool(response.truncated_tool_calls)
-            if truncated_tool_call_retries < max_truncated_tool_call_retries:
+            visible_text = (response.content or "").strip()
+
+            # Case 3: visible text already streamed. SAME-messages retry is
+            # NOT safe — it would double-render. Delegate to the continuation
+            # path: keep the partial assistant turn and inject a "continue
+            # from the tail" nudge. This is the same shape the normal
+            # suspected-truncation branch uses (see below), reused here for
+            # the honest "length" finish.
+            if visible_text and truncation_continuations < max_truncation_continuations:
+                messages.append(assistant_msg)
+                truncation_continuations += 1
+                tail = response.content.rstrip()[-40:]
+                cont_text = truncation_continuation_text(tail)
+                messages.append(Message(role="user", content=cont_text))
+                yield InjectedMessageEvent(
+                    content=cont_text, injection_id=None, user_visible=False,
+                )
+                _log.warning(
+                    "length-with-visible-text continuation %d/%d: "
+                    "has_broken_tool_call=%s stream_dropped=%s "
+                    "completion_tokens=%s request_id=%s",
+                    truncation_continuations,
+                    max_truncation_continuations,
+                    has_broken_tool_call,
+                    stream_dropped,
+                    response.usage.completion_tokens if response.usage else None,
+                    provider_request_id,
+                )
+                elapsed = perf_counter() - step_start
+                total = perf_counter() - run_start
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_step_end(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                yield StepEnd(
+                    step=step + 1,
+                    elapsed_seconds=elapsed,
+                    total_elapsed_seconds=total,
+                )
+                continue
+
+            # Cases 1/2/4: no visible text was streamed, so re-issuing the
+            # SAME messages does not double-render anything.
+            if (
+                not visible_text
+                and truncated_tool_call_retries < max_truncated_tool_call_retries
+            ):
                 truncated_tool_call_retries += 1
                 requested_max = getattr(llm, "max_output_tokens", None) or 4096
                 boost = requested_max * (truncated_tool_call_retries + 1)
@@ -2388,7 +2449,8 @@ async def run_agent_loop(
                 )
                 continue
 
-            # Retries exhausted — persist what we have and surface the error.
+            # Retries / continuations exhausted — persist what we have and
+            # surface the error.
             messages.append(assistant_msg)
             usage = response.usage
             diag_parts: list[str] = []
@@ -2407,12 +2469,18 @@ async def run_agent_loop(
                 )
                 diag_parts.append(f"truncated_tool_calls=[{rendered}]")
             diag_parts.append(f"retries={truncated_tool_call_retries}")
-            diag = ("  Diagnostics: " + "; ".join(diag_parts)) if diag_parts else ""
-            msg = (
-                "LLM output appears truncated and could not be recovered after "
-                f"{truncated_tool_call_retries} retries. The provider may be "
-                "dropping the stream or clipping output; try a smaller task per "
-                "turn (e.g. write the file in sections instead of one call)." + diag
+            diag_parts.append(f"continuations={truncation_continuations}")
+            # User-facing message: keep it short and honest — the real cause
+            # is rarely "hit max_tokens" (much more often a relay dropped the
+            # stream or the model emitted broken JSON), and the long English
+            # diagnostic that used to be inlined here got string-concatenated
+            # onto the partial reply by hosts that append GENERATE chunks
+            # (officev3 does). The full diagnostic still goes to stderr so
+            # operators can triage.
+            msg = "输出被截断，请重试。"
+            _log.error(
+                "truncation retries exhausted: %s",
+                "; ".join(diag_parts),
             )
             _cleanup_incomplete_messages(messages)
             if hook_mgr.hooks:
