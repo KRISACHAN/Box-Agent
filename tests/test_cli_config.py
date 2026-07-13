@@ -122,6 +122,20 @@ def test_config_sub_agent_token_limit_defaults_and_overrides(tmp_path: Path) -> 
     assert cli.Config.from_yaml(override_path).agent.sub_agent_token_limit == 12345
 
 
+def test_config_mcp_connect_timeout_defaults_and_overrides(tmp_path: Path) -> None:
+    default_path = tmp_path / "default.yaml"
+    _write_config(default_path)
+    assert cli.Config.from_yaml(default_path).tools.mcp.connect_timeout == 60.0
+
+    override_path = tmp_path / "override.yaml"
+    _write_config(override_path)
+    with override_path.open("a", encoding="utf-8") as f:
+        f.write("tools:\n")
+        f.write("  mcp:\n")
+        f.write("    connect_timeout: 15\n")
+    assert cli.Config.from_yaml(override_path).tools.mcp.connect_timeout == 15.0
+
+
 def test_config_parallel_tool_timeout_defaults_and_overrides(tmp_path: Path) -> None:
     default_path = tmp_path / "default.yaml"
     _write_config(default_path)

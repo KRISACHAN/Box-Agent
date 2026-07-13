@@ -179,7 +179,7 @@ class AgentConfig(BaseModel):
 class MCPConfig(BaseModel):
     """MCP (Model Context Protocol) timeout configuration"""
 
-    connect_timeout: float = 10.0  # Connection timeout (seconds)
+    connect_timeout: float = 60.0  # Connection timeout (seconds)
     execute_timeout: float = 60.0  # Tool execution timeout (seconds)
     sse_read_timeout: float = 120.0  # SSE read timeout (seconds)
 
@@ -465,7 +465,7 @@ class Config(BaseModel):
         # Parse MCP configuration
         mcp_data = tools_data.get("mcp", {})
         mcp_config = MCPConfig(
-            connect_timeout=mcp_data.get("connect_timeout", 10.0),
+            connect_timeout=mcp_data.get("connect_timeout", 60.0),
             execute_timeout=mcp_data.get("execute_timeout", 60.0),
             sse_read_timeout=mcp_data.get("sse_read_timeout", 120.0),
         )

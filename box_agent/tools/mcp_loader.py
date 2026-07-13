@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,7 +54,7 @@ ConnectionType = Literal["stdio", "sse", "http", "streamable_http"]
 class MCPTimeoutConfig:
     """MCP timeout configuration."""
 
-    connect_timeout: float = 10.0  # Connection timeout (seconds)
+    connect_timeout: float = 60.0  # Connection timeout (seconds)
     execute_timeout: float = 60.0  # Tool execution timeout (seconds)
     sse_read_timeout: float = 120.0  # SSE read timeout (seconds)
 
@@ -262,6 +263,17 @@ class MCPServerConnection:
     async def connect(self) -> bool:
         """Connect to the MCP server with timeout protection."""
         connect_timeout = self._get_connect_timeout()
+        started_at = time.monotonic()
+        stage = "open-transport"
+
+        def elapsed_ms() -> int:
+            return round((time.monotonic() - started_at) * 1000)
+
+        command_label = f" command={self.command!r}" if self.connection_type == "stdio" else ""
+        _warn(
+            f"[mcp] connect:start server={self.name!r} transport={self.connection_type} "
+            f"timeout_s={connect_timeout}{command_label}"
+        )
 
         async def _close_exit_stack() -> None:
             if not self.exit_stack:
@@ -279,21 +291,39 @@ class MCPServerConnection:
             # Wrap connection with timeout
             async with _timeout(connect_timeout):
                 if self.connection_type == "stdio":
+                    stage = "open-stdio-transport"
                     read_stream, write_stream = await self._connect_stdio()
                 elif self.connection_type == "sse":
+                    stage = "open-sse-transport"
                     read_stream, write_stream = await self._connect_sse()
                 else:  # http / streamable_http
+                    stage = "open-http-transport"
                     read_stream, write_stream = await self._connect_streamable_http()
+
+                _warn(
+                    f"[mcp] connect:transport-open server={self.name!r} "
+                    f"stage={stage} elapsed_ms={elapsed_ms()}"
+                )
 
                 # Enter client session context
                 session = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
                 self.session = session
 
                 # Initialize the session
+                stage = "initialize-session"
                 await session.initialize()
+                _warn(
+                    f"[mcp] connect:initialized server={self.name!r} "
+                    f"elapsed_ms={elapsed_ms()}"
+                )
 
                 # List available tools
+                stage = "list-tools"
                 tools_list = await session.list_tools()
+                _warn(
+                    f"[mcp] connect:tools-listed server={self.name!r} "
+                    f"elapsed_ms={elapsed_ms()} tool_count={len(tools_list.tools)}"
+                )
 
             # Wrap each tool with execute timeout
             execute_timeout = self._get_execute_timeout()
@@ -318,20 +348,29 @@ class MCPServerConnection:
             return True
 
         except TimeoutError:
-            self.last_error = f"Connection timed out after {connect_timeout}s"
-            _warn(f"✗ Connection to MCP server '{self.name}' timed out after {connect_timeout}s")
+            self.last_error = f"Connection timed out after {connect_timeout}s during {stage}"
+            _warn(
+                f"[mcp] connect:timeout server={self.name!r} stage={stage} "
+                f"timeout_s={connect_timeout} elapsed_ms={elapsed_ms()}"
+            )
             await _close_exit_stack()
             return False
 
         except asyncio.CancelledError as e:
             self.last_error = f"Connection cancelled: {e}"
-            _warn(f"✗ Connection to MCP server '{self.name}' was cancelled during initialization: {e}")
+            _warn(
+                f"[mcp] connect:cancelled server={self.name!r} stage={stage} "
+                f"elapsed_ms={elapsed_ms()}"
+            )
             await _close_exit_stack()
             return False
 
         except Exception as e:
             self.last_error = str(e)
-            _warn(f"✗ Failed to connect to MCP server '{self.name}': {e}")
+            _warn(
+                f"[mcp] connect:failed server={self.name!r} stage={stage} "
+                f"elapsed_ms={elapsed_ms()} error={e}"
+            )
             await _close_exit_stack()
             import traceback
 

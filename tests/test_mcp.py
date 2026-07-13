@@ -364,7 +364,7 @@ class TestMCPTimeoutConfig:
     def test_default_timeout_config(self):
         """Test default timeout configuration values."""
         config = MCPTimeoutConfig()
-        assert config.connect_timeout == 10.0
+        assert config.connect_timeout == 60.0
         assert config.execute_timeout == 60.0
         assert config.sse_read_timeout == 120.0
 
@@ -453,6 +453,28 @@ class TestMCPServerConnectionTimeout:
             execute_timeout=180.0,
         )
         assert conn._get_execute_timeout() == 180.0
+
+    @pytest.mark.asyncio
+    async def test_timeout_log_identifies_connection_stage(self, monkeypatch, capsys):
+        """Timeout diagnostics should identify the MCP connection phase that stalled."""
+        conn = MCPServerConnection(
+            name="slow-stdio",
+            connection_type="stdio",
+            command="npx",
+            connect_timeout=0.02,
+        )
+
+        async def stall_transport():
+            await asyncio.sleep(1)
+
+        monkeypatch.setattr(conn, "_connect_stdio", stall_transport)
+
+        assert await conn.connect() is False
+        assert conn.last_error == "Connection timed out after 0.02s during open-stdio-transport"
+
+        stderr = capsys.readouterr().err
+        assert "[mcp] connect:start server='slow-stdio' transport=stdio" in stderr
+        assert "[mcp] connect:timeout server='slow-stdio' stage=open-stdio-transport" in stderr
 
 
 # =============================================================================
