@@ -570,10 +570,6 @@ class SessionState:
 class BoxACPAgent:
     """Minimal ACP adapter wrapping the existing Agent runtime."""
 
-    # Soft deadline for the first prompt to wait on background MCP loading.
-    # Beyond this we proceed without MCP tools and inject them once ready, so a
-    # single slow/broken MCP server cannot hang the user's first message.
-    _MCP_PROMPT_WAIT_SECONDS: float = 5.0
     # Session updates are local ACP notifications. If the host stops draining
     # them, one stuck update must not freeze the agent loop forever.
     _SESSION_UPDATE_TIMEOUT_SECONDS: float = 15.0
@@ -745,6 +741,12 @@ class BoxACPAgent:
             register_mcp_tools(state.agent.tools, mcp_tools)
         self._mcp_loaded = True
         log.info("mcp/ready", count=len(mcp_tools))
+
+    def _sub_agent_capability_state(self) -> str:
+        """Expose MCP readiness without leaking configuration or permissions."""
+        if self._mcp_loaded or self._mcp_task is None:
+            return "ready"
+        return "loading"
 
     async def _finalize_mcp_load(self) -> None:
         """Background drain of the MCP task after the prompt has already started."""
@@ -1015,6 +1017,8 @@ class BoxACPAgent:
                 llm=self._llm,
                 permission_engine=perm_engine,
                 skill_runtime_context=skill_runtime_context,
+                skill_loader=self._skill_loader,
+                capability_state_provider=self._sub_agent_capability_state,
                 use_output_dir=artifact_mode != "project",
                 artifact_root_dir=output_dir,
                 env_context=env_context,
@@ -3151,8 +3155,18 @@ async def run_acp_server(config: Config | None = None) -> None:
         # set up, so the host's `initialize` timeout fired before we could
         # answer. The task fills the loader's catalog in the background;
         # BoxACPAgent awaits it before the first turn's SkillSelector runs.
+        # Do not even spawn MCP subprocesses until the ACP transport and
+        # AgentSideConnection are ready. A cold `npx` server can take tens of
+        # seconds to initialize; it must not compete with the protocol
+        # handshake or make MCP connection logs look like the readiness gate.
+        mcp_start_gate = asyncio.Event()
         base_tools, skill_loader, mcp_task, skill_task = await initialize_base_tools(
-            config, output=_stderr_print, memory_manager=memory_mgr, llm=llm, defer_skills=True,
+            config,
+            output=_stderr_print,
+            memory_manager=memory_mgr,
+            llm=llm,
+            defer_skills=True,
+            mcp_start_gate=mcp_start_gate,
         )
         prompt_path = Config.find_config_file(config.agent.system_prompt_path)
         if prompt_path and prompt_path.exists():
@@ -3213,6 +3227,8 @@ async def run_acp_server(config: Config | None = None) -> None:
         AgentSideConnection(lambda conn: BoxACPAgent(conn, config, llm, base_tools, system_prompt, memory_manager=memory_mgr, hooks=_hooks, skill_loader=skill_loader, mcp_task=mcp_task, skill_task=skill_task, lite_llm=lite_llm), writer, reader)
 
         log.info("server/ready", message="ACP server ready, listening on stdio")
+        _stderr_print("✅ ACP protocol ready; MCP loading continues in background")
+        mcp_start_gate.set()
         await asyncio.Event().wait()
 
     except Exception as exc:

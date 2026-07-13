@@ -256,7 +256,7 @@ Edit `mcp.json` to add a new MCP Server:
 Built-in skills are committed under `box_agent/skills/` and loaded through `box_agent/skills/_manifest.json`.
 No git submodule setup is required for normal development.
 
-The current manifest lists 31 built-in skills, including:
+The current manifest lists 32 built-in skills, including:
 
 - 📄 **Document Processing**: Create and edit PDF, DOCX, XLSX, PPTX
 - 🎨 **Design Creation**: Generate artwork, posters, GIF animations
@@ -317,6 +317,8 @@ cat > SKILL.md << 'EOF'
 ---
 name: my-custom-skill
 description: My custom skill for handling specific tasks.
+allowed-tools:
+  - read_file
 ---
 
 # Overview
@@ -342,6 +344,14 @@ A: Answer 1
 ```
 
 The new Skill will be automatically loaded and recognized by the Agent.
+
+`allowed-tools` (or `allowed_tools`) is normalized, deduplicated, and sorted at
+load time. It is routing metadata in the skill catalog and becomes part of an
+explicit sub-agent's requested capability set when that Skill is selected; the
+runtime still intersects it with the parent's live tools and the delegation
+constraints. Use the smallest list the Skill actually needs. Skill dependencies
+belong in `required_skills`; `related_skills` are suggestions and are not loaded
+automatically. See [Sub-agent Delegation](SUB_AGENT_DELEGATION.md).
 
 ### 3.5 Customizing System Prompt
 

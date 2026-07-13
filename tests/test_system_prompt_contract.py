@@ -35,12 +35,25 @@ def test_system_prompt_separates_source_content_from_search_clues():
     assert "只有对应工具成功返回目标内容时，才可这样表述" in prompt
 
 
-def test_system_prompt_sub_agent_trigger_covers_separable_evidence_units():
+def test_system_prompt_forbids_reusing_model_history_placeholders():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 
-    assert "可隔离的小单元任务" in prompt
-    assert "分别收集证据、核验事实、分析判断、起草内容或检查质量" in prompt
-    assert "候选项、来源范围、时间段" in prompt
-    assert "不限于写作或 QA" in prompt
-    assert "只返回局部证据/结论" in prompt
+    assert "[Full tool-call argument omitted from model history]" in prompt
+    assert "是内部历史摘要，不是真实文件内容" in prompt
+    assert "绝不能复制到任何工具参数" in prompt
+    assert "不要为绕过摘要保护而改用 `execute_code`" in prompt
+
+
+def test_system_prompt_sub_agent_routing_is_cost_aware_and_capability_explicit():
+    prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
+
+    assert "独立上下文、并行耗时或证据隔离收益明显高于启动和合并成本" in prompt
+    assert "不要仅因单元数量达到 5 个就强制并行" in prompt
+    assert "execution.strategy=\"batch_files\"" in prompt
+    assert 'capabilities.required_tools=["read_file"]' in prompt
+    assert "满足限制的最少互斥批次" in prompt
+    assert "显式最小能力声明的 `general_loop`" in prompt
+    assert "INVALID_DELEGATION_SPEC" in prompt
+    assert "最多修正重试一次" in prompt
+    assert "只有完全没有 `capabilities` 的旧调用" in prompt
     assert "最终合并、交叉校验" in prompt

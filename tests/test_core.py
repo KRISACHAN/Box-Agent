@@ -959,6 +959,213 @@ async def test_write_file_large_artifact_arguments_are_compacted_in_model_histor
 
 
 @pytest.mark.asyncio
+async def test_consecutive_html_writes_delay_compaction_for_one_model_turn(tmp_path):
+    first_html = "<section class='slide'>FIRST_REAL_FRAGMENT</section>"
+    second_html = "<section class='slide'>SECOND_REAL_FRAGMENT</section>"
+    msgs = _msgs()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "drafts/slides_01_04.html",
+                                "content": first_html,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-2",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "drafts/slides_05_08.html",
+                                "content": second_html,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=msgs,
+            tools={"write_file": WriteTool(workspace_dir=str(tmp_path))},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    second_request_calls = [
+        tool_call
+        for message in llm.message_calls[1]
+        if message.role == "assistant" and message.tool_calls
+        for tool_call in message.tool_calls
+    ]
+    assert second_request_calls[0].function.arguments["content"] == first_html
+
+    third_request_calls = [
+        tool_call
+        for message in llm.message_calls[2]
+        if message.role == "assistant" and message.tool_calls
+        for tool_call in message.tool_calls
+    ]
+    assert "[Full tool-call argument omitted from model history]" in (
+        third_request_calls[0].function.arguments["content"]
+    )
+    assert third_request_calls[1].function.arguments["content"] == second_html
+
+    stored_calls = [
+        tool_call
+        for message in msgs
+        if message.role == "assistant" and message.tool_calls
+        for tool_call in message.tool_calls
+    ]
+    assert all(
+        "[Full tool-call argument omitted from model history]"
+        in tool_call.function.arguments["content"]
+        for tool_call in stored_calls
+    )
+    assert (tmp_path / "drafts/slides_01_04.html").read_text() == first_html
+    assert (tmp_path / "drafts/slides_05_08.html").read_text() == second_html
+
+
+@pytest.mark.asyncio
+async def test_model_history_placeholder_write_is_hidden_and_self_heals(tmp_path):
+    first_html = "<section class='slide'>FIRST_REAL_FRAGMENT</section>"
+    second_html = "<section class='slide'>SECOND_REAL_FRAGMENT</section>"
+    placeholder = (
+        "[Full tool-call argument omitted from model history]\n"
+        "Tool: write_file\n"
+        "Argument: content\n"
+        "Path: drafts/slides_05_08.html"
+    )
+
+    class RecordingWriteTool(WriteTool):
+        def __init__(self):
+            super().__init__(workspace_dir=str(tmp_path))
+            self.executions: list[tuple[str, str]] = []
+
+        async def execute(self, path: str, content: str) -> ToolResult:
+            self.executions.append((path, content))
+            return await super().execute(path=path, content=content)
+
+    write_tool = RecordingWriteTool()
+    msgs = _msgs()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "drafts/slides_01_04.html",
+                                "content": first_html,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="placeholder-write",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "drafts/slides_05_08.html",
+                                "content": placeholder,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-2",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "drafts/slides_05_08.html",
+                                "content": second_html,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=msgs,
+            tools={"write_file": write_tool},
+            max_steps=6,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    placeholder_start = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallStart)
+        and event.tool_call_id == "placeholder-write"
+    )
+    placeholder_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "placeholder-write"
+    )
+    assert placeholder_start.user_visible is False
+    assert placeholder_result.user_visible is False
+    assert placeholder_result.success is False
+    assert "INTERNAL_MODEL_HISTORY_PLACEHOLDER" in (placeholder_result.error or "")
+    assert any(
+        isinstance(event, InjectedMessageEvent)
+        and event.user_visible is False
+        and "Regenerate the missing real content" in event.content
+        for event in events
+    )
+    assert write_tool.executions == [
+        ("drafts/slides_01_04.html", first_html),
+        ("drafts/slides_05_08.html", second_html),
+    ]
+    assert (tmp_path / "drafts/slides_05_08.html").read_text() == second_html
+
+
+@pytest.mark.asyncio
 async def test_write_file_qa_json_arguments_are_compacted_even_when_small(tmp_path):
     marker = "SHOULD_NOT_STAY_IN_QA_TOOL_ARGS"
     content = f'{{"ok": false, "details": "{marker}"}}'
@@ -1456,6 +1663,43 @@ async def test_web_search_budget_synthesizes_result_and_allows_final_answer():
     done = [e for e in events if isinstance(e, DoneEvent)]
     assert len(done) == 1
     assert done[0].stop_reason == StopReason.END_TURN
+
+
+@pytest.mark.asyncio
+async def test_total_tool_call_budget_is_a_hard_loop_limit():
+    tool_calls = [
+        ToolCall(
+            id=f"echo-{index}",
+            type="function",
+            function=FunctionCall(name="echo", arguments={"text": str(index)}),
+        )
+        for index in range(3)
+    ]
+    llm = MockLLM(
+        [
+            LLMResponse(content="", tool_calls=tool_calls, finish_reason="tool"),
+            LLMResponse(content="final", finish_reason="stop"),
+        ]
+    )
+    echo = CountingEchoTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": echo},
+            max_steps=3,
+            max_tool_calls=2,
+        )
+    )
+
+    assert echo.calls == 2
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    assert len(results) == 3
+    assert results[-1].success is False
+    assert "Total tool call budget reached" in (results[-1].error or "")
+    injected = [event for event in events if isinstance(event, InjectedMessageEvent)]
+    assert any("工具调用总预算已达到上限" in event.content for event in injected)
 
 
 @pytest.mark.asyncio

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import tiktoken
 
 from box_agent.events import DoneEvent, StopReason, SubAgentEvent, WebSearchEvent
-from box_agent.schema import LLMResponse, Message, StreamEvent
+from box_agent.schema import LLMResponse, Message, StreamEvent, TokenUsage
 from box_agent.agent import Agent
 from box_agent.tools.base import Tool, ToolResult
+from box_agent.tools.file_tools import ReadTool, WriteTool
+from box_agent.tools.skill_loader import SkillLoader
 from box_agent.tools.sub_agent_tool import SubAgentTool
 
 
@@ -103,34 +107,28 @@ def test_schema():
     assert "task" in schema["input_schema"]["properties"]
     # `title` is an optional short distinct label, not required.
     assert "title" in schema["input_schema"]["properties"]
+    assert "capabilities" in schema["input_schema"]["properties"]
+    assert "execution" in schema["input_schema"]["properties"]
+    assert "batch_files" in schema["input_schema"]["properties"]["execution"]["properties"]["strategy"]["enum"]
     assert schema["input_schema"]["required"] == ["task"]
 
     openai_schema = tool.to_openai_schema()
     assert openai_schema["function"]["name"] == "sub_agent"
 
 
-def test_description_encourages_bounded_parallel_units_with_parent_merge():
+def test_description_prefers_cost_aware_batching_and_parent_merge():
     llm = AsyncMock()
     tool = SubAgentTool(llm=llm, parent_tools={})
     description = tool.description
 
-    assert "Mandatory trigger" in description
-    assert "independent evidence gathering" in description
-    assert "fact checking" in description
-    assert "analysis, comparison, drafting" in description
-    assert "more than 5 structurally similar units" in description
-    assert "launch 3-7 sub_agent calls first" in description
-    assert "single small unit" in description
-    assert "1 candidate" in description
-    assert "1 source range" in description
-    assert "1 sub-question" in description
-    assert "unique path, directory, or filename prefix" in description
-    assert "If the final deliverable is a single file" in description
-    assert "draft fragments, local partial files" in description
-    assert "evidence/finding summaries" in description
-    assert "Do not assign two sub-agents to write the same file" in description
-    assert "parent agent must own coordination" in description
-    assert "write final deliverables" in description
+    assert "independent context, parallel latency, or evidence isolation" in description
+    assert "minimum tools and Skills" in description
+    assert "batch_files" in description
+    assert "required_tools=[\"read_file\"]" in description
+    assert "fewest mutually exclusive batches" in description
+    assert "Do not create multiple children merely because there are five or more units" in description
+    assert "parent remains responsible" in description
+    assert "final deliverables" in description
 
 
 # ── Tool filtering ───────────────────────────────────────────
@@ -272,6 +270,150 @@ def test_agent_wires_system_prompt_into_sub_agent(tmp_path):
     assert tool._parent_system_prompt is not None
     assert "Parent constraint: keep output generic." in tool._parent_system_prompt
     assert "Current Workspace" in tool._parent_system_prompt
+
+
+async def test_new_style_general_loop_uses_only_resolved_tools_and_slim_prompt(tmp_path):
+    captured = {}
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        captured["messages"] = messages
+        captured["tools"] = tools
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(
+            type="finish",
+            finish_reason="stop",
+            tool_calls=None,
+            usage=TokenUsage(prompt_tokens=11, completion_tokens=2, total_tokens=13),
+        )
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    read_file = ReadTool(workspace_dir=str(tmp_path))
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": read_file, "web_search": WebSearchTool()},
+        workspace_dir=str(tmp_path),
+    )
+    tool.set_parent_system_prompt("SECRET_PARENT_PROMPT with the full capability catalog")
+
+    result = await tool.execute(
+        task="Inspect the local inputs",
+        capabilities={"required_tools": ["read_file"]},
+    )
+
+    assert result.success is True
+    assert [candidate.name for candidate in captured["tools"]] == ["read_file"]
+    system_prompt = captured["messages"][0].content
+    assert "Immutable rules" in system_prompt
+    assert "SECRET_PARENT_PROMPT" not in system_prompt
+    assert "Inherited parent system prompt" not in system_prompt
+    assert result.raw_output["legacy_general"] is False
+    assert result.raw_output["resolved_tools"] == ["read_file"]
+    assert result.raw_output["model_calls"] == 1
+    assert result.raw_output["usage"] == {
+        "input_tokens": 11,
+        "output_tokens": 2,
+        "total_tokens": 13,
+    }
+
+
+async def test_invalid_new_style_spec_never_falls_back_or_calls_llm():
+    llm = AsyncMock()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+
+    result = await tool.execute(task="Inspect", capabilities={})
+
+    assert result.success is False
+    assert result.raw_output["code"] == "INVALID_DELEGATION_SPEC"
+    assert result.raw_output["retryable"] is True
+    assert "minimal_valid_example" in result.raw_output
+    assert result.raw_output["retry_limit"] == 1
+    llm.generate.assert_not_called()
+    llm.generate_stream.assert_not_called()
+
+
+async def test_explicit_null_capabilities_is_invalid_not_legacy():
+    llm = AsyncMock()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+
+    result = await tool.execute(task="Inspect", capabilities=None)
+
+    assert result.success is False
+    assert result.raw_output["code"] == "INVALID_DELEGATION_SPEC"
+    assert "capabilities" in result.raw_output["invalid_fields"]
+    llm.generate_stream.assert_not_called()
+
+
+async def test_selected_skills_are_loaded_into_new_prompt_only(tmp_path):
+    skill_dir = tmp_path / "review-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: review-skill
+description: Review local material
+allowed-tools: [read_file]
+---
+
+Follow the REVIEW-SKILL-CONTENT rubric.
+""",
+        encoding="utf-8",
+    )
+    loader = SkillLoader(tmp_path)
+    loader.discover_skills()
+    captured_messages = None
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        nonlocal captured_messages
+        captured_messages = messages
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": ReadTool(workspace_dir=str(tmp_path))},
+        workspace_dir=str(tmp_path),
+    )
+    tool.set_skill_provider(lambda: loader)
+
+    result = await tool.execute(
+        task="Review the material",
+        capabilities={
+            "required_tools": ["read_file"],
+            "skills": ["review-skill"],
+        },
+    )
+
+    assert result.success is True
+    assert "REVIEW-SKILL-CONTENT" in captured_messages[0].content
+    assert result.raw_output["resolved_skills"] == ["review-skill"]
+
+
+async def test_capability_state_provider_drives_not_ready_error():
+    llm = AsyncMock()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+    tool.set_capability_state_provider(lambda: "loading")
+
+    result = await tool.execute(
+        task="Use the future MCP tool",
+        capabilities={"required_tools": ["mcp_future_tool"]},
+        constraints={
+            "read_only": False,
+            "network": True,
+            "write_scope": None,
+            "external_side_effect": True,
+        },
+    )
+
+    assert result.success is False
+    assert result.raw_output["code"] == "REQUIRED_TOOL_NOT_READY"
+    assert result.raw_output["pending_source"] == "mcp"
+    assert result.raw_output["requested_tools"]["required"] == ["mcp_future_tool"]
+    assert result.raw_output["resolved_tools"] == []
+    assert result.raw_output["denied_tools"][0]["name"] == "mcp_future_tool"
+    assert result.raw_output["model_calls"] == 0
+    llm.generate_stream.assert_not_called()
 
 
 async def test_web_search_tool_emits_reference_event():
@@ -429,6 +571,357 @@ async def test_max_steps_respected():
     assert call_count <= 4  # max_steps=3 means 3 LLM calls
 
 
+async def test_batch_files_reads_twenty_files_once_and_calls_generate_once(tmp_path):
+    paths = []
+    for index in range(20):
+        path = tmp_path / f"project-{index:02d}.md"
+        path.write_text(f"# Project {index}\nScore material {index}\n", encoding="utf-8")
+        paths.append(path.name)
+
+    class CountingReadTool(ReadTool):
+        def __init__(self):
+            super().__init__(workspace_dir=str(tmp_path))
+            self.calls = []
+
+        async def execute(self, path, offset=None, limit=None):
+            self.calls.append(path)
+            return await super().execute(path=path, offset=offset, limit=limit)
+
+    class BatchLLM:
+        def __init__(self):
+            self.generate_calls = 0
+            self.stream_calls = 0
+            self.messages = None
+            self.tools = "unset"
+
+        async def generate(self, messages, tools=None, **kwargs):
+            self.generate_calls += 1
+            self.messages = messages
+            self.tools = tools
+            encoding = tiktoken.get_encoding("cl100k_base")
+            prompt_tokens = sum(
+                len(encoding.encode(str(message.content))) for message in messages
+            )
+            return LLMResponse(
+                content="ranked all 20 projects",
+                finish_reason="stop",
+                usage=TokenUsage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=100,
+                    total_tokens=prompt_tokens + 100,
+                ),
+            )
+
+        async def generate_stream(self, messages, tools=None, **kwargs):
+            self.stream_calls += 1
+            raise AssertionError("batch_files must not enter run_agent_loop")
+            yield
+
+    llm = BatchLLM()
+    read_tool = CountingReadTool()
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": read_tool},
+        workspace_dir=str(tmp_path),
+    )
+
+    started = perf_counter()
+    result = await tool.execute(
+        task="Compare every project and rank them",
+        execution={"strategy": "batch_files"},
+        capabilities={"required_tools": ["read_file"]},
+        inputs={"files": list(reversed(paths))},
+    )
+    elapsed = perf_counter() - started
+
+    assert result.success is True
+    assert result.content == "ranked all 20 projects"
+    assert sorted(read_tool.calls) == sorted(paths)
+    assert len(read_tool.calls) == 20
+    assert llm.generate_calls == 1
+    assert llm.stream_calls == 0
+    assert llm.tools is None
+    assert "<<<UNTRUSTED_FILE" in llm.messages[-1].content
+    assert llm.messages[-1].content.count("<<<UNTRUSTED_FILE") == 20
+    assert result.raw_output["model_calls"] == 1
+    assert result.raw_output["tool_calls"] == 20
+    assert result.raw_output["resolved_tools"] == ["read_file"]
+    assert result.raw_output["usage"]["input_tokens"] <= int(3_353_714 * 0.10)
+    assert elapsed < 60
+
+
+async def test_batch_files_prefetch_propagates_cancellation():
+    started = asyncio.Event()
+
+    class CancellableReadTool(Tool):
+        @property
+        def name(self):
+            return "read_file"
+
+        @property
+        def description(self):
+            return "test read"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"path": {"type": "string"}}}
+
+        async def execute(self, path):
+            started.set()
+            await asyncio.Event().wait()
+
+    llm = AsyncMock()
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": CancellableReadTool()},
+    )
+
+    execution = asyncio.create_task(
+        tool.execute(
+            task="Summarize",
+            execution={"strategy": "batch_files"},
+            capabilities={"required_tools": ["read_file"]},
+            inputs={"files": ["one.md"]},
+        )
+    )
+    await started.wait()
+    execution.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await execution
+    llm.generate.assert_not_called()
+
+
+async def test_batch_files_uses_configurable_synthesis_timeout():
+    class CompleteReadTool(Tool):
+        @property
+        def name(self):
+            return "read_file"
+
+        @property
+        def description(self):
+            return "test read"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"path": {"type": "string"}}}
+
+        async def execute(self, path):
+            return ToolResult(
+                success=True,
+                content="body",
+                raw_output={
+                    "source_char_count": 4,
+                    "selected_char_count": 4,
+                    "selected_line_count": 1,
+                    "truncated": False,
+                },
+            )
+
+    class HangingLLM:
+        async def generate(self, **kwargs):
+            await asyncio.Event().wait()
+
+    tool = SubAgentTool(
+        llm=HangingLLM(),
+        parent_tools={"read_file": CompleteReadTool()},
+        batch_synthesis_timeout_seconds=0.01,
+    )
+
+    result = await tool.execute(
+        task="Summarize",
+        execution={"strategy": "batch_files"},
+        capabilities={"required_tools": ["read_file"]},
+        inputs={"files": ["one.md"]},
+    )
+
+    assert result.success is False
+    assert result.raw_output["code"] == "BATCH_SYNTHESIS_TIMEOUT"
+    assert result.raw_output["timeout_seconds"] == 0.01
+    assert "configured 0.01 second runtime limit" in result.raw_output["message"]
+
+
+@pytest.mark.parametrize(
+    ("content", "raw_output", "expected_code"),
+    [
+        (
+            "normal body",
+            None,
+            "READ_COMPLETENESS_UNVERIFIED",
+        ),
+        (
+            "body ... [Content truncated: 40000 tokens -> ~32000 tokens limit] ...",
+            None,
+            "FILE_CONTENT_TRUNCATED",
+        ),
+        (
+            "large body",
+            {
+                "source_char_count": 64_001,
+                "selected_char_count": 64_001,
+                "selected_line_count": 1,
+                "truncated": False,
+            },
+            "FILE_TOO_LARGE",
+        ),
+        (
+            "truncated body",
+            {
+                "source_char_count": 10,
+                "selected_char_count": 10,
+                "selected_line_count": 1,
+                "truncated": True,
+            },
+            "FILE_CONTENT_TRUNCATED",
+        ),
+    ],
+)
+async def test_batch_files_rejects_unproven_or_incomplete_reads_before_model(
+    content,
+    raw_output,
+    expected_code,
+):
+    class UnsafeReadTool(Tool):
+        @property
+        def name(self):
+            return "read_file"
+
+        @property
+        def description(self):
+            return "test read"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"path": {"type": "string"}}}
+
+        async def execute(self, path):
+            return ToolResult(success=True, content=content, raw_output=raw_output)
+
+    llm = AsyncMock()
+    tool = SubAgentTool(llm=llm, parent_tools={"read_file": UnsafeReadTool()})
+
+    result = await tool.execute(
+        task="Summarize",
+        execution={"strategy": "batch_files"},
+        capabilities={"required_tools": ["read_file"]},
+        inputs={"files": ["one.md"]},
+    )
+
+    assert result.success is False
+    assert result.raw_output["type"] == "sub_agent_delegation_error"
+    assert result.raw_output["code"] == "BATCH_FILES_PREFETCH_FAILED"
+    assert result.raw_output["failures"][0]["code"] == expected_code
+    assert result.raw_output["model_calls"] == 0
+    llm.generate.assert_not_called()
+    llm.generate_stream.assert_not_called()
+
+
+async def test_batch_files_rejects_aggregate_over_200k_before_model():
+    class LargeCompleteReadTool(Tool):
+        @property
+        def name(self):
+            return "read_file"
+
+        @property
+        def description(self):
+            return "test read"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"path": {"type": "string"}}}
+
+        async def execute(self, path):
+            content = "x" * 51_000
+            return ToolResult(
+                success=True,
+                content=content,
+                raw_output={
+                    "source_char_count": len(content),
+                    "selected_char_count": len(content),
+                    "selected_line_count": 1,
+                    "truncated": False,
+                },
+            )
+
+    llm = AsyncMock()
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": LargeCompleteReadTool()},
+    )
+
+    result = await tool.execute(
+        task="Summarize all files",
+        execution={"strategy": "batch_files"},
+        capabilities={"required_tools": ["read_file"]},
+        inputs={"files": ["a.md", "b.md", "c.md", "d.md"]},
+    )
+
+    assert result.success is False
+    assert result.raw_output["failures"] == [
+        {
+            "path": "*",
+            "code": "AGGREGATE_CONTENT_TOO_LARGE",
+            "source_char_count": 204_000,
+            "limit": 200_000,
+            "retryable": False,
+        }
+    ]
+    assert result.raw_output["model_calls"] == 0
+    llm.generate.assert_not_called()
+
+
+async def test_write_scope_is_enforced_before_live_write_tool(tmp_path):
+    from box_agent.schema import FunctionCall, ToolCall
+
+    call_num = 0
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        nonlocal call_num
+        call_num += 1
+        if call_num == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="write-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={"path": "../outside.txt", "content": "blocked"},
+                        ),
+                    )
+                ],
+            )
+        else:
+            yield StreamEvent(type="text", delta="write was denied")
+            yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    write_tool = WriteTool(workspace_dir=str(tmp_path))
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={"write_file": write_tool},
+        workspace_dir=str(tmp_path),
+    )
+
+    result = await tool.execute(
+        task="Write only inside allowed",
+        capabilities={"required_tools": ["write_file"]},
+        constraints={
+            "read_only": False,
+            "network": False,
+            "write_scope": ["allowed"],
+            "external_side_effect": False,
+        },
+    )
+
+    assert result.success is True
+    assert not (tmp_path.parent / "outside.txt").exists()
+    assert result.raw_output["tool_calls"] == 1
+
+
 # ── Parallel execution in core ───────────────────────────────
 
 
@@ -560,13 +1053,59 @@ async def test_parallel_sub_agent_progress_keeps_parent_tool_call_id():
     } == {"parent-b"}
 
 
+async def test_parallel_new_style_calls_do_not_leak_resolved_tools():
+    observed = {}
+
+    class IsolatedLLM:
+        async def generate_stream(self, messages, tools=None, **kwargs):
+            task_text = messages[-1].content
+            key = "read" if "read task" in task_text else "web"
+            observed[key] = [tool.name for tool in tools]
+            await asyncio.sleep(0.01)
+            yield StreamEvent(type="text", delta=f"done {key}")
+            yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
+
+    tool = SubAgentTool(
+        llm=IsolatedLLM(),
+        parent_tools={
+            "read_file": ReadTool(),
+            "web_search": WebSearchTool(),
+        },
+    )
+    result_read, result_web = await asyncio.gather(
+        tool.execute(
+            task="read task",
+            capabilities={"required_tools": ["read_file"]},
+        ),
+        tool.execute(
+            task="web task",
+            capabilities={"required_tools": ["web_search"]},
+            constraints={
+                "read_only": True,
+                "network": True,
+                "write_scope": None,
+                "external_side_effect": False,
+            },
+        ),
+    )
+
+    assert result_read.success is True
+    assert result_web.success is True
+    assert observed == {"read": ["read_file"], "web": ["web_search"]}
+    assert result_read.raw_output["resolved_tools"] == ["read_file"]
+    assert result_web.raw_output["resolved_tools"] == ["web_search"]
+
+
 def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
-    """config.agent.sub_agent_token_limit flows into the SubAgentTool instance."""
+    """Sub-agent config and live capability providers flow through setup."""
     from box_agent.config import AgentConfig, ToolsConfig
     from box_agent.tools.setup import add_workspace_tools
 
     class Config:
-        agent = AgentConfig(sub_agent_token_limit=12345)
+        agent = AgentConfig(
+            sub_agent_token_limit=12345,
+            sub_agent_batch_synthesis_timeout_seconds=234.5,
+        )
         tools = ToolsConfig(
             enable_bash=False,
             enable_file_tools=False,
@@ -575,14 +1114,20 @@ def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
         )
 
     tools: list = []
+    skill_loader = object()
     add_workspace_tools(
         tools,
         Config(),
         tmp_path,
         allow_full_access=False,
         llm=AsyncMock(),
+        skill_loader=skill_loader,
+        capability_state_provider=lambda: "loading",
         output=lambda *_: None,
     )
 
     sub_agent = next(t for t in tools if t.name == "sub_agent")
     assert sub_agent._token_limit == 12345
+    assert sub_agent._batch_synthesis_timeout_seconds == 234.5
+    assert sub_agent._resolve_skill_loader() is skill_loader
+    assert sub_agent._resolve_capability_state() == "loading"

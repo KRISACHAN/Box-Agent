@@ -96,6 +96,24 @@ def tool_call_budget_wrapup_text(tool_name: str, limit: int) -> str:
     )
 
 
+def total_tool_call_budget_message(limit: int) -> str:
+    """Synthetic error once the per-loop total tool budget is exhausted."""
+    return (
+        f"Total tool call budget reached ({limit} calls this task). "
+        "Do not call any more tools; synthesize the final answer from the "
+        "evidence and tool results already collected."
+    )
+
+
+def total_tool_call_budget_wrapup_text(limit: int) -> str:
+    """One-shot synthesis nudge for the total tool-call hard limit."""
+    return (
+        f"⚠️ 本任务工具调用总预算已达到上限（{limit} 次）。"
+        "现在请停止调用任何工具，仅基于已有结果直接给出完整最终答案；"
+        "缺口简要标注即可。"
+    )
+
+
 # ── Near-limit / no-progress wrap-up nudges ──────────────────────
 
 

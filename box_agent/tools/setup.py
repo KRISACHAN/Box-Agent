@@ -107,7 +107,14 @@ class Colors:
     RESET = "\033[0m"
 
 
-async def initialize_base_tools(config: Config, output=None, memory_manager=None, llm=None, defer_skills: bool = False):
+async def initialize_base_tools(
+    config: Config,
+    output=None,
+    memory_manager=None,
+    llm=None,
+    defer_skills: bool = False,
+    mcp_start_gate: asyncio.Event | None = None,
+):
     """Initialize base tools (independent of workspace)
 
     These tools are loaded from package configuration and don't depend on workspace.
@@ -126,6 +133,9 @@ async def initialize_base_tools(config: Config, output=None, memory_manager=None
             Callers must ``await skill_task`` (or its completion) before
             they need the skill catalog. CLI keeps the default (False) so
             users still see the "Loading Claude Skills..." status inline.
+        mcp_start_gate: Optional gate used by ACP to keep MCP subprocess and
+            network startup behind protocol readiness. CLI leaves this unset,
+            so its existing eager background loading behavior is unchanged.
 
     Returns:
         Tuple of (tools, skill_loader, mcp_task, skill_task). The MCP task
@@ -272,7 +282,12 @@ async def initialize_base_tools(config: Config, output=None, memory_manager=None
 
             async def _load() -> List[Tool]:
                 try:
-                    loaded = await load_mcp_tools_async(str(mcp_config_path), auth_file=config.llm.auth_file)
+                    if mcp_start_gate is not None:
+                        await mcp_start_gate.wait()
+                    loaded = await load_mcp_tools_async(
+                        str(mcp_config_path),
+                        auth_file=config.llm.auth_file,
+                    )
                     if loaded:
                         _out(f"{Colors.GREEN}✅ Loaded {len(loaded)} MCP tools (from: {mcp_config_path}){Colors.RESET}")
                     else:
@@ -350,6 +365,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         allow_full_access: bool = True, non_interactive: bool = False, output=None,
                         llm=None, permission_engine: PermissionEngine | None = None,
                         skill_runtime_context: SkillRuntimeContext | None = None,
+                        skill_loader=None, capability_state_provider=None,
                         use_output_dir: bool = True,
                         artifact_root_dir: str | Path | None = None,
                         env_context=None):
@@ -369,6 +385,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         llm: LLM client instance (needed for sub_agent tool)
         permission_engine: If provided, tools use capability-based permission checks
         skill_runtime_context: Runtime env to expose to subprocess-backed tools
+        skill_loader: Current live SkillLoader for explicit child Skill selection
+        capability_state_provider: Read-only callable returning MCP loading/ready state
         use_output_dir: If True, execute_code chdirs into {workspace}/output.
         artifact_root_dir: Optional host-supplied output root for this session.
     """
@@ -482,8 +500,15 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             parent_tools=parent_tools,
             workspace_dir=str(workspace_dir),
             token_limit=config.agent.sub_agent_token_limit,
+            batch_synthesis_timeout_seconds=(
+                config.agent.sub_agent_batch_synthesis_timeout_seconds
+            ),
             artifact_detection_enabled=use_output_dir,
             artifact_root_dir=str(artifact_root) if artifact_root else None,
         )
+        if skill_loader is not None:
+            sub_agent_tool.set_skill_provider(lambda: skill_loader)
+        if capability_state_provider is not None:
+            sub_agent_tool.set_capability_state_provider(capability_state_provider)
         tools.append(sub_agent_tool)
         _out(f"{Colors.GREEN}✅ Loaded sub-agent tool (sub_agent){Colors.RESET}")

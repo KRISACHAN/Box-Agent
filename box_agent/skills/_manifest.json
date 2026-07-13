@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "box_agent_version": "0.8.71",
-  "generated_at": "2026-06-30T03:05:11Z",
+  "box_agent_version": "0.8.79",
+  "generated_at": "2026-07-13T15:29:49Z",
   "skills": [
     {
       "name": "artifacts-builder",
@@ -46,6 +46,10 @@
     {
       "name": "internal-comms",
       "path": "internal-comms/SKILL.md"
+    },
+    {
+      "name": "mcp-config",
+      "path": "mcp-config/SKILL.md"
     },
     {
       "name": "memory-guide",
@@ -126,10 +130,6 @@
     {
       "name": "writing-workflow",
       "path": "writing-workflow/SKILL.md"
-    },
-    {
-      "name": "mcp-config",
-      "path": "mcp-config/SKILL.md"
     }
   ]
 }

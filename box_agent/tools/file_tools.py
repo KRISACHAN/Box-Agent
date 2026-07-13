@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import tiktoken
 
+from ..model_history import is_model_history_placeholder
 from .base import Tool, ToolResult
 from .pptx_safety import detect_pptx_self_check_bypass
 from .safety import backup_file, validate_path_in_workspace
@@ -73,13 +74,6 @@ _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_SIZE_THRESHOLD = 8_000
 MAX_FILE_TOOL_CONTENT_CHARS = 8_000
 MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY = f"{MAX_FILE_TOOL_CONTENT_CHARS:,}"
-_MODEL_HISTORY_PLACEHOLDER_PREFIXES = (
-    "[Full tool-call argument omitted from model history]",
-    "[Full file content omitted from model history]",
-    "[Full tool output omitted from model history]",
-)
-
-
 def _strip_number_prefix(line: str) -> str:
     """Remove the read_file line-number prefix from one formatted line."""
     if "|" not in line:
@@ -120,7 +114,7 @@ def _looks_like_generated_artifact(file_path: Path, content: str) -> bool:
 def _model_history_placeholder_error(*values: str) -> str | None:
     """Reject internal history placeholders before they reach real files."""
     for value in values:
-        if any(value.startswith(prefix) for prefix in _MODEL_HISTORY_PLACEHOLDER_PREFIXES):
+        if is_model_history_placeholder(value):
             return (
                 "Refusing to write a model-history placeholder to disk. "
                 "Regenerate the real file content, or read the existing file with read_file before editing."
@@ -295,9 +289,12 @@ class ReadTool(Tool):
             except UnicodeDecodeError:
                 with open(file_path, encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
+                source_char_count = sum(len(line) for line in lines)
                 # Prepend a warning that will appear before the content
                 lines.insert(0, "[Warning: File contains non-UTF-8 bytes, some characters replaced with \ufffd. "
                               "For data files, consider using execute_code with pd.read_csv() or pd.read_excel().]\n")
+            else:
+                source_char_count = sum(len(line) for line in lines)
 
             # Apply offset and limit
             start = (offset - 1) if offset else 0
@@ -308,6 +305,8 @@ class ReadTool(Tool):
                 end = len(lines)
 
             selected_lines = lines[start:end]
+            selected_char_count = sum(len(line) for line in selected_lines)
+            selected_line_count = len(selected_lines)
 
             # Format with line numbers (1-indexed)
             numbered_lines = []
@@ -320,10 +319,22 @@ class ReadTool(Tool):
 
             # Apply token truncation if needed
             max_tokens = 32000
-            content = truncate_text_by_tokens(content, max_tokens)
+            full_content = content
+            content = truncate_text_by_tokens(full_content, max_tokens)
+            truncated = content != full_content
 
             model_context = build_read_file_model_context(file_path, content, len(lines))
-            return ToolResult(success=True, content=content, model_context=model_context)
+            return ToolResult(
+                success=True,
+                content=content,
+                model_context=model_context,
+                raw_output={
+                    "source_char_count": source_char_count,
+                    "selected_char_count": selected_char_count,
+                    "selected_line_count": selected_line_count,
+                    "truncated": truncated,
+                },
+            )
         except Exception as e:
             return ToolResult(success=False, content="", error=str(e))
 

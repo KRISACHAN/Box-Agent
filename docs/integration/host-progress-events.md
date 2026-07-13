@@ -44,6 +44,21 @@ Known `event` values:
 
 Final sub-agent summaries still arrive on the parent tool-call result (`tool_name = sub_agent`). Hosts may show the summary in the tool card, while the main conversation should wait for the parent agent's assistant message.
 
+Strict capability-based delegation also adds a final diagnostic payload to the
+parent result:
+
+- Success: `rawOutput.type === "sub_agent_delegation"` with strategy,
+  requested/resolved tools and Skills, denied optional tools, constraints,
+  budgets, usage, and call counts.
+- Validation/prefetch/timeout failure:
+  `rawOutput.type === "sub_agent_delegation_error"` with a stable `code`,
+  `message`, and `retryable` flag.
+
+These are final-result diagnostics, not nested progress events. Render them in
+the parent `sub_agent` card and keep `sub_agent_progress` as the only
+discriminator for live child activity. The complete runtime contract and error
+codes are documented in [Sub-agent Delegation](../SUB_AGENT_DELEGATION.md).
+
 ## Plan snapshots
 
 Plan tools emit a structured, user-visible plan through tool-call result `rawOutput`. This is the proposed approach for the task, not execution progress.
@@ -239,6 +254,7 @@ function handleToolUpdate(update: ToolCallUpdate) {
 ## Compatibility notes
 
 - Older runtimes may emit `sub_agent_progress` without `sub_agent_id`; hosts can fall back to `parent_tool_call_id + task_preview` with lower confidence.
+- Older runtimes may return no `sub_agent_delegation` diagnostic; keep the generic parent tool-result renderer as fallback.
 - Older runtimes may not emit `plan_snapshot`; hosts should keep rendering ordinary assistant text and generic tool details as fallback.
 - Older runtimes may return todo results as plain text only; hosts should keep the generic tool renderer as fallback.
 - Older runtimes may emit `goal_snapshot.goal` with only `objective`, `status`, `createdAt`, and `updatedAt`; treat missing `evidence`, `progress`, `blockedReason`, and `completedBy` as empty/unknown.

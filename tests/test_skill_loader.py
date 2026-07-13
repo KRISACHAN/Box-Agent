@@ -84,6 +84,31 @@ Skill content here.
             "research-synthesis",
             "research-to-deck-outline",
         ]
+        metadata = skill.to_metadata_dict()
+        assert metadata["allowed_tools"] == ["read_file", "write_file"]
+
+
+def test_allowed_tools_are_normalized_and_rendered_as_routing_metadata(tmp_path):
+    skill_dir = tmp_path / "tool-routing"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: tool-routing
+description: Route a small task
+allowed_tools: "write_file, read_file read_file"
+---
+
+Use the selected tools.
+""",
+        encoding="utf-8",
+    )
+    loader = SkillLoader(tmp_path)
+    loader.discover_skills()
+
+    skill = loader.get_skill("tool-routing")
+    assert skill.allowed_tools == ["read_file", "write_file"]
+    prompt = loader.get_skills_metadata_prompt()
+    assert "allowed tools: read_file, write_file" in prompt
 
 
 def test_load_invalid_skill():

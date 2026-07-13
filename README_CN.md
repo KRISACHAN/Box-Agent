@@ -45,13 +45,16 @@ box-agent --task "分析 sales.csv — 按收入展示前 10 名产品的柱状�
 | MCP 工具集成         | 原生支持                                            | 不支持               | 不支持             |
 | ACP 协议（嵌入应用） | 完整支持                                            | 不支持               | 不支持             |
 | 独立二进制           | PyInstaller 运行时，无需 Python                     | 不支持               | 不支持             |
-| 上下文压缩           | 双层自动（微压缩 + LLM 摘要）                       | 手动                 | 基于 Git           |
+| 上下文压缩           | 分阶段自动压缩 + LLM 摘要                            | 手动                 | 基于 Git           |
 
 ## 核心特性
 
 ### 子 Agent 并行
 
-将任务委派给隔离的子 Agent 并发运行。每个子 Agent 拥有独立上下文 — 只返回摘要结果。非常适合多文件分析。
+把隔离工作委派给子 Agent，并显式声明工具、Skills、输入、约束以及步骤/工具调用
+硬预算。多个已知本地文本文件可交给一个 `batch_files` 子 Agent 并发读取，再执行
+一次无工具综合；异构任务则使用有边界的 `general_loop` 子 Agent。父 Agent 始终负责
+冲突处理、最终交付物和验证。
 
 ```
 用户: "分别分析 data1.csv、data2.csv 和 data3.csv，然后给出综合总结"
@@ -68,6 +71,10 @@ box-agent --task "分析 sales.csv — 按收入展示前 10 名产品的柱状�
                     │ 生成最终报告           │
                     └─────────────────────────┘
 ```
+
+新式委派默认拒绝扩权（`read_only: true`、`network: false`、
+`external_side_effect: false`）。完整 schema、限制、兼容行为与宿主诊断见
+[子 Agent 委派契约](docs/SUB_AGENT_DELEGATION_CN.md)。
 
 ### 沙箱代码执行
 
@@ -94,15 +101,17 @@ provider: "openai"
 model: "your-model"
 ```
 
-### 双层上下文压缩
+### 分阶段上下文压缩
 
-- **第一层 — 微压缩**：每一步自动将旧工具结果（3+ 轮之前）替换为简短占位符。零成本，无需 LLM 调用。
-- **第二层 — 自动摘要**：当 Token 数超过推导阈值时触发（用户自配 endpoint 默认约 104k token），由 LLM 对对话进行摘要。原始数据保留在日志中。
+- **Layer 0 — 大内容**：生成型产物的读取结果会立即压缩；大型 write/edit 参数会保留到下一次模型调用完成，再替换为结构化占位符，让模型有机会确认执行结果，同时避免后续轮次重复支付完整上下文成本。
+- **Layer 1 — 微压缩**：每一步自动将更旧的工具结果替换为简短占位符。零成本，无需 LLM 调用。
+- **Layer 2 — 自动摘要**：当 Token 数超过推导阈值时触发（用户自配 endpoint 默认约 104k token），由 LLM 对对话进行摘要。原始数据保留在日志中。
+- **自愈保护**：如果后续模型错误地把内部历史占位符当成文件或代码参数复用，Box-Agent 会拒绝执行并请求一次干净重生成，避免占位符被写入磁盘。
 
 ### 更多特性
 
 - **MCP 工具**：接入任何 [MCP 服务器](https://github.com/modelcontextprotocol/servers) — 网页搜索、知识图谱、数据库
-- **Claude Skills**：30 种内置技能，涵盖文档处理（DOCX、PDF、PPTX、XLSX）、画布设计、Obsidian、Web 应用测试等
+- **Claude Skills**：32 种内置技能，涵盖文档处理（DOCX、PDF、PPTX、XLSX）、画布设计、Obsidian、Web 应用测试等
 - **ACP 协议**：通过 JSON-RPC over stdio 将 Box Agent 嵌入 Electron 应用、Zed 编辑器或任何 ACP 兼容宿主
 - **独立运行时**：PyInstaller 二进制打包 Python 及所有依赖。无需外部 Python — 下载即用
 - **跨会话记忆**：持久化记忆让 Agent 在多次对话间保留关键信息
@@ -239,6 +248,9 @@ api_base: "https://api.anthropic.com"
 model: "claude-sonnet-4-20250514"
 provider: "anthropic" # "anthropic" 或 "openai"
 max_steps: 200
+max_parallel_tools: 8
+parallel_tool_timeout_seconds: 900
+sub_agent_batch_synthesis_timeout_seconds: 300 # 设为 0 可关闭额外综合超时
 goal_autopilot_enabled: true
 goal_autopilot_max_turns: 3
 goal_autopilot_max_seconds: 14400
@@ -351,6 +363,7 @@ uv run pytest --cov              # 带覆盖率
 
 ## 链接
 
+- [文档索引](docs/README.md)
 - [PyPI](https://pypi.org/project/box-agent/) · [GitHub](https://github.com/Raccoon-Office/Box-Agent) · [Releases](https://github.com/Raccoon-Office/Box-Agent/releases)
 - [Anthropic API](https://docs.anthropic.com/claude/reference) · [MCP Servers](https://github.com/modelcontextprotocol/servers) · [ACP Protocol](https://github.com/nichochar/agent-client-protocol)
 

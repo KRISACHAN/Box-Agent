@@ -1,5 +1,60 @@
 # Release State
 
+## v0.8.79 (2026-07-13)
+
+- **Commit:** release commit tagged `v0.8.79`
+- **PyPI:** https://pypi.org/project/box-agent/0.8.79/
+- **GitHub release:** https://github.com/Raccoon-Office/Box-Agent/releases/tag/v0.8.79
+- **Compare:** https://github.com/Raccoon-Office/Box-Agent/compare/v0.8.71...v0.8.79
+
+### Artifacts (SHA256)
+
+| File | SHA256 |
+| --- | --- |
+| `box_agent-0.8.79-py3-none-any.whl` | `51b4b5313866cac5564491698254bda5ccf9702626e85c5ec67559045e162e31` |
+| `box_agent-0.8.79.tar.gz` | `ee0ca09273ece392395fd3fd4227688b214ec32ec3b79af1fc7894b9b48389dc` |
+| `box-agent-runtime-v0.8.79-darwin-arm64.tar.gz` | `7c2c1209b09eb721c10584d075794b372a9de911957588a844d8060b02e74cbb` |
+
+### What shipped
+
+- **Explicit sub-agent capability contract:** new-style calls declare minimum
+  tools, Skills, inputs, deny-by-default constraints, and hard step/tool-call
+  budgets. Capability resolution uses the live parent tool map, distinguishes
+  MCP `loading` from `ready`, blocks recursive delegation, and returns structured
+  diagnostics without silently falling back to legacy execution.
+- **Cost-aware sub-agent strategies:** `general_loop` is capped at 12 steps / 16
+  total tool calls. `batch_files` concurrently prefetches up to 32 complete local
+  text files, enforces 64,000 characters per file and 200,000 aggregate
+  characters, then performs one tool-free synthesis call. The new
+  `sub_agent_batch_synthesis_timeout_seconds` setting defaults to 300 seconds.
+- **Safer model history compaction:** large mutation arguments remain visible
+  for one subsequent model request and are compacted afterward. Internal history
+  placeholders are rejected if the model tries to reuse them as file/code
+  arguments, with one automatic regeneration attempt.
+- **Bounded file mutations:** `write_file` and `append_file` advertise and
+  enforce an 8,000-character per-call content limit so large static artifacts
+  are written in reviewable chunks.
+- **Skill routing metadata:** `allowed-tools` and `allowed_tools` are normalized,
+  deduplicated, sorted, exposed in catalog metadata, and used during explicit
+  sub-agent capability resolution. The manifest currently lists 32 built-in
+  Skills.
+
+### Proof and known gaps
+
+- Focused regression coverage lives in `tests/test_sub_agent_capabilities.py`,
+  `tests/test_sub_agent_tool.py`, `tests/test_core.py`, `tests/test_tools.py`,
+  `tests/test_skill_loader.py`, `tests/test_cli_config.py`, and `tests/test_acp.py`.
+- Verification: 244 focused tests and the full suite (1,250 passed, 16 skipped)
+  passed; wheel/sdist passed `twine check` and contained no `__pycache__`,
+  `.pyc`, `.DS_Store`, or `.omx` entries; the extracted darwin-arm64 runtime
+  reached `ACP protocol ready` with protocol stdout clean.
+- Existing configs remain compatible because the new synthesis timeout has a
+  default. Setting it to `0` disables only the extra batch synthesis wall-clock
+  cap; the provider request timeout still applies.
+- **Runtime: darwin-arm64 only.** No `darwin-x64`, Linux, or Windows artifact was
+  built in this release. The runtime was not installed into officev3 during the
+  release; downstream packaged behavior still requires install/restart/probe.
+
 ## v0.8.71 (2026-06-21)
 
 - **Commit:** `4ffc2a8e53e247cb031a3921545d29384dce4f82` (main, tag `v0.8.71`)
@@ -28,7 +83,7 @@
 ### Follow-ups / known gaps
 
 - **Runtime: darwin-arm64 only.** 与 v0.8.70 相同，`darwin-x64` / `linux-*` / Windows runtime 未随本次发布构建。
-- **未发布的后续改动**：tag `v0.8.71` 之后 main 已累积多笔提交（图像水印 `添加水印`、Windows 内核 PID 修复 #5、权限收紧、Obsidian context write-back #6、pptx skill 调整、plan 触发条件优化等），`pyproject.toml` 仍停留在 `0.8.71`，尚未 bump/发新版。当前工作树内置 skill 数已增至 31。下次发版需 bump 版本号并补 SHA256。
+- **未发布的后续改动**：tag `v0.8.71` 之后 main 已累积多笔提交（图像水印、Windows 内核 PID 修复、权限收紧、Obsidian context write-back、PPTX/HyperFrames skill、MCP 与上下文保护等）。当前开发树已 bump 到 `0.8.79`，但尚未 tag/发布；详见本文顶部 Unreleased 段。下次发版必须以真实构建产物补齐 SHA256。
 
 ## v0.8.70 (2026-06-16)
 

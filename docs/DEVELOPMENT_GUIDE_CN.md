@@ -248,7 +248,7 @@ CLI `--task` 模式和 ACP 会话会对持久 goal 启用有边界的自动续�
 内置 skills 已提交在 `box_agent/skills/` 下，并通过 `box_agent/skills/_manifest.json` 加载。
 正常开发不需要执行 git submodule 初始化。
 
-当前 manifest 列出 31 个内置 skills，包括：
+当前 manifest 列出 32 个内置 skills，包括：
 
 - 📄 **文档处理**：轻松创建和编辑 PDF、DOCX、XLSX、PPTX 等格式的文档。
 - 🎨 **设计创作**：生成富有创意的艺术作品、海报和 GIF 动画。
@@ -296,6 +296,8 @@ cat > SKILL.md << 'EOF'
 ---
 name: my-custom-skill
 description: 这是一个自定义技能，用于处理特定任务。
+allowed-tools:
+  - read_file
 ---
 
 # 概述
@@ -322,6 +324,12 @@ EOF
 ```
 
 完成以上步骤后，Agent 将在下次启动时自动加载并识别这项新技能。
+
+`allowed-tools`（也兼容 `allowed_tools`）会在加载时归一化、去重并排序。它是
+skill catalog 中的路由元数据；当显式子 Agent 选择该 Skill 时，也会进入请求能力
+集合，但运行时仍会与父会话实时工具和委派约束取交集。只声明 Skill 真正需要的
+最小工具集。依赖 Skill 写入 `required_skills`；`related_skills` 只是推荐项，不会
+自动加载。详见[子 Agent 委派](SUB_AGENT_DELEGATION_CN.md)。
 
 ### 3.5 自定义系统提示词
 

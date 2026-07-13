@@ -129,6 +129,11 @@ class AgentConfig(BaseModel):
     # loop's context_token_limit. Single source of truth for the value that was
     # previously hardcoded in SubAgentTool; not surfaced in config-example.yaml.
     sub_agent_token_limit: int = 40_000
+    # Total wall-clock cap for the tool-free synthesis call used by
+    # sub_agent execution.strategy=batch_files. Set to 0 to rely only on the
+    # provider request timeout. This is intentionally separate from the
+    # sub-agent parallel batch timeout above.
+    sub_agent_batch_synthesis_timeout_seconds: float = 300.0
     # Continue an active durable goal after a natural end_turn, bounded so a
     # third-party outage or bad plan cannot loop forever.
     goal_autopilot_enabled: bool = True
@@ -427,6 +432,9 @@ class Config(BaseModel):
                 else 900.0
             ),
             sub_agent_token_limit=data.get("sub_agent_token_limit", 40_000),
+            sub_agent_batch_synthesis_timeout_seconds=float(
+                data.get("sub_agent_batch_synthesis_timeout_seconds", 300.0)
+            ),
             goal_autopilot_enabled=data.get("goal_autopilot_enabled", True),
             goal_autopilot_max_turns=data.get("goal_autopilot_max_turns", 3),
             goal_autopilot_max_seconds=data.get("goal_autopilot_max_seconds", 14400.0),

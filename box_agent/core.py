@@ -55,6 +55,7 @@ from .events import (
 from .hooks import HookManager
 from .logger import AgentLogger
 from .llm.debug_logging import reset_llm_debug_sink, set_llm_debug_sink
+from .model_history import is_model_history_placeholder
 from .loop_guards import (
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
@@ -71,6 +72,8 @@ from .loop_guards import (
     near_limit_wrapup_text,
     no_progress_wrapup_text,
     reply_is_substantial,
+    total_tool_call_budget_message,
+    total_tool_call_budget_wrapup_text,
     tool_call_budget_message,
     tool_call_budget_wrapup_text,
     truncation_continuation_text,
@@ -88,6 +91,28 @@ from .tools.base import EventEmittingTool, Tool, ToolResult
 # Type alias — consumers supply a zero-arg callable that returns True
 # when the execution should be cancelled.
 CancelChecker = Callable[[], bool]
+
+_MODEL_HISTORY_PLACEHOLDER_ARGUMENTS: Final[dict[str, tuple[str, ...]]] = {
+    "write_file": ("content",),
+    "append_file": ("content",),
+    "edit_file": ("old_str", "new_str"),
+    "execute_code": ("code",),
+}
+_MODEL_HISTORY_PLACEHOLDER_REPAIR_LIMIT: Final[int] = 1
+_MODEL_HISTORY_PLACEHOLDER_TOOL_ERROR = (
+    "INTERNAL_MODEL_HISTORY_PLACEHOLDER: the requested tool argument is an internal "
+    "history summary, not executable content. Regenerate the real argument. For static "
+    "artifacts, continue with write_file/append_file instead of moving the body into "
+    "execute_code."
+)
+_MODEL_HISTORY_PLACEHOLDER_REPAIR_GUIDANCE = (
+    "An internal model-history placeholder was returned as a tool argument. Regenerate "
+    "the missing real content now. Never copy text beginning with "
+    "`[Full tool-call argument omitted from model history]`, `[Full file content omitted "
+    "from model history]`, or `[Full tool output omitted from model history]` into any "
+    "tool argument. For long static artifacts, use write_file for the first real chunk "
+    "and append_file for later real chunks; do not move the file body into execute_code."
+)
 
 _PLAN_START_TRIGGERS = (
     "先做规划",
@@ -730,7 +755,7 @@ def _summarize_tool_argument_for_model(
         f"Path: {path or 'unknown'}",
         f"Lines: {len(lines)}",
         f"Characters: {len(value)}",
-        "Reason: generated artifact/script content was already written to disk; read the file with offset/limit if exact content is needed.",
+        "Reason: the argument was omitted to keep future model turns compact; consult the matching tool result for success or failure, and read the file if exact content is needed.",
     ]
     if preview:
         summary.extend(["", f"Preview first {min(preview_limit, len(lines))} lines:", preview])
@@ -795,6 +820,38 @@ def _tool_calls_for_model_history(tool_calls: list[ToolCall] | None) -> list[Too
         )
         for tc in tool_calls
     ]
+
+
+def _tool_calls_need_model_history_compaction(tool_calls: list[ToolCall] | None) -> bool:
+    """Return true when any tool-call argument should be compacted after one turn."""
+    if not tool_calls:
+        return False
+    for tool_call in tool_calls:
+        arguments = tool_call.function.arguments
+        path = arguments.get("path")
+        path_value = path if isinstance(path, str) else None
+        if any(
+            _tool_argument_needs_compaction(
+                tool_call.function.name,
+                argument_name,
+                value,
+                path_value,
+            )
+            for argument_name, value in arguments.items()
+        ):
+            return True
+    return False
+
+
+def _model_history_placeholder_argument(
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    """Return the first mutation argument that incorrectly reuses a history placeholder."""
+    for argument_name in _MODEL_HISTORY_PLACEHOLDER_ARGUMENTS.get(tool_name, ()):
+        if is_model_history_placeholder(arguments.get(argument_name)):
+            return argument_name
+    return None
 
 
 def _tool_message_content_for_model(
@@ -1726,6 +1783,7 @@ async def run_agent_loop(
     messages: list[Message],
     tools: dict[str, Tool],
     max_steps: int = 200,
+    max_tool_calls: int | None = None,
     token_limit: int = 113400,
     is_cancelled: CancelChecker | None = None,
     logger: AgentLogger | None = None,
@@ -1769,6 +1827,7 @@ async def run_agent_loop(
         messages: Message history (mutated in-place).
         tools: ``{name: Tool}`` dict.
         max_steps: Maximum LLM call iterations.
+        max_tool_calls: Optional hard cap across all tool executions in this loop.
         token_limit: Token threshold for triggering summarization.
         is_cancelled: Optional callable — return ``True`` to stop.
         logger: Optional ``AgentLogger`` for file-based logging.
@@ -1976,6 +2035,7 @@ async def run_agent_loop(
     # calls are answered with synthetic tool errors so the protocol remains
     # valid while nudging the model to synthesize.
     tool_call_counts: dict[str, int] = {}
+    tool_call_total = 0
     tool_budget_wrapup_injected: set[str] = set()
     visible_tool_call_total = 0
     final_summary_guidance_injected = False
@@ -1993,11 +2053,23 @@ async def run_agent_loop(
     plan_approval_request_id = "plan-" + hashlib.sha1(
         f"{run_start}:{_latest_user_text(messages)}".encode("utf-8", errors="ignore")
     ).hexdigest()[:10]
+    pending_history_compaction: Message | None = None
+    model_history_placeholder_repairs = 0
+
+    def _compact_pending_tool_call_history() -> None:
+        """Compact the latest large tool arguments after one LLM request saw them."""
+        nonlocal pending_history_compaction
+        pending = pending_history_compaction
+        pending_history_compaction = None
+        if pending is None or not any(message is pending for message in messages):
+            return
+        pending.tool_calls = _tool_calls_for_model_history(pending.tool_calls)
 
     for step in range(max_steps):
         # ── Cancellation check (top of step) ────────────────
         # No cleanup needed here — messages are consistent at step boundaries.
         if cancelled():
+            _compact_pending_tool_call_history()
             if hook_mgr.hooks:
                 await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
             yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
@@ -2012,6 +2084,7 @@ async def run_agent_loop(
         web_search_step_duplicate_results = 0
         web_search_step_structured_results = 0
         web_search_step_labels: list[str] = []
+        model_history_placeholder_auto_repair_requested = False
 
         # ── Drain inject queue (in-stream injection) ───────
         if inject_queue:
@@ -2085,6 +2158,21 @@ async def run_agent_loop(
                     Message(role="user", content=format_injected_message(budget_text))
                 )
                 yield InjectedMessageEvent(content=budget_text, injection_id=None, user_visible=False)
+        if (
+            max_tool_calls is not None
+            and tool_call_total >= max_tool_calls
+            and "__total__" not in tool_budget_wrapup_injected
+        ):
+            tool_budget_wrapup_injected.add("__total__")
+            budget_text = total_tool_call_budget_wrapup_text(max_tool_calls)
+            messages.append(
+                Message(role="user", content=format_injected_message(budget_text))
+            )
+            yield InjectedMessageEvent(
+                content=budget_text,
+                injection_id=None,
+                user_visible=False,
+            )
 
         # ── Micro-compact (Layer 1) ────────────────────────
         # Cheap: replace old tool results with placeholders
@@ -2192,12 +2280,14 @@ async def run_agent_loop(
 
             if cancelled():
                 _cleanup_incomplete_messages(messages)
+                _compact_pending_tool_call_history()
                 if hook_mgr.hooks:
                     await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 return
 
             if finish_event is None:
+                _compact_pending_tool_call_history()
                 msg = "LLM stream ended without a finish event"
                 if hook_mgr.hooks:
                     await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
@@ -2218,6 +2308,11 @@ async def run_agent_loop(
                 stream_dropped_mid_tool=finish_event.stream_dropped_mid_tool,
             )
             provider_request_id = finish_event.provider_request_id
+            # The request that just completed saw the previous large tool-call
+            # arguments in full. Compact them now so only one subsequent model
+            # turn pays that context cost and later turns cannot immediately
+            # echo a synthetic placeholder as the next file chunk.
+            _compact_pending_tool_call_history()
             yield LLMOutputEvent(
                 step=step + 1,
                 content=response.content,
@@ -2232,6 +2327,9 @@ async def run_agent_loop(
             from .llm.error_messages import classify_llm_error
             from .retry import StreamInterrupted
 
+            # The provider request was attempted with the pending arguments in
+            # full. Do not retain them indefinitely when the request fails.
+            _compact_pending_tool_call_history()
             provider_request_id = None
             if isinstance(exc, StreamInterrupted):
                 partial_text = exc.partial_text or ""
@@ -2336,7 +2434,11 @@ async def run_agent_loop(
             role="assistant",
             content=response.content,
             thinking=response.thinking,
-            tool_calls=_tool_calls_for_model_history(response.tool_calls),
+            tool_calls=(
+                [tool_call.model_copy(deep=True) for tool_call in response.tool_calls]
+                if response.tool_calls
+                else None
+            ),
         )
 
         # ── Output truncated by provider token limit ────────
@@ -2492,6 +2594,8 @@ async def run_agent_loop(
 
         # ── Append assistant message (non-truncated path) ───
         messages.append(assistant_msg)
+        if _tool_calls_need_model_history_compaction(assistant_msg.tool_calls):
+            pending_history_compaction = assistant_msg
 
         # Reset the retry counter now that a clean turn landed — a future
         # truncation on a later step should get its own fresh budget.
@@ -2643,6 +2747,7 @@ async def run_agent_loop(
         # ── Cancellation check (before tools) ──────────────
         if cancelled():
             _cleanup_incomplete_messages(messages)
+            _compact_pending_tool_call_history()
             if hook_mgr.hooks:
                 await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
             yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
@@ -2685,7 +2790,12 @@ async def run_agent_loop(
         parallel_calls = []
         for tc in response.tool_calls:
             fn_name = tc.function.name
-            if fn_name in tools and getattr(tools[fn_name], "parallel_safe", False):
+            if _model_history_placeholder_argument(fn_name, tc.function.arguments):
+                # Placeholder repair is stateful and must be handled by the
+                # sequential branch even if a future mutation tool is marked
+                # parallel-safe.
+                regular_calls.append(tc)
+            elif fn_name in tools and getattr(tools[fn_name], "parallel_safe", False):
                 parallel_calls.append(tc)
             else:
                 regular_calls.append(tc)
@@ -2709,12 +2819,15 @@ async def run_agent_loop(
         step_made_progress = False
 
         def _reserve_tool_budget(tool_name: str) -> tuple[bool, str | None]:
+            nonlocal tool_call_total
+            if max_tool_calls is not None and tool_call_total >= max_tool_calls:
+                return False, total_tool_call_budget_message(max_tool_calls)
             limit = TOOL_CALL_LIMITS.get(tool_name)
-            if limit is None:
-                return True, None
-            if tool_call_counts.get(tool_name, 0) >= limit:
+            if limit is not None and tool_call_counts.get(tool_name, 0) >= limit:
                 return False, tool_call_budget_message(tool_name, limit)
-            tool_call_counts[tool_name] = tool_call_counts.get(tool_name, 0) + 1
+            if limit is not None:
+                tool_call_counts[tool_name] = tool_call_counts.get(tool_name, 0) + 1
+            tool_call_total += 1
             return True, None
 
         def _reserve_web_search_call(arguments: dict[str, Any]) -> tuple[bool, str | None]:
@@ -2753,15 +2866,31 @@ async def run_agent_loop(
             tc_id = tc.id
             fn_name = tc.function.name
             fn_args = tc.function.arguments
+            placeholder_argument = _model_history_placeholder_argument(fn_name, fn_args)
+            can_auto_repair_placeholder = (
+                placeholder_argument is not None
+                and model_history_placeholder_repairs
+                < _MODEL_HISTORY_PLACEHOLDER_REPAIR_LIMIT
+            )
 
-            if plan_approval_gate_active and fn_name != "plan_write":
+            if placeholder_argument is not None:
+                allowed_to_execute = False
+                internal_skip_error = (
+                    f"{_MODEL_HISTORY_PLACEHOLDER_TOOL_ERROR} "
+                    f"Rejected argument: {fn_name}.{placeholder_argument}."
+                )
+                if can_auto_repair_placeholder:
+                    model_history_placeholder_auto_repair_requested = True
+            elif plan_approval_gate_active and fn_name != "plan_write":
                 allowed_to_execute = False
                 internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
             elif fn_name == WEB_SEARCH_TOOL_NAME:
                 allowed_to_execute, internal_skip_error = _reserve_web_search_call(fn_args)
             else:
                 allowed_to_execute, internal_skip_error = _reserve_tool_budget(fn_name)
-            tool_user_visible = allowed_to_execute
+            tool_user_visible = (
+                placeholder_argument is not None and not can_auto_repair_placeholder
+            ) or allowed_to_execute
             if tool_user_visible and fn_name not in FINAL_SUMMARY_EXCLUDED_TOOLS:
                 visible_tool_call_total += 1
 
@@ -2773,14 +2902,14 @@ async def run_agent_loop(
             )
 
             # Hook: tool start (interceptor — may modify arguments)
-            if hook_mgr.hooks and tool_user_visible:
+            if hook_mgr.hooks and tool_user_visible and allowed_to_execute:
                 fn_args = await hook_mgr.fire_tool_start(
                     tool_call_id=tc_id, tool_name=fn_name, arguments=fn_args,
                 )
 
             # Snapshot workspace before tool execution for diff-based artifact detection
             pre_files: set[Path] = set()
-            if artifact_detection_enabled and tool_user_visible and workspace_dir:
+            if artifact_detection_enabled and allowed_to_execute and tool_user_visible and workspace_dir:
                 pre_files = _snapshot_workspace(workspace_dir, artifact_root_dir)
 
             if not allowed_to_execute:
@@ -3017,6 +3146,7 @@ async def run_agent_loop(
             # Cancellation check after each tool
             if cancelled():
                 _cleanup_incomplete_messages(messages)
+                _compact_pending_tool_call_history()
                 if hook_mgr.hooks:
                     await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
@@ -3417,12 +3547,30 @@ async def run_agent_loop(
             # protocol-valid state for the next turn.
             if cancelled():
                 _cleanup_incomplete_messages(messages)
+                _compact_pending_tool_call_history()
                 if hook_mgr.hooks:
                     await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 return
 
+        if model_history_placeholder_auto_repair_requested:
+            model_history_placeholder_repairs += 1
+            messages.append(
+                Message(
+                    role="user",
+                    content=format_injected_message(
+                        _MODEL_HISTORY_PLACEHOLDER_REPAIR_GUIDANCE
+                    ),
+                )
+            )
+            yield InjectedMessageEvent(
+                content=_MODEL_HISTORY_PLACEHOLDER_REPAIR_GUIDANCE,
+                injection_id=None,
+                user_visible=False,
+            )
+
         if plan_approval_gate_completed:
+            _compact_pending_tool_call_history()
             elapsed = perf_counter() - step_start
             total = perf_counter() - run_start
             if hook_mgr.hooks:
@@ -3520,6 +3668,7 @@ async def run_agent_loop(
             asyncio.create_task(memory_extractor.maybe_extract(messages, "step_interval"))
 
     # ── Max steps exhausted ─────────────────────────────────
+    _compact_pending_tool_call_history()
     msg = f"Task couldn't be completed after {max_steps} steps."
     if memory_extractor:
         asyncio.create_task(memory_extractor.maybe_extract(messages, "loop_end"))

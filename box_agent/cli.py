@@ -375,6 +375,9 @@ def _config_summary(config: Config, config_path: Path, show_secrets: bool = Fals
             "workspace_dir": config.agent.workspace_dir,
             "max_parallel_tools": config.agent.max_parallel_tools,
             "parallel_tool_timeout_seconds": config.agent.parallel_tool_timeout_seconds,
+            "sub_agent_batch_synthesis_timeout_seconds": (
+                config.agent.sub_agent_batch_synthesis_timeout_seconds
+            ),
             "goal_autopilot_enabled": config.agent.goal_autopilot_enabled,
             "goal_autopilot_max_turns": config.agent.goal_autopilot_max_turns,
             "goal_autopilot_max_seconds": config.agent.goal_autopilot_max_seconds,
@@ -432,6 +435,7 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
     print(f"  max_steps         : {agent['max_steps']}")
     print(f"  max_parallel_tools: {agent['max_parallel_tools']}")
     print(f"  parallel_timeout  : {agent['parallel_tool_timeout_seconds']}s")
+    print(f"  batch_synth_timeout: {agent['sub_agent_batch_synthesis_timeout_seconds']}s")
     print(f"  goal_autopilot    : {agent['goal_autopilot_enabled']} ({agent['goal_autopilot_max_turns']} turns, {agent['goal_autopilot_max_seconds']}s, no-progress {agent['goal_autopilot_no_progress_turns']})")
     print(f"  enable_memory     : {agent['enable_memory']}")
 
@@ -1967,6 +1971,12 @@ async def run_agent(
         llm=llm_client,
         permission_engine=perm_engine,
         skill_runtime_context=skill_runtime_context,
+        skill_loader=skill_loader,
+        capability_state_provider=(
+            lambda: "loading"
+            if mcp_task is not None and not mcp_task.done()
+            else "ready"
+        ),
         env_context=cli_env_context,
     )
 

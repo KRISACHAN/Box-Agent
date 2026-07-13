@@ -22,7 +22,7 @@ Box-Agent 现在同时提供 Python 包和面向桌面宿主的独立 ACP runtim
 
 | 功能           | 当前实现                                                                                                    |
 | -------------- | ----------------------------------------------------------------------------------------------------------- |
-| **上下文管理** | ✅ 通过 `MemoryManager` 实现跨会话持久化记忆，支持自动会话摘要；两层上下文压缩机制。 |
+| **上下文管理** | ✅ 通过 `MemoryManager` 实现跨会话持久化记忆；分阶段压缩参数/工具结果，并在 token 阈值触发摘要。 |
 | **工具调用**   | ✅ 提供了基础的 Read/Write/Edit/Bash 工具。                                                                  |
 | **错误处理**   | ✅ 支持 provider 错误人性化提示、重试机制和 ACP 错误传播。                                                   |
 | **日志**       | ✅ ACP 诊断输出走 stderr，并支持可选日志文件。                                                               |
@@ -59,19 +59,24 @@ Electron 或其它桌面宿主应优先使用独立 runtime。它打包 Python �
 #### 下载
 
 ```bash
-gh release download v0.8.70 --repo Raccoon-Office/Box-Agent \
+# 下载最新已发布 runtime（当前为 v0.8.71）
+gh release download --repo Raccoon-Office/Box-Agent \
   --pattern "box-agent-runtime-*.tar.gz"
 ```
+
+源码树中的 package version 可能高于最新已发布 runtime。嵌入产物前先查看
+[发布状态](RELEASE_STATE.md)；除非对应 tag 和 asset 已真实存在，不要用开发版本号
+拼接下载地址。
 
 #### 从源码构建
 
 ```bash
 uv sync --group dev
-uv run box-agent-build-runtime --version 0.8.70
+uv run box-agent-build-runtime
 
 # Apple Silicon 上构建 macOS Intel/x64 runtime：
 # 先准备 x86_64 uv 与 .venv-x64，再运行：
-UV_PROJECT_ENVIRONMENT=.venv-x64 arch -x86_64 ~/.local/bin-x64/uv run box-agent-build-runtime --version 0.8.70 --target darwin-x64
+UV_PROJECT_ENVIRONMENT=.venv-x64 arch -x86_64 ~/.local/bin-x64/uv run box-agent-build-runtime --target darwin-x64
 ```
 
 运行时约束：
@@ -113,7 +118,24 @@ services:
           memory: 512M     # 保证至少 512MB
 ```
 
-#### 3.3.2 磁盘限制
+#### 3.3.2 Agent 并发与超时限制
+
+除了容器资源限制，还应在 `~/.box-agent/config/config.yaml` 设置运行时限制：
+
+```yaml
+max_steps: 200
+max_parallel_tools: 8
+parallel_tool_timeout_seconds: 900
+sub_agent_batch_synthesis_timeout_seconds: 300
+```
+
+这些配置分别控制不同操作：`max_steps` 限制顶层模型迭代，`max_parallel_tools`
+限制单步中 `parallel_safe` 调用并发量，`parallel_tool_timeout_seconds` 限制一个
+并发批次，最后一项只限制 `batch_files` 的无工具综合请求。将最后一项设为 `0` 只会
+关闭这层额外限制，不会关闭 provider timeout。批处理策略还包含文件数量与内容硬限制，
+详见[子 Agent 委派](SUB_AGENT_DELEGATION_CN.md)。
+
+#### 3.3.3 磁盘限制
 
 Agent 运行过程中可能会产生大量的临时文件和日志，因此需要限制其磁盘使用量：
 

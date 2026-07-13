@@ -23,7 +23,7 @@ Box-Agent now ships as both a Python package and a standalone ACP runtime for de
 
 | Feature                | Current Implementation                                                                                                |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Context Management** | ✅ Cross-session memory via MemoryManager with auto session summaries; two-layer context compression |
+| **Context Management** | ✅ Cross-session memory via MemoryManager; staged argument/tool-result compaction plus token-triggered summaries |
 | **Tool Calling**       | ✅ Basic Read/Write/Edit/Bash                                                                                          |
 | **Error Handling**     | ✅ Humanized provider errors, retry support, and ACP error propagation                                                 |
 | **Logging**            | ✅ Structured ACP diagnostics on stderr and optional log files                                                         |
@@ -60,13 +60,15 @@ For embedding Box Agent in Electron or other desktop applications, use the stand
 #### Downloading
 
 ```bash
-# From GitHub Releases
-gh release download v0.8.70 --repo Raccoon-Office/Box-Agent \
+# Download the latest published runtime (currently v0.8.71)
+gh release download --repo Raccoon-Office/Box-Agent \
   --pattern "box-agent-runtime-*.tar.gz"
-
-# Or direct URL
-# https://github.com/Raccoon-Office/Box-Agent/releases/download/v0.8.70/box-agent-runtime-v0.8.70-darwin-arm64.tar.gz
 ```
+
+The package version in the source tree may be newer than the latest published
+runtime. Check [Release State](RELEASE_STATE.md) before embedding an artifact;
+never construct a download URL from the development version unless that tag and
+asset actually exist.
 
 #### Directory Structure
 
@@ -133,25 +135,25 @@ Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `
 Build the current machine architecture:
 
 ```bash
-uv run box-agent-build-runtime --version 0.8.70
+uv run box-agent-build-runtime
 ```
 
 Build macOS Intel/x64 from an Apple Silicon Mac:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=.venv-x64 arch -x86_64 ~/.local/bin-x64/uv run box-agent-build-runtime --version 0.8.70 --arch x64
+UV_PROJECT_ENVIRONMENT=.venv-x64 arch -x86_64 ~/.local/bin-x64/uv run box-agent-build-runtime --arch x64
 ```
 
 The long form is also supported:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=.venv-x64 arch -x86_64 ~/.local/bin-x64/uv run box-agent-build-runtime --version 0.8.70 --target darwin-x64
+UV_PROJECT_ENVIRONMENT=.venv-x64 arch -x86_64 ~/.local/bin-x64/uv run box-agent-build-runtime --target darwin-x64
 ```
 
 Optional environment defaults:
 
 ```bash
-BOX_AGENT_RUNTIME_VERSION=0.8.70 uv run box-agent-build-runtime
+BOX_AGENT_RUNTIME_VERSION=X.Y.Z uv run box-agent-build-runtime
 BOX_AGENT_RUNTIME_OUTPUT=dist/runtime uv run box-agent-build-runtime
 BOX_AGENT_RUNTIME_TARGET=darwin-x64 arch -x86_64 uv run box-agent-build-runtime
 ```
@@ -159,7 +161,7 @@ BOX_AGENT_RUNTIME_TARGET=darwin-x64 arch -x86_64 uv run box-agent-build-runtime
 The older direct script entry remains available for compatibility:
 
 ```bash
-uv run python scripts/build_runtime.py --version 0.8.70 --target darwin-arm64
+uv run python scripts/build_runtime.py --target darwin-arm64
 ```
 
 macOS runtime artifacts additionally bundle a pinned Node.js runtime under
@@ -199,7 +201,27 @@ services:
           memory: 512M     # Guarantee at least 512MB
 ```
 
-#### 3.4.2 Disk Limits
+#### 3.4.2 Agent concurrency and timeout limits
+
+Set runtime-level limits in `~/.box-agent/config/config.yaml` as well as
+container limits:
+
+```yaml
+max_steps: 200
+max_parallel_tools: 8
+parallel_tool_timeout_seconds: 900
+sub_agent_batch_synthesis_timeout_seconds: 300
+```
+
+These limits control different operations: `max_steps` bounds top-level model
+iterations, `max_parallel_tools` caps `parallel_safe` calls in one step,
+`parallel_tool_timeout_seconds` caps one such parallel batch, and the sub-agent
+setting caps only the tool-free synthesis request used by `batch_files`. Setting
+the last value to `0` disables that extra cap, not the provider timeout. The
+batch strategy also enforces its own file/count/content limits; see
+[Sub-agent Delegation](SUB_AGENT_DELEGATION.md).
+
+#### 3.4.3 Disk Limits
 
 Agents may generate large amounts of temporary files and log files, so disk usage needs to be limited:
 

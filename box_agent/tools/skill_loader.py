@@ -168,6 +168,7 @@ All files and references in this skill are relative to this directory.
             "description": self.description,
             "source": self.source,
             "path": str(self.skill_path) if self.skill_path else None,
+            "allowed_tools": self.allowed_tools or [],
             "required_skills": self.required_skills or [],
             "related_skills": self.related_skills or [],
             "broken": self.broken,
@@ -261,7 +262,7 @@ class SkillLoader:
             name = raw_name.strip()
             if name and _SKILL_NAME_RE.match(name) and name not in names:
                 names.append(name)
-        return names or None
+        return sorted(names) or None
 
     # Backward compatibility — expose the first source directory
     @property
@@ -373,6 +374,9 @@ class SkillLoader:
             related_skills = self._parse_skill_name_list(
                 frontmatter.get("related_skills", frontmatter.get("related-skills"))
             )
+            allowed_tools = self._parse_skill_name_list(
+                frontmatter.get("allowed_tools", frontmatter.get("allowed-tools"))
+            )
 
             return Skill(
                 name=frontmatter["name"],
@@ -380,7 +384,7 @@ class SkillLoader:
                 content=processed_content,
                 source=source,
                 license=frontmatter.get("license"),
-                allowed_tools=frontmatter.get("allowed-tools"),
+                allowed_tools=allowed_tools,
                 metadata=frontmatter.get("metadata"),
                 skill_path=skill_path,
                 keywords=keywords_list,
@@ -830,6 +834,10 @@ class SkillLoader:
             prompt_parts.append("**Skill catalog:**")
             for skill in skills_to_render:
                 routing_hints = []
+                if skill.allowed_tools:
+                    routing_hints.append(
+                        f"allowed tools: {', '.join(skill.allowed_tools)}"
+                    )
                 if skill.required_skills:
                     routing_hints.append(
                         f"required: {', '.join(skill.required_skills)}"

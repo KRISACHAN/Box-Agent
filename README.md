@@ -45,13 +45,18 @@ Most agent frameworks are either too simple (no sandbox, no tools) or too comple
 | MCP tool integration         | Native                                            | No                    | No                 |
 | ACP protocol (embed in apps) | Full support                                      | No                    | No                 |
 | Standalone binary            | PyInstaller runtime, no Python needed             | No                    | No                 |
-| Context compression          | 2-layer automatic (micro-compact + LLM summary)   | Manual                | Git-based          |
+| Context compression          | Staged automatic compaction + LLM summary          | Manual                | Git-based          |
 
 ## Key Features
 
 ### Sub-Agent Parallelism
 
-Delegate tasks to isolated sub-agents that run concurrently. Each sub-agent has its own context — only the summary comes back. Perfect for multi-file analysis.
+Delegate isolated work to sub-agents with explicit tools, Skills, inputs,
+constraints, and hard step/tool-call budgets. For many known local text files,
+one `batch_files` child reads the files concurrently and performs one tool-free
+synthesis call; heterogeneous work can use bounded `general_loop` children.
+The parent remains responsible for conflict handling, the final deliverable,
+and verification.
 
 ```
 You: "Analyze data1.csv, data2.csv, and data3.csv separately, then give me a combined summary"
@@ -68,6 +73,11 @@ You: "Analyze data1.csv, data2.csv, and data3.csv separately, then give me a com
                     │ Produces final report   │
                     └─────────────────────────┘
 ```
+
+New-style delegation is deny-by-default (`read_only: true`, `network: false`,
+`external_side_effect: false`). See the
+[sub-agent delegation contract](docs/SUB_AGENT_DELEGATION.md) for schemas,
+limits, compatibility behavior, and host diagnostics.
 
 ### Sandboxed Code Execution
 
@@ -94,15 +104,17 @@ provider: "openai"
 model: "your-model"
 ```
 
-### 2-Layer Context Compression
+### Staged Context Compression
 
-- **Layer 1 — Micro-compact**: Every step, old tool results (3+ turns back) are replaced with short placeholders. Zero cost, no LLM call.
+- **Layer 0 — Large content**: Generated-artifact reads are compacted immediately. Large write/edit arguments remain intact for one subsequent model turn, then become structured placeholders so the model can confirm success without repeatedly paying the full context cost.
+- **Layer 1 — Micro-compact**: Every step, older tool results are replaced with short placeholders. Zero cost, no LLM call.
 - **Layer 2 — Auto-summary**: When tokens exceed the derived threshold (about 104k tokens for user-configured endpoints by default), an LLM call summarizes the conversation. Original data is preserved in logs.
+- **Self-healing guard**: Internal history placeholders are rejected if a later model turn tries to reuse them as executable file/code arguments; Box-Agent requests one clean regeneration instead of writing the placeholder to disk.
 
 ### More
 
 - **MCP Tools**: Connect to any [MCP server](https://github.com/modelcontextprotocol/servers) — web search, knowledge graphs, databases
-- **Claude Skills**: 30 built-in skills for documents (DOCX, PDF, PPTX, XLSX), canvas design, Obsidian, web app testing, and more
+- **Claude Skills**: 32 built-in skills for documents (DOCX, PDF, PPTX, XLSX), canvas design, Obsidian, web app testing, and more
 - **ACP Protocol**: Embed Box Agent in Electron apps, Zed Editor, or any ACP-compatible host via JSON-RPC over stdio
 - **Standalone Runtime**: PyInstaller binary bundles Python + all dependencies. No external Python needed — download and run
 - **Cross-session Memory**: Persistent memory lets the agent retain key information across conversations
@@ -241,6 +253,9 @@ api_base: "https://api.anthropic.com"
 model: "claude-sonnet-4-20250514"
 provider: "anthropic" # "anthropic" or "openai"
 max_steps: 200
+max_parallel_tools: 8
+parallel_tool_timeout_seconds: 900
+sub_agent_batch_synthesis_timeout_seconds: 300 # 0 disables the extra batch synthesis cap
 goal_autopilot_enabled: true
 goal_autopilot_max_turns: 3
 goal_autopilot_max_seconds: 14400
@@ -368,6 +383,7 @@ Issues and PRs welcome! See [Contributing Guide](CONTRIBUTING.md).
 
 ## Links
 
+- [Documentation](docs/README.md)
 - [PyPI](https://pypi.org/project/box-agent/) · [GitHub](https://github.com/Raccoon-Office/Box-Agent) · [Releases](https://github.com/Raccoon-Office/Box-Agent/releases)
 - [Anthropic API](https://docs.anthropic.com/claude/reference) · [MCP Servers](https://github.com/modelcontextprotocol/servers) · [ACP Protocol](https://github.com/nichochar/agent-client-protocol)
 

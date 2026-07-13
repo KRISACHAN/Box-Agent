@@ -8,6 +8,7 @@ import pytest
 
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
 from box_agent.tools import BashTool, EditTool, ReadTool, WriteTool, add_workspace_tools
+from box_agent.tools.file_tools import truncate_text_by_tokens
 
 
 @pytest.mark.asyncio
@@ -28,9 +29,85 @@ async def test_read_tool():
         # ReadTool now returns content with line numbers in format: "LINE_NUMBER|LINE_CONTENT"
         assert "Hello, World!" in result.content, f"Content mismatch: {result.content}"
         assert "|Hello, World!" in result.content, f"Expected line number format: {result.content}"
+        assert result.raw_output == {
+            "source_char_count": len("Hello, World!"),
+            "selected_char_count": len("Hello, World!"),
+            "selected_line_count": 1,
+            "truncated": False,
+        }
         print("✅ ReadTool test passed")
     finally:
         Path(temp_path).unlink()
+
+
+@pytest.mark.asyncio
+async def test_read_tool_reports_selected_range_completeness(tmp_path):
+    path = tmp_path / "range.txt"
+    path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    result = await ReadTool(workspace_dir=str(tmp_path)).execute(
+        path="range.txt",
+        offset=2,
+        limit=1,
+    )
+
+    assert result.success is True
+    assert result.raw_output == {
+        "source_char_count": len("one\ntwo\nthree\n"),
+        "selected_char_count": len("two\n"),
+        "selected_line_count": 1,
+        "truncated": False,
+    }
+
+
+def test_read_truncation_marker_is_stable():
+    truncated = truncate_text_by_tokens("token " * 40_000, 32_000)
+
+    assert "[Content truncated:" in truncated
+    assert "tokens -> ~32000 tokens limit" in truncated
+
+
+@pytest.mark.asyncio
+async def test_initialize_base_tools_can_gate_mcp_until_protocol_ready(
+    tmp_path,
+    monkeypatch,
+):
+    from box_agent.tools import setup as setup_module
+
+    started = asyncio.Event()
+
+    async def fake_load_mcp_tools_async(*args, **kwargs):
+        started.set()
+        return []
+
+    monkeypatch.setattr(
+        setup_module,
+        "load_mcp_tools_async",
+        fake_load_mcp_tools_async,
+    )
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_bash=False,
+            enable_skills=False,
+            enable_mcp=True,
+        ),
+    )
+    gate = asyncio.Event()
+
+    _, _, mcp_task, _ = await setup_module.initialize_base_tools(
+        config,
+        output=lambda *_: None,
+        mcp_start_gate=gate,
+    )
+    assert mcp_task is not None
+    await asyncio.sleep(0)
+    assert started.is_set() is False
+
+    gate.set()
+    await mcp_task
+    assert started.is_set() is True
 
 
 @pytest.mark.asyncio
