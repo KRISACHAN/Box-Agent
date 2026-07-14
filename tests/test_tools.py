@@ -85,6 +85,9 @@ async def test_initialize_base_tools_can_gate_mcp_until_protocol_ready(
         "load_mcp_tools_async",
         fake_load_mcp_tools_async,
     )
+    # Create a minimal MCP config file so the code path creates mcp_task.
+    mcp_config = tmp_path / "mcp.json"
+    mcp_config.write_text('{"mcpServers": {}}')
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(workspace_dir=str(tmp_path)),
@@ -92,6 +95,7 @@ async def test_initialize_base_tools_can_gate_mcp_until_protocol_ready(
             enable_bash=False,
             enable_skills=False,
             enable_mcp=True,
+            mcp_config_path=str(mcp_config),
         ),
     )
     gate = asyncio.Event()
