@@ -354,9 +354,10 @@ class OpenAIClient(LLMClientBase):
             elif msg.role == "assistant":
                 assistant_msg = {"role": "assistant"}
 
-                # Add content if present
-                if msg.content:
-                    assistant_msg["content"] = msg.content
+                # Always include content — even when empty — so LiteLLM/OpenAI
+                # never sees a missing key that gets serialized to `content: null`
+                # downstream (network gateway rejects null with 400).
+                assistant_msg["content"] = msg.content if msg.content else ""
 
                 # Add tool calls if present
                 if msg.tool_calls:
