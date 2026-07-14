@@ -113,6 +113,14 @@ from box_agent.acp.action_hints import (
     normalize_action_hint_blocks,
 )
 from box_agent.acp.env_context import EnvContext, build_env_context_prompt
+from box_agent.acp.follow_up_suggestions import (
+    FollowUpSuggestionsStreamExtractor,
+    build_follow_up_suggestions_generation_prompt,
+    build_follow_up_suggestions_generation_system_prompt,
+    build_follow_up_suggestions_prompt,
+    parse_follow_up_suggestions_response,
+)
+from box_agent.llm.lightweight import LightweightPromptError, run_lightweight_prompt
 from box_agent.acp.project_context import build_project_startup_context_prompt
 from box_agent.experts import ExpertSessionContext
 from box_agent.memory import MemoryManager
@@ -237,6 +245,50 @@ class _ActionHintNormalizingLLM:
         if content == response.content:
             return response
         return response.model_copy(update={"content": content})
+
+
+class _FollowUpSuggestionsExtractingLLM:
+    """Strip model-authored suggestion metadata before core/history see it."""
+
+    def __init__(self, wrapped: Any):
+        self._wrapped = wrapped
+        self._extractor = FollowUpSuggestionsStreamExtractor()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
+    @property
+    def follow_up_suggestions(self) -> list[str]:
+        return self._extractor.suggestions
+
+    async def generate_stream(self, *args: Any, **kwargs: Any):
+        text_template = None
+        async for event in self._wrapped.generate_stream(*args, **kwargs):
+            if getattr(event, "type", None) != "text":
+                for text in self._extractor.finish():
+                    if text:
+                        yield _text_stream_event_like(event, text)
+                yield event
+                continue
+
+            text_template = event
+            for text in self._extractor.push(event.delta or ""):
+                if text:
+                    yield event.model_copy(update={"delta": text})
+
+        if text_template is not None:
+            for text in self._extractor.finish():
+                if text:
+                    yield text_template.model_copy(update={"delta": text})
+
+    async def generate(self, *args: Any, **kwargs: Any):
+        response = await self._wrapped.generate(*args, **kwargs)
+        extractor = FollowUpSuggestionsStreamExtractor()
+        visible = "".join(extractor.push(response.content) + extractor.finish())
+        self._extractor = extractor
+        if visible == response.content:
+            return response
+        return response.model_copy(update={"content": visible})
 
 
 def _text_stream_event_like(event: Any, text: str) -> Any:
@@ -565,6 +617,7 @@ class SessionState:
     require_plan_approval: bool = False  # host requires approval after plan_write before execution
     pending_plan_approval: dict[str, Any] | None = None
     preloaded_skill_names: list[str] = field(default_factory=list)
+    follow_up_suggestions_enabled: bool = False
 
 
 class BoxACPAgent:
@@ -838,6 +891,7 @@ class BoxACPAgent:
         require_plan_approval = False
         artifact_mode = "output"
         initial_goal_request: dict[str, Any] | None = None
+        follow_up_suggestions_enabled = False
         # Lightweight one-shot utility session (e.g. host-side title/tag
         # generation). When set, the session carries no tools, skips memory
         # recall injection, and skips auto memory-extraction — it is a pure
@@ -856,6 +910,11 @@ class BoxACPAgent:
             )
             artifact_mode = _normalize_artifact_mode(meta)
             initial_goal_request = _goal_request_from_meta(meta)
+            follow_up_suggestions_enabled = _meta_bool(
+                meta,
+                "follow_up_suggestions",
+                "followUpSuggestions",
+            )
             env_context = EnvContext.from_meta(meta.get("env_context"))
             expert_context = ExpertSessionContext.from_meta(meta)
             # Caller-owned session id (e.g. officev3 chat session id). Forwarded
@@ -975,6 +1034,7 @@ class BoxACPAgent:
             skill_runtime_context=skill_runtime_context,
             expert_context=expert_context,
             artifact_mode=artifact_mode,
+            follow_up_suggestions_enabled=follow_up_suggestions_enabled,
         )
 
         # Inject memory context (skipped for lightweight utility sessions)
@@ -1083,6 +1143,7 @@ class BoxACPAgent:
             upstream_session_id=upstream_session_id,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
+            follow_up_suggestions_enabled=follow_up_suggestions_enabled,
         )
 
         # Skill selector: per-turn keyword-based filter on the skill catalog.
@@ -1200,6 +1261,7 @@ class BoxACPAgent:
         skill_runtime_context: SkillRuntimeContext | None = None,
         expert_context: ExpertSessionContext | None = None,
         artifact_mode: str = "output",
+        follow_up_suggestions_enabled: bool = False,
     ) -> str:
         """Build system prompt with conditional mode-specific injection."""
         _MODE_PROMPT_MAP = {
@@ -1239,6 +1301,9 @@ class BoxACPAgent:
         hints_prompt = self._build_action_hints_prompt(env_context)
         if hints_prompt:
             base_prompt = f"{base_prompt.rstrip()}\n\n{hints_prompt}"
+
+        if follow_up_suggestions_enabled:
+            base_prompt = f"{base_prompt.rstrip()}\n\n{build_follow_up_suggestions_prompt()}"
 
         attr = _MODE_PROMPT_MAP.get(session_mode or "")
         if attr:
@@ -2256,7 +2321,46 @@ class BoxACPAgent:
                 update_tool_call(tool_call_id, raw_output=payload),
             )
 
-        llm = _ActionHintNormalizingLLM(agent.llm)
+        async def _generate_follow_up_suggestions(final_content: str) -> list[str]:
+            latest_user_request = ""
+            for message in reversed(agent.messages):
+                if message.role == "user" and isinstance(message.content, str):
+                    latest_user_request = message.content
+                    break
+            if not latest_user_request or not final_content.strip():
+                return []
+
+            try:
+                result = await run_lightweight_prompt(
+                    self._lite_llm,
+                    build_follow_up_suggestions_generation_prompt(
+                        latest_user_request,
+                        final_content,
+                    ),
+                    system_prompt=build_follow_up_suggestions_generation_system_prompt(),
+                    session_id=state.upstream_session_id,
+                    timeout=8.0,
+                )
+            except LightweightPromptError as exc:
+                log.info(
+                    "follow_up_suggestions/skipped",
+                    session_id=session_id,
+                    reason=exc.code,
+                )
+                return []
+
+            suggestions = parse_follow_up_suggestions_response(result.text)
+            log.info(
+                "follow_up_suggestions/generated",
+                session_id=session_id,
+                count=len(suggestions),
+                duration_ms=result.duration_ms,
+            )
+            return suggestions
+
+        llm: Any = _ActionHintNormalizingLLM(agent.llm)
+        if state.follow_up_suggestions_enabled:
+            llm = _FollowUpSuggestionsExtractingLLM(llm)
 
         async for event in run_agent_loop(
             llm=llm,
@@ -2527,8 +2631,27 @@ class BoxACPAgent:
                     case StepEnd(step=s, elapsed_seconds=el, total_elapsed_seconds=tot):
                         log.debug("step/end", session_id=session_id, step=s, duration_ms=int(el * 1000), total_ms=int(tot * 1000))
 
-                    case DoneEvent(stop_reason=reason):
+                    case DoneEvent(stop_reason=reason, final_content=final_content):
                         log.debug("done", session_id=session_id, stop_reason=reason.value)
+                        suggestions = getattr(llm, "follow_up_suggestions", [])
+                        if (
+                            reason == StopReason.END_TURN
+                            and state.pending_plan_approval is None
+                            and (state.agent.goal is None or state.agent.goal.status != "active")
+                        ):
+                            if not suggestions:
+                                suggestions = await _generate_follow_up_suggestions(final_content)
+                            if suggestions:
+                                await self._send(
+                                    session_id,
+                                    update_tool_call(
+                                        f"follow-up-suggestions-{uuid4().hex[:8]}",
+                                        raw_output={
+                                            "type": "follow_up_suggestions",
+                                            "suggestions": suggestions,
+                                        },
+                                    ),
+                                )
                         await _send_turn_usage()
                         return reason.value
 

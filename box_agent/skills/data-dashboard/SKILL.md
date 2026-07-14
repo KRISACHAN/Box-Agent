@@ -61,6 +61,58 @@ keywords: [dashboard, 数据看板, 看板, 仪表盘, demo, 可视化报告, ht
 - **renderer 是纯函数**：只读 `D[id]`，只写 `#page-{id}` 子树，不互相依赖。
 - **首页强制是"洞察总结"**：3-6 条 bullet + 核心 KPI + 一张总览图。让人 5 秒看完结论。
 
+### 3.1 大看板分片模式（5+ 页时启用）
+
+默认仍由一个 Agent 生成小看板。只有满足任一条件时，才使用子 Agent 并行分片：
+
+- 看板有 **5 页或更多**；
+- 单页已明确划分，且预计完整 HTML 会很长；
+- 每页的图表、数据和 DOM 都能以 `P1`、`P2` 等页面 ID 隔离。
+
+不要把多个子 Agent 指向同一个 `dashboard.html`。父 Agent 先串行确定页面、数据口径、主题 token、导航和共享交互；再让 **2–3 个**子 Agent 并行写各自独占的 `drafts/P*.json`。每个委派必须设置 `read_only: false` 和仅包含该 fragment 的 `write_scope`。父 Agent 不得把 fragment 正文读回后用模型拼接，而应运行 `scripts/merge_dashboard_fragments.js` 生成唯一的最终 HTML。
+
+父 Agent 先写 `drafts/dashboard-contract.json`：
+
+```json
+{
+  "title": "经营总览",
+  "brand": "Northstar",
+  "initialPage": "P1",
+  "note": "数据截至 2026-07-14",
+  "pages": [
+    {"id": "P1", "label": "总览", "group": "概览"},
+    {"id": "P2", "label": "趋势", "group": "经营"}
+  ]
+}
+```
+
+每个子 Agent 只写一个 fragment，字段如下：
+
+```json
+{
+  "pageId": "P1",
+  "data": {"kpis": [], "trend": []},
+  "html": "<section class=\"page\" id=\"page-P1\">...</section>",
+  "renderer": "() => { const d = D.P1; /* only render #page-P1 */ }",
+  "css": "#page-P1 .local-panel { display: grid; }"
+}
+```
+
+硬约束：`pageId` 必须在 contract 中且每页恰好一个 fragment；HTML 只能是一段对应 `#page-Pn` 的 `.page`，不得含 document-level 标签或 `<script>`；内部 `id` 必须以 `Pn-` 开头；renderer 只能是函数表达式，不得声明 `D`、`renderers` 或共享状态；局部 CSS 必须以 `#page-Pn` 开头，不能修改 `body`、`:root`、导航或主布局。页面排序永远以 contract 为准，不以文件传入顺序为准。
+
+合并命令（先解析当前 skill 目录；不要假定当前工作目录）：
+
+```bash
+DATA_DASHBOARD_SKILL_DIR="${BOX_AGENT_DATA_DASHBOARD_SKILL_DIR:-${DATA_DASHBOARD_SKILL_DIR:-{skill_dir}}}"
+${BOX_AGENT_NODE:-node} "$DATA_DASHBOARD_SKILL_DIR/scripts/merge_dashboard_fragments.js" \
+  --template "$DATA_DASHBOARD_SKILL_DIR/assets/template.html" \
+  --contract drafts/dashboard-contract.json \
+  --out dashboard.html \
+  drafts/P1.json drafts/P2.json drafts/P3.json
+```
+
+合并后父 Agent 负责唯一的最终检查：确认所有 contract 页面都存在、浏览器打开无 JS 错误、375/768/1440px 三档不裂、切页和 resize 后图表正常。若子 Agent 失败，仅重试对应 fragment；不要重做已通过的页面。
+
 ## 4. ECharts 用法约定
 
 - 注册主题：`echarts.registerTheme('app', themeObj)`，所有 `echarts.init(dom, 'app')`。主题统一了背景、坐标轴、tooltip、palette。

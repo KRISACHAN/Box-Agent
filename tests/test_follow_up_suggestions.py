@@ -1,0 +1,177 @@
+from types import SimpleNamespace
+
+import pytest
+
+from box_agent.acp import BoxACPAgent
+from box_agent.acp.follow_up_suggestions import (
+    FollowUpSuggestionsStreamExtractor,
+    build_follow_up_suggestions_generation_system_prompt,
+    build_follow_up_suggestions_prompt,
+    normalize_follow_up_suggestions,
+    parse_follow_up_suggestions_response,
+)
+from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
+from box_agent.schema import LLMResponse, StreamEvent
+
+
+class _RecordingConn:
+    def __init__(self) -> None:
+        self.updates = []
+
+    async def sessionUpdate(self, payload):
+        self.updates.append(payload)
+
+
+class _FollowUpLLM:
+    async def generate(self, messages, tools=None):
+        return LLMResponse(content="完成。", finish_reason="stop")
+
+    async def generate_stream(self, messages, tools=None, **_):
+        yield StreamEvent(
+            type="text",
+            delta=(
+                "已完成方案。\n```follow_up_suggestions\n"
+                '{"suggestions":["把方案拆成今日待办", "给我一份风险清单"]}\n```'
+            ),
+        )
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+
+class _DedicatedFollowUpLLM:
+    async def generate(self, messages, tools=None, **_):
+        return LLMResponse(
+            content='{"suggestions":["核对项目当前的 React 版本", "查看 React 19.2 的新增内容"]}',
+            finish_reason="stop",
+        )
+
+    async def generate_stream(self, messages, tools=None, **_):
+        yield StreamEvent(type="text", delta="React 当前 npm 稳定最新版是 19.2.7。")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+
+def test_extractor_hides_split_metadata_block_and_keeps_visible_answer() -> None:
+    extractor = FollowUpSuggestionsStreamExtractor()
+
+    first = extractor.push("已整理好执行方案。\n```follow_up_sugg")
+    second = extractor.push(
+        'estions\n{"suggestions":["把方案拆成今日待办", "给我一份风险清单"]}\n```'
+    )
+    final = extractor.finish()
+
+    assert "".join(first + second + final) == "已整理好执行方案。\n"
+    assert extractor.suggestions == ["把方案拆成今日待办", "给我一份风险清单"]
+
+
+def test_extractor_drops_invalid_or_unfinished_metadata() -> None:
+    extractor = FollowUpSuggestionsStreamExtractor()
+
+    assert extractor.push("回答。\n```follow_up_suggestions\n{bad json}\n```") == ["回答。\n"]
+    assert extractor.suggestions == []
+
+    extractor.push("\n```follow_up_suggestions\n")
+    assert extractor.finish() == []
+
+
+def test_normalize_follow_up_suggestions_limits_and_deduplicates() -> None:
+    assert normalize_follow_up_suggestions(
+        ["  整理成待办  ", "整理成待办", "再生成风险清单", "补充负责人", "第四条"]
+    ) == ["整理成待办", "再生成风险清单", "补充负责人"]
+
+
+def test_parser_accepts_json_and_accidental_fences() -> None:
+    assert parse_follow_up_suggestions_response(
+        '```json\n{"suggestions":["整理迁移步骤"]}\n```'
+    ) == ["整理迁移步骤"]
+    assert parse_follow_up_suggestions_response("不是 JSON") == []
+
+
+def test_prompt_requires_a_structured_follow_up_block_only_after_completion() -> None:
+    prompt = build_follow_up_suggestions_prompt()
+
+    assert "```follow_up_suggestions" in prompt
+    assert "任务失败" in prompt
+    assert '"suggestions"' in build_follow_up_suggestions_generation_system_prompt()
+
+
+@pytest.mark.asyncio
+async def test_acp_strips_model_metadata_and_emits_structured_suggestions(tmp_path) -> None:
+    conn = _RecordingConn()
+    agent = BoxACPAgent(
+        conn,
+        Config(
+            llm=LLMConfig(api_key="test-key"),
+            agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+            tools=ToolsConfig(),
+        ),
+        _FollowUpLLM(),
+        [],
+        "system",
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"follow_up_suggestions": True})
+    )
+
+    assert agent._sessions[session.sessionId].follow_up_suggestions_enabled is True
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "做完了吗"}])
+    )
+
+    assert response.stopReason == "end_turn"
+    visible_text = "".join(
+        update.update.content.text
+        for update in conn.updates
+        if getattr(update.update, "sessionUpdate", None) == "agent_message_chunk"
+    )
+    assert visible_text == "已完成方案。\n"
+    assert "follow_up_suggestions" not in visible_text
+    suggestion_updates = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "sessionUpdate", None) == "tool_call_update"
+        and isinstance(getattr(update.update, "rawOutput", None), dict)
+        and update.update.rawOutput.get("type") == "follow_up_suggestions"
+    ]
+    assert suggestion_updates == [
+        {
+            "type": "follow_up_suggestions",
+            "suggestions": ["把方案拆成今日待办", "给我一份风险清单"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_acp_generates_suggestions_in_a_dedicated_lightweight_call(tmp_path) -> None:
+    conn = _RecordingConn()
+    agent = BoxACPAgent(
+        conn,
+        Config(
+            llm=LLMConfig(api_key="test-key"),
+            agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+            tools=ToolsConfig(),
+        ),
+        _DedicatedFollowUpLLM(),
+        [],
+        "system",
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"follow_up_suggestions": True})
+    )
+
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "React 最新版是多少"}])
+    )
+
+    assert response.stopReason == "end_turn"
+    suggestion_updates = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "sessionUpdate", None) == "tool_call_update"
+        and isinstance(getattr(update.update, "rawOutput", None), dict)
+        and update.update.rawOutput.get("type") == "follow_up_suggestions"
+    ]
+    assert suggestion_updates == [
+        {
+            "type": "follow_up_suggestions",
+            "suggestions": ["核对项目当前的 React 版本", "查看 React 19.2 的新增内容"],
+        }
+    ]

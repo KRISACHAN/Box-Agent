@@ -91,21 +91,25 @@ table.t tbody tr:hover{background:var(--surface-2)}
   .sidebar nav a{font-size:0;padding:var(--sp-3)}
   .main{margin-left:56px;padding:var(--sp-4)}
 }
+/* DASHBOARD_FRAGMENT:EXTRA_CSS */
 </style>
 </head>
 <body>
 
 <aside class="sidebar">
-  <div class="logo"><!-- FILL: brand --></div>
+  <div class="logo"><!-- DASHBOARD_FRAGMENT:BRAND --><!-- FILL: brand --></div>
   <nav>
+    <!-- DASHBOARD_FRAGMENT:NAV:START -->
     <!-- FILL: 按 nav-group 分组，a.data-page 对应 page id
     <div class="nav-group">概览</div>
     <a href="#" data-page="P1" class="active">总览</a>
     -->
+    <!-- DASHBOARD_FRAGMENT:NAV:END -->
   </nav>
 </aside>
 
 <main class="main">
+  <!-- DASHBOARD_FRAGMENT:PAGES:START -->
   <!-- 每页一个 .page，id 形如 page-P1 -->
   <section class="page active" id="page-P1">
     <h1 class="page-title"><!-- FILL --></h1>
@@ -116,18 +120,22 @@ table.t tbody tr:hover{background:var(--surface-2)}
   </section>
 
   <!-- 继续添加 page-P2, page-P3 ... -->
+  <!-- DASHBOARD_FRAGMENT:PAGES:END -->
 </main>
 
 <!-- 如为模拟数据 -->
+<!-- DASHBOARD_FRAGMENT:NOTE -->
 <!-- <div class="note">⚠️ 虚拟数据，仅用于演示</div> -->
 
 <script>
 /* ========== 1. Data ========== */
 const D = {
+  /* DASHBOARD_FRAGMENT:DATA:START */
   P1: {
     kpis: [], insights: [], overview: { /* echarts option-friendly shape */ }
   },
   // P2, P3, ...
+  /* DASHBOARD_FRAGMENT:DATA:END */
 };
 
 /* ========== 2. ECharts theme ========== */
@@ -186,6 +194,7 @@ window.addEventListener('resize', () => Object.values(charts).forEach(c => c.res
 
 /* ========== 6. Renderers (one per page, pure) ========== */
 const renderers = {
+  /* DASHBOARD_FRAGMENT:RENDERERS:START */
   P1: () => {
     const d = D.P1;
     ui.kpis('P1-kpis', d.kpis);
@@ -200,6 +209,7 @@ const renderers = {
     });
   },
   // P2: () => { ... },
+  /* DASHBOARD_FRAGMENT:RENDERERS:END */
 };
 
 /* ========== 7. Routing + lazy render ========== */
@@ -217,6 +227,7 @@ document.querySelectorAll('.sidebar nav a[data-page]').forEach(a => {
 });
 
 /* ========== 8. Boot ========== */
+/* DASHBOARD_FRAGMENT:INITIAL_PAGE */
 showPage('P1');
 </script>
 </body>
