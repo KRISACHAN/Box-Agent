@@ -30,6 +30,7 @@ from box_agent.schema import LLMResponse, Message, StreamEvent, TokenUsage
         "面对阿根廷这种顶级强队时，手里的牌太",
         "塞拉米的问题不是“不会带队”，而是",
         "the model stopped writing in the middle of a",
+        "the",
         "未闭合的 **加粗",
         "一句没有结尾的话",
     ],
@@ -55,6 +56,13 @@ def test_looks_like_truncated_true(text):
         "- 一个完整的列表项",
         "* another bullet",
         "1. numbered item",
+        "ACTIVE_SKILL_CLI_OK",
+        "success",
+        "abc-123",
+        "report.pdf",
+        "/path/to/file",
+        r"C:\temp\file.txt",
+        "https://example.com/a?id=1",
         "",
         "   \n  ",
     ],
@@ -197,6 +205,25 @@ async def test_short_reply_below_token_floor_not_continued():
             truncation_continuation_enabled=True,
         )
     )
+    assert llm.calls == 1
+    assert not [e for e in events if isinstance(e, InjectedMessageEvent)]
+    done = [e for e in events if isinstance(e, DoneEvent)][-1]
+    assert done.stop_reason == StopReason.END_TURN
+
+
+async def test_atomic_status_reply_is_not_continued_despite_high_token_usage():
+    """Hidden reasoning tokens must not make a complete status token look cut off."""
+    llm = MockLLM([_truncated("ACTIVE_SKILL_CLI_OK", completion_tokens=56)])
+    events = await _collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={},
+            max_steps=5,
+            truncation_continuation_enabled=True,
+        )
+    )
+
     assert llm.calls == 1
     assert not [e for e in events if isinstance(e, InjectedMessageEvent)]
     done = [e for e in events if isinstance(e, DoneEvent)][-1]

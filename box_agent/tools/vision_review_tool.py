@@ -44,9 +44,13 @@ class VisionReviewTool(Tool):
         workspace_dir: str = ".",
         allow_full_access: bool = True,
         permission_engine: PermissionEngine | None = None,
+        relative_root_dir: str | None = None,
     ) -> None:
         self.llm = llm
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.relative_root_dir = (
+            Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
+        )
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
 
@@ -73,7 +77,10 @@ class VisionReviewTool(Tool):
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 1,
-                    "description": "Local PNG/JPEG screenshot paths to review. Relative paths resolve from the workspace.",
+                    "description": (
+                        "Local PNG/JPEG screenshot paths to review. Relative paths resolve "
+                        "from the active project/artifact root."
+                    ),
                 },
                 "output_path": {
                     "type": "string",
@@ -218,9 +225,11 @@ class VisionReviewTool(Tool):
         return self._resolve_writable_path(str(Path(first_image_path).parent / _DEFAULT_OUTPUT_FILENAME))
 
     def _resolve_readable_path(self, path: str) -> Path:
-        file_path = Path(path)
-        if not file_path.is_absolute():
-            file_path = self.workspace_dir / file_path
+        file_path = self._resolve_from_active_root(path)
+        if not file_path.exists() and not Path(path).is_absolute():
+            workspace_candidate = self.workspace_dir / path
+            if workspace_candidate.exists():
+                file_path = workspace_candidate
         file_path = file_path.absolute()
 
         if self._perm:
@@ -238,9 +247,7 @@ class VisionReviewTool(Tool):
         return file_path
 
     def _resolve_writable_path(self, path: str) -> Path:
-        file_path = Path(path)
-        if not file_path.is_absolute():
-            file_path = self.workspace_dir / file_path
+        file_path = self._resolve_from_active_root(path)
         file_path = file_path.absolute()
 
         if self._perm:
@@ -256,6 +263,21 @@ class VisionReviewTool(Tool):
             if error:
                 raise ValueError(error)
         return file_path
+
+    def _resolve_from_active_root(self, path: str) -> Path:
+        file_path = Path(path)
+        if file_path.is_absolute():
+            return file_path
+        try:
+            root_from_workspace = self.relative_root_dir.relative_to(self.workspace_dir)
+        except ValueError:
+            root_from_workspace = None
+        if (
+            root_from_workspace
+            and file_path.parts[: len(root_from_workspace.parts)] == root_from_workspace.parts
+        ):
+            return self.workspace_dir / file_path
+        return self.relative_root_dir / file_path
 
     def _build_content_blocks(
         self,
@@ -341,6 +363,9 @@ Rules:
 
     def _display_path(self, path: Path) -> str:
         try:
-            return str(path.relative_to(self.workspace_dir))
+            return str(path.relative_to(self.relative_root_dir))
         except ValueError:
-            return str(path)
+            try:
+                return str(path.relative_to(self.workspace_dir))
+            except ValueError:
+                return str(path)

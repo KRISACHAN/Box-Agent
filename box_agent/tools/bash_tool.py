@@ -412,6 +412,7 @@ class BashTool(Tool):
     def __init__(
         self,
         workspace_dir: str | None = None,
+        scope_root_dir: str | None = None,
         allow_full_access: bool = True,
         non_interactive: bool = False,
         sandbox_venv_path: str | None = None,
@@ -424,6 +425,8 @@ class BashTool(Tool):
             workspace_dir: Working directory for command execution.
                            If provided, all commands run in this directory.
                            If None, commands run in the process's cwd.
+            scope_root_dir: Optional security boundary when the command cwd is
+                            a nested artifact directory.
             allow_full_access: If False, block commands that escape the workspace.
             non_interactive: If True, never prompt on stdin; dangerous commands
                              return an approval request for the core/host.
@@ -482,6 +485,7 @@ class BashTool(Tool):
         if not self.is_windows:
             self._login_shell = _resolve_login_shell()
         self.workspace_dir = workspace_dir
+        self.scope_root_dir = scope_root_dir or workspace_dir
         self.allow_full_access = allow_full_access
         self.non_interactive = non_interactive
         self._perm = permission_engine
@@ -896,7 +900,7 @@ Examples:
 
             # 2. Scope control (capability-based or legacy)
             if self._perm:
-                escape_reason = detect_scope_escape(command, workspace_dir=self.workspace_dir)
+                escape_reason = detect_scope_escape(command, workspace_dir=self.scope_root_dir)
                 if escape_reason:
                     from .permissions import FILESYSTEM_READ, FILESYSTEM_WRITE, extract_absolute_paths
 
@@ -959,13 +963,13 @@ Examples:
                                 permission_request=decision.permission_request,
                             )
             elif not self.allow_full_access:
-                escape_reason = detect_scope_escape(command, workspace_dir=self.workspace_dir)
+                escape_reason = detect_scope_escape(command, workspace_dir=self.scope_root_dir)
                 if escape_reason:
                     return BashOutputResult(
                         success=False,
                         error=(
                             f"Command blocked: {escape_reason}. "
-                            f"Tools are restricted to workspace ({self.workspace_dir}). "
+                            f"Tools are restricted to workspace ({self.scope_root_dir}). "
                             f"Set 'allow_full_access: true' in config to allow full system access."
                         ),
                         stdout="",

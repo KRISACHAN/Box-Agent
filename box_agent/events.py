@@ -213,6 +213,13 @@ class SummarizationEvent:
     estimated_tokens: int
     api_tokens: int
     token_limit: int
+    estimated_after: int = 0
+    mode: str = "summary"
+    summary_calls: int = 0
+    micro_compacted: int = 0
+    error: str | None = None
+    error_type: str | None = None
+    trigger_source: str = "none"
 
 
 # ── Errors & completion ─────────────────────────────────────────

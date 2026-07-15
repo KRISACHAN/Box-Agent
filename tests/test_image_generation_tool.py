@@ -1,6 +1,8 @@
 import base64
 import hashlib
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -177,7 +179,41 @@ async def test_generate_image_saves_relative_paths_under_output_dir(
     assert target.read_bytes() == PNG_BYTES
     assert not (tmp_path / "assets/generated/hero.png").exists()
     assert result.raw_output["rel_path"] == "session-a/output/assets/generated/hero.png"
+    assert result.raw_output["artifact_rel_path"] == "assets/generated/hero.png"
+    assert result.raw_output["path"] == "assets/generated/hero.png"
     assert result.raw_output["abs_path"] == str(target)
+    assert "[assets/generated/hero.png]" in result.content
+
+
+@pytest.mark.asyncio
+async def test_generate_image_does_not_duplicate_workspace_relative_output_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    workspace = tmp_path / "session-a"
+    artifact_root = workspace / "output"
+    tool = GenerateImageTool(
+        workspace_dir=str(workspace),
+        output_dir=str(artifact_root),
+        allow_full_access=False,
+        endpoint="https://image.example.test/v1/images/generations",
+    )
+
+    result = await tool.execute(
+        prompt="hero",
+        output_path="output/assets/generated/legacy-path.png",
+    )
+
+    assert result.success
+    assert (artifact_root / "assets/generated/legacy-path.png").read_bytes() == PNG_BYTES
+    assert not (artifact_root / "output/assets/generated/legacy-path.png").exists()
 
 
 @pytest.mark.asyncio
@@ -822,6 +858,138 @@ def test_add_workspace_tools_passes_image_generation_config(tmp_path: Path) -> N
     assert tool.model == "chatgpt-image-latest"
     assert tool.auth_file == str(tmp_path / "auth.json")
     assert tool.timeout == 45.0
+
+
+@pytest.mark.asyncio
+async def test_output_mode_tools_share_artifact_relative_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    workspace = tmp_path / "session-a"
+    workspace.mkdir()
+    (workspace / "source.txt").write_text("uploaded", encoding="utf-8")
+    artifact_root = workspace / "output"
+    tools = []
+
+    class Config:
+        tools = ToolsConfig(
+            enable_bash=True,
+            enable_file_tools=True,
+            enable_todo=False,
+            enable_sub_agent=False,
+        )
+        image_generation = ImageGenerationConfig(
+            endpoint="https://image.example.test/v1/images/generations",
+        )
+
+    add_workspace_tools(
+        tools,
+        Config(),
+        workspace,
+        allow_full_access=False,
+        output=lambda *_: None,
+        use_output_dir=True,
+        artifact_root_dir=artifact_root,
+    )
+    by_name = {tool.name: tool for tool in tools}
+
+    write_result = await by_name["write_file"].execute(
+        path="assets/generated/manifest.json",
+        content=json.dumps(
+            {
+                "mode": "creative_image_mode",
+                "image_plan": [
+                    {
+                        "slide": 1,
+                        "decision": "generate",
+                        "status": "generated",
+                        "output_path": "assets/generated/hero.png",
+                    }
+                ],
+            }
+        ),
+    )
+    image_result = await by_name["generate_image"].execute(
+        prompt="hero",
+        output_path="assets/generated/hero.png",
+    )
+    read_result = await by_name["read_file"].execute(path="../source.txt")
+    legacy_write_result = await by_name["write_file"].execute(
+        path="output/legacy.txt",
+        content="legacy-compatible",
+    )
+
+    assert write_result.success
+    assert image_result.success
+    assert read_result.success
+    assert legacy_write_result.success
+    assert "uploaded" in read_result.content
+    assert (artifact_root / "assets/generated/manifest.json").is_file()
+    assert (artifact_root / "assets/generated/hero.png").is_file()
+    assert (artifact_root / "legacy.txt").read_text(encoding="utf-8") == "legacy-compatible"
+    assert not (artifact_root / "output/legacy.txt").exists()
+    assert by_name["bash"].workspace_dir == str(artifact_root)
+    assert by_name["bash"].scope_root_dir == str(workspace)
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required for the PPT image-manifest validator")
+    validator = (
+        Path(__file__).parents[1]
+        / "box_agent/skills/document-skills/pptx/scripts/validate_image_manifest.js"
+    )
+    completed = subprocess.run(
+        [
+            node,
+            str(validator),
+            "assets/generated/manifest.json",
+            "--mode",
+            "creative_image_mode",
+            "--min-generated",
+            "1",
+            "--report",
+            "qa/image_manifest.json",
+        ],
+        cwd=artifact_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_project_mode_tools_keep_workspace_relative_root(tmp_path: Path) -> None:
+    tools = []
+
+    class Config:
+        tools = ToolsConfig(
+            enable_bash=True,
+            enable_file_tools=True,
+            enable_todo=False,
+            enable_sub_agent=False,
+        )
+
+    add_workspace_tools(
+        tools,
+        Config(),
+        tmp_path,
+        allow_full_access=False,
+        output=lambda *_: None,
+        use_output_dir=False,
+    )
+    by_name = {tool.name: tool for tool in tools}
+
+    assert by_name["bash"].workspace_dir == str(tmp_path)
+    assert by_name["write_file"].relative_root_dir == tmp_path
+    assert by_name["generate_image"].output_dir == tmp_path
+    assert not (tmp_path / "output").exists()
 
 
 def _real_png(size=(256, 256), color=(40, 40, 40)) -> bytes:

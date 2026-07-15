@@ -198,6 +198,24 @@ _CLEAN_ENDING_CHARS: Final[frozenset[str]] = frozenset(
 # Markdown structural last-lines that are complete as-is.
 _TABLE_ROW_RE: Final = re.compile(r"^\s*\|.*\|\s*$")
 _LIST_ITEM_RE: Final = re.compile(r"^\s*([-*+]|\d+[.)])\s+\S")
+_ATOMIC_ASCII_REPLY_RE: Final = re.compile(
+    r"^[A-Za-z0-9./\\:@+#%?&=~_-]{1,256}$"
+)
+_ATOMIC_REPLY_WORDS: Final[frozenset[str]] = frozenset(
+    {"ok", "done", "success", "failed", "true", "false", "none", "null"}
+)
+
+
+def _looks_like_atomic_ascii_reply(text: str) -> bool:
+    """Return true for complete machine-like status, ID, URL, or path replies."""
+    if not _ATOMIC_ASCII_REPLY_RE.fullmatch(text):
+        return False
+    return (
+        text.casefold() in _ATOMIC_REPLY_WORDS
+        or (text.upper() == text and any(char.isalpha() for char in text))
+        or any(char.isdigit() for char in text)
+        or any(char in "._/\\:@+#%?&=~-" for char in text)
+    )
 
 
 def looks_like_truncated_output(text: str) -> bool:
@@ -211,6 +229,8 @@ def looks_like_truncated_output(text: str) -> bool:
     """
     stripped = text.rstrip()
     if not stripped:
+        return False
+    if _looks_like_atomic_ascii_reply(stripped):
         return False
     if stripped[-1] in _CLEAN_ENDING_CHARS:
         return False

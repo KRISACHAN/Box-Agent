@@ -17,6 +17,8 @@ SkillSource = Literal["builtin", "user"]
 class GetSkillTool(Tool):
     """Tool to get detailed information about a specific skill"""
 
+    loads_active_skill_instructions = True
+
     def __init__(
         self,
         skill_loader: SkillLoader,

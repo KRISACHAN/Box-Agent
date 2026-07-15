@@ -2097,12 +2097,7 @@ async def run_agent(
         agent._proposal_negotiator = CLIMemoryProposalNegotiator(memory_mgr)
 
     def _set_agent_system_prompt(system_prompt: str) -> None:
-        agent.system_prompt = system_prompt
-        if agent.messages and agent.messages[0].role == "system":
-            agent.messages[0] = Message(role="system", content=system_prompt)
-        for tool in agent.tools.values():
-            if hasattr(tool, "set_parent_system_prompt"):
-                tool.set_parent_system_prompt(system_prompt)
+        agent.set_system_prompt(system_prompt)
 
     # 7.5 Skill selector: filter skill metadata per turn based on cumulative user query
     skill_selector = None

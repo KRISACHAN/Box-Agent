@@ -114,6 +114,76 @@ class CapturingStreamLLM(MockLLM):
             yield event
 
 
+class ActiveSkillTool(Tool):
+    loads_active_skill_instructions = True
+
+    @property
+    def name(self) -> str:
+        return "get_skill"
+
+    @property
+    def description(self) -> str:
+        return "Load a test skill"
+
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {"skill_name": {"type": "string"}},
+            "required": ["skill_name"],
+        }
+
+    async def execute(self, skill_name: str) -> ToolResult:
+        return ToolResult(
+            success=True,
+            content=f"# Skill: {skill_name}\n\nMANDATORY_SKILL_RULE",
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_skill_moves_full_instructions_to_system_prompt() -> None:
+    messages = _msgs()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="skill-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="get_skill",
+                            arguments={"skill_name": "pptx"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"get_skill": ActiveSkillTool()},
+            max_steps=5,
+        )
+    )
+
+    second_request = llm.message_calls[1]
+    system_message = second_request[0]
+    tool_message = next(message for message in second_request if message.role == "tool")
+    result_event = next(event for event in events if isinstance(event, ToolCallResult))
+
+    assert "## Active Skill Instructions" in system_message.content
+    assert "MANDATORY_SKILL_RULE" in system_message.content
+    assert "MANDATORY_SKILL_RULE" not in tool_message.content
+    assert "loaded into active system instructions" in tool_message.content
+    assert "MANDATORY_SKILL_RULE" in result_event.content
+
+
 class ChunkedStreamLLM:
     """LLM test double that emits visible text in multiple stream chunks."""
 
@@ -2617,6 +2687,7 @@ class _FakeSummaryLLM:
     async def generate(self, messages, tools=None, *, thinking_enabled: bool = False, session_id: str = "", **_):
         self.calls.append({
             "n_messages": len(messages),
+            "messages": messages,
             "tools": tools,
             "thinking_enabled": thinking_enabled,
             "session_id": session_id,
@@ -2651,22 +2722,27 @@ async def test_create_summary_propagates_exceptions():
 
 
 @pytest.mark.asyncio
-async def test_maybe_summarize_drops_exec_msgs_on_llm_failure():
-    """When _create_summary raises, exec_msgs should be DROPPED, never returned verbatim."""
+async def test_maybe_summarize_uses_bounded_fallback_on_llm_failure():
+    """Summary failure keeps a bounded reference record instead of deleting execution data."""
     from box_agent.core import _maybe_summarize
     msgs = [
         Message(role="system", content="sys"),
         Message(role="user", content="please do X"),
-        Message(role="assistant", content="A" * 5000),  # bulk content
-        Message(role="tool", content="B" * 5000, tool_call_id="t1", name="bash"),
+        Message(role="assistant", content="A" * 50_000),
+        Message(role="tool", content="B" * 50_000, tool_call_id="t1", name="bash"),
     ]
     llm = _FakeSummaryLLM(raise_exc=RuntimeError("network"))
-    new_msgs, skip_next, _est = await _maybe_summarize(llm, msgs, token_limit=10, api_total_tokens=0, skip_check=False)
+    outcome = await _maybe_summarize(
+        llm, msgs, token_limit=5_000, api_total_tokens=0, skip_check=False
+    )
+    new_msgs, skip_next, _est = outcome
     assert new_msgs is not None
-    assert skip_next is True
-    # System + user kept; exec_msgs (assistant+tool) dropped because summary failed
-    assert [m.role for m in new_msgs] == ["system", "user"]
-    # Token count strictly less than original
+    assert skip_next is False
+    assert outcome.mode == "fallback"
+    assert outcome.error == "network"
+    assert [m.role for m in new_msgs] == ["system", "user", "user"]
+    assert "Deterministic history fallback" in str(new_msgs[1].content)
+    assert "tool=bash" in str(new_msgs[1].content)
     assert sum(len(str(m.content)) for m in new_msgs) < sum(len(str(m.content)) for m in msgs)
 
 
@@ -2681,10 +2757,11 @@ async def test_maybe_summarize_inserts_summary_marker():
     llm = _FakeSummaryLLM("brief")
     new_msgs, _, _ = await _maybe_summarize(llm, msgs, token_limit=10, api_total_tokens=0, skip_check=False)
     assert new_msgs is not None
-    # Last message is the summary marker as a user-role replacement
-    assert new_msgs[-1].role == "user"
-    assert new_msgs[-1].content.startswith(_SUMMARY_MARKER)
-    assert "brief" in new_msgs[-1].content
+    # The compact reference precedes the exact active user request.
+    assert new_msgs[1].role == "user"
+    assert new_msgs[1].content.startswith(_SUMMARY_MARKER)
+    assert "brief" in new_msgs[1].content
+    assert new_msgs[2] is msgs[1]
 
 
 @pytest.mark.asyncio
@@ -2710,6 +2787,32 @@ async def test_maybe_summarize_collapses_orphan_summary_markers():
 
 
 @pytest.mark.asyncio
+async def test_second_compaction_rolls_prior_summary_forward_once():
+    from box_agent.core import _maybe_summarize, _SUMMARY_MARKER
+
+    prior_fact = "IMPORTANT_PRIOR_FACT_42"
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content=f"{_SUMMARY_MARKER}\n\n{prior_fact}"),
+        Message(role="user", content="current request"),
+        Message(role="assistant", content="new execution " * 5_000),
+    ]
+    llm = _FakeSummaryLLM("rolled history")
+    outcome = await _maybe_summarize(
+        llm, msgs, token_limit=1_000, api_total_tokens=0, skip_check=False
+    )
+
+    assert outcome.messages is not None
+    summary_prompt = llm.calls[0]["messages"][1].content
+    assert prior_fact in summary_prompt
+    assert sum(
+        1
+        for message in outcome.messages
+        if message.role == "user" and str(message.content).startswith(_SUMMARY_MARKER)
+    ) == 1
+
+
+@pytest.mark.asyncio
 async def test_maybe_summarize_skip_check_short_circuits():
     from box_agent.core import _maybe_summarize
     llm = _FakeSummaryLLM("never called")
@@ -2729,6 +2832,171 @@ async def test_maybe_summarize_below_threshold_noop():
     assert new_msgs is None
     assert skip_next is False
     assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_maybe_summarize_compacts_many_rounds_with_one_llm_call():
+    from box_agent.core import _maybe_summarize
+
+    msgs = [Message(role="system", content="system")]
+    for index in range(12):
+        msgs.extend(
+            [
+                Message(role="user", content=f"round {index}"),
+                Message(role="assistant", content=(f"result-{index}-" * 700)),
+            ]
+        )
+    llm = _FakeSummaryLLM("one bounded summary")
+    outcome = await _maybe_summarize(
+        llm, msgs, token_limit=1_000, api_total_tokens=0, skip_check=False
+    )
+
+    assert outcome.messages is not None
+    assert outcome.summary_calls == 1
+    assert len(llm.calls) == 1
+    assert outcome.messages[-1] is msgs[-2]
+
+
+@pytest.mark.asyncio
+async def test_create_summary_bounds_provider_prompt():
+    from box_agent.core import _create_summary
+
+    msgs = [
+        Message(role="tool", content=str(index) + "x" * 20_000, name="bash", tool_call_id=str(index))
+        for index in range(30)
+    ]
+    llm = _FakeSummaryLLM("bounded")
+    await _create_summary(llm, msgs, 1)
+
+    prompt = llm.calls[0]["messages"][1].content
+    assert len(prompt) < 65_000
+    assert "summary source limit reached" in prompt
+
+
+@pytest.mark.asyncio
+async def test_maybe_summarize_preserves_latest_user_and_recent_tail_exactly():
+    from box_agent.core import _maybe_summarize
+
+    latest_user = Message(role="user", content="LATEST REQUEST MUST STAY EXACT")
+    recent_tail = Message(role="assistant", content="recent evidence " * 50)
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old request"),
+        Message(role="assistant", content="old execution " * 4_000),
+        latest_user,
+        recent_tail,
+    ]
+    outcome = await _maybe_summarize(
+        _FakeSummaryLLM("old history"),
+        msgs,
+        token_limit=5_000,
+        api_total_tokens=0,
+        skip_check=False,
+    )
+
+    assert outcome.messages is not None
+    assert outcome.messages[-2] is latest_user
+    assert outcome.messages[-1] is recent_tail
+
+
+@pytest.mark.asyncio
+async def test_maybe_summarize_uses_prompt_tokens_not_total_tokens_when_provided():
+    from box_agent.core import _maybe_summarize
+
+    llm = _FakeSummaryLLM("unused")
+    outcome = await _maybe_summarize(
+        llm,
+        [Message(role="system", content="sys"), Message(role="user", content="small")],
+        token_limit=5_000,
+        api_total_tokens=50_000,
+        api_prompt_tokens=10,
+        skip_check=False,
+    )
+
+    assert outcome.mode == "none"
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_prompt_pressure_can_compact_current_execution_suffix():
+    from box_agent.core import _maybe_summarize
+
+    latest_user = Message(role="user", content="keep this request")
+    msgs = [
+        Message(role="system", content="sys"),
+        latest_user,
+        Message(role="assistant", content="current execution"),
+        Message(role="tool", content="recent output", name="bash", tool_call_id="t1"),
+    ]
+    outcome = await _maybe_summarize(
+        _FakeSummaryLLM("current execution summarized"),
+        msgs,
+        token_limit=1_000,
+        api_total_tokens=50_000,
+        api_prompt_tokens=2_000,
+        skip_check=False,
+    )
+
+    assert outcome.mode == "summary"
+    assert outcome.messages is not None
+    assert outcome.messages[-1] is latest_user
+    assert outcome.summary_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_cooldown_uses_local_fallback_without_provider_call():
+    from box_agent.core import _maybe_summarize
+
+    llm = _FakeSummaryLLM("should not be called")
+    outcome = await _maybe_summarize(
+        llm,
+        [
+            Message(role="system", content="sys"),
+            Message(role="user", content="task"),
+            Message(role="assistant", content="large " * 10_000),
+        ],
+        token_limit=5_000,
+        api_total_tokens=0,
+        skip_check=False,
+        allow_llm_summary=False,
+    )
+
+    assert outcome.mode == "fallback"
+    assert outcome.summary_calls == 0
+    assert outcome.error_type == "RuntimeError"
+    assert llm.calls == []
+
+
+def test_request_token_estimate_includes_tool_schemas():
+    from box_agent.core import _estimate_request_tokens, _estimate_tokens
+
+    class _SchemaTool:
+        def to_openai_schema(self):
+            return {"description": "large schema " * 2_000}
+
+    msgs = [Message(role="system", content="sys"), Message(role="user", content="small")]
+    message_tokens = _estimate_tokens(msgs)
+    request_tokens = _estimate_request_tokens(msgs, {"large": _SchemaTool()})
+    assert request_tokens > message_tokens + 1_000
+
+
+def test_generic_large_tool_result_is_bounded_only_for_model_history():
+    from box_agent.core import _tool_message_content_for_model
+    from box_agent.tools.base import ToolResult
+
+    full_content = "start\n" + "x" * 100_000 + "\nfinal exit status: 0"
+    model_content = _tool_message_content_for_model(
+        tool_name="bash",
+        arguments={"command": "demo"},
+        result=ToolResult(success=True, content=full_content),
+        visible_content=full_content,
+        visible_error=None,
+    )
+
+    assert len(model_content) < 24_000
+    assert "Characters returned: 100027" in model_content
+    assert "final exit status: 0" in model_content
+    assert full_content.endswith("final exit status: 0")
 
 
 def test_micro_compact_token_budget_shrinks_keep_window_when_recent_oversized():

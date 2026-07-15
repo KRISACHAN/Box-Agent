@@ -95,6 +95,8 @@ def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
         return (
             "- **目录**：交付物落当前会话的 output 根目录；以沙箱 cwd 和 host 提供的工作区信息为准，"
             "不要写到 `~/.box-agent/` 等内部目录。\n"
+            "- **相对路径**：bash、文件工具、`generate_image` 和视觉检查的相对路径都已从当前 output 根开始；"
+            "使用 `assets/generated/a.png`，不要再添加 `output/` 前缀。读取会话根的上传文件时使用 `../<name>`。\n"
             "- **桌面交付**：完成后说明文件名即可。宿主会从结构化 ArtifactEvent 渲染可打开的文件卡。"
         )
     return (
@@ -407,16 +409,25 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     _out = output or print
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
-    artifact_root = Path(artifact_root_dir).expanduser().resolve() if use_output_dir and artifact_root_dir else None
+    artifact_root = None
+    if use_output_dir:
+        artifact_root = (
+            Path(artifact_root_dir).expanduser().resolve()
+            if artifact_root_dir
+            else (workspace_dir / "output").resolve()
+        )
+        artifact_root.mkdir(parents=True, exist_ok=True)
+    relative_root = artifact_root or workspace_dir
 
-    # Bash tool - needs workspace as cwd for command execution
+    # Relative tool paths use the project root or the active artifact root.
     runtime_context = skill_runtime_context or build_skill_runtime_context(sandbox_mode=sandbox_mode)
     if config.tools.enable_bash:
         sandbox_venv_path = None
         if sandbox_mode and not getattr(sys, "frozen", False):
             sandbox_venv_path = str(SandboxEnvironment().venv_dir)
         bash_tool = BashTool(
-            workspace_dir=str(workspace_dir),
+            workspace_dir=str(relative_root),
+            scope_root_dir=str(workspace_dir),
             allow_full_access=allow_full_access,
             non_interactive=non_interactive,
             sandbox_venv_path=sandbox_venv_path,
@@ -424,19 +435,42 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             runtime_env=runtime_context.env(),
         )
         tools.append(bash_tool)
-        _out(f"{Colors.GREEN}✅ Loaded Bash tool (cwd: {workspace_dir}){Colors.RESET}")
+        _out(f"{Colors.GREEN}✅ Loaded Bash tool (cwd: {relative_root}){Colors.RESET}")
 
-    # File tools - need workspace to resolve relative paths
+    # File tools resolve relative paths from relative_root and retain workspace scope.
     if config.tools.enable_file_tools:
         tools.extend(
             [
-                ReadTool(workspace_dir=str(workspace_dir), allow_full_access=allow_full_access, permission_engine=permission_engine),
-                WriteTool(workspace_dir=str(workspace_dir), allow_full_access=allow_full_access, permission_engine=permission_engine),
-                AppendTool(workspace_dir=str(workspace_dir), allow_full_access=allow_full_access, permission_engine=permission_engine),
-                EditTool(workspace_dir=str(workspace_dir), allow_full_access=allow_full_access, permission_engine=permission_engine),
+                ReadTool(
+                    workspace_dir=str(workspace_dir),
+                    allow_full_access=allow_full_access,
+                    permission_engine=permission_engine,
+                    relative_root_dir=str(relative_root),
+                ),
+                WriteTool(
+                    workspace_dir=str(workspace_dir),
+                    allow_full_access=allow_full_access,
+                    permission_engine=permission_engine,
+                    relative_root_dir=str(relative_root),
+                ),
+                AppendTool(
+                    workspace_dir=str(workspace_dir),
+                    allow_full_access=allow_full_access,
+                    permission_engine=permission_engine,
+                    relative_root_dir=str(relative_root),
+                ),
+                EditTool(
+                    workspace_dir=str(workspace_dir),
+                    allow_full_access=allow_full_access,
+                    permission_engine=permission_engine,
+                    relative_root_dir=str(relative_root),
+                ),
             ]
         )
-        _out(f"{Colors.GREEN}✅ Loaded file operation tools (workspace: {workspace_dir}){Colors.RESET}")
+        _out(
+            f"{Colors.GREEN}✅ Loaded file operation tools "
+            f"(relative root: {relative_root}, scope: {workspace_dir}){Colors.RESET}"
+        )
 
     # Todo tool - task tracking for multi-step workflows
     if config.tools.enable_todo:
@@ -476,6 +510,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                 workspace_dir=str(workspace_dir),
                 allow_full_access=allow_full_access,
                 permission_engine=permission_engine,
+                relative_root_dir=str(relative_root),
             )
         )
         _out(f"{Colors.GREEN}✅ Loaded vision review tool (vision_review){Colors.RESET}")

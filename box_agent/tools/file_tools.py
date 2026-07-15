@@ -74,6 +74,31 @@ _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_SIZE_THRESHOLD = 8_000
 MAX_FILE_TOOL_CONTENT_CHARS = 8_000
 MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY = f"{MAX_FILE_TOOL_CONTENT_CHARS:,}"
+
+
+def _resolve_from_active_root(
+    path: str,
+    *,
+    workspace_dir: Path,
+    relative_root_dir: Path,
+) -> Path:
+    """Resolve canonical artifact paths and legacy workspace-relative paths."""
+    file_path = Path(path)
+    if file_path.is_absolute():
+        return file_path
+
+    try:
+        root_from_workspace = relative_root_dir.relative_to(workspace_dir)
+    except ValueError:
+        root_from_workspace = None
+    if (
+        root_from_workspace
+        and file_path.parts[: len(root_from_workspace.parts)] == root_from_workspace.parts
+    ):
+        return workspace_dir / file_path
+    return relative_root_dir / file_path
+
+
 def _strip_number_prefix(line: str) -> str:
     """Remove the read_file line-number prefix from one formatted line."""
     if "|" not in line:
@@ -202,16 +227,25 @@ def build_read_file_model_context(file_path: Path, content: str, total_lines: in
 class ReadTool(Tool):
     """Read file content."""
 
-    def __init__(self, workspace_dir: str = ".", allow_full_access: bool = True,
-                 permission_engine: PermissionEngine | None = None):
+    def __init__(
+        self,
+        workspace_dir: str = ".",
+        allow_full_access: bool = True,
+        permission_engine: PermissionEngine | None = None,
+        relative_root_dir: str | None = None,
+    ):
         """Initialize ReadTool with workspace directory.
 
         Args:
-            workspace_dir: Base directory for resolving relative paths
+            workspace_dir: Security boundary for filesystem access
             allow_full_access: If False, restrict reads to workspace directory
             permission_engine: If provided, use capability-based permission checks
+            relative_root_dir: Optional base directory for resolving relative paths
         """
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.relative_root_dir = (
+            Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
+        )
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
 
@@ -252,10 +286,17 @@ class ReadTool(Tool):
     async def execute(self, path: str, offset: int | None = None, limit: int | None = None) -> ToolResult:
         """Execute read file."""
         try:
-            file_path = Path(path)
-            # Resolve relative paths relative to workspace_dir
-            if not file_path.is_absolute():
-                file_path = self.workspace_dir / file_path
+            # Resolve relative paths from the active project/artifact root while
+            # retaining workspace_dir as the filesystem security boundary.
+            file_path = _resolve_from_active_root(
+                path,
+                workspace_dir=self.workspace_dir,
+                relative_root_dir=self.relative_root_dir,
+            )
+            if not file_path.exists() and not Path(path).is_absolute():
+                workspace_candidate = self.workspace_dir / path
+                if workspace_candidate.exists():
+                    file_path = workspace_candidate
 
             # Path validation
             if self._perm:
@@ -342,16 +383,25 @@ class ReadTool(Tool):
 class WriteTool(Tool):
     """Write content to a file."""
 
-    def __init__(self, workspace_dir: str = ".", allow_full_access: bool = True,
-                 permission_engine: PermissionEngine | None = None):
+    def __init__(
+        self,
+        workspace_dir: str = ".",
+        allow_full_access: bool = True,
+        permission_engine: PermissionEngine | None = None,
+        relative_root_dir: str | None = None,
+    ):
         """Initialize WriteTool with workspace directory.
 
         Args:
-            workspace_dir: Base directory for resolving relative paths
+            workspace_dir: Security boundary for filesystem access
             allow_full_access: If False, restrict writes to workspace directory
             permission_engine: If provided, use capability-based permission checks
+            relative_root_dir: Optional base directory for resolving relative paths
         """
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.relative_root_dir = (
+            Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
+        )
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
 
@@ -398,10 +448,12 @@ class WriteTool(Tool):
     async def execute(self, path: str, content: str) -> ToolResult:
         """Execute write file."""
         try:
-            file_path = Path(path)
-            # Resolve relative paths relative to workspace_dir
-            if not file_path.is_absolute():
-                file_path = self.workspace_dir / file_path
+            # Resolve relative paths from the active project/artifact root.
+            file_path = _resolve_from_active_root(
+                path,
+                workspace_dir=self.workspace_dir,
+                relative_root_dir=self.relative_root_dir,
+            )
 
             # Path validation
             if self._perm:
@@ -448,10 +500,18 @@ class WriteTool(Tool):
 class AppendTool(Tool):
     """Append content to a file."""
 
-    def __init__(self, workspace_dir: str = ".", allow_full_access: bool = True,
-                 permission_engine: PermissionEngine | None = None):
+    def __init__(
+        self,
+        workspace_dir: str = ".",
+        allow_full_access: bool = True,
+        permission_engine: PermissionEngine | None = None,
+        relative_root_dir: str | None = None,
+    ):
         """Initialize AppendTool with workspace directory."""
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.relative_root_dir = (
+            Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
+        )
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
 
@@ -494,9 +554,11 @@ class AppendTool(Tool):
     async def execute(self, path: str, content: str) -> ToolResult:
         """Execute append file."""
         try:
-            file_path = Path(path)
-            if not file_path.is_absolute():
-                file_path = self.workspace_dir / file_path
+            file_path = _resolve_from_active_root(
+                path,
+                workspace_dir=self.workspace_dir,
+                relative_root_dir=self.relative_root_dir,
+            )
 
             if self._perm:
                 decision = self._perm.check(
@@ -540,16 +602,25 @@ class AppendTool(Tool):
 class EditTool(Tool):
     """Edit file by replacing text."""
 
-    def __init__(self, workspace_dir: str = ".", allow_full_access: bool = True,
-                 permission_engine: PermissionEngine | None = None):
+    def __init__(
+        self,
+        workspace_dir: str = ".",
+        allow_full_access: bool = True,
+        permission_engine: PermissionEngine | None = None,
+        relative_root_dir: str | None = None,
+    ):
         """Initialize EditTool with workspace directory.
 
         Args:
-            workspace_dir: Base directory for resolving relative paths
+            workspace_dir: Security boundary for filesystem access
             allow_full_access: If False, restrict edits to workspace directory
             permission_engine: If provided, use capability-based permission checks
+            relative_root_dir: Optional base directory for resolving relative paths
         """
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.relative_root_dir = (
+            Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
+        )
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
 
@@ -589,10 +660,16 @@ class EditTool(Tool):
     async def execute(self, path: str, old_str: str, new_str: str) -> ToolResult:
         """Execute edit file."""
         try:
-            file_path = Path(path)
-            # Resolve relative paths relative to workspace_dir
-            if not file_path.is_absolute():
-                file_path = self.workspace_dir / file_path
+            # Resolve relative paths from the active project/artifact root.
+            file_path = _resolve_from_active_root(
+                path,
+                workspace_dir=self.workspace_dir,
+                relative_root_dir=self.relative_root_dir,
+            )
+            if not file_path.exists() and not Path(path).is_absolute():
+                workspace_candidate = self.workspace_dir / path
+                if workspace_candidate.exists():
+                    file_path = workspace_candidate
 
             # Path validation
             if self._perm:

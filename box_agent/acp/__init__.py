@@ -669,12 +669,7 @@ class BoxACPAgent:
 
     def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
         """Update all live holders of the current system prompt."""
-        agent.system_prompt = system_prompt
-        if agent.messages and agent.messages[0].role == "system":
-            agent.messages[0] = Message(role="system", content=system_prompt)
-        for tool in agent.tools.values():
-            if hasattr(tool, "set_parent_system_prompt"):
-                tool.set_parent_system_prompt(system_prompt)
+        agent.set_system_prompt(system_prompt)
 
     def _strip_auto_loaded_skills(self, system_prompt: str) -> str:
         return strip_auto_loaded_skills(system_prompt)

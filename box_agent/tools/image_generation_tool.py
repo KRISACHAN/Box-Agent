@@ -283,8 +283,9 @@ class GenerateImageTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Generate or edit a bitmap image with the host-configured image service, save it inside the "
-            "workspace, and return a local path for use in HTML/PPTX assets. Use text-to-image when the user "
+            "Generate or edit a bitmap image with the host-configured image service, save it inside "
+            "the active project/artifact root, and return a local path for use in HTML/PPTX assets. "
+            "Use text-to-image when the user "
             "asks for a new image. Use image-to-image with reference_images when the user asks to modify, "
             "redraw, restyle, or preserve a supplied image/logo/sketch. Use for PPT image_plan items marked "
             "`generate`. If the service is not configured, report the blocked image generation instead of "
@@ -303,7 +304,11 @@ class GenerateImageTool(Tool):
                 },
                 "output_path": {
                     "type": "string",
-                    "description": "Workspace-relative image path, for example assets/generated/slide-03-hero.png.",
+                    "description": (
+                        "Project/artifact-root-relative image path, for example "
+                        "assets/generated/slide-03-hero.png. In output mode the tool already "
+                        "targets the current output root; do not prefix the path with output/."
+                    ),
                 },
                 "size": {
                     "type": "string",
@@ -466,16 +471,18 @@ class GenerateImageTool(Tool):
             target.write_bytes(image_bytes)
 
             rel_path = self._display_path(target)
+            artifact_rel_path = self._artifact_display_path(target)
             info = {
                 "type": "artifact",
                 "kind": "image",
                 "filename": target.name,
                 "rel_path": rel_path,
+                "artifact_rel_path": artifact_rel_path,
                 "abs_path": str(target),
                 "uri": target.as_uri(),
                 "mime": mime_type,
                 "size_bytes": len(image_bytes),
-                "path": rel_path,
+                "path": artifact_rel_path,
                 "absolute_path": str(target),
                 "mime_type": mime_type,
                 "bytes": len(image_bytes),
@@ -485,7 +492,7 @@ class GenerateImageTool(Tool):
                 "requested_width": requested_width,
                 "requested_height": requested_height,
                 "image_mode": "image_to_image" if edit_requested else "text_to_image",
-                "reference_images": [self._display_path(path) for path in reference_paths],
+                "reference_images": [self._artifact_display_path(path) for path in reference_paths],
                 "alt_text": alt_text or "",
                 "metadata": metadata or {},
                 "watermark": watermark_status,
@@ -493,7 +500,7 @@ class GenerateImageTool(Tool):
             return ToolResult(
                 success=True,
                 content=(
-                    f"Generated image saved to [{rel_path}]\n"
+                    f"Generated image saved to [{artifact_rel_path}]\n"
                     f"mime_type: {mime_type}\n"
                     f"bytes: {len(image_bytes)}\n"
                     f"watermark: {'applied' if watermark_status.get('applied') else 'not applied'}"
@@ -512,7 +519,21 @@ class GenerateImageTool(Tool):
     def _resolve_output_path(self, output_path: str) -> Path:
         path = Path(output_path).expanduser()
         if not path.is_absolute():
-            path = self.output_dir / path
+            # Accept either the canonical artifact-relative form
+            # (assets/generated/x.png) or the workspace-relative form returned
+            # by older runtimes (output/assets/generated/x.png) without nesting
+            # the artifact root twice.
+            try:
+                output_from_workspace = self.output_dir.relative_to(self.workspace_dir)
+            except ValueError:
+                output_from_workspace = None
+            if (
+                output_from_workspace
+                and path.parts[: len(output_from_workspace.parts)] == output_from_workspace.parts
+            ):
+                path = self.workspace_dir / path
+            else:
+                path = self.output_dir / path
         return path
 
     def _check_write_permission(self, target: Path) -> ToolResult | None:
@@ -537,7 +558,9 @@ class GenerateImageTool(Tool):
     def _resolve_readable_path(self, image_path: str) -> Path:
         path = Path(image_path).expanduser()
         if not path.is_absolute():
-            path = self.workspace_dir / path
+            output_candidate = self.output_dir / path
+            workspace_candidate = self.workspace_dir / path
+            path = output_candidate if output_candidate.exists() else workspace_candidate
         path = path.absolute()
 
         if self._perm:
@@ -757,3 +780,9 @@ class GenerateImageTool(Tool):
                 return str(target.relative_to(self.output_dir))
             except ValueError:
                 return str(target)
+
+    def _artifact_display_path(self, target: Path) -> str:
+        try:
+            return str(target.relative_to(self.output_dir))
+        except ValueError:
+            return self._display_path(target)

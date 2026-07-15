@@ -8,7 +8,9 @@ delegating to the shared execution core.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -42,7 +44,12 @@ from .logger import AgentLogger
 from .loop_guards import CompletionGate
 from .schema import Message
 from .tools.base import Tool, ToolResult
+from .tools.skill_preload import build_active_skills_prompt
 from .utils import calculate_display_width
+
+
+_log = logging.getLogger(__name__)
+_ACTIVE_SKILL_TOKEN_BUDGET = 32_000
 
 
 # ANSI color codes
@@ -462,6 +469,10 @@ class Agent:
             system_prompt = system_prompt + workspace_info
 
         self.system_prompt = system_prompt
+        self._active_skill_prompts: dict[str, str] = {}
+        self._active_skill_hashes: dict[str, str] = {}
+        self._active_skill_load_order: dict[str, int] = {}
+        self._active_skill_sequence = 0
         for tool in self.tools.values():
             if hasattr(tool, "set_parent_system_prompt"):
                 tool.set_parent_system_prompt(system_prompt)
@@ -480,6 +491,84 @@ class Agent:
         self.goal: GoalState | None = None
         self.tools["goal_read"] = _GoalReadTool(self)
         self.tools["goal_write"] = _GoalWriteTool(self)
+
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Update the live system prompt while preserving active skills."""
+        rendered_prompt = build_active_skills_prompt(
+            system_prompt,
+            self._active_skill_prompts,
+        )
+        self.system_prompt = rendered_prompt
+        if self.messages and self.messages[0].role == "system":
+            self.messages[0] = Message(role="system", content=rendered_prompt)
+        for tool in self.tools.values():
+            if hasattr(tool, "set_parent_system_prompt"):
+                tool.set_parent_system_prompt(rendered_prompt)
+
+    def activate_skill_instructions(self, skill_name: str, skill_prompt: str) -> None:
+        """Pin an on-demand skill in the managed system-prompt tail block."""
+        normalized_name = skill_name.strip()
+        if not normalized_name or not skill_prompt.strip():
+            return
+        prompt_hash = hashlib.sha256(skill_prompt.encode("utf-8")).hexdigest()
+        if self._active_skill_hashes.get(normalized_name) == prompt_hash:
+            return
+        self._active_skill_prompts[normalized_name] = skill_prompt
+        self._active_skill_hashes[normalized_name] = prompt_hash
+        self._active_skill_sequence += 1
+        self._active_skill_load_order[normalized_name] = self._active_skill_sequence
+        self.set_system_prompt(self.system_prompt)
+        diagnostics = self.active_skill_diagnostics()
+        if diagnostics["budget_exceeded"]:
+            _log.warning(
+                "active skill prompt budget exceeded: names=%s estimated_tokens=%d budget=%d; "
+                "instructions were preserved without silent truncation",
+                diagnostics["names"],
+                diagnostics["estimated_tokens"],
+                diagnostics["token_budget"],
+            )
+
+    def deactivate_skill_instructions(self, skill_name: str) -> bool:
+        """Explicitly remove one on-demand skill from the managed prompt tail."""
+        normalized_name = skill_name.strip()
+        if normalized_name not in self._active_skill_prompts:
+            return False
+        del self._active_skill_prompts[normalized_name]
+        self._active_skill_hashes.pop(normalized_name, None)
+        self._active_skill_load_order.pop(normalized_name, None)
+        self.set_system_prompt(self.system_prompt)
+        return True
+
+    def clear_active_skill_instructions(self) -> None:
+        """Clear on-demand skills at an explicit task/session boundary."""
+        if not self._active_skill_prompts:
+            return
+        self._active_skill_prompts.clear()
+        self._active_skill_hashes.clear()
+        self._active_skill_load_order.clear()
+        self.set_system_prompt(self.system_prompt)
+
+    def active_skill_diagnostics(self) -> dict[str, object]:
+        """Return metadata-only prompt budget diagnostics (never skill text)."""
+        ordered_names = tuple(
+            sorted(
+                self._active_skill_prompts,
+                key=lambda name: self._active_skill_load_order.get(name, 0),
+            )
+        )
+        estimated_tokens = sum(
+            max(1, len(self._active_skill_prompts[name]) // 4)
+            for name in ordered_names
+        )
+        return {
+            "names": ordered_names,
+            "hashes": tuple(
+                (name, self._active_skill_hashes[name]) for name in ordered_names
+            ),
+            "estimated_tokens": estimated_tokens,
+            "token_budget": _ACTIVE_SKILL_TOKEN_BUDGET,
+            "budget_exceeded": estimated_tokens > _ACTIVE_SKILL_TOKEN_BUDGET,
+        }
 
     def add_user_message(self, content: str):
         """Add a user message to history."""
@@ -680,6 +769,7 @@ class Agent:
             truncated_tool_call_boost_cap=self.truncated_tool_call_boost_cap,
             artifact_detection_enabled=artifact_detection_enabled,
             cache_fingerprint_context=self.cache_fingerprint_context,
+            active_skill_activator=self.activate_skill_instructions,
         ):
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):
@@ -749,7 +839,22 @@ class Agent:
                     f"\n{Colors.BRIGHT_YELLOW}📊 Token usage - Local estimate: {est}, "
                     f"API reported: {api}, Limit: {limit}{Colors.RESET}"
                 )
-                print(f"{Colors.BRIGHT_YELLOW}🔄 Triggering message history summarization...{Colors.RESET}")
+                if event.mode == "fallback":
+                    print(
+                        f"{Colors.BRIGHT_YELLOW}⚠️ Summary provider failed; "
+                        "using a bounded deterministic history record."
+                        f"{Colors.RESET}"
+                    )
+                elif event.mode == "blocked":
+                    print(
+                        f"{Colors.BRIGHT_RED}⛔ Context remains above the safe limit "
+                        f"after compaction ({event.estimated_after} tokens).{Colors.RESET}"
+                    )
+                else:
+                    print(
+                        f"{Colors.BRIGHT_YELLOW}🔄 Message history compacted to "
+                        f"approximately {event.estimated_after} tokens.{Colors.RESET}"
+                    )
 
             case StepStart(step=s, max_steps=mx):
                 BOX_WIDTH = 58

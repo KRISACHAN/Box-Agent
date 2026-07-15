@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
-from box_agent.tools import BashTool, EditTool, ReadTool, WriteTool, add_workspace_tools
+from box_agent.tools import (
+    AppendTool,
+    BashTool,
+    EditTool,
+    ReadTool,
+    WriteTool,
+    add_workspace_tools,
+)
 from box_agent.tools.file_tools import truncate_text_by_tokens
 
 
@@ -144,6 +151,27 @@ async def test_write_tool_blocks_pptx_skipcheck_exporter():
         assert not result.success
         assert "PPTX HTML self-check bypass blocked" in result.error
         assert not file_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_append_tool_allows_theme_css_after_canonical_pptx_comments(tmp_path):
+    file_path = tmp_path / "common.css"
+    file_path.write_text(
+        "/* rejected by html_self_check.js / html_to_editable_pptx.js; "
+        "everything below is yours to replace */\n"
+        ".slide { width: 1920px; height: 1080px; }\n",
+        encoding="utf-8",
+    )
+
+    result = await AppendTool().execute(
+        path=str(file_path),
+        content=".theme-dark { background: #05070d; }\n",
+    )
+
+    assert result.success, result.error
+    assert file_path.read_text(encoding="utf-8").endswith(
+        ".theme-dark { background: #05070d; }\n"
+    )
 
 
 @pytest.mark.asyncio

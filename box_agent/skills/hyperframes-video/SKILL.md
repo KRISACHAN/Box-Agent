@@ -85,19 +85,19 @@ When changing the composition id, change the timeline key to exactly match it.
 
 ## Workflow
 
-1. Create a project folder, usually `output/hyperframes-video` or another clear artifact path.
+1. Create a project folder, usually `hyperframes-video` or another clear artifact path under the active artifact root.
 2. Copy the template:
 
 ```bash
-mkdir -p output/hyperframes-video
-cp -R "$HYPERFRAMES_TEMPLATE_DIR"/. output/hyperframes-video/
+mkdir -p hyperframes-video
+cp -R "$HYPERFRAMES_TEMPLATE_DIR"/. hyperframes-video/
 ```
 
 3. Edit the copied HTML/CSS/JS for the user's creative brief. Keep all `data-*` composition fields and timeline registration intact. For the first successful render, favor a compact 4-6 scene composition that can be written as one complete file.
 4. Run checks from inside the project folder:
 
 ```bash
-cd output/hyperframes-video
+cd hyperframes-video
 "$BOX_AGENT_NODE" "$HYPERFRAMES_RUNNER_PATH" inspect .
 ```
 

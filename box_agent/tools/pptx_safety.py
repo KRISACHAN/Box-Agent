@@ -12,6 +12,8 @@ _BYPASS_ERROR = (
     "Editable PPTX export: BLOCKED (HTML self-check failed)."
 )
 
+_NON_EXECUTABLE_STYLESHEET_SUFFIXES = {".css", ".less", ".sass", ".scss"}
+
 
 def _has_skipcheck_name(text: str) -> bool:
     return bool(re.search(r"skip[-_ ]?check|skipcheck|bypass", text, re.IGNORECASE))
@@ -73,7 +75,11 @@ def detect_pptx_self_check_bypass(path: str | None, text: str) -> str | None:
     DOM-to-PPTX bundle directly after self-check fails. Normal inspection of the
     official exporter remains allowed.
     """
-    path_text = str(Path(path).name if path else "")
+    file_path = Path(path) if path else None
+    if file_path and file_path.suffix.lower() in _NON_EXECUTABLE_STYLESHEET_SUFFIXES:
+        return None
+
+    path_text = str(file_path.name if file_path else "")
     combined = f"{path_text}\n{text}"
 
     if _has_skipcheck_name(combined) and _mentions_pptx_exporter(combined):
