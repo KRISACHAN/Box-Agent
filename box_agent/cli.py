@@ -56,6 +56,7 @@ from box_agent.tools.setup import (
     SANDBOX_INFO_PROMPT,
     add_workspace_tools,
     await_mcp_tools,
+    build_file_delivery_prompt,
     initialize_base_tools,
     register_mcp_tools,
 )
@@ -1932,6 +1933,19 @@ async def run_agent(
     tools, skill_loader, mcp_task, _skill_task = await initialize_base_tools(
         config, memory_manager=memory_mgr, llm=llm_client
     )
+    cli_preloaded_skill_hashes: dict[str, str] = {}
+    if skill_loader:
+        from box_agent.tools.skill_tool import GetSkillTool
+
+        tools = [
+            GetSkillTool(
+                skill_loader,
+                preloaded_skill_hashes=cli_preloaded_skill_hashes,
+            )
+            if isinstance(tool, GetSkillTool)
+            else tool
+            for tool in tools
+        ]
 
     # 4. Add workspace-dependent tools
     non_interactive = task is not None
@@ -2016,6 +2030,11 @@ async def run_agent(
     else:
         # Remove placeholder if sandbox not enabled
         system_prompt = system_prompt.replace("{SANDBOX_INFO}", "")
+
+    system_prompt = system_prompt.replace(
+        "{FILE_DELIVERY_INFO}",
+        build_file_delivery_prompt(use_output_dir=True),
+    )
 
     system_prompt = f"{system_prompt.rstrip()}\n\n{build_skill_runtime_prompt(skill_runtime_context)}"
 
@@ -2134,6 +2153,8 @@ async def run_agent(
             existing_skill_names=cli_preloaded_skill_names,
         )
         cli_preloaded_skill_names[:] = list(result.loaded_names)
+        cli_preloaded_skill_hashes.clear()
+        cli_preloaded_skill_hashes.update(result.loaded_skill_hashes)
         _sync_cli_cache_fingerprint_context()
         for missing_name in result.missing_names:
             print(f"{Colors.YELLOW}⚠️  Skill preload target not found: {missing_name}{Colors.RESET}")

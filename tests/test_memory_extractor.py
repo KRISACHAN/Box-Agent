@@ -91,7 +91,7 @@ async def test_extract_core_additions_write_memory_md(mgr: MemoryManager):
     messages = [
         Message(role="user", content="今天天气怎么样"),
         Message(role="assistant", content="你想查哪个城市的天气？"),
-        Message(role="user", content="我在北京"),
+        Message(role="user", content="记住我在北京"),
     ]
 
     result = await extractor.maybe_extract(messages, "loop_end")
@@ -112,7 +112,7 @@ async def test_extract_core_additions_dedup_and_filter_context_duplicate(mgr: Me
         '"additions": [{"text": "- User\\u0027s default city for local queries is Beijing", "topic": "user_profile"}], '
         '"merges": []}',
     )
-    messages = [Message(role="user", content="我在北京")]
+    messages = [Message(role="user", content="记住我在北京")]
 
     await extractor.maybe_extract(messages, "loop_end")
 
@@ -131,7 +131,7 @@ async def test_extract_merges(mgr: MemoryManager):
         '{"additions": [], "merges": [{"old": "- user name is Alice", "new": "- user name is Alice Zhang"}]}',
     )
     messages = [
-        Message(role="user", content="Actually my full name is Alice Zhang"),
+        Message(role="user", content="Remember that my full name is Alice Zhang"),
         Message(role="assistant", content="Updated!"),
     ]
 
@@ -162,7 +162,7 @@ async def test_extract_additions_dedup_against_core(mgr: MemoryManager):
         mgr,
         '{"additions": ["- user: Alice", "- project deadline: June"], "merges": []}',
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember that I prefer concise updates")]
 
     await extractor.maybe_extract(messages, "loop_end")
     ctx = mgr.read_context()
@@ -179,7 +179,7 @@ async def test_extract_additions_dedup_against_context(mgr: MemoryManager):
         mgr,
         '{"additions": ["- q2 goal: dashboard", "- weekly report format: progress/issues/plan"], "merges": []}',
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember this weekly report preference")]
 
     await extractor.maybe_extract(messages, "loop_end")
     ctx = mgr.read_context()
@@ -196,7 +196,7 @@ async def test_context_only_extraction_does_not_touch_core(mgr: MemoryManager):
         mgr,
         '{"additions": ["- auto extracted fact"], "merges": []}',
     )
-    messages = [Message(role="user", content="Something interesting")]
+    messages = [Message(role="user", content="Remember this context-only fact")]
 
     await extractor.maybe_extract(messages, "loop_end")
     assert mgr.read_core() == "- user wrote this manually"
@@ -215,7 +215,7 @@ async def test_cooldown_prevents_repeated_extraction(mgr: MemoryManager):
         cooldown=9999,
         step_interval=1,
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember this fenced-output fact")]
 
     assert await extractor.maybe_extract(messages, "loop_end") is True
     assert await extractor.maybe_extract(messages, "step_interval") is False
@@ -230,15 +230,15 @@ async def test_step_interval_counting(mgr: MemoryManager):
         cooldown=0,
         step_interval=3,
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember this Python preference")]
 
     assert await extractor.maybe_extract(messages, "step_interval") is False
     assert await extractor.maybe_extract(messages, "step_interval") is False
     assert await extractor.maybe_extract(messages, "step_interval") is True
 
 
-async def test_loop_end_ignores_cooldown(mgr: MemoryManager):
-    """loop_end trigger always runs regardless of cooldown."""
+async def test_loop_end_ignores_cooldown_for_high_signal_turns(mgr: MemoryManager):
+    """loop_end can run despite cooldown, but only for high-signal turns."""
     from box_agent.schema import Message
 
     extractor = _make_extractor(
@@ -246,10 +246,23 @@ async def test_loop_end_ignores_cooldown(mgr: MemoryManager):
         '{"additions": ["- fact"], "merges": []}',
         cooldown=9999,
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember that I prefer Python")]
 
     assert await extractor.maybe_extract(messages, "loop_end") is True
     assert await extractor.maybe_extract(messages, "loop_end") is True
+
+
+async def test_loop_end_skips_low_signal_turns(mgr: MemoryManager):
+    from box_agent.schema import Message
+
+    extractor = _make_extractor(
+        mgr,
+        '{"additions": ["- fact"], "merges": []}',
+        cooldown=0,
+    )
+
+    assert await extractor.maybe_extract([Message(role="user", content="hi")], "loop_end") is False
+    assert mgr.read_context() == ""
 
 
 # ── Edge cases ────────────────────────────────────────────────
@@ -259,7 +272,7 @@ async def test_invalid_json_from_llm(mgr: MemoryManager):
     from box_agent.schema import Message
 
     extractor = _make_extractor(mgr, "This is not JSON at all")
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember this preference")]
 
     result = await extractor.maybe_extract(messages, "loop_end")
     assert result is True
@@ -273,7 +286,7 @@ async def test_extract_with_markdown_fences(mgr: MemoryManager):
         mgr,
         '```json\n{"additions": ["- from fenced output"], "merges": []}\n```',
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember this name preference")]
 
     await extractor.maybe_extract(messages, "loop_end")
     assert "from fenced output" in mgr.read_context()
@@ -287,7 +300,7 @@ async def test_merge_ambiguous_skipped(mgr: MemoryManager):
         mgr,
         '{"additions": [], "merges": [{"old": "- uses Python", "new": "- uses Python 3.12"}]}',
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember this Python preference")]
 
     await extractor.maybe_extract(messages, "loop_end")
     ctx = mgr.read_context()
@@ -303,7 +316,7 @@ async def test_merge_substring_does_not_match(mgr: MemoryManager):
         mgr,
         '{"additions": [], "merges": [{"old": "Alice", "new": "Bob"}]}',
     )
-    messages = [Message(role="user", content="test")]
+    messages = [Message(role="user", content="Remember this name preference")]
 
     await extractor.maybe_extract(messages, "loop_end")
     assert "Alice Zhang" in mgr.read_context()
@@ -324,7 +337,7 @@ async def test_extract_additions_routed_to_topics(mgr: MemoryManager):
         '{"text": "- prefers Chinese replies", "topic": "preferences"}'
         '], "merges": []}',
     )
-    messages = [Message(role="user", content="hi")]
+    messages = [Message(role="user", content="Remember that I am a backend engineer")]
 
     await extractor.maybe_extract(messages, "loop_end")
 
@@ -341,7 +354,7 @@ async def test_extract_unknown_topic_falls_back_to_general(mgr: MemoryManager):
         mgr,
         '{"additions": [{"text": "- some fact", "topic": "made_up_label"}], "merges": []}',
     )
-    messages = [Message(role="user", content="hi")]
+    messages = [Message(role="user", content="Remember this durable fact")]
 
     await extractor.maybe_extract(messages, "loop_end")
 
@@ -357,7 +370,7 @@ async def test_extract_string_additions_still_general(mgr: MemoryManager):
         mgr,
         '{"additions": ["- legacy style fact"], "merges": []}',
     )
-    messages = [Message(role="user", content="hi")]
+    messages = [Message(role="user", content="Remember this legacy style fact")]
 
     await extractor.maybe_extract(messages, "loop_end")
 

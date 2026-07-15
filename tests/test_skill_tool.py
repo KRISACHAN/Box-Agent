@@ -7,6 +7,7 @@ Tests for skill tools after Progressive Disclosure optimization:
 """
 
 import tempfile
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,40 @@ async def test_get_skill_tool(skill_loader):
     assert result.success
     assert "test-skill-0" in result.content
     assert "Test skill 0 description" in result.content
+    assert "Test skill 0 content" in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_skill_tool_returns_short_context_when_skill_is_preloaded(skill_loader):
+    skill = skill_loader.get_skill("test-skill-0")
+    assert skill is not None
+    skill_prompt = skill.to_prompt()
+    tool = GetSkillTool(
+        skill_loader,
+        preloaded_skill_hashes={
+            skill.name: sha256(skill_prompt.encode("utf-8")).hexdigest()
+        },
+    )
+
+    result = await tool.execute(skill_name=skill.name)
+
+    assert result.success
+    assert "already preloaded" in result.content
+    assert result.model_context == result.content
+    assert "Test skill 0 content" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_skill_tool_returns_full_content_when_preloaded_skill_changed(skill_loader):
+    tool = GetSkillTool(
+        skill_loader,
+        preloaded_skill_hashes={"test-skill-0": "outdated"},
+    )
+
+    result = await tool.execute(skill_name="test-skill-0")
+
+    assert result.success
+    assert result.model_context is None
     assert "Test skill 0 content" in result.content
 
 

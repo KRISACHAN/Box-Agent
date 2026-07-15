@@ -297,14 +297,30 @@ def test_recall_only_core(mgr: MemoryManager):
     block = mgr.recall()
     assert "--- MEMORY START ---" in block
     assert "always use English" in block
-    assert "project context" not in block
+    assert "[Memory Search Routing]" in block
+    assert "project context that should NOT be recalled" not in block
 
 
-def test_recall_does_not_include_context(mgr: MemoryManager):
-    """Context memory must not appear in recall — only via search."""
+def test_recall_includes_routing_summary_without_context_content(mgr: MemoryManager):
+    """Recall may include the routing index, but not full context entries."""
     mgr.write_context("- secret context")
     block = mgr.recall()
-    assert block == ""  # No core memory → empty
+    assert "[Memory Search Routing]" in block
+    assert "Use `memory_search`" in block
+    assert "secret context" not in block
+
+
+def test_memory_summary_file_routes_without_migrating_legacy(memory_dir):
+    legacy = memory_dir / "CONTEXT.md"
+    legacy.write_text("- old workflow uses make test\n", encoding="utf-8")
+
+    mgr = MemoryManager(memory_dir=str(memory_dir))
+
+    summary = mgr.read_memory_summary()
+    assert mgr.memory_summary_file.exists()
+    assert "Legacy context: present" in summary
+    assert "old workflow uses make test" not in summary
+    assert mgr.search("make test") == ["- old workflow uses make test"]
 
 
 # ── build_memory_block ────────────────────────────────────────
@@ -327,13 +343,8 @@ def test_build_memory_block_core_only():
     assert "core item" in block
 
 
-def test_auto_match_context_bumps_hits_and_last_used(mgr: MemoryManager):
-    """auto_match_context must increment hits/last_used on matched entries.
-
-    Without this side effect, prompt-time recall never accumulates evidence
-    that an entry is useful, and the promotion gate (hit_threshold) is
-    permanently unreachable.
-    """
+def test_auto_match_context_does_not_bump_hits_or_last_used(mgr: MemoryManager):
+    """auto_match_context is a weak hint, not promotion evidence."""
     from box_agent.memory import _new_entry, write_context_file
 
     matched = _new_entry("- 科技公司入职培训PPT 已完成 render 导出")
@@ -345,10 +356,8 @@ def test_auto_match_context_bumps_hits_and_last_used(mgr: MemoryManager):
     assert results, "expected at least one auto-match hit"
 
     entries = {e.id: e for e in mgr._read_context_entries()}
-    assert entries[matched.id].hits == 1
-    assert entries[matched.id].last_used >= original_last_used
-    assert entries[matched.id].last_used != ""
-    # untouched entry stays at 0 hits.
+    assert entries[matched.id].hits == 0
+    assert entries[matched.id].last_used == original_last_used
     assert entries[unmatched.id].hits == 0
 
 

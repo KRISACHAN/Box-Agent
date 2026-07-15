@@ -4,7 +4,8 @@ Directory layout::
 
     ~/.box-agent/memory/
     ├── MEMORY.md          # Core memory (always injected into system prompt)
-    └── context/           # Topic-sharded searchable context (retrieved on demand)
+    ├── memory_summary.md  # Lightweight routing summary for deciding memory_search
+    └── v2/experiences/    # Topic-sharded searchable context (retrieved on demand)
 """
 
 from __future__ import annotations
@@ -207,6 +208,12 @@ def write_context_file(path: Path, entries: list[ContextEntry]) -> None:
 
 _TOPIC_SLUG_FORBIDDEN_RE = re.compile(r"[\s/\\:*?\"<>|.,;]+")
 _TOPIC_INDEX_FILENAME = "_index.json"
+_V2_DIRNAME = "v2"
+_EXPERIENCES_DIRNAME = "experiences"
+_V2_STATE_FILENAME = "state.json"
+_MEMORY_SUMMARY_FILENAME = "memory_summary.md"
+_MEMORY_SUMMARY_MAX_TOPICS = 12
+_MEMORY_SUMMARY_MAX_TERMS_PER_TOPIC = 16
 
 
 def _slugify_topic(text: str, max_len: int = 64) -> str:
@@ -452,7 +459,12 @@ class MemoryManager:
       Always injected into the system prompt via ``recall()``.
       Written by LLM via ``memory_write(category="core")``.
 
-    - **context/<topic>.md** — project context, task patterns, behavioral feedback.
+    - **memory_summary.md** — compact routing guide injected with core memory so
+      the model can decide when ``memory_search`` is worth calling without an
+      extra memory model pass.
+
+    - **v2/experiences/<topic>.md** — project context, task patterns,
+      behavioral feedback.
       Retrieved on demand via topic-routed ``memory_search``.
       Written by ``memory_write(category="context")`` and ``MemoryExtractor``.
     """
@@ -467,11 +479,20 @@ class MemoryManager:
         self.memory_dir = Path(memory_dir).expanduser()
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.dedup_jaccard_threshold = dedup_jaccard_threshold
-        self._context_dir = self.memory_dir / "context"
+
+        # v2 is an overlay, not a migration.  New context/experience writes go
+        # here; old context files remain untouched and are searched only as a
+        # fallback for explicit memory_search calls.
+        self._legacy_context_dir = self.memory_dir / "context"
+        self._v2_dir = self.memory_dir / _V2_DIRNAME
+        self._context_dir = self._v2_dir / _EXPERIENCES_DIRNAME
         self._context_dir.mkdir(parents=True, exist_ok=True)
         self._topic_store = TopicStore(self._context_dir)
-        self._purge_legacy_context_file()
+        self._legacy_topic_store = TopicStore(self._legacy_context_dir)
+
+        self._ensure_v2_state()
         self._topic_store.ensure_index()
+        self.refresh_memory_summary()
 
     # ── File paths ──────────────────────────────────────────────
 
@@ -482,8 +503,18 @@ class MemoryManager:
 
     @property
     def context_dir(self) -> Path:
-        """Directory holding per-topic context markdown files."""
+        """Directory holding v2 per-topic experience markdown files."""
         return self._context_dir
+
+    @property
+    def memory_summary_file(self) -> Path:
+        """memory_summary.md — lightweight routing guide for searchable memory."""
+        return self.memory_dir / _MEMORY_SUMMARY_FILENAME
+
+    @property
+    def legacy_context_dir(self) -> Path:
+        """Read-only fallback directory for pre-v2 context markdown files."""
+        return self._legacy_context_dir
 
     @property
     def topic_store(self) -> "TopicStore":
@@ -492,12 +523,17 @@ class MemoryManager:
 
     @property
     def context_file(self) -> Path:
-        """Backward-compat shim: path of the ``general`` topic file.
+        """Backward-compat shim: path of the v2 ``general`` topic file.
 
         Prefer :meth:`topic_store` / :meth:`read_all_context_entries` for new
-        code. Direct reads/writes here only affect the default topic.
+        code. Direct reads/writes here only affect the default v2 topic.
         """
         return self._context_dir / "general.md"
+
+    @property
+    def legacy_context_file(self) -> Path:
+        """Fallback path for old monolithic/top-level CONTEXT.md."""
+        return self.memory_dir / "CONTEXT.md"
 
     @property
     def archive_file(self) -> Path:
@@ -508,6 +544,11 @@ class MemoryManager:
     def trash_dir(self) -> Path:
         """Soft-delete root for purged entries. Lazy-created on first write."""
         return self.memory_dir / "trash"
+
+    @property
+    def v2_state_file(self) -> Path:
+        """Marker describing the v2 no-migration cutover policy."""
+        return self._v2_dir / _V2_STATE_FILENAME
 
     # ── Core memory (MEMORY.md) ─────────────────────────────────
 
@@ -563,8 +604,8 @@ class MemoryManager:
     # ── Context memory (CONTEXT.md) ─────────────────────────────
 
     def read_context(self) -> str:
-        """Read CONTEXT.md as plain text (entries' content joined by newline)."""
-        entries = self._read_context_entries()
+        """Read v2 context plus legacy fallback as joined plain text."""
+        entries = self._read_context_entries() + self._read_legacy_context_entries()
         if not entries:
             return ""
         return "\n".join(e.content for e in entries).strip()
@@ -644,16 +685,31 @@ class MemoryManager:
         self._write_context_entries(existing_entries)
 
     def _read_context_entries(self) -> list[ContextEntry]:
-        """Parse all topic files into a flat entry list (or empty if none)."""
+        """Parse all v2 experience topic files into a flat entry list."""
         return self._topic_store.read_all()
+
+    def _read_legacy_context_entries(self) -> list[ContextEntry]:
+        """Read pre-v2 context without mutating it.
+
+        Legacy entries are preserved for explicit search fallback only.  They do
+        not participate in auto-match, promotion, extraction writes, or
+        maintainer rewrites.
+        """
+        entries: list[ContextEntry] = []
+        entries.extend(self._legacy_topic_store.read_all())
+        if self.legacy_context_file.exists():
+            entries.extend(parse_context_file(self.legacy_context_file))
+        return entries
 
     def _write_context_entries(self, entries: list[ContextEntry]) -> None:
         """Persist *entries* across topic files."""
         self._topic_store.write_all(entries)
+        self.refresh_memory_summary()
 
     def _write_context_topic_entries(self, entries: list[ContextEntry]) -> None:
         """Persist entries for touched topics only."""
         self._topic_store.write_topics(entries)
+        self.refresh_memory_summary()
 
     def read_all_context_entries(self) -> list[ContextEntry]:
         """Public: read every context entry across all topics."""
@@ -662,41 +718,124 @@ class MemoryManager:
     def write_all_context_entries(self, entries: list[ContextEntry]) -> None:
         """Public: replace all context entries (sharded by ``entry.topic``)."""
         self._topic_store.write_all(entries)
+        self.refresh_memory_summary()
 
     def list_topics(self) -> list[str]:
         """Return the list of known topic slugs (excluding the JSON sidecar)."""
         return self._topic_store.list_topics()
 
     def read_context_topic(self, topic: str) -> str:
-        """Return the joined content of one topic, or empty if unknown."""
+        """Return the joined v2 content of one topic, or empty if unknown."""
         entries = self._topic_store.read_topic(topic)
         if not entries:
             return ""
         return "\n".join(e.content for e in entries).strip()
 
-    def _purge_legacy_context_file(self) -> None:
-        """Move pre-shard ``CONTEXT.md`` into trash on first run after upgrade.
+    def read_memory_summary(self) -> str:
+        """Return the generated memory routing summary, refreshing it first."""
+        return self.refresh_memory_summary()
 
-        Schema-change policy is wipe-on-upgrade — no migration. The legacy
-        file is parked under ``trash/<date>/CONTEXT.legacy.<HHMMSS>.md`` for
-        manual recovery in case anything important slipped through.
+    def refresh_memory_summary(self) -> str:
+        """Generate and persist a compact memory routing summary.
+
+        This file is an index, not a migration target.  It gives the model the
+        Codex-style decision boundary for when to call ``memory_search`` and a
+        small topic/term map for v2 experiences.  It never rewrites legacy
+        context files and it does not include full context entries.
         """
-        legacy = self.memory_dir / "CONTEXT.md"
-        if not legacy.exists():
-            return
-        # Only purge if the new layout is empty — otherwise the migration was
-        # presumably already handled and the legacy file is stray.
-        if any(self._context_dir.glob("*.md")):
+        summary = self._build_memory_summary()
+        try:
+            if summary:
+                current = self.memory_summary_file.read_text(encoding="utf-8") if self.memory_summary_file.exists() else ""
+                if current != summary:
+                    self.memory_summary_file.write_text(summary, encoding="utf-8")
+            elif self.memory_summary_file.exists():
+                current = self.memory_summary_file.read_text(encoding="utf-8")
+                empty_summary = self._empty_memory_summary()
+                if current != empty_summary:
+                    self.memory_summary_file.write_text(empty_summary, encoding="utf-8")
+        except OSError:
+            logger.exception("Failed to refresh memory_summary.md")
+        return summary
+
+    def _build_memory_summary(self) -> str:
+        topics = self._topic_store.list_topics()
+        legacy_present = self._has_legacy_context()
+        if not topics and not legacy_present:
+            return ""
+
+        lines = [
+            "# Memory Routing Summary",
+            "",
+            "Use `memory_search` when the current request may depend on saved user preferences, historical decisions, repo or workflow conventions, previously verified fixes, specific paths, recurring errors, or prior task experience.",
+            "Skip memory for clearly one-off simple questions, trivial rewrites, current time/date, or requests fully answered by the visible conversation.",
+            "",
+            "Search behavior:",
+            "- v2 experiences are searched first.",
+            "- Legacy context is read-only explicit-search fallback only; it is not auto-matched or promoted.",
+            "- Automatic matches are weak hints and do not count as promotion evidence.",
+            "",
+        ]
+
+        if topics:
+            index = self._topic_store.read_index()
+            lines.append("Searchable v2 experience topics:")
+            for slug in topics[:_MEMORY_SUMMARY_MAX_TOPICS]:
+                record = index.get(slug, {})
+                count = int(record.get("count", 0) or 0)
+                raw_terms = record.get("terms", [])
+                terms = [
+                    str(term)
+                    for term in raw_terms
+                    if isinstance(term, str) and term.strip()
+                ][:_MEMORY_SUMMARY_MAX_TERMS_PER_TOPIC]
+                term_text = ", ".join(terms) if terms else "no indexed terms"
+                lines.append(f"- `{slug}`: {count} entr{'y' if count == 1 else 'ies'}; terms: {term_text}")
+            if len(topics) > _MEMORY_SUMMARY_MAX_TOPICS:
+                lines.append(f"- ... {len(topics) - _MEMORY_SUMMARY_MAX_TOPICS} more topic(s) omitted from the routing summary.")
+            lines.append("")
+
+        if legacy_present:
+            lines.append("Legacy context: present. Use `memory_search` only when the summary or user request suggests older saved context may matter.")
+            lines.append("")
+
+        return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _empty_memory_summary() -> str:
+        return (
+            "# Memory Routing Summary\n\n"
+            "No searchable context memory is saved yet.\n"
+        )
+
+    def _has_legacy_context(self) -> bool:
+        if self.legacy_context_file.exists():
+            return True
+        if not self._legacy_context_dir.exists():
+            return False
+        return any(
+            p.is_file() and p.suffix == ".md" and not p.stem.startswith("_")
+            for p in self._legacy_context_dir.iterdir()
+        )
+
+    def _ensure_v2_state(self) -> None:
+        """Create a small marker for the no-migration v2 cutover."""
+        if self.v2_state_file.exists():
             return
         try:
-            now = datetime.now(timezone.utc)
-            day = now.strftime("%Y-%m-%d")
-            stamp = now.strftime("%H%M%S")
-            dest_dir = self.memory_dir / "trash" / day
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            legacy.rename(dest_dir / f"CONTEXT.legacy.{stamp}.md")
+            self._v2_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "schema_version": 2,
+                "cutover_at": _now_iso(),
+                "legacy_context_policy": "explicit_search_fallback_only",
+                "legacy_promotion_policy": "disabled",
+            }
+            self.v2_state_file.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         except OSError:
-            logger.exception("Failed to archive legacy CONTEXT.md; leaving in place")
+            logger.exception("Failed to create memory v2 state marker")
 
     def _dedupe_context_lines(self, content: str, *, existing_context: str | None = None) -> list[str]:
         """Return non-empty context lines not already present in Core or Context.
@@ -726,14 +865,15 @@ class MemoryManager:
     # ── Search ──────────────────────────────────────────────────
 
     def search(self, query: str, *, limit: int = 5, topic: str | None = None) -> list[str]:
-        """Keyword search across topic-routed context entries.
+        """Keyword search across v2 experiences, then legacy fallback.
 
         Returns entry contents (deduped across multi-line entries) ranked by
         occurrence count, with historical ``hits`` as a tiebreak.  Capped at
         ``limit`` so noisy keywords cannot flood the model.
 
-        Side effect: increments ``hits`` and refreshes ``last_used`` on each
-        matched entry, then persists the file.
+        Side effect: v2 matches increment ``hits`` and refresh ``last_used``.
+        Legacy fallback matches are read-only and never become promotion
+        evidence.
         """
         if not query:
             return []
@@ -745,7 +885,20 @@ class MemoryManager:
             entries = self._read_context_entries()
             results = self._search_entries(query_lower, entries, limit, None)
 
+        if not results:
+            results = self._search_legacy_context(query_lower, limit=limit, topic=topic)
+
         return results
+
+    def _search_legacy_context(self, query_lower: str, *, limit: int, topic: str | None = None) -> list[str]:
+        """Read-only search over pre-v2 context."""
+        if topic:
+            entries = self._legacy_topic_store.read_topic(topic)
+            if _slugify_topic(topic) == "general" and self.legacy_context_file.exists():
+                entries.extend(parse_context_file(self.legacy_context_file))
+        else:
+            entries = self._read_legacy_context_entries()
+        return self._search_entries(query_lower, entries, limit, None, update_usage=False)
 
     def auto_match_context(self, query: str, *, limit: int = 3) -> list[dict[str, str]]:
         """Return high-confidence context-memory matches for a user prompt.
@@ -755,8 +908,8 @@ class MemoryManager:
         to provide *possibly relevant* context, never to force the model to
         treat a new request as a continuation of an old task.
 
-        Side effect: increments ``hits`` and refreshes ``last_used`` on each
-        entry whose content matched at least one returned line.
+        Auto-match is read-only: it does not increment hits or create
+        promotion evidence. Explicit ``memory_search`` is the usage signal.
         """
         query = _sanitize_auto_match_query(query)
         if _is_title_generation_query(query):
@@ -773,10 +926,26 @@ class MemoryManager:
         if not entries:
             return []
 
-        top = self._auto_match_entries(query, query_lower, query_terms, entries, routed_topics, limit)
+        top = self._auto_match_entries(
+            query,
+            query_lower,
+            query_terms,
+            entries,
+            routed_topics,
+            limit,
+            update_usage=False,
+        )
         if not top and routed_topics is not None and not explicit_topic:
             entries = self._read_context_entries()
-            top = self._auto_match_entries(query, query_lower, query_terms, entries, None, limit)
+            top = self._auto_match_entries(
+                query,
+                query_lower,
+                query_terms,
+                entries,
+                None,
+                limit,
+                update_usage=False,
+            )
 
         return [
             {
@@ -809,6 +978,8 @@ class MemoryManager:
         entries: list[ContextEntry],
         limit: int,
         routed_topics: list[str] | None,
+        *,
+        update_usage: bool = True,
     ) -> list[str]:
         if not entries:
             return []
@@ -823,11 +994,12 @@ class MemoryManager:
             if occurrences == 0:
                 continue
             scored.append((occurrences, entry.hits, entry.content))
-            entry.hits += 1
-            entry.last_used = now
-            changed = True
+            if update_usage:
+                entry.hits += 1
+                entry.last_used = now
+                changed = True
 
-        if changed:
+        if changed and update_usage:
             if routed_topics is None:
                 self._write_context_entries(entries)
             else:
@@ -844,6 +1016,8 @@ class MemoryManager:
         entries: list[ContextEntry],
         routed_topics: list[str] | None,
         limit: int,
+        *,
+        update_usage: bool = True,
     ) -> list[tuple[float, int, str, int]]:
         # (score, line_no, text, entry_index) — line_no is scoped to the searched
         # topic set; callers treat it as a lightweight display id.
@@ -866,7 +1040,7 @@ class MemoryManager:
         scored.sort(key=lambda item: (-item[0], item[1]))
         top = scored[:limit]
 
-        if top:
+        if top and update_usage:
             now = _now_iso()
             hit_entry_indices = {entry_idx for _, _, _, entry_idx in top}
             for idx in hit_entry_indices:
@@ -884,13 +1058,15 @@ class MemoryManager:
     def recall(self, **_kwargs) -> str:
         """Build a memory block for system-prompt injection.
 
-        Only injects MEMORY.md (core).  CONTEXT.md is accessed on demand
-        via ``memory_search`` tool.
+        Injects MEMORY.md (core) plus the lightweight ``memory_summary.md``
+        routing guide. Full context entries remain on demand via
+        ``memory_search``.
         """
         core = self.read_core()
-        if not core:
+        summary = self.read_memory_summary()
+        if not core and not summary:
             return ""
-        return self.build_memory_block(core)
+        return self.build_memory_block(core, memory_summary=summary)
 
     # ── OpenClaw import ─────────────────────────────────────────
 
@@ -983,16 +1159,21 @@ class MemoryManager:
         return filtered
 
     @staticmethod
-    def build_memory_block(core: str) -> str:
+    def build_memory_block(core: str, *, memory_summary: str = "") -> str:
         """Format core memory into a prompt block."""
-        if not core:
+        if not core and not memory_summary:
             return ""
 
         parts: list[str] = ["--- MEMORY START ---"]
         parts.append("")
-        parts.append("[Core Memory]")
-        parts.append(core)
-        parts.append("")
+        if core:
+            parts.append("[Core Memory]")
+            parts.append(core)
+            parts.append("")
+        if memory_summary:
+            parts.append("[Memory Search Routing]")
+            parts.append(memory_summary.strip())
+            parts.append("")
         parts.append("--- MEMORY END ---")
         return "\n".join(parts)
 
@@ -1535,6 +1716,7 @@ Output ONLY valid JSON (no markdown fences):
 _CORE_PROMOTION_MAX_CHARS = 360
 _CORE_PROMOTION_MAX_LINES = 2
 _CORE_PROMOTION_MAX_SUMMARY_SEPARATORS = 8
+_CORE_PROMOTION_TOPICS: frozenset[str] = frozenset({"user_profile", "preferences"})
 
 _TASK_HISTORY_PHRASES: frozenset[str] = frozenset({
     "工作项目包括",
@@ -1593,6 +1775,8 @@ def _is_core_promotion_worthy(entry: ContextEntry) -> bool:
     Long conversation/task summaries stay in searchable context and are handled
     by context compaction, not direct user pinning.
     """
+    if _slugify_topic(entry.topic or "general") not in _CORE_PROMOTION_TOPICS:
+        return False
     if not _is_core_promotion_sized(entry.content):
         return False
     if _looks_like_task_history_summary(entry.content):
@@ -1784,6 +1968,58 @@ def _is_self_citation(query: str, memory: str, *, threshold: float = 0.7) -> boo
     return len(q & m) / len(m) >= threshold
 
 
+_EXTRACTION_HIGH_SIGNAL_TERMS: tuple[str, ...] = (
+    "remember",
+    "remember that",
+    "i prefer",
+    "my preference",
+    "default",
+    "from now on",
+    "next time",
+    "root cause",
+    "verified",
+    "tests passed",
+    "记住",
+    "以后",
+    "下次",
+    "偏好",
+    "我喜欢",
+    "我不喜欢",
+    "默认",
+    "不要",
+    "必须",
+    "根因",
+    "修复",
+    "验证",
+    "测试通过",
+)
+
+
+def _has_high_signal_for_loop_end(messages: list[Message]) -> bool:
+    """Return whether loop-end extraction is worth spending on this turn.
+
+    Stop events are frequent and often represent trivial one-off exchanges.
+    Keep loop-end extraction for turns with explicit preference/profile signal,
+    tool-backed work, or enough conversation substance to justify curation.
+    """
+    non_system = [m for m in messages if m.role != "system"]
+    if not non_system:
+        return False
+
+    if any(m.role == "tool" for m in non_system):
+        return True
+    if any(m.role == "assistant" and m.tool_calls for m in non_system):
+        return True
+
+    transcript = MemoryManager._build_transcript(non_system, max_chars_per_msg=1000)
+    lower = transcript.lower()
+    if any(term in lower for term in _EXTRACTION_HIGH_SIGNAL_TERMS):
+        return True
+
+    user_turns = sum(1 for m in non_system if m.role == "user")
+    return user_turns >= 2 and len(transcript) >= 1200
+
+
 class MemoryExtractor:
     """Lifecycle-triggered memory extraction from conversation.
 
@@ -1831,7 +2067,9 @@ class MemoryExtractor:
         elif trigger == "pre_summarize":
             if now - self._last_time < self._cooldown:
                 return False
-        # "loop_end" always runs — no cooldown check
+        elif trigger == "loop_end":
+            if not _has_high_signal_for_loop_end(messages):
+                return False
 
         try:
             await self._extract(messages)

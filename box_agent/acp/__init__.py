@@ -71,6 +71,7 @@ from box_agent.tools.setup import (
     add_workspace_tools,
     await_mcp_tools,
     await_skill_discovery,
+    build_file_delivery_prompt,
     build_sandbox_info_prompt,
     initialize_base_tools,
     merge_mcp_tools,
@@ -617,6 +618,7 @@ class SessionState:
     require_plan_approval: bool = False  # host requires approval after plan_write before execution
     pending_plan_approval: dict[str, Any] | None = None
     preloaded_skill_names: list[str] = field(default_factory=list)
+    preloaded_skill_hashes: dict[str, str] = field(default_factory=dict)
     follow_up_suggestions_enabled: bool = False
 
 
@@ -753,6 +755,8 @@ class BoxACPAgent:
         for skill_name in result.missing_names:
             log.warn("skills/preload_missing", session_id=session_id, skill=skill_name)
         state.preloaded_skill_names = list(result.loaded_names)
+        state.preloaded_skill_hashes.clear()
+        state.preloaded_skill_hashes.update(result.loaded_skill_hashes)
         self._sync_cache_fingerprint_context(state)
         if not result.loaded_names:
             return
@@ -1046,6 +1050,7 @@ class BoxACPAgent:
                 system_prompt = f"{system_prompt.rstrip()}\n\n{memory_block}"
                 log.info("session/memory", session_id=session_id, message="Memory context injected")
 
+        preloaded_skill_hashes: dict[str, str] = {}
         if utility:
             # Pure text transform: no base tools, no workspace/sandbox tools.
             tools: list = []
@@ -1053,12 +1058,20 @@ class BoxACPAgent:
                      message="Utility session: tools disabled (no memory recall/extraction)")
         else:
             tools = list(self._base_tools)
-            if expert_context and self._skill_loader:
+            if self._skill_loader:
                 from box_agent.tools.skill_tool import GetSkillTool
 
                 tools = [
-                    GetSkillTool(self._skill_loader, include_disabled=True)
-                    if getattr(tool, "name", "") == "get_skill"
+                    GetSkillTool(
+                        self._skill_loader,
+                        include_disabled=expert_context is not None,
+                        preloaded_skill_hashes=preloaded_skill_hashes,
+                    )
+                    if isinstance(tool, GetSkillTool)
+                    or (
+                        expert_context is not None
+                        and getattr(tool, "name", "") == "get_skill"
+                    )
                     else tool
                     for tool in tools
                 ]
@@ -1143,6 +1156,7 @@ class BoxACPAgent:
             upstream_session_id=upstream_session_id,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
+            preloaded_skill_hashes=preloaded_skill_hashes,
             follow_up_suggestions_enabled=follow_up_suggestions_enabled,
         )
 
@@ -1270,9 +1284,15 @@ class BoxACPAgent:
         }
 
         use_output_dir = artifact_mode != "project"
-        base_prompt = self._system_prompt.replace(
-            "{SANDBOX_INFO}",
-            build_sandbox_info_prompt(use_output_dir=use_output_dir),
+        base_prompt = (
+            self._system_prompt.replace(
+                "{SANDBOX_INFO}",
+                build_sandbox_info_prompt(use_output_dir=use_output_dir),
+            )
+            .replace(
+                "{FILE_DELIVERY_INFO}",
+                build_file_delivery_prompt(use_output_dir=use_output_dir),
+            )
         )
         if artifact_mode == "project":
             project_mode_prompt = (
@@ -1923,7 +1943,7 @@ class BoxACPAgent:
         }
 
     async def _memory_proposal_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Return CONTEXT.md entries eligible for promotion to core.
+        """Return v2 experience entries eligible for promotion to core.
 
         Request: ``{sessionId, includeCooldown?: bool, includePlan?: bool}``.
         When ``includeCooldown`` is true, cooldown filtering is bypassed

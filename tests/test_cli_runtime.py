@@ -8,10 +8,11 @@ from pathlib import Path
 
 import box_agent.cli as cli
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
-from box_agent.schema import LLMResponse, StreamEvent
+from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, ToolCall
 from box_agent.tools.skill_loader import SkillLoader
 from box_agent.tools.runtime import build_skill_runtime_context, build_skill_runtime_prompt
 from box_agent.tools.setup import add_workspace_tools
+from box_agent.tools.skill_tool import GetSkillTool
 
 
 def _make_executable(path: Path) -> None:
@@ -53,6 +54,7 @@ class _CaptureStreamLLM:
 
     def __init__(self, *args, **kwargs) -> None:
         self.system_prompts: list[str] = []
+        self.message_snapshots: list[list[tuple[str, str]]] = []
         self.retry_callback = None
         self.instances.append(self)
 
@@ -60,7 +62,31 @@ class _CaptureStreamLLM:
         return LLMResponse(content="ok", finish_reason="stop")
 
     async def generate_stream(self, *, messages, **kwargs):
+        self.message_snapshots.append([(message.role, message.content) for message in messages])
         self.system_prompts.append(messages[0].content)
+        yield StreamEvent(type="text", delta="done.")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+
+class _PreloadedSkillThenGetSkillLLM(_CaptureStreamLLM):
+    async def generate_stream(self, *, messages, **kwargs):
+        self.message_snapshots.append([(message.role, message.content) for message in messages])
+        self.system_prompts.append(messages[0].content)
+        if len(self.message_snapshots) == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="preloaded-skill",
+                        type="function",
+                        function=FunctionCall(
+                            name="get_skill", arguments={"skill_name": "pptx"}
+                        ),
+                    )
+                ],
+            )
+            return
         yield StreamEvent(type="text", delta="done.")
         yield StreamEvent(type="finish", finish_reason="stop")
 
@@ -161,7 +187,7 @@ def test_cli_task_preloads_pptx_even_when_filter_drops_it(tmp_path: Path, monkey
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(
-            max_steps=1,
+            max_steps=2,
             workspace_dir=str(workspace),
             enable_memory=False,
             enable_memory_extraction=False,
@@ -182,7 +208,7 @@ def test_cli_task_preloads_pptx_even_when_filter_drops_it(tmp_path: Path, monkey
     )
 
     async def fake_initialize_base_tools(*args, **kwargs):
-        return [], skill_loader, None, None
+        return [GetSkillTool(skill_loader)], skill_loader, None, None
 
     monkeypatch.setattr(cli.Config, "get_default_config_path", staticmethod(lambda: config_path))
     monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
@@ -191,7 +217,7 @@ def test_cli_task_preloads_pptx_even_when_filter_drops_it(tmp_path: Path, monkey
         "find_config_file",
         staticmethod(lambda name: Path(name) if name == str(system_prompt_path) else None),
     )
-    monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
+    monkeypatch.setattr(cli, "LLMClient", _PreloadedSkillThenGetSkillLLM)
     monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
     monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
     _CaptureStreamLLM.instances.clear()
@@ -213,3 +239,11 @@ def test_cli_task_preloads_pptx_even_when_filter_drops_it(tmp_path: Path, monkey
     assert "# PPTX FULL RULES" in first_system_prompt
     assert "# Skill: html-templates" in first_system_prompt
     assert "# HTML TEMPLATE RULES" in first_system_prompt
+    snapshots = _CaptureStreamLLM.instances[0].message_snapshots
+    assert len(snapshots) == 2
+    tool_messages = [content for role, content in snapshots[1] if role == "tool"]
+    assert tool_messages == [
+        "Skill 'pptx' is already preloaded in this session. "
+        "Follow its system instructions directly."
+    ]
+    assert "# PPTX FULL RULES" not in tool_messages[0]

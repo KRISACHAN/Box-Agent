@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any
 
 from box_agent.loop_guards import CompletionGate
@@ -28,6 +29,7 @@ HOST_RUNTIME_PRELOAD_SKILLS: frozenset[str] = frozenset({"hyperframes-video"})
 class AutoLoadedSkillsPrompt:
     system_prompt: str
     loaded_names: tuple[str, ...]
+    loaded_skill_hashes: tuple[tuple[str, str], ...]
     missing_names: tuple[str, ...]
     changed: bool
 
@@ -142,12 +144,14 @@ def build_auto_loaded_skills_prompt(
         return AutoLoadedSkillsPrompt(
             system_prompt=system_prompt,
             loaded_names=(),
+            loaded_skill_hashes=(),
             missing_names=(),
             changed=False,
         )
 
     blocks: list[str] = []
     loaded_names: list[str] = []
+    loaded_skill_hashes: list[tuple[str, str]] = []
     missing_names: list[str] = []
     for skill_name in requested_names:
         skill = skill_loader.get_skill(skill_name, include_disabled=include_disabled)
@@ -155,12 +159,17 @@ def build_auto_loaded_skills_prompt(
             missing_names.append(skill_name)
             continue
         loaded_names.append(skill_name)
-        blocks.append(skill.to_prompt())
+        skill_prompt = skill.to_prompt()
+        blocks.append(skill_prompt)
+        loaded_skill_hashes.append(
+            (skill.name, sha256(skill_prompt.encode("utf-8")).hexdigest())
+        )
 
     if not blocks:
         return AutoLoadedSkillsPrompt(
             system_prompt=system_prompt,
             loaded_names=tuple(loaded_names),
+            loaded_skill_hashes=tuple(loaded_skill_hashes),
             missing_names=tuple(missing_names),
             changed=False,
         )
@@ -177,6 +186,7 @@ def build_auto_loaded_skills_prompt(
     return AutoLoadedSkillsPrompt(
         system_prompt=preloaded_prompt,
         loaded_names=tuple(loaded_names),
+        loaded_skill_hashes=tuple(loaded_skill_hashes),
         missing_names=tuple(missing_names),
         changed=system_prompt != preloaded_prompt,
     )

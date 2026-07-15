@@ -17,11 +17,17 @@ You have access to `memory_write`, `memory_read`, and `memory_search` tools for 
 
 **IMPORTANT**: Core is ONLY for what the user explicitly tells you. Never write your own summaries, inferences, or conclusions to core.
 
-**Context memory** (`CONTEXT.md`) — searchable on demand:
+**Memory summary** (`memory_summary.md`) — lightweight routing guide:
+- Injected at session start when searchable context exists
+- Helps decide whether a request should call `memory_search`
+- Does not contain full context entries
+
+**Context / experience memory** (`v2/experiences/<topic>.md`) — searchable on demand:
 - Project context: goals, deadlines, team info
 - Task patterns: report formats, document templates
 - Historical notes: last week's report highlights
 - Key decisions or constraints that may matter in future sessions
+- Previous pitfalls: verified fixes, recurring errors, specific paths, repo/workflow conventions
 
 Context writes are model-merged with existing context when an LLM is available. The model decides whether to add, replace, drop, or no-op; code applies only safe exact-match operations and falls back to append-with-dedup if planning fails.
 
@@ -52,7 +58,7 @@ memory_write(content="- Q2 goal: launch data dashboard by 6/30", category="conte
 
 ## When to Search
 
-Call `memory_search` when you need context that isn't in core memory:
+Call `memory_search` when the current request may depend on context that is not in core memory:
 
 ```
 # Before writing a weekly report
@@ -62,6 +68,8 @@ memory_search(query="Q2")
 # Before analyzing a document
 memory_search(query="document format")
 ```
+
+Also search for requests that may depend on saved user preferences, prior decisions, repo conventions, previous pitfalls, specific paths/errors, or recurring workflows. Skip memory for one-off simple questions, trivial rewrites, current time/date, or requests fully answered by the visible conversation.
 
 ## When NOT to Save
 

@@ -150,6 +150,8 @@ def test_code_agent_prompt_includes_software_engineering_contract(tmp_path):
     assert "JS 引用的 id/selector 与 HTML 一致" in code_prompt
     assert "Project Startup Context" in code_prompt
     assert "cwd 已是 `{workspace}/output/`" not in code_prompt
+    assert "不要在最终文本手写或猜测 `local-file://`" in code_prompt
+    assert "项目内相对位置即可" in code_prompt
 
 
 def test_code_agent_prompt_reads_workspace_agents_md(tmp_path):

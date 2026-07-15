@@ -89,6 +89,20 @@ Excel/Word/PDF/PowerPoint 优先在沙箱内用 Python 包，避免外部 CLI：
 """
 
 
+def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
+    """Build file-delivery guidance for output or project workspace mode."""
+    if use_output_dir:
+        return (
+            "- **目录**：交付物落当前会话的 output 根目录；以沙箱 cwd 和 host 提供的工作区信息为准，"
+            "不要写到 `~/.box-agent/` 等内部目录。\n"
+            "- **桌面交付**：完成后说明文件名即可。宿主会从结构化 ArtifactEvent 渲染可打开的文件卡。"
+        )
+    return (
+        "- **目录**：这是现有项目工作区。交付物可以在项目树中合适的位置；不要默认创建或使用 `output/`。\n"
+        "- **桌面交付**：完成后说明文件名和项目内相对位置即可。宿主会根据文件变更渲染可验证的文件入口。"
+    )
+
+
 # Single source of truth for the default sandbox / Python-execution block
 # injected into the system prompt. ACP may build a per-session variant when a
 # host marks the session as an existing project workspace.

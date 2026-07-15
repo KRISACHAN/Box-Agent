@@ -1,6 +1,6 @@
 """CLI handler for MemoryProposalEvent.
 
-Renders proposed CONTEXT.md → MEMORY.md (core) promotions in the
+    Renders proposed v2 experience → MEMORY.md (core) promotions in the
 terminal.  When the event carries an LLM-drafted plan, the user gets one
 diff to apply/reject in a single keystroke; otherwise we fall back to
 the legacy per-candidate pin/skip/reject flow.
@@ -121,7 +121,7 @@ class CLIMemoryProposalNegotiator:
             print(f"{Colors.DIM}{plan.rationale}{Colors.RESET}")
         print(
             f"{Colors.DIM}  将合并 {len(plan.consumed_entry_ids)} 条 context "
-            f"到 MEMORY.md, 应用后这些条目从 CONTEXT.md 删除。{Colors.RESET}"
+            f"到 MEMORY.md, 应用后这些条目从 v2 experience 删除。{Colors.RESET}"
         )
         print()
         print(_render_diff(plan.current_core, plan.new_core))

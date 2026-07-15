@@ -5,9 +5,12 @@ Box-Agent provides persistent cross-session memory with core memory plus topic-s
 | Type | Purpose | Recall behavior | Storage |
 |------|---------|-----------------|---------|
 | **Core memory** | User identity, explicit preferences, local defaults, durable behavioral rules | Automatically injected into the system prompt at session start | `~/.box-agent/memory/MEMORY.md` |
-| **Context memory** | Project context, task templates, historical notes, decisions, deadlines | Topic-routed search on demand via `memory_search`; not automatically injected | `~/.box-agent/memory/context/<topic>.md` |
+| **Memory summary** | Lightweight routing guide for deciding whether a request should search memory | Injected with core memory; does not contain full context entries | `~/.box-agent/memory/memory_summary.md` |
+| **Context / experience memory** | Project context, task templates, historical notes, decisions, deadlines, prior pitfalls | Topic-routed search on demand via `memory_search`; weak auto-match may surface v2 hits | `~/.box-agent/memory/v2/experiences/<topic>.md` |
 
-This split keeps high-signal user facts always available while preventing project/history notes from bloating every prompt.
+This split keeps high-signal user facts always available while giving the model a small Codex-style routing summary for deciding when `memory_search` is worth calling. Full project/history notes stay out of the prompt unless searched.
+
+Compatibility policy: v2 is an overlay, not a migration. Pre-v2 `CONTEXT.md` and `context/<topic>.md` files remain on disk and are searched only as a read-only fallback for explicit `memory_search`; they are not auto-matched, not rewritten, and not eligible for promotion.
 
 ---
 
@@ -65,7 +68,7 @@ Use core only when the user explicitly states durable personal information or pr
 
 #### Context writes
 
-`category="context"` writes to topic-sharded context memory under `context/<topic>.md`.
+`category="context"` writes to topic-sharded v2 experience memory under `v2/experiences/<topic>.md`.
 
 When an LLM client is available, append-mode context writes are model-merged with existing memory:
 
@@ -100,7 +103,7 @@ Returns both `MEMORY.md` and context memory when present.
 }
 ```
 
-Search is a case-insensitive keyword search over context entries. When `topic` is omitted, Box-Agent first uses the topic sidecar index (`context/_index.json`) to route the query to likely topic files, then falls back to all topics if the routed search finds nothing. Core memory is already present in the prompt, so `memory_search` only searches context memory.
+Search is a case-insensitive keyword search over v2 experience entries. When `topic` is omitted, Box-Agent first uses the topic sidecar index (`v2/experiences/_index.json`) to route the query to likely topic files, then falls back to all v2 topics if the routed search finds nothing. If v2 has no match, explicit `memory_search` falls back to legacy context read-only. Core memory is already present in the prompt, so `memory_search` only searches context / experience memory.
 
 ---
 
@@ -108,16 +111,18 @@ Search is a case-insensitive keyword search over context entries. When `topic` i
 
 No additional integration code is needed. When `enable_memory: true`:
 
-- **Startup**: `MEMORY.md` is recalled and injected into the system prompt if non-empty.
+- **Startup**: `MEMORY.md` is recalled and injected into the system prompt if non-empty. `memory_summary.md` is also injected when searchable v2 or legacy context exists, so the model can decide whether to call `memory_search` without an extra routing model call.
 - **During a session**: the agent can call `memory_write`, `memory_read`, and `memory_search`.
-- **Lifecycle extraction**: when `enable_memory_extraction: true`, the agent loop periodically asks the LLM to extract cross-session-useful memory. Explicit user profile/preferences/local defaults can go to core; project and task history go to topic-sharded context memory.
+- **Lifecycle extraction**: when `enable_memory_extraction: true`, the agent loop asks the LLM to extract cross-session-useful memory at protected lifecycle points. Explicit user profile/preferences/local defaults can go to core; project and task history go to topic-sharded v2 experience memory.
 
 Manual editing is also possible:
 
 ```bash
 vim ~/.box-agent/memory/MEMORY.md
-vim ~/.box-agent/memory/context/preferences.md
+vim ~/.box-agent/memory/v2/experiences/preferences.md
 ```
+
+`memory_summary.md` is generated from the v2 topic index and legacy-presence marker; inspect it when debugging routing, but do not treat manual edits as durable because the manager refreshes it.
 
 ---
 
@@ -173,7 +178,7 @@ Format:
 --- MEMORY END ---
 ```
 
-Context memory is not injected automatically; use `memory_search` when the agent needs project/task context.
+Full context memory is not injected automatically. The model sees only `memory_summary.md` as a routing guide, and should call `memory_search` when the current request may depend on saved preferences, historical decisions, repo conventions, previous pitfalls, specific paths/errors, or recurring workflows.
 
 ---
 
@@ -181,16 +186,22 @@ Context memory is not injected automatically; use `memory_search` when the agent
 
 ```text
 ~/.box-agent/memory/
-├── MEMORY.md          # Core memory, always recalled at session start
-├── context/           # Searchable context memory by topic
-│   ├── _index.json    # Topic routing index
-│   ├── general.md
-│   ├── preferences.md
-│   └── project.md
+├── MEMORY.md              # Core memory, always recalled at session start
+├── memory_summary.md      # Generated routing summary for memory_search decisions
+├── v2/
+│   ├── state.json         # No-migration cutover marker
+│   └── experiences/       # Searchable v2 experience memory by topic
+│       ├── _index.json    # Topic routing index
+│       ├── general.md
+│       ├── preferences.md
+│       └── project.md
+├── context/               # Legacy fallback only; not auto-matched/promoted
+│   └── ...
+├── CONTEXT.md             # Legacy fallback only, if present
 └── .openclaw_imported # Marker for one-time OpenClaw import, when applicable
 ```
 
-`MEMORY.md` and topic files under `context/` are plain UTF-8 markdown files. Bullet points are recommended because model merge and line-level safety checks operate on full lines.
+`MEMORY.md` and topic files under `v2/experiences/` are plain UTF-8 markdown files. Bullet points are recommended because model merge and line-level safety checks operate on full lines. The topic files are buckets such as `preferences`, `project`, `feedback`, and `general`; they are not intended to grow one file per project.
 
 ---
 
@@ -200,11 +211,11 @@ When `enable_memory_extraction` is enabled, `MemoryExtractor` analyzes recent co
 
 - before context summarization (`pre_summarize`)
 - every configured step interval (`step_interval`)
-- at loop end (`loop_end`)
+- at loop end (`loop_end`) only when the turn has high-signal evidence such as explicit preferences, "remember" instructions, tool-backed work, verified fixes, root cause notes, or enough multi-turn substance
 
 The extractor can write explicit user-stated profile facts, preferences, and local defaults to `MEMORY.md`. For example, if the user says they are in Beijing while asking for weather, the extractor should save a cautious default such as `- 用户用于本地查询的默认城市是北京`, not infer a permanent residence.
 
-Project context, task patterns, historical notes, decisions, deadlines, and behavioral feedback still go to topic-sharded context memory. This keeps one-off task details out of core memory.
+Project context, task patterns, historical notes, decisions, deadlines, and behavioral feedback still go to topic-sharded v2 experience memory. This keeps one-off task details out of core memory, and avoids running a memory extraction pass after every trivial stop.
 
 ---
 

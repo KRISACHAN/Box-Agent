@@ -30,6 +30,7 @@ from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage,
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS
 from box_agent.tools.skill_loader import SKILL_SLOT_SENTINEL, SkillLoader
+from box_agent.tools.skill_tool import create_skill_tools
 from box_agent.tools.setup import SANDBOX_INFO_PROMPT, build_sandbox_info_prompt
 
 
@@ -514,6 +515,28 @@ class CaptureMessagesLLM:
 
     async def generate(self, messages, tools=None):
         return LLMResponse(content="done", finish_reason="stop")
+
+
+class PreloadedSkillThenGetSkillLLM(CaptureMessagesLLM):
+    async def generate_stream(self, messages, tools=None, **_):
+        self.calls.append([(msg.role, msg.content) for msg in messages])
+        if len(self.calls) == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="preloaded-skill",
+                        type="function",
+                        function=FunctionCall(
+                            name="get_skill", arguments={"skill_name": "pptx"}
+                        ),
+                    )
+                ],
+            )
+            return
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(type="finish", finish_reason="stop")
 
 
 class GoalCompleteLLM:
@@ -1582,6 +1605,72 @@ async def test_acp_preloads_matched_pptx_skill_for_deliverable(tmp_path):
     assert "# PPTX FULL RULES" in first_system_prompt
     assert prompt_capture.parent_system_prompt == first_system_prompt
     assert agent._sessions[session.sessionId].preloaded_skill_names == ["pptx"]
+
+
+@pytest.mark.asyncio
+async def test_acp_does_not_repeat_preloaded_skill_in_get_skill_tool_context(tmp_path):
+    skills_dir = tmp_path / "skills"
+    pptx_dir = skills_dir / "pptx"
+    pptx_dir.mkdir(parents=True)
+    (pptx_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "keywords: [ppt, pptx, powerpoint, slide]\n"
+        "---\n"
+        "# PPTX FULL RULES\n"
+        "Use the editable deck workflow.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = PreloadedSkillThenGetSkillLLM()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        llm,
+        create_skill_tools(sources=[(skills_dir, "builtin")])[0],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "做一份 12 页新员工入职培训 PPT，1920×1080 可编辑"}],
+        )
+    )
+
+    assert agent._sessions[session.sessionId].preloaded_skill_names == ["pptx"]
+    assert len(llm.calls) == 2
+    tool_messages = [content for role, content in llm.calls[1] if role == "tool"]
+    assert tool_messages == [
+        "Skill 'pptx' is already preloaded in this session. "
+        "Follow its system instructions directly."
+    ]
+    assert "# PPTX FULL RULES" not in tool_messages[0]
+
+    other_session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    first_state = agent._sessions[session.sessionId]
+    other_state = agent._sessions[other_session.sessionId]
+    first_get_skill = first_state.agent.tools["get_skill"]
+    other_get_skill = other_state.agent.tools["get_skill"]
+    assert first_get_skill is not other_get_skill
+    assert first_get_skill.preloaded_skill_hashes is first_state.preloaded_skill_hashes
+    assert other_get_skill.preloaded_skill_hashes is other_state.preloaded_skill_hashes
+    assert other_state.preloaded_skill_hashes == {}
 
 
 @pytest.mark.asyncio

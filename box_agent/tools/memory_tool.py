@@ -161,9 +161,12 @@ class MemorySearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search topic-sharded context memory by keyword. Use this to find "
-            "project context, task patterns, or historical notes. Core memory "
-            "is always available — use this for everything else."
+            "Search topic-sharded context/experience memory by keyword. Use this "
+            "when the current request may depend on saved user preferences, prior "
+            "decisions, repo/workflow conventions, previous pitfalls, specific "
+            "paths or errors, or recurring task experience. Skip it for clearly "
+            "one-off simple questions. Core memory is always available — use this "
+            "for everything else."
         )
 
     @property

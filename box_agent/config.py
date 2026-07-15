@@ -176,8 +176,8 @@ class AgentConfig(BaseModel):
     memory_conflict_resolution_enabled: bool = True  # LLM-arbitrated semantic conflict pass
     memory_conflict_cluster_threshold: float = 0.3  # Jaccard for clustering conflict candidates
     memory_conflict_max_clusters_per_run: int = 5  # cap LLM calls per maintainer run
-    memory_promotion_proposal_enabled: bool = True  # auto-suggest CONTEXT → core
-    memory_promotion_hit_threshold: int = 5  # min hits before suggesting promotion
+    memory_promotion_proposal_enabled: bool = True  # suggest v2 experience → core
+    memory_promotion_hit_threshold: int = 5  # min explicit-search hits before suggesting promotion
     memory_promotion_cooldown_days: int = 14  # skip re-proposing for this long
 
 

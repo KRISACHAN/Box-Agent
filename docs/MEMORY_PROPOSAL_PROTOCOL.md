@@ -5,15 +5,19 @@
 
 本协议用于让 ACP 宿主在「记忆页面」上展示**「可以加入核心记忆 (MEMORY.md) 的候选条目」**，由用户逐条决定是否升级为长期记忆。
 
+当前策略比早期版本更保守：候选只来自 v2 experience memory，不来自 legacy `CONTEXT.md`；自动匹配不会累计晋升证据；只有 user/profile/preference 类型的高信号条目才可能被提议。
+
 ## 0. 名词与背景
 
 - **Core 记忆**：`MEMORY.md`，每次会话自动注入 system prompt。宿主已能读写。
-- **Context 记忆**：`CONTEXT.md`，按需检索（`memory_search` / 自动匹配）。每条携带 `hits` / `last_used` / `confidence` 等元数据。
-- **升级 (promotion)**：把 `CONTEXT.md` 中命中频次较高的条目移动到 `MEMORY.md`，成为永久注入的核心记忆。
+- **Context / experience 记忆**：`v2/experiences/<topic>.md`，按需检索（`memory_search` / 自动匹配）。每条携带 `hits` / `last_used` / `confidence` 等元数据。
+- **Legacy context**：旧版 `CONTEXT.md` 或 `context/<topic>.md`。只作为显式 `memory_search` 的只读兜底，不参与自动匹配、提议、迁移或重写。
+- **升级 (promotion)**：把 v2 experiences 中命中频次较高且适合长期注入的条目移动到 `MEMORY.md`，成为永久注入的核心记忆。
 - **候选 (candidate)**：满足以下全部条件的 Context 条目：
   - `hits >= memory_promotion_hit_threshold`（默认 5）
   - `core_status != "rejected"`（拒绝是永久的）
   - `source != "core"`（已经在核心的不算）
+  - `topic` 是 `user_profile` 或 `preferences`
   - `last_proposed` 为空，或早于 `memory_promotion_cooldown_days`（默认 14 天）之前
 
 候选筛选完全由 Agent 侧实现；宿主**只关心展示与决策回写**。
@@ -46,7 +50,7 @@ Push 通道可选作为「红点提醒」：当 Agent 推来一批新候选时�
 
 ## 2. Push：`session/memory_proposal`（Agent → Host）
 
-**触发时机**：每轮 turn 结束（`DoneEvent(END_TURN)` 或 `DoneEvent(MAX_STEPS)`）之前，候选非空时。
+**触发时机**：每轮 turn 结束（`DoneEvent(END_TURN)` 或 `DoneEvent(MAX_STEPS)`）之前，v2 候选非空时。
 
 **幂等性保证**：Agent 在发送前会把每条候选的 `last_proposed` 戳到当前时间，所以：
 
@@ -189,30 +193,30 @@ Push 通道可选作为「红点提醒」：当 Agent 推来一批新候选时�
 
 ## 5. 各 decision 的语义与副作用
 
-| Decision | CONTEXT.md | MEMORY.md | 是否再提示 |
+| Decision | v2 experience entry | MEMORY.md | 是否再提示 |
 |---|---|---|---|
-| `pin` | 删除该条 | 追加该条内容（行级去重） | 否（已不在 CONTEXT 里） |
+| `pin` | 删除该条 | 追加该条内容（行级去重） | 否（已不在 v2 experience 里） |
 | `reject` | 保留，但 `core_status="rejected"` | 不变 | **永久不再提示**（即使将来 hits 翻倍） |
 | `skip` | 不变 | 不变 | 冷却结束后 (14 天) 再次出现 |
 
 **关键不变量**：
 
-1. **同一条记忆永远只在一处**：pin 后只在 MEMORY.md，reject 后只在 CONTEXT.md 且带 rejected 标记，绝不会两边都有。
+1. **同一条记忆永远只在一处**：pin 后只在 MEMORY.md，reject 后只在 v2 experience 里且带 rejected 标记，绝不会两边都有。
 2. **MEMORY.md 行级去重**：宿主若同时通过自己的编辑功能往 MEMORY.md 写了相同的内容，Agent 在 pin 时不会再追加一遍。
-3. **rejected 是终态**：即便用户后悔，目前只能通过手工编辑 `CONTEXT.md` 里那条的 `core_status` 元数据来恢复（罕见，无需 UI 支持）。
+3. **rejected 是终态**：即便用户后悔，目前只能通过手工编辑 v2 experience 里那条的 `core_status` 元数据来恢复（罕见，无需 UI 支持）。
 
 ---
 
 ## 6. 数据结构：`ContextEntry`
 
-记忆页面如果想直接读 `CONTEXT.md`（不推荐，但可行），文件格式如下：
+记忆页面如果想直接读 v2 experience 文件（不推荐，但可行），文件格式如下：
 
 ```
 <!-- ctx id=ctx_20260517_a1b2 created=2026-05-17T08:30:00 last_used=2026-05-17T14:20:00 hits=7 source=extractor confidence=0.85 -->
 用户偏好在 PPT outline 阶段先确认章节再展开细节
 ```
 
-字段 `core_status=rejected` 和 `last_proposed=<ISO>` 仅在非默认值时序列化。旧版无注释头的 `CONTEXT.md` 在第一次写回时自动迁移。
+字段 `core_status=rejected` 和 `last_proposed=<ISO>` 仅在非默认值时序列化。旧版 `CONTEXT.md` 不再自动迁移；它会保留在原位，仅作为显式搜索兜底。
 
 更推荐通过 Pull/Apply 协议交互，把文件解析的细节留给 Agent 侧。
 
@@ -224,7 +228,7 @@ Push 通道可选作为「红点提醒」：当 Agent 推来一批新候选时�
 
 ```yaml
 memory_promotion_proposal_enabled: true   # 总开关；false 时 push 通道彻底关闭
-memory_promotion_hit_threshold: 5         # hits 达到这个值才算候选
+memory_promotion_hit_threshold: 5         # v2 explicit-search hits 达到这个值才算候选
 memory_promotion_cooldown_days: 14        # 冷却天数
 ```
 
@@ -256,3 +260,4 @@ ACP 端的「记忆页面」语义与 CLI 一致，确保两侧行为统一（�
 
 - 旧版 Box-Agent (< 0.8.32)：所有 `_session/memory_proposal` / `_memory_proposal_list` / `_memory_proposal_apply` 调用会返回 `method_not_found`，宿主侧应当兼容降级（不显示候选区块即可）。
 - 旧版宿主 + 新版 Box-Agent：Push 通道返回 `method_not_found` 后 Agent 静默降级，不会影响 turn 正常结束。
+- 新版 Box-Agent 不迁移旧 `CONTEXT.md` / `context/<topic>.md`。这些旧数据仍可被显式 `memory_search` 兜底命中，但不会再出现在候选列表。宿主已经展示过的旧候选可以直接丢弃或等下一次 Pull 以 Agent 返回为准。

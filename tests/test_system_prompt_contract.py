@@ -44,6 +44,14 @@ def test_system_prompt_forbids_reusing_model_history_placeholders():
     assert "不要为绕过摘要保护而改用 `execute_code`" in prompt
 
 
+def test_system_prompt_uses_mode_specific_file_delivery_guidance():
+    prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
+
+    assert "{FILE_DELIVERY_INFO}" in prompt
+    assert "local-file://C:/" not in prompt
+    assert "所有交付物落 `{workspace}/output/`" not in prompt
+
+
 def test_system_prompt_sub_agent_routing_is_cost_aware_and_capability_explicit():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 

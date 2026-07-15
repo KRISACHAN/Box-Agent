@@ -32,8 +32,9 @@ def _stamp(days_ago: int = 0) -> str:
 
 
 def _entry(content: str, *, hits: int = 0, core_status: str = "none",
-           last_proposed: str = "", source: str = "tool") -> ContextEntry:
-    e = _new_entry(content, source=source)
+           last_proposed: str = "", source: str = "tool",
+           topic: str = "preferences") -> ContextEntry:
+    e = _new_entry(content, source=source, topic=topic)
     e.hits = hits
     e.core_status = core_status
     e.last_proposed = last_proposed
@@ -115,6 +116,29 @@ def test_list_candidates_zero_threshold_returns_nothing(mgr: MemoryManager):
     """Defensive: a zero/negative threshold shouldn't propose everything."""
     write_context_file(mgr.context_file, [_entry("- anything", hits=1)])
     assert mgr.list_promotion_candidates(hit_threshold=0, cooldown_days=14) == []
+
+
+def test_list_candidates_excludes_non_core_topics(mgr: MemoryManager):
+    write_context_file(mgr.context_file, [
+        _entry("- user prefers concise answers", hits=8, topic="preferences"),
+        _entry("- project build uses uv", hits=8, topic="project"),
+        _entry("- general task note", hits=8, topic="general"),
+    ])
+
+    cands = mgr.list_promotion_candidates(hit_threshold=5, cooldown_days=14)
+
+    assert [c.content for c in cands] == ["- user prefers concise answers"]
+
+
+def test_list_candidates_ignores_legacy_context(mgr: MemoryManager):
+    legacy_dir = mgr.legacy_context_dir
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    write_context_file(legacy_dir / "preferences.md", [
+        _entry("- legacy hot candidate", hits=20, topic="preferences"),
+    ])
+
+    assert mgr.search("legacy hot") == ["- legacy hot candidate"]
+    assert mgr.list_promotion_candidates(hit_threshold=5, cooldown_days=0) == []
 
 
 # ── mark_proposed ───────────────────────────────────────────

@@ -260,16 +260,16 @@ def test_topic_slug_normalizes_unsafe_chars(mgr: MemoryManager):
     assert "." not in topics[0]
 
 
-def test_legacy_context_file_is_purged_on_init(memory_dir: Path):
+def test_legacy_context_file_is_preserved_for_search_fallback(memory_dir: Path):
     legacy = memory_dir / "CONTEXT.md"
     legacy.write_text("- old line\n", encoding="utf-8")
 
-    MemoryManager(memory_dir=str(memory_dir))
+    mgr = MemoryManager(memory_dir=str(memory_dir))
 
-    assert not legacy.exists()
-    trash_files = list((memory_dir / "trash").rglob("CONTEXT.legacy.*.md"))
-    assert len(trash_files) == 1
-    assert "old line" in trash_files[0].read_text(encoding="utf-8")
+    assert legacy.exists()
+    assert mgr.search("old") == ["- old line"]
+    assert not (memory_dir / "trash").exists()
+    assert mgr.v2_state_file.exists()
 
 
 def test_topic_store_writes_sidecar_index(mgr: MemoryManager):
@@ -286,7 +286,17 @@ def test_topic_store_writes_sidecar_index(mgr: MemoryManager):
     assert "three" in data["beta"]["terms"]
 
 
-def test_memory_manager_rebuilds_pre_vocabulary_topic_index(memory_dir: Path):
+def test_write_all_context_entries_refreshes_memory_summary(mgr: MemoryManager):
+    mgr.write_all_context_entries([
+        _new_entry("- project uses uv", topic="project"),
+    ])
+
+    summary = mgr.memory_summary_file.read_text(encoding="utf-8")
+    assert "`project`" in summary
+    assert "uses" in summary
+
+
+def test_memory_manager_leaves_legacy_context_index_untouched(memory_dir: Path):
     context_dir = memory_dir / "context"
     context_dir.mkdir()
     entry = _new_entry("- user prefers dark mode", topic="preferences")
@@ -300,7 +310,7 @@ def test_memory_manager_rebuilds_pre_vocabulary_topic_index(memory_dir: Path):
 
     import json as _json
     data = _json.loads((context_dir / "_index.json").read_text(encoding="utf-8"))
-    assert "dark" in data["preferences"]["terms"]
+    assert "terms" not in data["preferences"]
     assert mgr.search("dark mode") == ["- user prefers dark mode"]
 
 

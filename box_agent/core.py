@@ -955,7 +955,7 @@ def _extract_web_search_payload(tool_name: str, content: str) -> dict[str, Any] 
 
 
 def _auto_match_memory_for_latest_prompt(messages: list[Message], memory_manager: Any) -> ToolCallResult | None:
-    """Conservatively match CONTEXT.md against the latest user prompt.
+    """Conservatively match v2 experience memory against the latest user prompt.
 
     Matches are injected as weak, one-turn context: the model is told these
     memories may be relevant and must ignore them when the user is starting a

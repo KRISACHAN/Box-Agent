@@ -5,7 +5,8 @@ Implements Progressive Disclosure (Level 2): Load full skill content when needed
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from hashlib import sha256
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 
 from .base import Tool, ToolResult
 from .skill_loader import SkillLoader
@@ -16,9 +17,16 @@ SkillSource = Literal["builtin", "user"]
 class GetSkillTool(Tool):
     """Tool to get detailed information about a specific skill"""
 
-    def __init__(self, skill_loader: SkillLoader, *, include_disabled: bool = False):
+    def __init__(
+        self,
+        skill_loader: SkillLoader,
+        *,
+        include_disabled: bool = False,
+        preloaded_skill_hashes: Mapping[str, str] | None = None,
+    ):
         self.skill_loader = skill_loader
         self.include_disabled = include_disabled
+        self.preloaded_skill_hashes = preloaded_skill_hashes
 
     @property
     def name(self) -> str:
@@ -68,6 +76,18 @@ class GetSkillTool(Tool):
         # retried. The rendered content clearly tells the model to ask the
         # user to fix SKILL.md instead of proceeding.
         result = skill.to_prompt()
+        if self.preloaded_skill_hashes and self.preloaded_skill_hashes.get(
+            skill.name
+        ) == sha256(result.encode("utf-8")).hexdigest():
+            message = (
+                f"Skill '{skill.name}' is already preloaded in this session. "
+                "Follow its system instructions directly."
+            )
+            return ToolResult(
+                success=True,
+                content=message,
+                model_context=message,
+            )
         raw_output = None
         if skill.broken:
             raw_output = {
