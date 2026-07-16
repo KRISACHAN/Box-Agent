@@ -71,6 +71,8 @@ memory_search(query="document format")
 
 Also search for requests that may depend on saved user preferences, prior decisions, repo conventions, previous pitfalls, specific paths/errors, or recurring workflows. Skip memory for one-off simple questions, trivial rewrites, current time/date, or requests fully answered by the visible conversation.
 
+When you search, do not pass the full user sentence if it contains action words like "send", "write", "help", "发我", or "帮我". Extract 1-3 stable noun phrases and search those first: project/product names, repo/module paths, exact errors, workflows, artifact types, or prior decisions. For example, "排产平台融资 ppt 的演讲稿发我" should search "排产平台", "融资路演", or "ppt" instead of the full sentence.
+
 ## When NOT to Save
 
 - Ephemeral task details ("read file X", "fix this bug")

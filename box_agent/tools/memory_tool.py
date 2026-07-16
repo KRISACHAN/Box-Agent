@@ -165,8 +165,12 @@ class MemorySearchTool(Tool):
             "when the current request may depend on saved user preferences, prior "
             "decisions, repo/workflow conventions, previous pitfalls, specific "
             "paths or errors, or recurring task experience. Skip it for clearly "
-            "one-off simple questions. Core memory is always available — use this "
-            "for everything else."
+            "one-off simple questions. Prefer 1-3 short durable search keys "
+            "instead of the full user sentence: project/product names, repo/module "
+            "paths, exact errors, workflows, artifact types, or prior decisions. "
+            "For compound Chinese requests, split stable noun phrases into "
+            "separate searches. Core memory is always available — use this for "
+            "everything else."
         )
 
     @property
@@ -176,7 +180,11 @@ class MemorySearchTool(Tool):
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Keyword to search for (case-insensitive).",
+                    "description": (
+                        "Search key or short phrase (case-insensitive). Avoid full "
+                        "sentences with action words; use stable nouns such as "
+                        "project names, paths, errors, workflows, or artifact types."
+                    ),
                 },
                 "topic": {
                     "type": "string",

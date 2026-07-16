@@ -393,6 +393,81 @@ def bundled_stable_runtime_components(
 # ── Build ────────────────────────────────────────────────────
 
 
+def resolve_officev3_dir(value: str | None = None) -> Path:
+    """Resolve an officev3 checkout containing the runtime installer."""
+    configured = value or os.environ.get("BOX_AGENT_OFFICEV3_DIR")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        candidates = [candidate.resolve()]
+    else:
+        candidates = [
+            (PROJECT_ROOT.parents[1] / "frontend" / "officev3").resolve(),
+            (PROJECT_ROOT.parent / "officev3").resolve(),
+        ]
+
+    for candidate in candidates:
+        installer = candidate / "scripts" / "install-box-agent-runtime.js"
+        if installer.is_file():
+            return candidate
+
+    rendered = ", ".join(str(candidate) for candidate in candidates)
+    raise RuntimeError(
+        "Unable to locate officev3 runtime installer. "
+        f"Checked: {rendered}. Pass --install-officev3 /path/to/officev3 "
+        "or set BOX_AGENT_OFFICEV3_DIR."
+    )
+
+
+def install_runtime_into_officev3(
+    archive_path: Path,
+    officev3_dir: Path,
+    *,
+    expected_version: str,
+) -> Path:
+    """Install a built runtime archive into officev3 build-resources."""
+    archive_path = archive_path.resolve()
+    if not archive_path.is_file():
+        raise RuntimeError(f"Runtime archive not found: {archive_path}")
+
+    installer = officev3_dir / "scripts" / "install-box-agent-runtime.js"
+    if not installer.is_file():
+        raise RuntimeError(f"officev3 runtime installer not found: {installer}")
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        raise RuntimeError("Node.js is required to install the runtime into officev3")
+
+    print(f"\nInstalling runtime into officev3: {officev3_dir}")
+    result = subprocess.run(
+        [node_bin, str(installer), str(archive_path)],
+        cwd=str(officev3_dir),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"officev3 runtime installer failed with exit code {result.returncode}"
+        )
+
+    installed_dir = officev3_dir / "build-resources" / "box-agent-runtime"
+    manifest_path = installed_dir / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Installed officev3 runtime manifest is invalid: {manifest_path}: {exc}"
+        ) from exc
+
+    installed_version = str(manifest.get("version") or "")
+    if installed_version != expected_version:
+        raise RuntimeError(
+            "Installed officev3 runtime version mismatch: "
+            f"expected {expected_version}, got {installed_version or 'unknown'}"
+        )
+
+    return installed_dir
+
+
 def build_runtime(
     version: str,
     output_dir: Path,
@@ -859,6 +934,17 @@ def main():
             "BOX_AGENT_SANDBOX_PYTHON and any stable tool runtimes it needs."
         ),
     )
+    parser.add_argument(
+        "--install-officev3",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help=(
+            "After building, install the archive into officev3. Omit DIR to use "
+            "BOX_AGENT_OFFICEV3_DIR or auto-detect the usual checkout layout."
+        ),
+    )
     args = parser.parse_args()
 
     if args.target and args.arch:
@@ -887,10 +973,20 @@ def main():
             target=target,
             external_python_sandbox=args.external_python_sandbox,
         )
+        installed_dir = None
+        if args.install_officev3 is not None:
+            officev3_dir = resolve_officev3_dir(args.install_officev3 or None)
+            installed_dir = install_runtime_into_officev3(
+                archive,
+                officev3_dir,
+                expected_version=version,
+            )
     except (RuntimeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
     print(f"\nDone! Artifact: {archive}")
+    if installed_dir is not None:
+        print(f"Done! Installed officev3 runtime: {installed_dir}")
 
 
 if __name__ == "__main__":

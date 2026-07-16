@@ -19,7 +19,7 @@ wire 格式，但底层共享 core/tool 行为仍可能一致。
 | **Env Context**       | 前端 → 后端 | `session/new._meta.env_context`       | [ENV_CONTEXT_PROTOCOL.md](./ENV_CONTEXT_PROTOCOL.md)             | 宿主把 CLI 路径 / 平台 / 浏览器工具状态等已知事实喂给模型，避免它否认已可用的工具 |
 | **Filesystem Policy** | 前端 → 后端 | `session/new._meta.filesystem_policy` | [FILESYSTEM_POLICY_PROTOCOL.md](./FILESYSTEM_POLICY_PROTOCOL.md) | 宿主声明 session 工作区根 + 额外允许目录，避免反复触发 `permission/request` 协商  |
 | **Artifact**          | 后端 → 前端 | `update_tool_call.rawOutput`          | [ARTIFACT_PROTOCOL.md](./ARTIFACT_PROTOCOL.md)                   | 宿主收集、解析并渲染 Agent 生成的文件产物                                          |
-| **Host Progress**     | 后端 → 前端 | `update_tool_call.rawOutput`          | [integration/host-progress-events.md](./integration/host-progress-events.md) | 宿主分组渲染 sub-agent、plan、todo、goal 等结构化执行状态 |
+| **Host Progress**     | 后端 → 前端 | `update_tool_call.rawOutput`          | [integration/host-progress-events.md](./integration/host-progress-events.md) | 宿主分组渲染 sub-agent、plan、todo、goal、turn usage 等结构化执行状态 |
 
 > 已经存在但本次未变更的扩展点：`_meta.session_mode`（会话模式）、`_meta.deep_think`（深度思考开关）、`_meta.officev3_permissions_override`（已废弃）。
 

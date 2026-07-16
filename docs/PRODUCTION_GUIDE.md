@@ -130,6 +130,17 @@ uv run box-agent-build-runtime --version X.Y.Z
 
 Produces `dist/runtime/box-agent-runtime-v{version}-{platform}-{arch}.tar.gz`.
 
+To build the archive and install it into officev3 `build-resources` in one
+command:
+
+```bash
+uv run box-agent-build-runtime --version X.Y.Z --install-officev3
+```
+
+The command auto-detects the usual `Dev/frontend/officev3` checkout. Use
+`--install-officev3 /path/to/officev3` or set `BOX_AGENT_OFFICEV3_DIR` for a
+different layout.
+
 Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win32-x64`.
 
 Build the current machine architecture:

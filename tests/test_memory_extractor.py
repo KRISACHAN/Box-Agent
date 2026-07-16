@@ -79,6 +79,49 @@ async def test_extract_threads_session_id(mgr: MemoryManager):
     assert llm.generate.await_args.kwargs["session_id"] == "office-session-1"
 
 
+async def test_extract_additions_stamp_session_turn_and_trigger(mgr: MemoryManager):
+    from box_agent.schema import Message
+
+    extractor = _make_extractor(
+        mgr,
+        '{"additions": [{"text": "- user prefers Python", "topic": "preferences"}], "merges": []}',
+        session_id="office-session-1",
+        turn_id="turn-42",
+    )
+    messages = [Message(role="user", content="Remember that I prefer Python")]
+
+    result = await extractor.maybe_extract(messages, "loop_end")
+
+    assert result is True
+    entries = mgr.read_all_context_entries()
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.source == "extractor"
+    assert entry.session_id == "office-session-1"
+    assert entry.turn_id == "turn-42"
+    assert entry.trigger == "loop_end"
+
+
+async def test_extract_uses_turn_id_snapshot_over_mutable_state(mgr: MemoryManager):
+    from box_agent.schema import Message
+
+    extractor = _make_extractor(
+        mgr,
+        '{"additions": ["- user prefers Python"], "merges": []}',
+        session_id="office-session-1",
+        turn_id="stale-turn",
+    )
+    extractor.set_turn_id("newer-turn")
+    messages = [Message(role="user", content="Remember that I prefer Python")]
+
+    result = await extractor.maybe_extract(messages, "loop_end", turn_id="snapshot-turn")
+
+    assert result is True
+    entries = mgr.read_all_context_entries()
+    assert len(entries) == 1
+    assert entries[0].turn_id == "snapshot-turn"
+
+
 async def test_extract_core_additions_write_memory_md(mgr: MemoryManager):
     """Explicit user profile/default facts can go directly to core memory."""
     from box_agent.schema import Message

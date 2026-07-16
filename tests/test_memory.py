@@ -307,6 +307,7 @@ def test_recall_includes_routing_summary_without_context_content(mgr: MemoryMana
     block = mgr.recall()
     assert "[Memory Search Routing]" in block
     assert "Use `memory_search`" in block
+    assert "Do not pass the whole user sentence" in block
     assert "secret context" not in block
 
 
@@ -699,6 +700,49 @@ def test_search_ranks_by_occurrence_count_then_hits(mgr: MemoryManager):
     # `many` ranks first despite being written last in CONTEXT.md.
     assert "report A" in results[0]
     assert "report D only" in results[1]
+
+
+def test_search_compound_chinese_action_query_matches_stable_terms(mgr: MemoryManager):
+    """Full user action sentences should still recall stable project memories."""
+    from box_agent.memory import _new_entry, write_context_file
+
+    target = _new_entry(
+        "用户正在为一个AI质检+智能排产平台项目制作融资路演PPT，"
+        "面向VC投资人，项目已有30家试点客户"
+    )
+    weak_ppt = _new_entry("- 公司内部培训类 PPT 偏好：浅色背景、图标、小色块")
+    unrelated = _new_entry("- 完全无关的事实")
+    write_context_file(mgr.context_file, [weak_ppt, unrelated, target])
+
+    results = mgr.search("排产平台融资 ppt 的演讲稿发我")
+
+    assert results
+    assert "智能排产平台项目制作融资路演PPT" in results[0]
+    assert not any("公司内部培训" in item for item in results)
+
+
+def test_search_short_chinese_entity_plus_artifact_matches_memory(mgr: MemoryManager):
+    """A short entity plus artifact type is enough for explicit memory_search."""
+    from box_agent.memory import _new_entry, write_context_file
+
+    target = _new_entry("用户之前做过庄周 PPT，主题是逍遥游和齐物论。")
+    weak_ppt = _new_entry("- 公司内部培训类 PPT 偏好：浅色背景、图标、小色块")
+    entity_only = _new_entry("- 用户之前讨论过庄周思想，但没有产物记录。")
+    write_context_file(mgr.context_file, [weak_ppt, entity_only, target])
+
+    results = mgr.search("庄周 ppt 的内容返回给我")
+
+    assert results
+    assert "庄周 PPT" in results[0]
+    assert not any("公司内部培训" in item for item in results)
+    assert not any("没有产物记录" in item for item in results)
+
+
+def test_search_ignores_single_weak_term_from_long_query(mgr: MemoryManager):
+    """A lone weak artifact term such as ppt should not recall unrelated entries."""
+    mgr.write_context("- 公司内部培训类 PPT 偏好：浅色背景、图标、小色块")
+
+    assert mgr.search("帮我把那个 ppt 发我") == []
 
 
 def test_search_caps_results_at_limit(mgr: MemoryManager):

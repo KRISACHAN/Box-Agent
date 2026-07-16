@@ -243,6 +243,16 @@ running ACP process, then probe the installed runtime. For local packaging:
 uv run box-agent-build-runtime
 ```
 
+Build a versioned runtime and install the resulting archive into the usual
+officev3 checkout in one command:
+
+```bash
+uv run box-agent-build-runtime --version 0.8.82 --install-officev3
+```
+
+Pass an explicit checkout path after `--install-officev3`, or set
+`BOX_AGENT_OFFICEV3_DIR`, when officev3 is stored elsewhere.
+
 ### Configuration
 
 After running `box-agent setup`, your config lives at `~/.box-agent/config/config.yaml`:

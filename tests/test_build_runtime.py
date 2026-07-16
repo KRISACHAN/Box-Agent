@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
 
@@ -141,3 +142,98 @@ def test_pyinstaller_args_drop_sandbox_stack_for_external_python_mode() -> None:
     assert ("--exclude-module", "pip") in exclude_pairs
     assert ("--exclude-module", "jupyter_client") not in exclude_pairs
     assert ("--exclude-module", "dateutil") not in exclude_pairs
+
+
+def test_resolve_officev3_dir_accepts_explicit_checkout(tmp_path: Path) -> None:
+    officev3_dir = tmp_path / "officev3"
+    installer = officev3_dir / "scripts" / "install-box-agent-runtime.js"
+    installer.parent.mkdir(parents=True)
+    installer.write_text("// test installer\n", encoding="utf-8")
+
+    assert build_runtime.resolve_officev3_dir(str(officev3_dir)) == officev3_dir.resolve()
+
+
+def test_resolve_officev3_dir_uses_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    officev3_dir = tmp_path / "officev3"
+    installer = officev3_dir / "scripts" / "install-box-agent-runtime.js"
+    installer.parent.mkdir(parents=True)
+    installer.write_text("// test installer\n", encoding="utf-8")
+    monkeypatch.setenv("BOX_AGENT_OFFICEV3_DIR", str(officev3_dir))
+
+    assert build_runtime.resolve_officev3_dir() == officev3_dir.resolve()
+
+
+def test_install_runtime_into_officev3_runs_installer_and_checks_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "box-agent-runtime-v0.8.82-darwin-arm64.tar.gz"
+    archive.write_bytes(b"runtime")
+    officev3_dir = tmp_path / "officev3"
+    installer = officev3_dir / "scripts" / "install-box-agent-runtime.js"
+    installer.parent.mkdir(parents=True)
+    installer.write_text("// test installer\n", encoding="utf-8")
+    installed_dir = officev3_dir / "build-resources" / "box-agent-runtime"
+    installed_dir.mkdir(parents=True)
+    (installed_dir / "manifest.json").write_text(
+        json.dumps({"version": "0.8.82"}),
+        encoding="utf-8",
+    )
+    calls: list[tuple[list[str], str]] = []
+
+    monkeypatch.setattr(build_runtime.shutil, "which", lambda _name: "/usr/bin/node")
+
+    def fake_run(command: list[str], *, cwd: str) -> CompletedProcess[str]:
+        calls.append((command, cwd))
+        return CompletedProcess(command, 0)
+
+    monkeypatch.setattr(build_runtime.subprocess, "run", fake_run)
+
+    result = build_runtime.install_runtime_into_officev3(
+        archive,
+        officev3_dir,
+        expected_version="0.8.82",
+    )
+
+    assert result == installed_dir
+    assert calls == [
+        (
+            ["/usr/bin/node", str(installer), str(archive.resolve())],
+            str(officev3_dir),
+        )
+    ]
+
+
+def test_install_runtime_into_officev3_rejects_installed_version_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "runtime.tar.gz"
+    archive.write_bytes(b"runtime")
+    officev3_dir = tmp_path / "officev3"
+    installer = officev3_dir / "scripts" / "install-box-agent-runtime.js"
+    installer.parent.mkdir(parents=True)
+    installer.write_text("// test installer\n", encoding="utf-8")
+    installed_dir = officev3_dir / "build-resources" / "box-agent-runtime"
+    installed_dir.mkdir(parents=True)
+    (installed_dir / "manifest.json").write_text(
+        json.dumps({"version": "0.8.81"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(build_runtime.shutil, "which", lambda _name: "/usr/bin/node")
+    monkeypatch.setattr(
+        build_runtime.subprocess,
+        "run",
+        lambda command, *, cwd: CompletedProcess(command, 0),
+    )
+
+    with pytest.raises(RuntimeError, match="version mismatch"):
+        build_runtime.install_runtime_into_officev3(
+            archive,
+            officev3_dir,
+            expected_version="0.8.82",
+        )

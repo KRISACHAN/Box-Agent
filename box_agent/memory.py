@@ -67,6 +67,9 @@ class ContextEntry:
     source: str = "tool"  # "tool" | "extractor" | "legacy" | "user"
     confidence: float = 1.0
     topic: str = "general"  # slug; routes the entry to context/{topic}.md
+    session_id: str = ""  # host-owned conversation/session id, if available
+    turn_id: str = ""  # host-owned user-visible turn id, if available
+    trigger: str = ""  # extraction/write trigger, e.g. "loop_end"
     # Promotion-to-core tracking. ``core_status`` is "none" by default;
     # set to "rejected" after the user permanently declines promotion.
     # ``last_proposed`` is bumped each time the entry is offered for
@@ -90,8 +93,18 @@ def _new_entry_id() -> str:
     return f"ctx_{stamp}_{uuid.uuid4().hex[:6]}"
 
 
+def _header_value(value: Any, *, max_len: int = 256) -> str:
+    """Normalize metadata values for the whitespace-delimited ctx header."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"\s+", "_", text)[:max_len]
+
+
 def _new_entry(content: str, *, source: str = "tool", confidence: float = 1.0,
-               topic: str = "general") -> ContextEntry:
+               topic: str = "general", session_id: str = "",
+               turn_id: str = "", trigger: str = "") -> ContextEntry:
     now = _now_iso()
     return ContextEntry(
         id=_new_entry_id(),
@@ -102,6 +115,9 @@ def _new_entry(content: str, *, source: str = "tool", confidence: float = 1.0,
         source=source,
         confidence=confidence,
         topic=topic or "general",
+        session_id=_header_value(session_id),
+        turn_id=_header_value(turn_id),
+        trigger=_header_value(trigger),
     )
 
 
@@ -115,6 +131,12 @@ def _format_entry_header(e: ContextEntry) -> str:
         f"confidence={e.confidence:.2f}",
         f"topic={e.topic or 'general'}",
     ]
+    if e.session_id:
+        parts.append(f"session_id={_header_value(e.session_id)}")
+    if e.turn_id:
+        parts.append(f"turn_id={_header_value(e.turn_id)}")
+    if e.trigger:
+        parts.append(f"trigger={_header_value(e.trigger)}")
     if e.core_status and e.core_status != "none":
         parts.append(f"core_status={e.core_status}")
     if e.last_proposed:
@@ -181,6 +203,9 @@ def _parse_context_text(text: str) -> list[ContextEntry]:
                 source=meta.get("source") or "legacy",
                 confidence=float(meta.get("confidence", "1.0")),
                 topic=meta.get("topic") or "general",
+                session_id=meta.get("session_id") or meta.get("sessionId") or "",
+                turn_id=meta.get("turn_id") or meta.get("turnId") or "",
+                trigger=meta.get("trigger") or "",
                 core_status=meta.get("core_status") or "none",
                 last_proposed=meta.get("last_proposed") or "",
             ))
@@ -770,6 +795,13 @@ class MemoryManager:
             "Use `memory_search` when the current request may depend on saved user preferences, historical decisions, repo or workflow conventions, previously verified fixes, specific paths, recurring errors, or prior task experience.",
             "Skip memory for clearly one-off simple questions, trivial rewrites, current time/date, or requests fully answered by the visible conversation.",
             "",
+            "When calling `memory_search`:",
+            "- Do not pass the whole user sentence when it contains action words such as send, write, help, or give me.",
+            "- Search 1-3 short durable keys instead: project/product name, repo/module/path, exact error, workflow, artifact type, or prior decision.",
+            "- Prefer noun phrases over commands. For Chinese prompts, split compound intents into separate searches.",
+            "- If a narrow search misses, retry with a broader stable term or an explicit topic.",
+            "- Examples: `排产平台融资 ppt 的演讲稿发我` -> `排产平台`, `融资路演`, `ppt`; `上次 EACCES 怎么修` -> `EACCES`, `npm cache`, `runtime install`.",
+            "",
             "Search behavior:",
             "- v2 experiences are searched first.",
             "- Legacy context is read-only explicit-search fallback only; it is not auto-matched or promoted.",
@@ -868,8 +900,8 @@ class MemoryManager:
         """Keyword search across v2 experiences, then legacy fallback.
 
         Returns entry contents (deduped across multi-line entries) ranked by
-        occurrence count, with historical ``hits`` as a tiebreak.  Capped at
-        ``limit`` so noisy keywords cannot flood the model.
+        exact occurrence and query-term overlap, with historical ``hits`` as a
+        tiebreak.  Capped at ``limit`` so noisy keywords cannot flood the model.
 
         Side effect: v2 matches increment ``hits`` and refresh ``last_used``.
         Legacy fallback matches are read-only and never become promotion
@@ -877,7 +909,7 @@ class MemoryManager:
         """
         if not query:
             return []
-        query_lower = query.lower()
+        query_lower = query.lower().strip()
         entries, routed_topics, explicit_topic = self._entries_for_query(query, topic=topic)
         results = self._search_entries(query_lower, entries, limit, routed_topics)
 
@@ -984,16 +1016,17 @@ class MemoryManager:
         if not entries:
             return []
 
-        scored: list[tuple[int, int, str]] = []  # (occurrences, hits, content)
+        query_terms = _extract_search_terms(query_lower)
+        scored: list[tuple[float, int, int, str]] = []  # (score, occurrences, hits, content)
         changed = False
         now = _now_iso()
 
         for entry in entries:
             content_lower = entry.content.lower()
-            occurrences = content_lower.count(query_lower)
-            if occurrences == 0:
+            score, occurrences = _score_memory_search(query_lower, query_terms, content_lower)
+            if score <= 0:
                 continue
-            scored.append((occurrences, entry.hits, entry.content))
+            scored.append((score, occurrences, entry.hits, entry.content))
             if update_usage:
                 entry.hits += 1
                 entry.last_used = now
@@ -1005,8 +1038,8 @@ class MemoryManager:
             else:
                 self._write_context_topic_entries(entries)
 
-        scored.sort(key=lambda item: (-item[0], -item[1]))
-        return [content for _, _, content in scored[:limit]]
+        scored.sort(key=lambda item: (-item[0], -item[1], -item[2]))
+        return [content for _, _, _, content in scored[:limit]]
 
     def _auto_match_entries(
         self,
@@ -1297,13 +1330,26 @@ class MemoryManager:
                 if not content:
                     continue
                 op_topic = _slugify_topic(str(op.get("topic", "") or "general"))
+                op_source = _header_value(op.get("source") or "tool")
+                op_session_id = _header_value(op.get("session_id") or op.get("sessionId"))
+                op_turn_id = _header_value(op.get("turn_id") or op.get("turnId"))
+                op_trigger = _header_value(op.get("trigger"))
                 existing_norm = {e.content.strip().lower() for e in entries}
                 for line in content.splitlines():
                     norm = line.strip().lower()
                     if not norm or norm in existing_norm or norm in core_norm:
                         continue
                     existing_norm.add(norm)
-                    entries.append(_new_entry(line, source="tool", topic=op_topic))
+                    entries.append(
+                        _new_entry(
+                            line,
+                            source=op_source or "tool",
+                            topic=op_topic,
+                            session_id=op_session_id,
+                            turn_id=op_turn_id,
+                            trigger=op_trigger,
+                        )
+                    )
                     changed = True
 
             elif action == "noop":
@@ -1795,6 +1841,26 @@ _NOISE_TERMS: frozenset[str] = frozenset({
 })
 
 
+_SEARCH_NOISE_TERMS: frozenset[str] = _NOISE_TERMS | frozenset({
+    "帮我", "请帮", "请你", "给我", "发我", "写个", "写一",
+    "做个", "做一", "一下", "这个", "那个", "发给", "帮忙",
+    "返回", "返回给", "返回给我", "输出", "展示", "内容返",
+    "内容返回", "内容返回给", "内容返回给我", "的内容", "的内",
+    "send", "write", "help", "give", "make", "create",
+})
+
+_SEARCH_ARTIFACT_TERMS: frozenset[str] = frozenset({
+    "ppt", "pptx", "deck", "slides", "slide", "pdf", "doc", "docx",
+    "md", "html", "xlsx", "xls", "csv",
+})
+
+_SEARCH_ACTION_MARKERS: tuple[str, ...] = (
+    "返回", "发我", "发给", "给我", "帮我", "输出", "展示",
+)
+
+_SEARCH_MIN_TERM_SCORE = 2.5
+
+
 def _extract_match_terms(text: str) -> list[str]:
     """Extract conservative phrase-like terms from a prompt or memory line."""
     terms: set[str] = set()
@@ -1820,6 +1886,127 @@ def _extract_match_terms(text: str) -> list[str]:
                         terms.add(candidate)
 
     return sorted(terms, key=lambda term: (-len(term), term))
+
+
+def _extract_search_terms(text: str) -> list[str]:
+    """Extract explicit-search terms from a query.
+
+    ``memory_search`` is model-initiated, so it can be less conservative than
+    auto-match.  We still strip common command words, but keep shorter durable
+    Chinese terms like "融资" and file/tool tokens like "ppt" so compound user
+    requests can find related memories even when the whole sentence is not a
+    substring of the saved entry.
+    """
+    terms: set[str] = set(_extract_match_terms(text))
+
+    for token in re.findall(r"[a-z0-9][a-z0-9_-]{1,}", text):
+        if not _is_search_noise_term(token):
+            terms.add(token)
+
+    for segment in re.findall(r"[\u4e00-\u9fff]{2,}", text):
+        if not _is_search_noise_term(segment) and len(segment) <= 12:
+            terms.add(segment)
+        for size in (4, 3, 2):
+            if len(segment) < size:
+                continue
+            for idx in range(0, len(segment) - size + 1):
+                candidate = segment[idx:idx + size]
+                if not _is_search_noise_term(candidate):
+                    terms.add(candidate)
+
+    return sorted(
+        {t for t in terms if t.strip() and not _is_search_noise_term(t)},
+        key=lambda term: (-len(term), term),
+    )
+
+
+def _dedupe_contained_terms(terms: set[str] | list[str]) -> list[str]:
+    """Keep the longest useful terms while preserving independent short terms."""
+    ordered = sorted({t for t in terms if t.strip()}, key=lambda term: (-len(term), term))
+    kept: list[str] = []
+    for term in ordered:
+        if any(term != other and term in other for other in kept):
+            continue
+        kept.append(term)
+    return kept
+
+
+def _search_term_weight(term: str) -> float:
+    if re.search(r"[\u4e00-\u9fff]", term):
+        if len(term) >= 5:
+            return 3.0
+        if len(term) == 4:
+            return 2.0
+        if len(term) == 3:
+            return 1.2
+        return 0.7
+    if len(term) >= 5:
+        return 1.7
+    if len(term) == 4:
+        return 1.3
+    return 1.0
+
+
+def _is_search_noise_term(term: str) -> bool:
+    return term in _SEARCH_NOISE_TERMS or any(marker in term for marker in _SEARCH_ACTION_MARKERS)
+
+
+def _is_search_artifact_term(term: str) -> bool:
+    return term.lower() in _SEARCH_ARTIFACT_TERMS
+
+
+def _is_short_cjk_entity_term(term: str) -> bool:
+    return bool(
+        re.search(r"[\u4e00-\u9fff]", term)
+        and len(term) >= 2
+        and not _is_search_noise_term(term)
+    )
+
+
+def _score_memory_search(query_lower: str, query_terms: list[str], memory_lower: str) -> tuple[float, int]:
+    """Score explicit memory_search matches.
+
+    Exact substring matches stay dominant for short deliberate queries.  Longer
+    natural-language queries can still recall entries through several stable
+    overlapping terms, but a single weak term such as "ppt" is not enough.
+    """
+    normalized_query = query_lower.strip()
+    occurrences = memory_lower.count(normalized_query) if normalized_query else 0
+    if occurrences:
+        return float(occurrences * 100), occurrences
+
+    if not query_terms:
+        return 0.0, 0
+
+    matched = _dedupe_contained_terms([term for term in query_terms if term in memory_lower])
+    if not matched:
+        return 0.0, 0
+
+    score = sum(_search_term_weight(term) for term in matched)
+    has_entity_artifact_pair = any(_is_short_cjk_entity_term(term) for term in matched) and any(
+        _is_search_artifact_term(term) for term in matched
+    )
+    strong_matches = [
+        term for term in matched
+        if (
+            (re.search(r"[\u4e00-\u9fff]", term) and len(term) >= 4)
+            or (not re.search(r"[\u4e00-\u9fff]", term) and len(term) >= 4)
+        )
+    ]
+    if not strong_matches and len(matched) < 2:
+        return 0.0, 0
+    if has_entity_artifact_pair:
+        score = max(score, _SEARCH_MIN_TERM_SCORE)
+    if score < _SEARCH_MIN_TERM_SCORE:
+        return 0.0, 0
+
+    memory_terms = _extract_search_terms(memory_lower)
+    if memory_terms:
+        matched_in_memory = len(set(matched) & set(memory_terms))
+        if matched_in_memory > 0 and len(memory_terms) > 4 * matched_in_memory:
+            score *= 0.75
+
+    return score, 0
 
 
 _TITLE_GENERATION_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -2035,27 +2222,42 @@ class MemoryExtractor:
         memory_manager: MemoryManager,
         *,
         session_id: str = "",
+        turn_id: str = "",
         cooldown: int = 300,
         step_interval: int = 10,
     ):
         self._llm = llm
         self._mgr = memory_manager
         self._session_id = session_id
+        self._turn_id = turn_id
         self._cooldown = cooldown
         self._step_interval = step_interval
         self._last_time: float = 0.0
         self._steps_since: int = 0
 
-    async def maybe_extract(self, messages: list[Message], trigger: str) -> bool:
+    def set_turn_id(self, turn_id: str) -> None:
+        """Update the current host-owned turn id for subsequent extractions."""
+
+        self._turn_id = _header_value(turn_id)
+
+    async def maybe_extract(
+        self,
+        messages: list[Message],
+        trigger: str,
+        *,
+        turn_id: str | None = None,
+    ) -> bool:
         """Check whether extraction should run, then run if needed.
 
         Args:
             messages: Current conversation messages.
             trigger: ``"pre_summarize"`` | ``"step_interval"`` | ``"loop_end"``
+            turn_id: Optional user-visible turn id snapshot from the caller.
 
         Returns:
             True if extraction was actually performed.
         """
+        extraction_turn_id = _header_value(self._turn_id if turn_id is None else turn_id)
         now = monotonic()
 
         if trigger == "step_interval":
@@ -2072,7 +2274,7 @@ class MemoryExtractor:
                 return False
 
         try:
-            await self._extract(messages)
+            await self._extract(messages, trigger, turn_id=extraction_turn_id)
             self._last_time = monotonic()
             self._steps_since = 0
             return True
@@ -2080,7 +2282,7 @@ class MemoryExtractor:
             logger.exception("Memory extraction failed (trigger=%s)", trigger)
             return False
 
-    async def _extract(self, messages: list[Message]) -> None:
+    async def _extract(self, messages: list[Message], trigger: str, *, turn_id: str) -> None:
         """Use LLM to analyze messages and update CONTEXT.md."""
         from .schema import Message as Msg
 
@@ -2115,9 +2317,9 @@ class MemoryExtractor:
             session_id=self._session_id,
         )
 
-        self._apply_updates(response.content)
+        self._apply_updates(response.content, trigger=trigger, turn_id=turn_id)
 
-    def _apply_updates(self, llm_output: str) -> None:
+    def _apply_updates(self, llm_output: str, *, trigger: str, turn_id: str) -> None:
         """Parse LLM JSON output and apply to CONTEXT.md.
 
         Routed through ``apply_context_operations`` so entry metadata
@@ -2177,7 +2379,17 @@ class MemoryExtractor:
         for topic, lines in by_topic.items():
             joined = "\n".join(lines)
             if joined:
-                operations.append({"action": "add", "content": joined, "topic": topic})
+                operations.append(
+                    {
+                        "action": "add",
+                        "content": joined,
+                        "topic": topic,
+                        "source": "extractor",
+                        "session_id": self._session_id,
+                        "turn_id": turn_id,
+                        "trigger": trigger,
+                    }
+                )
 
         if operations:
             self._mgr.apply_context_operations(operations)

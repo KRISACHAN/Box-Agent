@@ -50,6 +50,9 @@ def test_new_format_roundtrip(memory_dir: Path):
             hits=2,
             source="tool",
             confidence=0.9,
+            session_id="office-session-1",
+            turn_id="turn-7",
+            trigger="loop_end",
         ),
         ContextEntry(
             id="ctx_test_2",
@@ -62,6 +65,10 @@ def test_new_format_roundtrip(memory_dir: Path):
         ),
     ]
     write_context_file(path, entries)
+    raw = path.read_text(encoding="utf-8")
+    assert "session_id=office-session-1" in raw
+    assert "turn_id=turn-7" in raw
+    assert "trigger=loop_end" in raw
 
     parsed = parse_context_file(path)
     assert len(parsed) == 2
@@ -70,9 +77,13 @@ def test_new_format_roundtrip(memory_dir: Path):
     assert parsed[0].hits == 2
     assert parsed[0].source == "tool"
     assert parsed[0].confidence == 0.9
+    assert parsed[0].session_id == "office-session-1"
+    assert parsed[0].turn_id == "turn-7"
+    assert parsed[0].trigger == "loop_end"
     assert parsed[1].id == "ctx_test_2"
     assert parsed[1].content == "- beta\n- multi-line continued"
     assert parsed[1].source == "extractor"
+    assert parsed[1].turn_id == ""
 
 
 def test_write_empty_entries_truncates_file(memory_dir: Path):

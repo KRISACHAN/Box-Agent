@@ -62,7 +62,7 @@
 
 - 优先提交小 PR，一次只修改一个行为或一个子系统。
 - 共享行为应放在共享核心逻辑中。如果一个行为需要同时支持 CLI 和 ACP runtime，应优先在共享核心实现，CLI/ACP 只作为适配层。
-- 修改代码路径前，如果 `.understand-anything/` 可用，应先用它做代码导航，再用源码阅读、`rg`、测试、日志或运行探针验证。
+- 修改代码路径前，如果 `.understand-anything/` 可用，应先用它做代码导航，再用源码阅读、`rg`、测试、日志或运行探针验证。范围和刷新步骤见[代码图谱指南](docs/UNDERSTAND_ANYTHING_CN.md)。
 - 只提交 Understand Anything 的共享配置（`.understand-anything/.understandignore` 和 `.understand-anything/config.json`）。不要提交生成图谱、fingerprint、intermediate、trash 或 cache 文件。
 - 不要提交本地凭据或用户配置。`config.yaml`、`mcp.json`、日志和 `workspace/` 都属于本地运行文件。
 - 如果改动会影响 officev3 或任何 packaged runtime，需要说明本次只验证了源码行为，还是也完成了 runtime rebuild/install/probe。

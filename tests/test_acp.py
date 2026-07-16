@@ -970,10 +970,20 @@ async def test_acp_emits_turn_usage_for_tools_mcp_and_tokens(tmp_path):
     )
 
     session = await agent.newSession(
-        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+        SimpleNamespace(
+            cwd=None,
+            field_meta={
+                "session_mode": "general",
+                "session_id": "office-session-a",
+            },
+        )
     )
     response = await agent.prompt(
-        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "open and echo"}])
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "open and echo"}],
+            field_meta={"turnId": "office-turn-1"},
+        )
     )
 
     assert response.stopReason == "end_turn"
@@ -990,6 +1000,11 @@ async def test_acp_emits_turn_usage_for_tools_mcp_and_tokens(tmp_path):
         == [{"server": "browser", "tool": "open", "name": "browser.open", "count": 1}]
         for item in turn_usage_outputs
     )
+    assert turn_usage_outputs[-1]["sessionId"] == "office-session-a"
+    assert turn_usage_outputs[-1]["session_id"] == "office-session-a"
+    assert turn_usage_outputs[-1]["acpSessionId"] == session.sessionId
+    assert turn_usage_outputs[-1]["turnId"] == "office-turn-1"
+    assert turn_usage_outputs[-1]["turn_id"] == "office-turn-1"
     assert turn_usage_outputs[-1]["tokenUsage"] == {
         "promptTokens": 12,
         "completionTokens": 6,
@@ -2841,11 +2856,21 @@ async def test_acp_prompt_response_reports_turn_token_total(tmp_path):
         SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
     )
     response = await agent.prompt(
-        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "hello"}])
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "hello"}],
+            field_meta={"turn_id": "turn-response-1"},
+        )
     )
 
     assert response.stopReason == "end_turn"
-    assert response.field_meta == {"usage": {"totalTokens": 30}}
+    assert response.field_meta["usage"] == {
+        "totalTokens": 30,
+        "sessionId": session.sessionId,
+        "session_id": session.sessionId,
+        "turnId": "turn-response-1",
+        "turn_id": "turn-response-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -2869,8 +2894,12 @@ async def test_acp_token_meter_resets_between_turns(tmp_path):
         SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "two"}])
     )
 
-    assert first.field_meta == {"usage": {"totalTokens": 25}}
-    assert second.field_meta == {"usage": {"totalTokens": 25}}
+    assert first.field_meta["usage"]["totalTokens"] == 25
+    assert second.field_meta["usage"]["totalTokens"] == 25
+    assert first.field_meta["usage"]["sessionId"] == session.sessionId
+    assert second.field_meta["usage"]["sessionId"] == session.sessionId
+    assert first.field_meta["usage"]["turnId"] == f"{session.sessionId}-turn-1"
+    assert second.field_meta["usage"]["turnId"] == f"{session.sessionId}-turn-2"
 
 
 class SpeakThenToolLLM:

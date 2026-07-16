@@ -103,7 +103,9 @@ Returns both `MEMORY.md` and context memory when present.
 }
 ```
 
-Search is a case-insensitive keyword search over v2 experience entries. When `topic` is omitted, Box-Agent first uses the topic sidecar index (`v2/experiences/_index.json`) to route the query to likely topic files, then falls back to all v2 topics if the routed search finds nothing. If v2 has no match, explicit `memory_search` falls back to legacy context read-only. Core memory is already present in the prompt, so `memory_search` only searches context / experience memory.
+Search is case-insensitive and ranks exact substring matches first, then multi-term overlap for longer natural-language queries. When `topic` is omitted, Box-Agent first uses the topic sidecar index (`v2/experiences/_index.json`) to route the query to likely topic files, then falls back to all v2 topics if the routed search finds nothing. If v2 has no match, explicit `memory_search` falls back to legacy context read-only. Core memory is already present in the prompt, so `memory_search` only searches context / experience memory.
+
+Models should call `memory_search` with short durable keys instead of whole action sentences. For example, `排产平台融资 ppt 的演讲稿发我` should become searches such as `排产平台`, `融资路演`, or `ppt`; `上次 EACCES 怎么修` should become `EACCES`, `npm cache`, or `runtime install`.
 
 ---
 
@@ -216,6 +218,14 @@ When `enable_memory_extraction` is enabled, `MemoryExtractor` analyzes recent co
 The extractor can write explicit user-stated profile facts, preferences, and local defaults to `MEMORY.md`. For example, if the user says they are in Beijing while asking for weather, the extractor should save a cautious default such as `- 用户用于本地查询的默认城市是北京`, not infer a permanent residence.
 
 Project context, task patterns, historical notes, decisions, deadlines, and behavioral feedback still go to topic-sharded v2 experience memory. This keeps one-off task details out of core memory, and avoids running a memory extraction pass after every trivial stop.
+
+New v2 experience entries may include provenance metadata in the entry header:
+
+```text
+<!-- ctx id=... source=extractor topic=project session_id=chat-a turn_id=chat-a-turn-17 trigger=loop_end -->
+```
+
+`session_id` is the host-owned conversation id from ACP `_meta.session_id`; `turn_id` is the host-owned user-visible turn id from ACP prompt `_meta.turnId` / `_meta.turn_id`; `trigger` records the lifecycle point that wrote the entry. These fields are optional and older entries simply omit them. They are for audit/debugging and future trace-back flows, not for search ranking or promotion eligibility.
 
 ---
 

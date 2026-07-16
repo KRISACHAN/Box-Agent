@@ -332,6 +332,16 @@ def _meta_bool(meta: Any, *keys: str) -> bool:
     return any(bool(meta.get(key, False)) for key in keys)
 
 
+def _meta_string(meta: Any, *keys: str) -> str:
+    if not isinstance(meta, dict):
+        return ""
+    for key in keys:
+        value = meta.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _plan_approval_from_meta(meta: Any) -> dict[str, Any] | None:
     if not isinstance(meta, dict):
         return None
@@ -620,6 +630,8 @@ class SessionState:
     preloaded_skill_names: list[str] = field(default_factory=list)
     preloaded_skill_hashes: dict[str, str] = field(default_factory=dict)
     follow_up_suggestions_enabled: bool = False
+    turn_counter: int = 0
+    current_turn_id: str = ""
 
 
 class BoxACPAgent:
@@ -1358,6 +1370,13 @@ class BoxACPAgent:
         user_text = "\n".join(block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "") for block in params.prompt)
         plan_detection_text = _latest_user_request_for_plan_detection(user_text)
         prompt_meta = getattr(params, "field_meta", None) or {}
+        state.turn_counter += 1
+        provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")
+        turn_id = provided_turn_id or f"{session_id}-turn-{state.turn_counter}"
+        billing_session_id = state.upstream_session_id or session_id
+        state.current_turn_id = turn_id
+        if state.memory_extractor is not None and hasattr(state.memory_extractor, "set_turn_id"):
+            state.memory_extractor.set_turn_id(turn_id)
         plan_approval = _plan_approval_from_meta(prompt_meta)
         if plan_approval is None:
             plan_approval = _plan_approval_from_pending_text(
@@ -1419,6 +1438,9 @@ class BoxACPAgent:
             "session/prompt",
             session_id=session_id,
             message=user_text,
+            upstream_session_id=state.upstream_session_id,
+            turn_id=turn_id,
+            turn_id_source="host" if provided_turn_id else "fallback",
             plan_detection_text=plan_detection_text[:500],
             host_plan_hint=host_plan_hint,
             force_plan_start=force_plan_start,
@@ -1516,6 +1538,8 @@ class BoxACPAgent:
             stop_reason = await self._run_turn(
                 state,
                 session_id,
+                turn_id=turn_id,
+                billing_session_id=billing_session_id,
                 force_plan_start=force_plan_start,
                 require_plan_approval=require_plan_approval,
                 plan_approval=plan_approval,
@@ -1554,6 +1578,8 @@ class BoxACPAgent:
                 stop_reason = await self._run_turn(
                     state,
                     session_id,
+                    turn_id=turn_id,
+                    billing_session_id=billing_session_id,
                     auto_approve_plan=auto_approve_plan,
                     completion_gate=completion_gate,
                     plan_start_text=plan_detection_text,
@@ -1580,6 +1606,8 @@ class BoxACPAgent:
         log.info(
             "session/done",
             session_id=session_id,
+            upstream_session_id=state.upstream_session_id,
+            turn_id=turn_id,
             stop_reason=stop_reason,
             duration_ms=duration_ms,
             total_tokens=turn_total_tokens,
@@ -1604,7 +1632,15 @@ class BoxACPAgent:
             and state.agent.goal.status == "active"
         ):
             acp_stop_reason = "max_turn_requests"
-        response_meta: dict[str, Any] = {"usage": {"totalTokens": turn_total_tokens}}
+        response_meta: dict[str, Any] = {
+            "usage": {
+                "totalTokens": turn_total_tokens,
+                "sessionId": billing_session_id,
+                "session_id": billing_session_id,
+                "turnId": turn_id,
+                "turn_id": turn_id,
+            }
+        }
         if state.agent.goal is not None or auto_continuations > 0:
             response_meta["goalAutopilot"] = {
                 "enabled": auto_enabled,
@@ -2135,6 +2171,8 @@ class BoxACPAgent:
         state: SessionState,
         session_id: str,
         *,
+        turn_id: str = "",
+        billing_session_id: str = "",
         force_plan_start: bool = False,
         require_plan_approval: bool = False,
         plan_approval: dict[str, Any] | None = None,
@@ -2289,6 +2327,11 @@ class BoxACPAgent:
             payload: dict[str, Any] = {
                 "type": "turn_usage",
                 "version": 1,
+                "sessionId": billing_session_id or state.upstream_session_id or session_id,
+                "session_id": billing_session_id or state.upstream_session_id or session_id,
+                "acpSessionId": session_id,
+                "turnId": turn_id,
+                "turn_id": turn_id,
                 "skills": list(used_skill_names),
                 "tools": [
                     {"name": name, "count": count}
@@ -2314,6 +2357,7 @@ class BoxACPAgent:
             log.debug(
                 "turn/usage",
                 session_id=session_id,
+                turn_id=turn_id,
                 payload=payload,
             )
             await self._send(
@@ -2390,6 +2434,7 @@ class BoxACPAgent:
             hooks=self._hooks,
             memory_manager=self._memory,
             memory_extractor=state.memory_extractor,
+            memory_turn_id=turn_id,
             memory_promotion_enabled=self._config.agent.memory_promotion_proposal_enabled,
             memory_promotion_hit_threshold=self._config.agent.memory_promotion_hit_threshold,
             memory_promotion_cooldown_days=self._config.agent.memory_promotion_cooldown_days,

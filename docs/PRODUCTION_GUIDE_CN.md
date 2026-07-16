@@ -79,6 +79,16 @@ uv run box-agent-build-runtime
 UV_PROJECT_ENVIRONMENT=.venv-x64 arch -x86_64 ~/.local/bin-x64/uv run box-agent-build-runtime --target darwin-x64
 ```
 
+构建 runtime 并立即安装到 officev3 `build-resources` 可以合并为一条命令：
+
+```bash
+uv run box-agent-build-runtime --version X.Y.Z --install-officev3
+```
+
+命令会自动查找常用的 `Dev/frontend/officev3` 目录。如果 officev3 位于其他
+位置，传入 `--install-officev3 /path/to/officev3` 或设置
+`BOX_AGENT_OFFICEV3_DIR`。
+
 运行时约束：
 
 | 通道 | 内容 | 规则 |

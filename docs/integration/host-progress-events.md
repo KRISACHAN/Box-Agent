@@ -10,6 +10,46 @@ Recommended host layout:
 - Tool/activity cards: tool calls, sub-agent progress, plan snapshots, todo snapshots, artifacts, and web search metadata.
 - Default collapsed details: sub-agent internals should be grouped and collapsible, not appended one-by-one as chat messages.
 
+## Turn usage and billing correlation
+
+Box-Agent emits per-user-turn usage snapshots as `update_tool_call.rawOutput.type === "turn_usage"`. A turn is one user-visible prompt/response loop, not one model call. Tool calls, retries, summarization, and auto-continuations within that loop should be aggregated under the same turn id.
+
+Hosts should pass the business conversation id on `session/new._meta.session_id` and the business turn id on every `session/prompt._meta.turnId` (or `_meta.turn_id`):
+
+```json
+{
+  "_meta": {
+    "session_id": "chat-a",
+    "turnId": "chat-a-turn-17"
+  }
+}
+```
+
+The stream payload includes both the host-facing ids and the ACP-local session id:
+
+```json
+{
+  "type": "turn_usage",
+  "version": 1,
+  "sessionId": "chat-a",
+  "session_id": "chat-a",
+  "acpSessionId": "sess-0-abcd1234",
+  "turnId": "chat-a-turn-17",
+  "turn_id": "chat-a-turn-17",
+  "skills": [],
+  "tools": [{"name": "echo", "count": 1}],
+  "mcp": [],
+  "tokenUsage": {
+    "promptTokens": 12,
+    "completionTokens": 6,
+    "totalTokens": 18,
+    "calls": 2
+  }
+}
+```
+
+The final `PromptResponse._meta.usage` carries the same `sessionId` and `turnId` plus `totalTokens`. If the host omits `turnId`, Box-Agent emits a local fallback such as `sess-0-abcd1234-turn-1`; use that only as a temporary compatibility value, not as the authoritative billing id. When a user switches from conversation A to B and then back to A, keep passing A's `session_id` with a new A turn id; the backend can store each usage event by `(sessionId, turnId)` and order history by event timestamp.
+
 ## Sub-agent progress
 
 A genuine sub-agent progress update arrives as a tool-call update whose `rawOutput.type` is `sub_agent_progress`.

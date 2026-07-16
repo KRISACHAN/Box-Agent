@@ -62,7 +62,7 @@ If you have an idea for a new feature, please create an Issue first to discuss i
 
 - Prefer small PRs that change one behavior or one subsystem.
 - Keep shared behavior in shared core logic. If a behavior must work in both CLI and ACP runtime, implement it in the shared core and keep CLI/ACP code as adapters.
-- Before changing code paths, use `.understand-anything/` as the first navigation aid when it is available, then verify the path with source reads, `rg`, tests, logs, or runtime probes.
+- Before changing code paths, use `.understand-anything/` as the first navigation aid when it is available, then verify the path with source reads, `rg`, tests, logs, or runtime probes. See the [code map guide](docs/UNDERSTAND_ANYTHING.md) for scope and refresh steps.
 - Commit only shared Understand Anything configuration (`.understand-anything/.understandignore` and `.understand-anything/config.json`). Do not commit generated graph, fingerprint, intermediate, trash, or cache files.
 - Do not include local credentials or user config. `config.yaml`, `mcp.json`, logs, and `workspace/` are local runtime files.
 - If a change affects officev3 or any packaged runtime, say whether you verified only source behavior or also rebuilt/installed/probed the runtime artifact.

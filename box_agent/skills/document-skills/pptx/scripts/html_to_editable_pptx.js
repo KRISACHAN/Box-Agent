@@ -392,6 +392,15 @@ async function main() {
     process.exit(1);
   }
 
+  // Source previews must reflect the authored HTML before background capture
+  // mutates stacking and visibility for the editable PPTX export tree.
+  const previews = [];
+  for (let i = 0; i < slideHandles.length; i += 1) {
+    const imagePath = path.join(outDir, `slide-${String(i + 1).padStart(2, "0")}.png`);
+    await slideHandles[i].screenshot({ path: imagePath });
+    previews.push(imagePath);
+  }
+
   let bgCaptures = [];
   if (opts.bgCapture === "always") {
     await injectCaptureStyles(page);
@@ -410,13 +419,6 @@ async function main() {
   }
 
   await page.addScriptTag({ path: bundlePath });
-
-  const previews = [];
-  for (let i = 0; i < slideHandles.length; i += 1) {
-    const imagePath = path.join(outDir, `slide-${String(i + 1).padStart(2, "0")}.png`);
-    await slideHandles[i].screenshot({ path: imagePath });
-    previews.push(imagePath);
-  }
 
   const exportResult = await page.evaluate(
     async ({ fileName, svgVector }) => {

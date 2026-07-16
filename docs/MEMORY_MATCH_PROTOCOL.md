@@ -18,7 +18,7 @@
 
 ## 2. 显式搜索命中的上下文记忆
 
-当模型根据 `memory_summary.md` 或当前问题判断需要查询记忆并调用 `memory_search` 时，工具结果的 `rawOutput` 会返回结构化匹配：
+当模型根据 `memory_summary.md` 或当前问题判断需要查询记忆并调用 `memory_search` 时，工具结果的 `rawOutput` 会返回结构化匹配。推荐模型传入短的稳定检索词，而不是完整用户句子；后端也会对长句做多词打分兜底。
 
 ```json
 {

@@ -2003,6 +2003,7 @@ async def run_agent_loop(
     hooks: list | None = None,
     memory_manager: Any | None = None,
     memory_extractor: Any | None = None,
+    memory_turn_id: str = "",
     memory_promotion_enabled: bool = False,
     memory_promotion_hit_threshold: int = 5,
     memory_promotion_cooldown_days: int = 14,
@@ -2058,9 +2059,11 @@ async def run_agent_loop(
         memory_manager: Optional ``MemoryManager`` instance for conservative
             prompt-level context memory auto matching.
         memory_extractor: Optional ``MemoryExtractor`` instance for
-            lifecycle-triggered memory extraction.  When present,
-            extraction is attempted before context compression and
-            every N steps.
+        lifecycle-triggered memory extraction.  When present,
+        extraction is attempted before context compression and
+        every N steps.
+        memory_turn_id: Optional caller-owned turn id to stamp on
+            lifecycle-triggered memory extraction entries.
         inject_queue: Optional queue for in-stream message injection.
             When present, queued user messages are drained at each
             step boundary and appended to the conversation before
@@ -2460,7 +2463,13 @@ async def run_agent_loop(
             # Snapshot messages before compression, then extract in background
             if memory_extractor:
                 _snapshot = list(messages)
-                asyncio.create_task(memory_extractor.maybe_extract(_snapshot, "pre_summarize"))
+                asyncio.create_task(
+                    memory_extractor.maybe_extract(
+                        _snapshot,
+                        "pre_summarize",
+                        turn_id=memory_turn_id,
+                    )
+                )
             yield SummarizationEvent(
                 estimated_tokens=est_before,
                 api_tokens=api_prompt_tokens,
@@ -3035,7 +3044,13 @@ async def run_agent_loop(
                 await hook_mgr.fire_done(stop_reason=StopReason.END_TURN, final_content=response.content)
             # Extract memory at agent loop end (background)
             if memory_extractor:
-                asyncio.create_task(memory_extractor.maybe_extract(messages, "loop_end"))
+                asyncio.create_task(
+                    memory_extractor.maybe_extract(
+                        messages,
+                        "loop_end",
+                        turn_id=memory_turn_id,
+                    )
+                )
             yield StepEnd(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
             proposal = await _build_proposal_event_with_plan()
             if proposal is not None:
@@ -3966,13 +3981,25 @@ async def run_agent_loop(
 
         # ── Periodic memory extraction (background) ──────────
         if memory_extractor:
-            asyncio.create_task(memory_extractor.maybe_extract(messages, "step_interval"))
+            asyncio.create_task(
+                memory_extractor.maybe_extract(
+                    messages,
+                    "step_interval",
+                    turn_id=memory_turn_id,
+                )
+            )
 
     # ── Max steps exhausted ─────────────────────────────────
     _compact_pending_tool_call_history()
     msg = f"Task couldn't be completed after {max_steps} steps."
     if memory_extractor:
-        asyncio.create_task(memory_extractor.maybe_extract(messages, "loop_end"))
+        asyncio.create_task(
+            memory_extractor.maybe_extract(
+                messages,
+                "loop_end",
+                turn_id=memory_turn_id,
+            )
+        )
     if hook_mgr.hooks:
         await hook_mgr.fire_done(stop_reason=StopReason.MAX_STEPS, final_content=msg)
     proposal = await _build_proposal_event_with_plan()
