@@ -1,10 +1,16 @@
-# HTML-First Editable Decks
+# HTML-First Editable Decks (legacy/custom HTML and optional export)
 
-Use this workflow for newly created decks by default unless the user provides an
-existing PowerPoint template to preserve or explicitly requires native PowerPoint
-charts/tables. New decks should be authored as fixed-size HTML first, then
-exported to editable PPTX with `scripts/html_to_editable_pptx.js`, which loads
-the skill-bundled `scripts/dom-to-pptx.bundle.js`.
+> New decks use the controlled `deck.json -> index.html` compiler described in
+> `controlled-layouts.md`. This reference remains authoritative for the explicit
+> free-form HTML escape route and for HTML-to-PPTX exporter behavior. Where this
+> file says `deck.html`, controlled decks use their compiled `index.html`.
+
+Use this workflow only for the explicit legacy/custom-HTML escape route. On
+that route, author fixed-size HTML and optionally export it to editable PPTX
+with `scripts/html_to_editable_pptx.js`, which loads the skill-bundled
+`scripts/dom-to-pptx.bundle.js`. Controlled new decks stay on the registered
+`deck.json -> index.html` compiler unless the user explicitly requests the
+legacy escape route.
 
 Before authoring a new deck when final `.pptx` delivery is expected, preflight
 the browser export environment with `scripts/check_html_export_env.js` or the
@@ -33,11 +39,10 @@ DOM-to-PPTX exporter.
   height: 1080px;`) verbatim — do not re-author these dimensions.
 - If the requested deliverable is final `.pptx`, preflight the browser export
   environment before writing the full HTML deck.
-- Before writing HTML, decide whether `references/outline.md` calls for a
-  separate `outline.json`. Use one for broad or structurally unclear prompts;
-  skip it when the user's prompt is already a sufficient page-level outline.
-  Never invent extra claims, data, or strategy just to make an outline look
-  deeper.
+- Before writing HTML, create the `outline.json` required by
+  `references/outline.md`. For a sufficient page-level user outline, preserve it
+  as a lightweight direct mapping; never invent extra claims, data, or strategy
+  just to make the artifact look deeper.
 - Use one `.slide` element per page. Do not author at `1280px × 720px`,
   `1280px × 760px`, viewport-relative sizes, or scaled wrappers. For a
   deliberately nonstandard size the user must opt in: pass `--canvas WxH` to both
@@ -47,15 +52,18 @@ DOM-to-PPTX exporter.
 - Export with `scripts/html_to_editable_pptx.js`.
 - Keep the source HTML and generated preview images beside the output deck for
   QA and future edits.
-- Render the exported PPTX and inspect for DOM-to-PPTX drift before delivery.
+- Render the exported PPTX when the user requests visual validation or
+  structural QA already suggests DOM-to-PPTX drift; otherwise keep the visual
+  inspection explicitly unclaimed.
 - Add a visible, consistent page number to every non-cover slide. Use one
   placement across the deck, preferably top-right or bottom-right, and keep the
   total count correct after adding/removing slides.
 
 This produces an editable PowerPoint deck from HTML-authored slides. The output
-is more editable than an image-only deck, but CSS-to-PPTX mapping can drift, so
-render QA is required for full visual validation, but if runtime is unavailable
-or blocked, report `Rendering: BLOCKED` and continue with a clear limitation.
+is more editable than an image-only deck, but CSS-to-PPTX mapping can drift.
+Rendered QA is required only to claim full visual validation; follow
+`SKILL.md` §4.2 for its opt-in triggers. If a triggered render is unavailable or
+blocked, report `Rendering: BLOCKED` and continue with a clear limitation.
 
 ## Data Charts And ECharts
 
@@ -63,6 +71,13 @@ For data-heavy slides, the HTML preview and the final PPTX must preserve the
 same underlying data. Use ECharts in `deck.html` when it helps render a faithful
 browser preview, interactions, or complex analytical styling, but treat it as a
 preview surface, not the final PPT representation.
+
+The controlled compiler bundles ECharts 6 locally and uses the SVG renderer;
+generated `index.html` files with controlled charts therefore remain standalone
+and do not depend on a CDN. `chart-bar-v1` covers simple rankings, while
+`chart-data-v1` covers animated bar, column, line, area, pie, donut, and radar
+charts. Their editable `deck.json` props are converted to ECharts options at
+runtime and to native PptxGenJS charts during editable PPTX export.
 
 Default data-display decision:
 
@@ -157,9 +172,20 @@ Use one `.slide` element per page:
 
 ## Fragment Drafting
 
-For decks with 6 or more slides, dense source material, or likely large HTML,
-follow the fragment rules in `SKILL.md` §3.4 before writing the final `deck.html`.
-Never re-serialize the whole deck through a single `write_file` call.
+This is only for the explicit legacy/custom-HTML escape route. Controlled decks
+render from `deck.json` regardless of slide count. For a large legacy deck:
+
+1. Copy `references/starter/common.css` to `drafts/common.css`; keep the locked
+   1920x1080 `.slide` geometry and define shared styles once.
+2. Write contiguous fragment files such as `drafts/slides_01_04.html`. Each file
+   contains only `<section class="slide" data-slide="NN">` blocks, numbered
+   continuously from `01`; no document wrapper, `<style>`, or `<script>`.
+3. Keep each fragment to roughly four slides or fewer. Charts in fragments use
+   `data-chart-spec` or `data-chart-spec-src`, never inline script tags.
+4. Merge once; never read all fragments back and re-serialize them through one
+   `write_file` call. Sub-agents, when explicitly used for independent ranges,
+   write their own fragment files and the parent only runs the merge command.
+
 The merge command is:
 
 ```bash

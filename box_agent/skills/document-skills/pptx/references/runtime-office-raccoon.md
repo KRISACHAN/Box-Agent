@@ -7,10 +7,13 @@
 
 ## 2. Export runtime rules
 
-1. Prefer editable flow with `scripts/html_to_editable_pptx.js` for new decks.
+1. Default controlled HTML delivery does not require an export preflight. When
+   the user explicitly requests PPTX, prefer the editable export flow with
+   `scripts/html_to_editable_pptx.js`.
 2. Do not use npm `dom-to-pptx`; export only through bundled `scripts/dom-to-pptx.bundle.js`.
 3. For preflight checks use `scripts/check_html_export_env.js` before full deck authoring when final PPTX is expected.
-4. If no host renderer exists, stop route selection and ask user to choose `HTML` or `PPTX`.
+4. If no host renderer exists during an explicit PPTX export, keep the finished
+   HTML deliverable and ask whether to defer export or switch to native PPTX.
 5. When browser export is blocked and user chooses `PPTX`, switch to `PptxGenJS`.
 
 ## 3. Dependency install path
@@ -39,7 +42,9 @@ ${BOX_AGENT_NPM:-npm} install --prefix "$OFFICE_RACCOON_NODE_PREFIX" playwright
 
 ## 5. Workspace boundary
 
-1. Keep temporary logs, previews, generated images, QA outputs in workspace/output folder.
+1. Keep temporary logs, previews, generated images, and QA outputs inside the
+   current canonical delivery root selected by the runtime. Do not add another
+   `output/` prefix.
 2. Do not create or delete outside workspace unless explicitly requested.
 3. Never `npm install` in deliverable workspace folders.
 

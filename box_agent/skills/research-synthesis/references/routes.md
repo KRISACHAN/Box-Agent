@@ -56,6 +56,10 @@ Use for specific but multi-dimensional research questions.
    - 1-2 macro overview searches.
    - 2-3 structure, actors, data, and authority searches.
    - 1 emerging issue, controversy, or recent-development search.
+   Treat these as five distinct evidence intents. Consume the returned result
+   set before opening another batch. A later query must target a named uncovered
+   dimension, conflict, or missing first-party source; reordered or lightly
+   reworded versions of an already-run entity/fact query do not add depth.
 2. Decompose into at least 10 dimensions unless the scope is explicitly small.
 3. Deep dive each dimension.
    - If subagents are authorized, launch multiple dimension agents in bounded

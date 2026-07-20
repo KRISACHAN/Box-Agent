@@ -1,0 +1,1230 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const { createHash } = require("crypto");
+
+const {
+  createEditorProps,
+  getLayout,
+  manifestRecord,
+} = require("../layouts/registry.js");
+const {
+  DEFAULT_THEME_ID,
+  createDeckDesign,
+  getTheme,
+  listThemes,
+  normalizeLayoutId,
+  resolveArtifactPath,
+  runtimeSourceBinding,
+  themeManifestRecord,
+  validateAssumptionsAgainstRuntime,
+  validateResearchFactsAgainstRuntime,
+  validateSourceFactsAgainstRuntime,
+  validateAndNormalizeDeck,
+} = require("./deck_spec_core.js");
+const {
+  compositionDirectionCatalog,
+  directionForFamily,
+  inferCompositionFamily,
+} = require("./composition_core.js");
+const {
+  analyzeOutlineLayoutIntent,
+  outlineIntentRecord,
+} = require("./outline_layout_contract.js");
+const { inferTheme } = require("./theme_selection_core.js");
+
+const AUTO_COVER_IMAGE_BRIEF_RE = /(?:融资|路演|投资人|\bvc\b|fundrais|investor|pitch\s*deck|发布会|产品发布|品牌提案|高端|premium)/i;
+const AUTO_COVER_VISUAL_STORY_RE = /(?:传奇|故事|人物|传记|体育|足球|球员|运动员|赛事|旅行|城市|历史|biograph|profile|sports?|football|athlete|legend|story|travel|history)/i;
+const AUTO_COVER_PRODUCT_VISUAL_RE = /(?:UI\s*截图|产品界面|客户端界面|主界面|工作台|编辑器界面|浏览器窗口|设备样机|产品主视觉|产品演示|功能演示|产品流程|UI\s*screenshot|product\s+interface|client\s+interface|browser\s+window|device\s+mockup|product\s+demo|feature\s+demo|product\s+flow)/i;
+const AUTO_COVER_TECH_VISUAL_RE = /(?:代码窗口|代码片段|协作节点|节点连接|系统架构|技术架构|架构图|运行时|编译链|code\s+window|code\s+snippet|collaboration\s+nodes?|system\s+architecture|technical\s+architecture|runtime|compiler)/i;
+const AUTO_OPTIONAL_IMAGE_INTENT_RE = /(?:主视觉|实景|照片|插画|概念图|效果图|界面|截图|样机|hero\s+image|photo|illustration|concept\s+art|visual|interface|screenshot|mockup)/i;
+const AUTO_DATA_VISUAL_RE = /(?:图表|表格|数据看板|KPI|指标|chart|table|dashboard|metrics?)/i;
+const AUTO_COVER_IMAGE_OPTOUT_RE = /(?:不要|无需|不需要|禁止)(?:生成|使用|添加)?(?:图片|生图|视觉图)|(?:纯文字|仅文字)|\b(?:no\s+(?:generated\s+)?images?|text[- ]only)\b/i;
+const STRUCTURED_NEXT_STEPS_MATRIX_RE = /(?:表格|矩阵|table|matrix)|(?:(?:执行)?角色|负责人|责任人|owners?|assignees?|responsibilit(?:y|ies))[^\n。；;]{0,48}(?:姓名|成员|人员|names?|members?)/i;
+const THEME_ID_ALIASES = Object.freeze({
+  carnival: "bold-poster",
+});
+const REQUIRED_FIELD_ALIASES = Object.freeze({
+  "cards-grid-v1": Object.freeze({ cards: "items" }),
+  "chart-bar-v1": Object.freeze({ chart: "items", data: "items" }),
+  "chart-data-v1": Object.freeze({ chart: "series", data: "series" }),
+  "table-data-v1": Object.freeze({ items: "rows", matrix: "rows", table: "rows" }),
+});
+
+function normalizeSourceText(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function sourceNumberTokens(value) {
+  return (String(value || "").match(/\d+(?:,\d{3})*(?:\.\d+)?%?/g) || [])
+    .map(token => {
+      const percent = token.endsWith("%");
+      const bare = token.replace(/,/g, "").replace(/%$/, "");
+      const numeric = Number(bare);
+      return `${Number.isFinite(numeric) ? numeric : bare}${percent ? "%" : ""}`;
+    });
+}
+
+function sourceBigramOverlap(value, sourceText) {
+  const normalize = text => String(text || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, "")
+    .trim();
+  const candidate = normalize(value);
+  const source = normalize(sourceText);
+  if (candidate.length < 4 || source.length < 4) return 0;
+  const bigrams = new Set();
+  for (let index = 0; index < candidate.length - 1; index += 1) {
+    bigrams.add(candidate.slice(index, index + 2));
+  }
+  const matched = [...bigrams].filter(bigram => source.includes(bigram)).length;
+  return bigrams.size ? matched / bigrams.size : 0;
+}
+
+function themeDiscoveryRecord(theme) {
+  const manifest = themeManifestRecord(theme);
+  return {
+    id: theme.id,
+    name: theme.name,
+    description: theme.description,
+    selection: theme.selection,
+    composition: {
+      family: manifest.composition.default_family,
+      alternatives: Math.max(0, manifest.composition.allowed_families.length - 1),
+    },
+  };
+}
+
+function resolveThemeInput(themeId) {
+  const exact = getTheme(themeId);
+  if (exact) return { theme: exact, normalization: null };
+  const normalizedInput = String(themeId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
+  const normalizedTheme = getTheme(normalizedInput);
+  if (normalizedTheme) {
+    return {
+      theme: normalizedTheme,
+      normalization: { from: themeId, to: normalizedTheme.id },
+    };
+  }
+  const aliasTarget = THEME_ID_ALIASES[normalizedInput];
+  const aliasTheme = aliasTarget ? getTheme(aliasTarget) : null;
+  return aliasTheme
+    ? { theme: aliasTheme, normalization: { from: themeId, to: aliasTheme.id } }
+    : { theme: null, normalization: null };
+}
+
+function selectTheme(opts, context) {
+  const inference = inferTheme(listThemes(), context, DEFAULT_THEME_ID);
+  if (String(opts.themeId || "").trim().toLowerCase() === "auto") {
+    return {
+      theme: getTheme(inference.theme_id),
+      normalization: null,
+      selection: {
+        ...inference,
+        requested_theme_id: "auto",
+      },
+    };
+  }
+
+  const explicit = resolveThemeInput(opts.themeId);
+  if (!explicit.theme) {
+    return {
+      ...explicit,
+      selection: {
+        source: "invalid_explicit",
+        requested_theme_id: opts.themeId,
+        auto_recommendation: inference,
+      },
+    };
+  }
+
+  if (
+    !opts.themeLocked
+    && explicit.theme.id === DEFAULT_THEME_ID
+    && inference.confidence === "high"
+    && inference.theme_id !== DEFAULT_THEME_ID
+  ) {
+    return {
+      theme: getTheme(inference.theme_id),
+      normalization: explicit.normalization,
+      selection: {
+        ...inference,
+        source: "auto_corrected_default",
+        requested_theme_id: explicit.theme.id,
+      },
+    };
+  }
+
+  return {
+    ...explicit,
+    selection: {
+      theme_id: explicit.theme.id,
+      requested_theme_id: opts.themeId,
+      source: opts.themeLocked ? "explicit_locked" : "explicit",
+      confidence: null,
+      score: null,
+      margin: null,
+      matched_signals: [],
+      ranking: inference.ranking,
+      auto_recommendation: {
+        theme_id: inference.theme_id,
+        confidence: inference.confidence,
+        score: inference.score,
+        margin: inference.margin,
+      },
+    },
+  };
+}
+
+function compactThemeSelection(selection) {
+  return {
+    requested_theme_id: selection.requested_theme_id,
+    selected_theme_id: selection.theme_id,
+    source: selection.source,
+    confidence: selection.confidence,
+    ...(Array.isArray(selection.matched_signals) && selection.matched_signals.length
+      ? {
+        matched_signals: selection.matched_signals.map(item => item.signal),
+      }
+      : {}),
+  };
+}
+
+function normalizeRequiredField(layout, field) {
+  if (Object.prototype.hasOwnProperty.call(layout.fields, field)) return field;
+  const aliases = REQUIRED_FIELD_ALIASES[layout.id] || {};
+  return aliases[field] || field;
+}
+
+function canonicalizeSourceFacts(sourceFacts) {
+  const binding = runtimeSourceBinding();
+  const source = normalizeSourceText(binding.source_text);
+  const changes = [];
+  const facts = sourceFacts.map(value => String(value || "").trim()).filter(Boolean)
+    .map(fact => {
+      if (!binding.available || source.includes(normalizeSourceText(fact))) return fact;
+      const labeled = /^[^:：]{1,32}[:：]\s*(.+)$/.exec(fact);
+      const candidate = labeled ? labeled[1].trim() : "";
+      if (
+        candidate.length >= 2
+        && source.includes(normalizeSourceText(candidate))
+      ) {
+        changes.push({ from: fact, to: candidate });
+        return candidate;
+      }
+      const sourceNumbers = new Set(sourceNumberTokens(binding.source_text));
+      const factNumbers = sourceNumberTokens(fact);
+      if (
+        binding.strict
+        && factNumbers.every(token => sourceNumbers.has(token))
+        && sourceBigramOverlap(fact, binding.source_text) >= 0.75
+      ) {
+        changes.push({
+          from: fact,
+          to: binding.source_text,
+          reason: "restored exact runtime source text after a non-numeric copy drift",
+        });
+        return binding.source_text;
+      }
+      return fact;
+    });
+  return { facts: [...new Set(facts)], changes };
+}
+
+function parseArgs(argv) {
+  const opts = {
+    layoutIds: [],
+    themeId: "auto",
+    themeLocked: false,
+    designSeed: null,
+    family: null,
+    title: "Untitled deck",
+    truthMode: "source_bound",
+    imageMode: "auto",
+    sourceFacts: [],
+    researchFacts: [],
+    assumptions: [],
+    requiredFields: [],
+    imageAssets: [],
+    outline: null,
+    out: null,
+    report: null,
+    force: false,
+    listThemes: false,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const value = argv[index + 1];
+    if (arg === "--theme" && value) {
+      opts.themeId = value;
+      index += 1;
+    } else if (arg === "--lock-theme") {
+      opts.themeLocked = true;
+    } else if (arg === "--design-seed" && value) {
+      opts.designSeed = value;
+      index += 1;
+    } else if (arg === "--family" && value) {
+      opts.family = value;
+      index += 1;
+    } else if (arg === "--title" && value) {
+      opts.title = value;
+      index += 1;
+    } else if (arg === "--truth-mode" && value) {
+      opts.truthMode = value;
+      index += 1;
+    } else if (arg === "--image-mode" && value) {
+      opts.imageMode = value;
+      index += 1;
+    } else if (arg === "--fact" && value) {
+      opts.sourceFacts.push(value);
+      index += 1;
+    } else if (arg === "--research-fact" && value) {
+      opts.researchFacts.push(value);
+      index += 1;
+    } else if (arg === "--assumption" && value) {
+      opts.assumptions.push(value);
+      index += 1;
+    } else if (arg === "--require-field" && value) {
+      const match = /^(\d+):([a-zA-Z0-9_]+)$/.exec(value);
+      if (!match) {
+        throw new Error("--require-field must use SLIDE_NUMBER:FIELD, for example 4:metrics");
+      }
+      opts.requiredFields.push({ slide: Number(match[1]), field: match[2] });
+      index += 1;
+    } else if (arg === "--image-asset" && value) {
+      const match = /^(\d+):([a-zA-Z0-9_-]+)=(.+)$/.exec(value);
+      if (!match) {
+        throw new Error(
+          "--image-asset must use SLIDE:SLOT=PATH, for example 1:hero=/path/to/cover.png"
+        );
+      }
+      opts.imageAssets.push({
+        slide: Number(match[1]),
+        slot: match[2],
+        sourcePath: match[3],
+      });
+      index += 1;
+    } else if (arg === "--outline" && value) {
+      opts.outline = value;
+      index += 1;
+    } else if (arg === "--out" && value) {
+      opts.out = value;
+      index += 1;
+    } else if (arg === "--report" && value) {
+      opts.report = value;
+      index += 1;
+    } else if (arg === "--force") {
+      opts.force = true;
+    } else if (arg === "--list-themes") {
+      opts.listThemes = true;
+    } else if (arg === "--help" || arg === "-h") {
+      console.log(
+        "Usage: inspect_deck_contract.js [LAYOUT_ID ...] " +
+        "[--theme auto|THEME_ID] [--lock-theme] [--family FAMILY_ID] [--design-seed SEED] [--title TITLE] [--truth-mode MODE] " +
+        "[--image-mode auto|creative_image_mode] " +
+        "[--image-asset SLIDE:SLOT=PATH ...] " +
+        "[--fact TEXT ...] [--research-fact TEXT ...] [--assumption TEXT ...] " +
+        "[--require-field SLIDE:FIELD ...] [--outline outline.json] [--out deck.json] " +
+        "[--report qa/deck_contract.json] [--force] [--list-themes]"
+      );
+      process.exit(0);
+    } else if (arg.startsWith("-")) {
+      throw new Error(`Unknown argument: ${arg}`);
+    } else {
+      opts.layoutIds.push(normalizeLayoutId(arg));
+    }
+  }
+  return opts;
+}
+
+function buildSlide(layoutId, index, outlineSlide = null) {
+  return {
+    id: `slide-${String(index + 1).padStart(2, "0")}`,
+    layout_id: layoutId,
+    props: createEditorProps(layoutId),
+    ...(outlineSlide
+      ? {
+        source_outline_page: outlineSlide.page,
+        outline_intent: outlineIntentRecord(outlineSlide),
+      }
+      : {}),
+  };
+}
+
+function nonEmptyText(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function readOutlineBinding(outlineInput, expectedSlideCount) {
+  const outlineFile = resolveArtifactPath(outlineInput);
+  if (!isNonEmptyFile(outlineFile)) {
+    throw new Error(`Outline file not found or empty: ${outlineFile}`);
+  }
+  const raw = fs.readFileSync(outlineFile, "utf8");
+  let outline;
+  try {
+    outline = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${outlineFile}: ${error.message}`);
+  }
+  const issues = [];
+  ["deck_goal", "audience", "storyline"].forEach(field => {
+    if (!nonEmptyText(outline && outline[field])) {
+      issues.push(`outline.${field}: required non-empty text`);
+    }
+  });
+  if (!nonEmptyText(outline && outline.source_mode)) {
+    issues.push("outline.source_mode: required non-empty text");
+  }
+  const slides = outline && Array.isArray(outline.slides) ? outline.slides : null;
+  if (!slides) {
+    issues.push("outline.slides: required array");
+  } else {
+    if (slides.length !== expectedSlideCount) {
+      issues.push(
+        `outline.slides: contains ${slides.length} page(s), but the ordered layout plan ` +
+        `contains ${expectedSlideCount}`
+      );
+    }
+    slides.forEach((slide, index) => {
+      const prefix = `outline.slides.${index}`;
+      if (!slide || typeof slide !== "object" || Array.isArray(slide)) {
+        issues.push(`${prefix}: required object`);
+        return;
+      }
+      if (slide.page !== index + 1) {
+        issues.push(`${prefix}.page: expected ${index + 1}`);
+      }
+      ["title", "message", "layout", "visual"].forEach(field => {
+        if (!nonEmptyText(slide[field])) issues.push(`${prefix}.${field}: required non-empty text`);
+      });
+      if (!Array.isArray(slide.bullets)) {
+        issues.push(`${prefix}.bullets: required array`);
+      }
+      if (!Array.isArray(slide.evidence)) {
+        issues.push(`${prefix}.evidence: required array`);
+      }
+    });
+  }
+  if (issues.length) {
+    throw new Error(`Outline binding failed:\n${issues.join("\n")}`);
+  }
+  const sourceMode = outline.source_mode.trim();
+  const importedResearchFacts = sourceMode === "public_authoritative_research"
+    ? [...new Set(slides.flatMap(slide => slide.evidence)
+      .map(value => String(value || "").trim())
+      .filter(Boolean))]
+    : [];
+  return {
+    file: outlineFile,
+    hash: createHash("sha256").update(raw).digest("hex"),
+    sourceMode,
+    content: {
+      deck_goal: outline.deck_goal,
+      audience: outline.audience,
+      storyline: outline.storyline,
+      tone: outline.tone || "",
+      slides,
+    },
+    slides,
+    importedResearchFacts,
+  };
+}
+
+function outlineHasQuantitativeEvidence(slide, sourceMode = "") {
+  const evidence = Array.isArray(slide && slide.evidence) ? slide.evidence : [];
+  const userProvidedContent = sourceMode === "user_provided"
+    ? [
+      slide && slide.title,
+      slide && slide.message,
+      ...(Array.isArray(slide && slide.bullets) ? slide.bullets : []),
+    ]
+    : [];
+  const content = [...evidence, ...userProvidedContent]
+    .map(value => String(value || ""))
+    .join(" ");
+  return /\d|%|％|[$¥￥€£]|[一二三四五六七八九十百千万]+(?:次|年|届|名|个|项|座|枚|金牌|冠军)/.test(content);
+}
+
+function normalizeOutlineDrivenLayoutIds(layoutIds, outlineBinding) {
+  const normalizations = [];
+  if (!outlineBinding) return { layoutIds: layoutIds.slice(), normalizations };
+  const effective = layoutIds.map((layoutId, index) => {
+    const slide = outlineBinding.slides[index];
+    const outlineText = [
+      slide && slide.title,
+      slide && slide.message,
+      slide && slide.layout,
+      slide && slide.visual,
+      ...(Array.isArray(slide && slide.bullets) ? slide.bullets : []),
+    ].filter(Boolean).join("\n");
+    if (
+      layoutId === "closing-next-steps-v1"
+      && STRUCTURED_NEXT_STEPS_MATRIX_RE.test(outlineText)
+    ) {
+      normalizations.push({
+        slide: index + 1,
+        from: layoutId,
+        to: "table-data-v1",
+        reason: "outline requires parallel next-step, role/owner, and identity fields",
+      });
+      return "table-data-v1";
+    }
+    const semantic = analyzeOutlineLayoutIntent(slide);
+    if (!semantic || semantic.allowed_layout_ids.includes(layoutId)) return layoutId;
+    normalizations.push({
+      slide: index + 1,
+      from: layoutId,
+      to: semantic.preferred_layout_id,
+      reason: semantic.reason,
+    });
+    return semantic.preferred_layout_id;
+  });
+  return { layoutIds: effective, normalizations };
+}
+
+function validateOutlineLayoutFit(orderedLayouts, outlineBinding) {
+  if (!outlineBinding) return;
+  const quantitativeLayouts = new Set(["chart-bar-v1", "chart-data-v1", "kpi-grid-v1"]);
+  const issues = [];
+  orderedLayouts.forEach((layout, index) => {
+    const semantic = analyzeOutlineLayoutIntent(outlineBinding.slides[index]);
+    if (semantic && !semantic.allowed_layout_ids.includes(layout.id)) {
+      issues.push(
+        `slide ${index + 1}: ${layout.id} does not express outline visual intent ` +
+        `${JSON.stringify(outlineBinding.slides[index].visual)}; use one of ` +
+        semantic.allowed_layout_ids.join(", ")
+      );
+    }
+    if (
+      quantitativeLayouts.has(layout.id)
+      && !outlineHasQuantitativeEvidence(
+        outlineBinding.slides[index],
+        outlineBinding.sourceMode
+      )
+    ) {
+      issues.push(
+        `slide ${index + 1}: ${layout.id} requires quantitative evidence, but outline page ` +
+        `${index + 1} is qualitative; choose a semantic text/cards layout instead of ` +
+        "inventing chart or KPI values"
+      );
+    }
+  });
+  if (issues.length) throw new Error(`Outline/layout fit failed:\n${issues.join("\n")}`);
+}
+
+function imagePrompt(context, slotRole) {
+  const slide = context && context.slide ? context.slide : {};
+  const visualContext = String(
+    context && (context.slideText || context.briefText) || ""
+  );
+  const parts = [
+    `Deck context: ${String(context && context.deckTitle || "presentation").trim()}.`,
+    slide.title ? `Slide title: ${slide.title}.` : "",
+    slide.message ? `Page intent: ${slide.message}.` : "",
+    slide.visual ? `Visual direction: ${slide.visual}.` : "",
+    `Create one ${slotRole || "presentation"} visual with a clear focal subject and room for adjacent slide copy.`,
+    AUTO_COVER_PRODUCT_VISUAL_RE.test(visualContext)
+      ? "If showing software, make it an explicitly conceptual product-interface illustration rather than claiming to reproduce a real screenshot."
+      : "",
+    "No embedded text, no logos, no watermark, and no decorative filler.",
+  ].filter(Boolean);
+  return parts.join(" ");
+}
+
+function buildImagePlanEntry(
+  layout,
+  index,
+  imageMode,
+  context = {},
+  existingAsset = null,
+) {
+  const slideNumber = index + 1;
+  const slideId = `slide-${String(slideNumber).padStart(2, "0")}`;
+  const slots = layout.mediaSlots && Array.isArray(layout.mediaSlots.slots)
+    ? layout.mediaSlots.slots
+    : [];
+  const background = layout.mediaSlots && layout.mediaSlots.background
+    ? layout.mediaSlots.background
+    : null;
+  const requestedAssetSlot = existingAsset && existingAsset.slot
+    ? existingAsset.slot
+    : null;
+  const slot = requestedAssetSlot && requestedAssetSlot !== "background"
+    ? slots.find(item => item && item.id === requestedAssetSlot) || null
+    : requestedAssetSlot === "background"
+      ? null
+      : slots[0] || null;
+  const targetId = requestedAssetSlot || (slot ? slot.id : "background");
+  const propPath = targetId === "background" ? "background" : slot.propPath;
+  const strategies = targetId !== "background" && slot && Array.isArray(slot.strategies)
+    ? slot.strategies
+    : background && Array.isArray(background.strategies)
+      ? background.strategies
+      : ["generate", "skip"];
+  const briefText = String(context.briefText || "");
+  const slideText = String(context.slideText || briefText);
+  const creativeCover = imageMode === "creative_image_mode" && index === 0;
+  const investorCoverBrief = AUTO_COVER_IMAGE_BRIEF_RE.test(briefText);
+  // Cover-specific visual intent lives on the bound outline page. Looking only
+  // at the deck-level goal misses concrete subjects such as a named athlete
+  // when the goal merely says "introduce X" but the cover says "人物海报".
+  const visualStoryBrief = AUTO_COVER_VISUAL_STORY_RE.test(slideText);
+  const productVisualBrief = AUTO_COVER_PRODUCT_VISUAL_RE.test(slideText);
+  const technicalVisualBrief = AUTO_COVER_TECH_VISUAL_RE.test(slideText);
+  const explicitOptionalVisual = Boolean(slot)
+    && AUTO_OPTIONAL_IMAGE_INTENT_RE.test(slideText)
+    && !AUTO_DATA_VISUAL_RE.test(slideText);
+  const autoCover = imageMode === "auto"
+    && index === 0
+    && !AUTO_COVER_IMAGE_OPTOUT_RE.test(briefText)
+    && (investorCoverBrief || visualStoryBrief || productVisualBrief || technicalVisualBrief)
+    && strategies.includes("generate");
+  const autoOptional = imageMode === "auto"
+    && index > 0
+    && !AUTO_COVER_IMAGE_OPTOUT_RE.test(briefText)
+    && explicitOptionalVisual
+    && strategies.includes("generate");
+  const useExisting = Boolean(existingAsset)
+    && !creativeCover
+    && strategies.includes("use_existing");
+  const generate = !useExisting && Boolean(
+    (slot && slot.required) || creativeCover || autoCover || autoOptional
+  );
+  const required = Boolean((slot && slot.required) || creativeCover || autoCover || autoOptional);
+  const decision = useExisting ? "use_existing" : generate ? "generate" : "skip";
+  const status = useExisting ? "ready" : generate ? "pending" : "skipped";
+  let decisionReason = "editable text, data, or shapes communicate this page more clearly than bitmap media";
+  if (useExisting) {
+    decisionReason = "a user-provided source asset is available for this declared media slot";
+  } else if (creativeCover) {
+    decisionReason = "creative_image_mode requires a generated cover visual";
+  } else if (slot && slot.required) {
+    decisionReason = "the selected layout requires this media slot";
+  } else if (autoCover) {
+    if (productVisualBrief) {
+      decisionReason = "the brief or outline explicitly calls for a product or interface cover visual";
+    } else if (technicalVisualBrief) {
+      decisionReason = "the brief or outline explicitly calls for a code or technical-system cover visual";
+    } else if (investorCoverBrief) {
+      decisionReason = "investor/pitch/launch brief benefits from a generated cover visual";
+    } else {
+      decisionReason = "visual story brief benefits from a generated cover visual";
+    }
+  } else if (autoOptional) {
+    decisionReason = "the page visual intent names a concrete hero, screenshot, mockup, or illustration job";
+  } else if (index === 0) {
+    decisionReason = "the outline supports a typography-led cover and does not request a concrete bitmap visual";
+  }
+  return {
+    slide: slideNumber,
+    slide_id: slideId,
+    layout_id: layout.id,
+    slot: targetId,
+    prop_path: propPath,
+    required,
+    decision,
+    status,
+    decision_reason: decisionReason,
+    prompt: generate ? imagePrompt(context, slot ? slot.role : "background") : "",
+    output_path: useExisting
+      ? existingAsset.outputPath
+      : generate
+        ? `assets/generated/${slideId}-${targetId}.png`
+        : null,
+    ...(useExisting
+      ? {
+        origin: "uploaded",
+        asset_hash: existingAsset.hash,
+      }
+      : {}),
+    allowed_strategies: strategies,
+  };
+}
+
+function prepareExistingImageAssets(specs, orderedLayouts, deckFile, force = false) {
+  const prepared = new Map();
+  const deckDir = path.dirname(deckFile);
+  const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+  specs.forEach(spec => {
+    const layout = orderedLayouts[spec.slide - 1];
+    if (!layout) {
+      throw new Error(`--image-asset targets missing slide ${spec.slide}`);
+    }
+    const slots = layout.mediaSlots && Array.isArray(layout.mediaSlots.slots)
+      ? layout.mediaSlots.slots
+      : [];
+    const slot = slots.find(item => item && item.id === spec.slot) || null;
+    const background = spec.slot === "background"
+      && layout.mediaSlots
+      && layout.mediaSlots.background
+      ? layout.mediaSlots.background
+      : null;
+    const strategies = slot && Array.isArray(slot.strategies)
+      ? slot.strategies
+      : background && Array.isArray(background.strategies)
+        ? background.strategies
+        : [];
+    if (!slot && !background) {
+      throw new Error(
+        `--image-asset ${spec.slide}:${spec.slot} does not match a media slot or background ` +
+        `for layout ${layout.id}`
+      );
+    }
+    if (!strategies.includes("use_existing")) {
+      throw new Error(
+        `--image-asset ${spec.slide}:${spec.slot} is not allowed by layout ${layout.id}`
+      );
+    }
+    const key = `${spec.slide}:${spec.slot}`;
+    if (prepared.has(key)) throw new Error(`Duplicate --image-asset binding: ${key}`);
+    if ([...prepared.values()].some(item => item.slide === spec.slide)) {
+      throw new Error(
+        `Only one primary --image-asset is supported per slide; slide ${spec.slide} has multiple bindings`
+      );
+    }
+    const sourcePath = path.resolve(spec.sourcePath);
+    if (!isNonEmptyFile(sourcePath)) {
+      throw new Error(`Existing image asset not found or empty: ${sourcePath}`);
+    }
+    const extension = path.extname(sourcePath).toLowerCase();
+    if (!allowedExtensions.has(extension)) {
+      throw new Error(
+        `Existing image asset must be PNG, JPG, JPEG, or WEBP: ${sourcePath}`
+      );
+    }
+    const slideId = `slide-${String(spec.slide).padStart(2, "0")}`;
+    const outputPath = `assets/source/${slideId}-${spec.slot}${extension}`;
+    const destination = path.join(deckDir, ...outputPath.split("/"));
+    if (fs.existsSync(destination) && !force && path.resolve(destination) !== sourcePath) {
+      throw new Error(`Refusing to overwrite existing copied image asset: ${destination}`);
+    }
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    if (path.resolve(destination) !== sourcePath) fs.copyFileSync(sourcePath, destination);
+    prepared.set(key, {
+      slide: spec.slide,
+      slot: spec.slot,
+      outputPath,
+      hash: createHash("sha256").update(fs.readFileSync(destination)).digest("hex"),
+    });
+  });
+  return prepared;
+}
+
+function isNonEmptyFile(filePath) {
+  try {
+    return fs.statSync(filePath).isFile() && fs.statSync(filePath).size > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function findDownstreamArtifacts(deckFile) {
+  const artifactRoot = path.dirname(deckFile);
+  const found = [];
+  const directFiles = [
+    "deck.patch.json",
+    "index.html",
+    path.join("qa", "deck_spec.json"),
+    path.join("qa", "truth_check.json"),
+    path.join("qa", "image_manifest.json"),
+    path.join("qa", "html_self_check.json"),
+    path.join("qa", "runtime_probe.json"),
+  ];
+  directFiles.forEach(relativePath => {
+    if (isNonEmptyFile(path.join(artifactRoot, relativePath))) {
+      found.push(relativePath);
+    }
+  });
+
+  const generatedDir = path.join(artifactRoot, "assets", "generated");
+  if (fs.existsSync(generatedDir)) {
+    const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+    fs.readdirSync(generatedDir, { withFileTypes: true })
+      .filter(entry => entry.isFile() && imageExtensions.has(path.extname(entry.name).toLowerCase()))
+      .forEach(entry => found.push(path.join("assets", "generated", entry.name)));
+  }
+
+  const manifestPath = path.join(generatedDir, "manifest.json");
+  if (isNonEmptyFile(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      const imagePlan = Array.isArray(manifest.image_plan) ? manifest.image_plan : [];
+      const hasProgress = imagePlan.some(entry => {
+        if (!entry || typeof entry !== "object") return false;
+        const status = String(entry.status || "").toLowerCase();
+        return ["generated", "ready", "complete", "completed", "reused", "fixed"].includes(status);
+      });
+      if (hasProgress) {
+        found.push(path.join("assets", "generated", "manifest.json (updated image state)"));
+      }
+    } catch (_error) {
+      // A malformed manifest is handled by the normal validation path. It is
+      // not sufficient evidence by itself to lock an otherwise bare scaffold.
+    }
+  }
+  return found;
+}
+
+function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  if (opts.listThemes) {
+    if (opts.layoutIds.length || opts.out || opts.report) {
+      throw new Error("--list-themes cannot be combined with layout ids, --out, or --report");
+    }
+    const compositionDirections = compositionDirectionCatalog().map(
+      direction => direction.id
+    );
+    console.log(JSON.stringify({
+      default_theme_id: DEFAULT_THEME_ID,
+      composition_directions: compositionDirections,
+      themes: listThemes().map(themeDiscoveryRecord),
+    }));
+    return;
+  }
+  if (opts.report && !opts.out) {
+    throw new Error("--report requires --out deck.json");
+  }
+  if (opts.out && !opts.outline) {
+    const deckFile = resolveArtifactPath(opts.out);
+    const siblingOutline = path.join(path.dirname(deckFile), "outline.json");
+    if (isNonEmptyFile(siblingOutline)) {
+      throw new Error(
+        `A validated outline already exists at ${siblingOutline}; pass ` +
+        "--outline outline.json so the scaffold cannot detach from its page plan"
+      );
+    }
+  }
+  if (!["source_bound", "illustrative"].includes(opts.truthMode)) {
+    throw new Error("--truth-mode must be source_bound or illustrative");
+  }
+  if (!["auto", "creative_image_mode"].includes(opts.imageMode)) {
+    throw new Error("--image-mode must be auto or creative_image_mode");
+  }
+  if (opts.imageAssets.length && !opts.out) {
+    throw new Error("--image-asset requires --out deck.json so the asset can be copied portably");
+  }
+  opts.layoutIds.forEach(layoutId => {
+    const layout = getLayout(layoutId);
+    if (!layout) {
+      throw new Error(
+        `Unknown layout_id: ${layoutId}; registered layout_ids: ` +
+        require("../layouts/registry.js").layouts.map(item => item.id).join(", ")
+      );
+    }
+  });
+  const outlineBinding = opts.outline
+    ? readOutlineBinding(opts.outline, opts.layoutIds.length)
+    : null;
+  const layoutResolution = normalizeOutlineDrivenLayoutIds(opts.layoutIds, outlineBinding);
+  const effectiveLayoutIds = layoutResolution.layoutIds;
+  const orderedLayouts = effectiveLayoutIds.map(layoutId => getLayout(layoutId));
+  validateOutlineLayoutFit(orderedLayouts, outlineBinding);
+  const runtimeBinding = runtimeSourceBinding();
+  const themeResolution = selectTheme(opts, {
+    title: opts.title,
+    source_facts: opts.sourceFacts,
+    source_text: runtimeBinding.source_text,
+    outline: outlineBinding ? outlineBinding.content : null,
+  });
+  const theme = themeResolution.theme;
+  if (!theme) {
+    throw new Error(
+      `Unknown theme_id: ${JSON.stringify(opts.themeId)}; ` +
+      `registered theme_ids: ${listThemes().map(item => item.id).join(", ")}`
+    );
+  }
+  const themeSelection = themeResolution.selection;
+  const designSelection = opts.family
+    ? {
+      family: opts.family,
+      source: "explicit_family",
+      score: null,
+      matched_signals: [],
+      scores: null,
+    }
+    : inferCompositionFamily(
+      theme,
+      {
+        title: opts.title,
+        source_text: outlineBinding ? "" : runtimeBinding.source_text,
+        outline: outlineBinding ? outlineBinding.content : null,
+      },
+      effectiveLayoutIds,
+    );
+  const design = createDeckDesign(theme, opts.designSeed, designSelection.family);
+  const selectedLayouts = [...new Set(effectiveLayoutIds)].map(layoutId => getLayout(layoutId));
+  const requiredFieldNormalizations = [];
+  const normalizedRequiredFields = opts.requiredFields.map(requirement => {
+    const layout = orderedLayouts[requirement.slide - 1];
+    if (!layout) {
+      throw new Error(
+        `Required field targets missing slide ${requirement.slide}; ` +
+        `the ordered plan contains ${orderedLayouts.length} slide(s)`
+      );
+    }
+    const field = normalizeRequiredField(layout, requirement.field);
+    if (!Object.prototype.hasOwnProperty.call(layout.fields, field)) {
+      throw new Error(
+        `Slide ${requirement.slide} layout ${layout.id} does not provide required field ` +
+        `${requirement.field}; available fields: ${Object.keys(layout.fields).join(", ")}`
+      );
+    }
+    if (field !== requirement.field) {
+      requiredFieldNormalizations.push({
+        slide: requirement.slide,
+        from: requirement.field,
+        to: field,
+      });
+    }
+    return { slide: requirement.slide, field };
+  });
+  const sourceFactNormalization = canonicalizeSourceFacts(opts.sourceFacts);
+  const researchFacts = [...new Set([
+    ...opts.researchFacts.map(value => value.trim()).filter(Boolean),
+    ...(outlineBinding ? outlineBinding.importedResearchFacts : []),
+  ])];
+  const skeleton = orderedLayouts.length
+    ? {
+      schema_version: 1,
+      title: opts.title,
+      theme_id: theme.id,
+      design,
+      truth_contract: {
+        mode: opts.truthMode,
+        source_facts: sourceFactNormalization.facts,
+        ...(researchFacts.length
+          ? { research_facts: researchFacts }
+          : {}),
+        assumptions: [...new Set(opts.assumptions.map(value => value.trim()).filter(Boolean))],
+      },
+      slides: orderedLayouts.map((layout, index) => buildSlide(
+        layout.id,
+        index,
+        outlineBinding ? outlineBinding.slides[index] : null
+      )),
+    }
+    : null;
+  if (skeleton) {
+    const validation = validateAndNormalizeDeck(skeleton);
+    if (!validation.ok) {
+      throw new Error(`Generated skeleton is invalid:\n${validation.issues.join("\n")}`);
+    }
+  }
+  const sourceBinding = validateSourceFactsAgainstRuntime(
+    skeleton ? skeleton.truth_contract.source_facts : []
+  );
+  if (sourceBinding.issues.length) {
+    throw new Error(`Source fact binding failed:\n${sourceBinding.issues.join("\n")}`);
+  }
+  const researchBinding = validateResearchFactsAgainstRuntime(
+    skeleton && Array.isArray(skeleton.truth_contract.research_facts)
+      ? skeleton.truth_contract.research_facts
+      : []
+  );
+  if (researchBinding.issues.length) {
+    throw new Error(`Research fact binding failed:\n${researchBinding.issues.join("\n")}`);
+  }
+  const assumptionBinding = validateAssumptionsAgainstRuntime(
+    skeleton ? skeleton.truth_contract.assumptions : []
+  );
+  if (assumptionBinding.issues.length) {
+    throw new Error(`Assumption binding failed:\n${assumptionBinding.issues.join("\n")}`);
+  }
+
+  let deckFile = null;
+  let contractReport = null;
+  let imageManifest = null;
+  if (opts.out) {
+    if (!skeleton) {
+      throw new Error("--out requires at least one ordered LAYOUT_ID");
+    }
+    deckFile = resolveArtifactPath(opts.out);
+    if (opts.force) {
+      const downstreamArtifacts = findDownstreamArtifacts(deckFile);
+      if (downstreamArtifacts.length) {
+        throw new Error(
+          "Refusing --force reset because downstream deck artifacts already exist: " +
+          `${downstreamArtifacts.join(", ")}. Resume from the existing deck/patch ` +
+          "and render/QA stages instead."
+        );
+      }
+    }
+    if (fs.existsSync(deckFile) && !opts.force) {
+      throw new Error(
+        `Refusing to overwrite existing deck skeleton: ${deckFile}; ` +
+        "patch the existing deck.json, or pass --force only for an intentional reset"
+      );
+    }
+    imageManifest = path.join(path.dirname(deckFile), "assets", "generated", "manifest.json");
+    if (fs.existsSync(imageManifest) && !opts.force) {
+      throw new Error(
+        `Refusing to overwrite existing image manifest: ${imageManifest}; ` +
+        "keep one deck/manifest pair in the canonical output root"
+      );
+    }
+    const existingImageAssets = prepareExistingImageAssets(
+      opts.imageAssets,
+      orderedLayouts,
+      deckFile,
+      opts.force,
+    );
+    fs.mkdirSync(path.dirname(deckFile), { recursive: true });
+    fs.writeFileSync(deckFile, `${JSON.stringify(skeleton, null, 2)}\n`, "utf8");
+
+    const globalBriefText = [
+      opts.title,
+      outlineBinding ? "" : runtimeBinding.source_text,
+      outlineBinding && outlineBinding.content
+        ? outlineBinding.content.deck_goal
+        : "",
+      outlineBinding && outlineBinding.content
+        ? outlineBinding.content.storyline
+        : "",
+    ].filter(Boolean).join("\n");
+    const imageManifestPayload = {
+      schema_version: 1,
+      mode: opts.imageMode,
+      deck: {
+        title: skeleton.title,
+        theme_id: skeleton.theme_id,
+        design: skeleton.design,
+      },
+      image_plan: orderedLayouts.map((layout, index) => (
+        buildImagePlanEntry(
+          layout,
+          index,
+          opts.imageMode,
+          {
+            deckTitle: opts.title,
+            briefText: globalBriefText,
+            slideText: [
+              globalBriefText,
+              outlineBinding ? outlineBinding.slides[index].title : "",
+              outlineBinding ? outlineBinding.slides[index].message : "",
+              outlineBinding ? outlineBinding.slides[index].visual : "",
+              outlineBinding ? outlineBinding.slides[index].bullets.join("\n") : "",
+            ].filter(Boolean).join("\n"),
+            slide: outlineBinding ? outlineBinding.slides[index] : null,
+          },
+          [...existingImageAssets.values()].find(
+            asset => asset.slide === index + 1
+          ) || null,
+        )
+      )),
+    };
+    fs.mkdirSync(path.dirname(imageManifest), { recursive: true });
+    fs.writeFileSync(imageManifest, `${JSON.stringify(imageManifestPayload, null, 2)}\n`, "utf8");
+
+    contractReport = opts.report
+      ? resolveArtifactPath(opts.report)
+      : path.join(path.dirname(deckFile), "qa", "deck_contract.json");
+    const contractHash = createHash("sha256").update(JSON.stringify({
+      contract_version: 2,
+      theme: themeManifestRecord(theme),
+      design: skeleton.design,
+      design_selection: designSelection,
+      layouts: selectedLayouts.map(manifestRecord),
+      layout_plan: effectiveLayoutIds,
+      layout_plan_requested: opts.layoutIds,
+      layout_normalizations: layoutResolution.normalizations,
+      image_mode: opts.imageMode,
+      truth_contract: skeleton.truth_contract,
+      source_binding_hash: sourceBinding.source_hash,
+      required_fields: normalizedRequiredFields,
+      theme_id_normalization: themeResolution.normalization,
+      theme_selection: themeSelection,
+      outline_binding: outlineBinding
+        ? {
+          outline_hash: outlineBinding.hash,
+          source_mode: outlineBinding.sourceMode,
+          evidence_import_count: outlineBinding.importedResearchFacts.length,
+        }
+        : null,
+    })).digest("hex");
+    const reportPayload = {
+      ok: true,
+      contract_version: 2,
+      contract_hash: contractHash,
+      deck_file: deckFile,
+      image_manifest: imageManifest,
+      theme_id: theme.id,
+      design: skeleton.design,
+      design_selection: designSelection,
+      theme_selection: themeSelection,
+      theme_id_normalization: themeResolution.normalization,
+      truth_mode: skeleton.truth_contract.mode,
+      image_mode: opts.imageMode,
+      source_fact_count: skeleton.truth_contract.source_facts.length,
+      research_fact_count: Array.isArray(skeleton.truth_contract.research_facts)
+        ? skeleton.truth_contract.research_facts.length
+        : 0,
+      assumption_count: skeleton.truth_contract.assumptions.length,
+      source_binding: {
+        available: sourceBinding.available,
+        strict: sourceBinding.strict,
+        allows_assumptions: sourceBinding.allows_assumptions,
+        source_hash: sourceBinding.source_hash,
+        verified_fact_count: sourceBinding.verified_fact_count,
+      },
+      source_fact_normalizations: sourceFactNormalization.changes,
+      slide_count: skeleton.slides.length,
+      layout_plan: effectiveLayoutIds,
+      layout_plan_requested: opts.layoutIds,
+      layout_normalizations: layoutResolution.normalizations,
+      required_fields: normalizedRequiredFields,
+      required_field_normalizations: requiredFieldNormalizations,
+      outline_binding: outlineBinding
+        ? {
+          outline_file: outlineBinding.file,
+          outline_hash: outlineBinding.hash,
+          source_mode: outlineBinding.sourceMode,
+          page_count: outlineBinding.slides.length,
+          evidence_import_count: outlineBinding.importedResearchFacts.length,
+        }
+        : null,
+    };
+    fs.mkdirSync(path.dirname(contractReport), { recursive: true });
+    fs.writeFileSync(contractReport, `${JSON.stringify(reportPayload, null, 2)}\n`, "utf8");
+  }
+
+  console.log(JSON.stringify({
+    contract_version: 2,
+    authoring_rules: {
+      theme_source: "available_theme_ids is built into the pptx skill; html-templates is optional",
+      layout_contract_path: "layouts[].fields",
+      layout_defaults_path: "layouts[].editor.defaultProps",
+      media_value_example: {
+        src: "assets/generated/image.png",
+        alt: "image description",
+        origin: "generated",
+      },
+      write_policy: {
+        scaffold_command: "Pass every slide's ordered layout id (including repeats), --outline outline.json, and --out deck.json; then edit props only.",
+        artifact_root: process.env.BOX_AGENT_OUTPUT_DIR || process.cwd(),
+        initial_full_deck_writes: 0,
+        initial_scaffold_writes: 1,
+        next_step: "The selected layout fields/defaults below are complete. Patch deck.json and assets/generated/manifest.json in place; do not call inspect_layout again for these layout ids.",
+        batch_patch_command: "Write deck.patch.json once, then run ${BOX_AGENT_NODE:-node} scripts/apply_deck_patch.js deck.json deck.patch.json to update all slide props in one validated mutation.",
+        after_validation_failure: "Patch only the paths named in the validation report; do not rewrite the whole deck.",
+        repeated_issue: "If the same issue class appears twice, re-read this contract and stop full-file rewrites.",
+      },
+      design_policy: {
+        path: "design",
+        rule: "Explicit --family wins. Otherwise infer one allowed family from the title, bound outline, and ordered layouts; keep the theme default when signals are weak. Persist design through patch/render/export. A fresh scaffold may choose another allowed family or variant.",
+        user_choice_path: "selected_theme.composition.directions",
+        family_selection_path: "selected_theme.composition.families[].selection_signals",
+        selection_source: designSelection.source,
+        selected_direction: directionForFamily(design.family),
+        selected_family: design.family,
+        reproducible_scaffold: "Pass --design-seed SEED only for tests or an intentionally reproducible new deck.",
+      },
+      ...(themeSelection.source !== "fallback_default"
+        ? {
+          theme_policy: {
+            rule: "Use --theme auto normally; --lock-theme only for an exact user choice.",
+            selection_source: themeSelection.source,
+            selected_theme_id: theme.id,
+          },
+        }
+        : {}),
+      image_policy: {
+        mode: opts.imageMode,
+        rule: opts.imageMode === "creative_image_mode"
+          ? "At least the cover is scaffolded as generate and one real generated asset is mandatory. Batch independent generate_image calls in one model turn."
+          : "Resolve required media entries. The scaffold reads outline visual intent: product/interface, code/system, investor/launch, and visual-story covers promote a concrete image job; user-provided --image-asset bindings win through use_existing, while text/data pages stay image-free when bitmap media adds no narrative value.",
+        validation_command: opts.imageMode === "creative_image_mode"
+          ? "node scripts/validate_image_manifest.js assets/generated/manifest.json --mode creative_image_mode --min-generated 1 --deck deck.json --report qa/image_manifest.json"
+          : "node scripts/validate_image_manifest.js assets/generated/manifest.json --deck deck.json --report qa/image_manifest.json",
+      },
+      truth_policy: {
+        source_contract_path: "truth_contract.source_facts",
+        research_contract_path: "truth_contract.research_facts",
+        assumption_contract_path: "truth_contract.assumptions",
+        validation_command: "node scripts/validate_deck_truth.js deck.json --report qa/truth_check.json",
+        rule: "Use --fact only for verbatim user/source text. After actual external research, use --research-fact for the resulting factual statements; public_authoritative_research outline evidence is imported automatically. Strict source-only requests reject research_facts. For public research, omit nonessential unsupported claims or replace the page with evidence-backed content; visible 待补充 is reserved for required unavailable user/private fields. Only explicit user permission allows --assumption, with visible 假设/示意 disclosure.",
+        source_binding: {
+          available: sourceBinding.available,
+          strict: sourceBinding.strict,
+          allows_assumptions: sourceBinding.allows_assumptions,
+          source_hash: sourceBinding.source_hash,
+          verified_fact_count: sourceBinding.verified_fact_count,
+        },
+        label_normalizations: sourceFactNormalization.changes,
+      },
+      outline_policy: outlineBinding
+        ? {
+          rule: "Slide N must preserve outline page N. Keep its exact title plus content anchors. Quantitative values may be split across KPI/chart fields when every page value and matching label is preserved; qualitative pages need an exact atomic message/bullet fragment. Do not duplicate full source sentences in every cell, swap page topics, or invent quantitative values for qualitative pages.",
+          source_mode: outlineBinding.sourceMode,
+          evidence_import_count: outlineBinding.importedResearchFacts.length,
+          pages: outlineBinding.slides.map(slide => ({
+            page: slide.page,
+            title: slide.title,
+            message: slide.message,
+            bullets: slide.bullets,
+            layout: slide.layout,
+            visual: slide.visual,
+            evidence: slide.evidence,
+          })),
+        }
+        : null,
+      content_requirements: {
+        command: "Use repeated --require-field SLIDE_NUMBER:FIELD flags during scaffold when the brief mandates a field, such as 4:metrics.",
+        enforced: normalizedRequiredFields,
+        normalizations: requiredFieldNormalizations,
+      },
+      ...(layoutResolution.normalizations.length
+        ? {
+          layout_policy: {
+            rule: "Use the effective layout contract below; a responsibility matrix was normalized to table-data-v1.",
+            normalizations: layoutResolution.normalizations,
+          },
+        }
+        : {}),
+    },
+    default_theme_id: DEFAULT_THEME_ID,
+    available_theme_ids: listThemes().map(theme => theme.id),
+    selected_theme: themeManifestRecord(theme),
+    ...(themeSelection.source !== "fallback_default"
+      ? { theme_selection: compactThemeSelection(themeSelection) }
+      : {}),
+    theme_id_normalization: themeResolution.normalization,
+    outline_binding: outlineBinding
+      ? {
+        outline_file: outlineBinding.file,
+        outline_hash: outlineBinding.hash,
+        source_mode: outlineBinding.sourceMode,
+        evidence_import_count: outlineBinding.importedResearchFacts.length,
+      }
+      : null,
+    ...(layoutResolution.normalizations.length
+      ? {
+        layout_plan_requested: opts.layoutIds,
+        layout_plan: effectiveLayoutIds,
+        layout_normalizations: layoutResolution.normalizations,
+      }
+      : {}),
+    layouts: selectedLayouts.map(manifestRecord),
+    deck_skeleton: skeleton,
+    deck_file: deckFile,
+    image_manifest: imageManifest,
+    contract_report: contractReport,
+  }));
+}
+
+try {
+  main();
+} catch (error) {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+}

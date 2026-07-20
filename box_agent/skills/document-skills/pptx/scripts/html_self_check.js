@@ -8,6 +8,7 @@ const {
   ensurePlaywrightBrowsersPath,
   officeRaccoonBrowserHostPath,
 } = require("./playwright_host");
+const { resolveArtifactPath } = require("./deck_spec_core.js");
 
 function officeRaccoonPrefix() {
   if (process.env.BOX_AGENT_NODE_PREFIX) return process.env.BOX_AGENT_NODE_PREFIX;
@@ -257,8 +258,16 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
 
       slideEls.forEach((slide, slideIndex) => {
         const slideRect = slide.getBoundingClientRect();
+        // Controlled decks declare the exact text nodes that remain editable
+        // after export. Chrome such as page numbers and proof indices is
+        // captured into the background bitmap, so measuring it as editable
+        // PowerPoint text produces false wrap-slack warnings.
+        const hasEditableTextContract = Boolean(
+          slide.querySelector('[data-prop-kind="text"]')
+        );
         const slideStyle = getComputedStyle(slide);
         const slideName = `slide-${String(slideIndex + 1).padStart(2, "0")}`;
+        const textSlackFindings = [];
         if (Math.abs(slideRect.width - expectedWidth) > 2 || Math.abs(slideRect.height - expectedHeight) > 2) {
           issues.push(
             `${slideName}: .slide size is ${Math.round(slideRect.width)}x${Math.round(slideRect.height)}, expected ${expectedWidth}x${expectedHeight}. ${sizeHint(slideRect.width, slideRect.height)}`
@@ -395,9 +404,6 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
               px(style.borderBottomRightRadius),
               px(style.borderBottomLeftRadius)
             );
-            const hasExplicitStableSize =
-              (inline && /\bwidth\s*:\s*[^;]+/i.test(inline) && /\bheight\s*:\s*[^;]+/i.test(inline)) ||
-              (style.width && style.width !== "auto" && style.height && style.height !== "auto" && paddingX === 0 && paddingY === 0);
             const isFlexCentered =
               style.display.includes("flex") &&
               style.alignItems === "center" &&
@@ -407,6 +413,15 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
               !text.includes("\n") &&
               badgeTextRe.test(text) &&
               !["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI"].includes(el.tagName);
+            const isBoundedControlledLabel =
+              hasEditableTextContract &&
+              text.length <= 32 &&
+              !text.includes("\n") &&
+              el.matches(
+                ".eyebrow, .card-kicker, .comparison-label, .kpi-label, " +
+                ".timeline-phase, .text-section-label, .project-case-label, " +
+                ".chart-source, .table-source"
+              );
             const parent = el.parentElement;
             const parentStyle = parent ? getComputedStyle(parent) : null;
             const isPlainFlexLabelChild =
@@ -430,30 +445,43 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
               );
             }
 
-            const hasDirectText = Array.from(el.childNodes).some(
+            const directTextNodes = Array.from(el.childNodes).filter(
               node => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim()
             );
-            if (!isPlainFlexLabelChild && hasDirectText) {
-              const range = document.createRange();
-              range.selectNodeContents(el);
-              const lineRects = Array.from(range.getClientRects()).filter(lineRect => lineRect.width > 1 && lineRect.height > 1);
-              range.detach();
+            const isEditableText = el.matches('[data-prop-kind="text"]');
+            if (
+              !isPlainFlexLabelChild &&
+              !isBoundedControlledLabel &&
+              directTextNodes.length &&
+              (!hasEditableTextContract || isEditableText)
+            ) {
+              const lineRects = directTextNodes.flatMap(node => {
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                const rects = Array.from(range.getClientRects()).filter(
+                  lineRect => lineRect.width > 1 && lineRect.height > 1
+                );
+                range.detach();
+                return rects;
+              });
               if (lineRects.length) {
-                const paddingRight = px(style.paddingRight);
-                const paddingBottom = px(style.paddingBottom);
-                const contentRight = rect.right - paddingRight;
-                const contentBottom = rect.bottom - paddingBottom;
-                const minRightSlack = Math.min(...lineRects.map(lineRect => contentRight - lineRect.right));
-                const minBottomSlack = Math.min(...lineRects.map(lineRect => contentBottom - lineRect.bottom));
-                if (minRightSlack < pptxTextSlackPx) {
-                  warnings.push(
-                    `${name}: text has only ${Math.round(minRightSlack)}px right slack; PowerPoint may rewrap after dom-to-pptx. Widen the text box by 16-24px or reduce font-size.`
-                  );
-                }
-                if (minBottomSlack < pptxTextSlackPx) {
-                  warnings.push(
-                    `${name}: text has only ${Math.round(minBottomSlack)}px bottom slack; leave extra vertical room for PowerPoint font metrics.`
-                  );
+                // Padding is intentional PowerPoint reflow headroom. Measure to
+                // the exported text box edge, not to the CSS content edge; the
+                // old subtraction erased the exact 24/16px buffer supplied by
+                // deck.css and falsely warned on every normally wrapped line.
+                const measuredRightSlack = Math.min(...lineRects.map(lineRect => rect.right - lineRect.right));
+                const measuredBottomSlack = Math.min(...lineRects.map(lineRect => rect.bottom - lineRect.bottom));
+                const minRightSlack = Math.max(measuredRightSlack, px(style.paddingRight));
+                const minBottomSlack = Math.max(measuredBottomSlack, px(style.paddingBottom));
+                if (
+                  minRightSlack < pptxTextSlackPx ||
+                  minBottomSlack < pptxTextSlackPx
+                ) {
+                  textSlackFindings.push({
+                    name,
+                    right: Math.round(minRightSlack),
+                    bottom: Math.round(minBottomSlack),
+                  });
                 }
               }
             }
@@ -476,6 +504,33 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
             }
           }
         });
+
+        if (domToPptx && textSlackFindings.length) {
+          const byElement = new Map();
+          textSlackFindings.forEach(finding => {
+            const existing = byElement.get(finding.name);
+            if (!existing) {
+              byElement.set(finding.name, finding);
+              return;
+            }
+            existing.right = Math.min(existing.right, finding.right);
+            existing.bottom = Math.min(existing.bottom, finding.bottom);
+          });
+          const findings = Array.from(byElement.values());
+          const worstRight = Math.min(...findings.map(finding => finding.right));
+          const worstBottom = Math.min(...findings.map(finding => finding.bottom));
+          const examples = findings
+            .sort((left, right) => Math.min(left.right, left.bottom) - Math.min(right.right, right.bottom))
+            .slice(0, 4)
+            .map(finding => finding.name.replace(`${slideName} `, ""))
+            .join(", ");
+          warnings.push(
+            `${slideName}: ${findings.length} text element(s) have less than ` +
+            `${pptxTextSlackPx}px PowerPoint wrap slack (worst right=${worstRight}px, ` +
+            `bottom=${worstBottom}px; examples: ${examples}). Leave 16-24px extra ` +
+            "room or reduce font size before editable PPTX export."
+          );
+        }
 
         Array.from(slide.querySelectorAll("img")).forEach(img => {
           const name = labelFor(img, slideIndex);
@@ -558,7 +613,7 @@ function dataSourceIssues(htmlPath, htmlText) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const htmlPath = path.resolve(opts.html);
+  const htmlPath = resolveArtifactPath(opts.html);
   if (!fs.existsSync(htmlPath)) {
     console.error(`HTML file not found: ${htmlPath}`);
     process.exit(1);
@@ -613,7 +668,7 @@ async function main() {
 
   const reportText = JSON.stringify(report, null, 2);
   if (opts.report) {
-    const reportPath = path.resolve(opts.report);
+    const reportPath = resolveArtifactPath(opts.report);
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, `${reportText}\n`);
   }
@@ -624,7 +679,7 @@ async function main() {
     `HTML self-check: ${report.ok ? "PASS" : "FAIL"} (${report.slideCount} slides, ${report.issues.length} issues, ${report.warnings.length} warnings)`
   );
   if (opts.report) {
-    console.log(`Report: ${path.resolve(opts.report)}`);
+    console.log(`Report: ${resolveArtifactPath(opts.report)}`);
   }
   if (!report.ok) {
     report.issues.slice(0, 8).forEach(issue => console.log(`- ${issue}`));

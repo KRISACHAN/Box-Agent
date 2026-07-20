@@ -57,6 +57,7 @@ from box_agent.tools.setup import (
     add_workspace_tools,
     await_mcp_tools,
     build_file_delivery_prompt,
+    build_image_generation_prompt,
     initialize_base_tools,
     register_mcp_tools,
 )
@@ -2036,6 +2037,10 @@ async def run_agent(
         build_file_delivery_prompt(use_output_dir=True),
     )
 
+    system_prompt = (
+        f"{system_prompt.rstrip()}\n\n{build_image_generation_prompt(config)}"
+    )
+
     system_prompt = f"{system_prompt.rstrip()}\n\n{build_skill_runtime_prompt(skill_runtime_context)}"
 
     if cli_env_context is not None:
@@ -2129,7 +2134,7 @@ async def run_agent(
         _sync_cli_cache_fingerprint_context()
         return skill_selector.matched_skill_names
 
-    def _apply_cli_auto_loaded_skills(completion_gate) -> None:
+    def _apply_cli_auto_loaded_skills(completion_gate, user_input: str) -> None:
         if skill_loader is None or skill_selector is None:
             _sync_cli_cache_fingerprint_context()
             return
@@ -2137,6 +2142,7 @@ async def run_agent(
             skill_selector.matched_skill_names,
             completion_gate,
             cli_env_context,
+            user_input,
         )
         if not preload_names and not cli_preloaded_skill_names:
             _sync_cli_cache_fingerprint_context()
@@ -2179,7 +2185,7 @@ async def run_agent(
             else None
         )
         _apply_skill_filter(task)
-        _apply_cli_auto_loaded_skills(completion_gate)
+        _apply_cli_auto_loaded_skills(completion_gate, task)
         agent.add_user_message(task)
         if completion_gate is not None:
             patterns = ", ".join(completion_gate.required_changed_artifact_globs)
@@ -2510,7 +2516,7 @@ async def run_agent(
                 else None
             )
             _apply_skill_filter(user_input)
-            _apply_cli_auto_loaded_skills(preload_gate)
+            _apply_cli_auto_loaded_skills(preload_gate, user_input)
             agent.add_user_message(user_input)
 
             # Create cancellation event

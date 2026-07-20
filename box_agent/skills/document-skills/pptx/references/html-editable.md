@@ -1,25 +1,35 @@
-# HTML-First Editable Export
+# HTML-First Editable Export (optional PPTX export)
 
-Use this path for newly generated decks. Author the deck as `deck.html`, then
+> New decks default to controlled `index.html + deck.json` delivery. Use this
+> reference when the user explicitly requests PPTX or when working on the
+> legacy/custom-HTML escape route. The controlled renderer already supplies the
+> required `.slide` structure and editor runtime.
+
+On the legacy route, author the deck as `deck.html`, then
 export the same `.slide` DOM elements to editable PowerPoint objects with the
 skill-bundled `scripts/dom-to-pptx.bundle.js`.
 
-This is the standard HTML-first path for new decks.
+This is the optional editable-PPTX export path for controlled or legacy HTML
+decks; it is not required for the default controlled HTML delivery.
 
 If final `.pptx` output is expected, run the browser export environment
 preflight before writing the full HTML deck. If Playwright/Chromium and host
 renderer are missing, tell the user this blocks HTML-to-editable-PPTX export and
-ask them to choose `HTML` or `PPTX`: `HTML` means deliver `deck.html` now and
-export later after setup; `PPTX` means switch to native PptxGenJS with different
-HTML/CSS fidelity tradeoffs.
+ask them to choose `HTML` or `PPTX`: `HTML` means keep the existing controlled
+`index.html + deck.json` deliverable (or `deck.html` on the explicit legacy
+route) and export later after setup; `PPTX` means switch to native PptxGenJS
+with different HTML/CSS fidelity tradeoffs.
 
 Route-change and self-check bypass rules live in `SKILL.md`. This reference adds
 editable-export details; do not use it to weaken the top-level workflow.
 
 ## Authoring Profile
 
-Before export, create `deck.html` with one `.slide` element per page. Prefer this
-`dom-to-pptx` authoring profile:
+Before export, use the existing source HTML (`index.html` for controlled decks,
+`deck.html` for the legacy route) with one `.slide` element per page. Controlled
+HTML is compiler output: fix `deck.json` and re-render rather than hand-editing
+it. The following authoring profile applies when writing legacy/custom HTML;
+the controlled renderer already enforces its applicable geometry and markup:
 
 - Copy `references/starter/common.css` to `drafts/common.css` and use its locked
   `.slide` block verbatim — every `.slide` is fixed at `width: 1920px;
@@ -86,20 +96,22 @@ Run:
 
 ```bash
 PPTX_SKILL_DIR="${BOX_AGENT_PPTX_SKILL_DIR:-$HOME/.box-agent/skills/pptx}"
+SOURCE_HTML=index.html # use deck.html only on the explicit legacy/custom route
 ${BOX_AGENT_NODE:-node} "$PPTX_SKILL_DIR/scripts/check_html_export_env.js"
-${BOX_AGENT_NODE:-node} "$PPTX_SKILL_DIR/scripts/html_to_editable_pptx.js" deck.html output.pptx --out slides
+${BOX_AGENT_NODE:-node} "$PPTX_SKILL_DIR/scripts/html_to_editable_pptx.js" "$SOURCE_HTML" output.pptx --out slides
 ```
 
 If `check_html_export_env.js` reports missing Playwright/Chromium and no host
 renderer is available, ask the user to choose before authoring or exporting:
-`HTML` keeps `deck.html` as the deliverable; `PPTX` switches to native
-PptxGenJS.
+`HTML` keeps the existing source bundle as the deliverable (`index.html +
+deck.json` for controlled decks, `deck.html` for legacy decks); `PPTX` switches
+to native PptxGenJS.
 
 The script runs HTML self-check with `--dom-to-pptx --allow-local-images`, creates
 `slides/slide-*.png` preview images for visual QA, loads the skill-local
 `scripts/dom-to-pptx.bundle.js`, temporarily inlines local `<img>` paths in the
 browser DOM for export, writes `qa/html_self_check.json`, and writes
-`output.pptx`. It does not rewrite `deck.html`. It passes `autoEmbedFonts: true`
+`output.pptx`. It does not rewrite the source HTML. It passes `autoEmbedFonts: true`
 and defaults `svgAsVector: false` so SVGs are rasterized for pixel fidelity,
 closer to the in-browser button export path. Pass `--svg-vector true` only when
 PowerPoint vector editability is more important than visual fidelity. If
@@ -115,8 +127,9 @@ export must use this skill's bundled `scripts/dom-to-pptx.bundle.js`, which may
 contain local fixes that are not in the published package.
 
 If there is no browser host after the user chose HTML, `dom-to-pptx` cannot run
-from the CLI. Finish and deliver `deck.html`, report editable PPTX export as
-`BLOCKED`, and include the install/download commands:
+from the CLI. Finish and deliver the existing controlled bundle (or the legacy
+`deck.html`), report editable PPTX export as `BLOCKED`, and include the
+install/download commands:
 
 ```text
 OFFICE_RACCOON_NODE_PREFIX="${BOX_AGENT_NODE_PREFIX:-${BOX_AGENT_RUNTIME_PREFIX:-<office-raccoon-prefix>}}"
@@ -130,19 +143,22 @@ has DOM layout APIs.
 
 ## QA Requirements
 
-Run the same package/text/render QA as other PPTX outputs.
+Run the same required package/text QA as other PPTX outputs. Rendered visual
+inspection follows the opt-in triggers in `SKILL.md` §4.2.
 
 Additional editable-export checks:
 
 - Confirm `qa/html_self_check.json` exists, is non-empty, and has `"ok": true`.
-- Treat text slack failures as real blockers. They usually predict the exact
-  issue where HTML text looks fine but the editable PPTX wraps one word or one
-  CJK character onto a new line.
-- Attempt to render the exported PPTX for QA; if render runtime is unavailable, set `Rendering: BLOCKED`.
+- Treat aggregated text-slack warnings as diagnostics, not blockers by
+  themselves. Fix them when an exported PPTX actually reflows or when a
+  structural overflow issue confirms the risk.
+- When visual inspection is triggered, render the exported PPTX; if that
+  runtime is unavailable, set `Rendering: BLOCKED`.
 - Check especially for text reflow, missing gradients, missing images,
   incorrect SVG conversion, wrong z-order, and shifted card/chart positions.
-- If render shows issues, fix `deck.html` and rerun
-  `html_to_editable_pptx.js`.
+- If render shows issues, fix `deck.json` and re-render `index.html` for a
+  controlled deck; fix `deck.html` directly only on the legacy route. Then
+  rerun `html_to_editable_pptx.js`.
 
 Do not claim full fidelity from `dom-to-pptx` without rendered slide images.
 If runtime is blocked, report `Rendering: BLOCKED` and keep the limitation explicit.

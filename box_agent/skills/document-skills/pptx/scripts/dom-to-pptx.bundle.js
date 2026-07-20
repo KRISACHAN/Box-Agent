@@ -62871,7 +62871,20 @@
     return null;
   }
 
-  function getTextStyle(style, scale) {
+  const CJK_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/;
+  const CJK_FONT_PATTERN = /pingfang|microsoft yahei|noto sans (?:cjk|sc|tc)|source han sans|hiragino sans gb|heiti|dengxian|simhei|simsun|wenquanyi|arial unicode/i;
+
+  function resolvePptxFontFace(fontFamily, text = '') {
+    const families = String(fontFamily || '')
+      .split(',')
+      .map((family) => family.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    const primary = families[0] || 'Arial';
+    if (!CJK_TEXT_PATTERN.test(String(text || ''))) return primary;
+    return families.find((family) => CJK_FONT_PATTERN.test(family)) || primary;
+  }
+
+  function getTextStyle(style, scale, text = '') {
     let colorObj = parseColor(style.color);
 
     const bgClip = style.webkitBackgroundClip || style.backgroundClip;
@@ -62914,7 +62927,7 @@
 
     return {
       color: colorObj.hex || '000000',
-      fontFace: style.fontFamily.split(',')[0].replace(/['"]/g, ''),
+      fontFace: resolvePptxFontFace(style.fontFamily, text),
       fontSize: Math.floor(fontSizePx * 0.75 * scale * 10) / 10,
       bold: parseInt(style.fontWeight) >= 600,
       italic: style.fontStyle === 'italic',
@@ -63489,7 +63502,7 @@
         if (cleanContent.trim()) {
           parts.push({
             text: cleanContent + ' ', // Add space after icon
-            options: getTextStyle(window.getComputedStyle(node), scale),
+            options: getTextStyle(window.getComputedStyle(node), scale, cleanContent),
           });
         }
       }
@@ -63519,7 +63532,7 @@
 
           parts.push({
             text: val,
-            options: getTextStyle(styleToUse, scale),
+            options: getTextStyle(styleToUse, scale, val),
           });
         }
       } else if (child.nodeType === 1) {
@@ -63844,6 +63857,152 @@
    * @param {PptxGenJS.Slide} slide - The PPTX slide object to add content to.
    * @param {PptxGenJS} pptx - The main PPTX instance.
    */
+  function normalizeNativeChartSpec(rawSpec) {
+    const spec = rawSpec && typeof rawSpec === 'object' ? rawSpec : {};
+    if (Array.isArray(spec.data)) {
+      return {
+        type: spec.orientation === 'vertical' ? 'column' : 'bar',
+        categories: spec.data.map((item) => String((item && item.label) || '')),
+        series: [{
+          name: String(spec.series || '数值'),
+          values: spec.data.map((item) => Number(item && item.value) || 0),
+        }],
+        legend: 'off',
+        show_values: 'on',
+        stacked: 'off',
+      };
+    }
+    const categories = Array.isArray(spec.categories)
+      ? spec.categories.map((value) => String(value == null ? '' : value))
+      : [];
+    const series = (Array.isArray(spec.series) ? spec.series : []).map((item, index) => ({
+      name: String((item && item.name) || `系列 ${index + 1}`),
+      values: categories.map((_, valueIndex) => {
+        const value = item && Array.isArray(item.values) ? item.values[valueIndex] : 0;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }),
+    }));
+    return {
+      type: ['bar', 'column', 'line', 'area', 'pie', 'donut', 'radar'].includes(spec.type)
+        ? spec.type
+        : 'column',
+      categories,
+      series,
+      legend: ['auto', 'on', 'off'].includes(spec.legend) ? spec.legend : 'auto',
+      show_values: ['auto', 'on', 'off'].includes(spec.show_values) ? spec.show_values : 'auto',
+      stacked: spec.stacked === 'on' ? 'on' : 'off',
+    };
+  }
+
+  function chartCssColor(element, variableName, fallback) {
+    try {
+      const value = window.getComputedStyle(element).getPropertyValue(variableName).trim();
+      const parsed = parseColor(value);
+      return parsed && parsed.hex ? parsed.hex : fallback;
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  function addNativeCharts(root, slide, pptx, layoutConfig) {
+    const chartRoots = Array.from(
+      root.querySelectorAll('[data-pptx-chart][data-native-chart="true"]')
+    );
+    chartRoots.forEach((chartRoot) => {
+      const encoded = chartRoot.getAttribute('data-chart-spec');
+      if (!encoded) return;
+      let spec;
+      try {
+        spec = normalizeNativeChartSpec(JSON.parse(encoded));
+      } catch (error) {
+        console.warn('Skipping invalid native chart spec', error);
+        return;
+      }
+      if (!spec.categories.length || !spec.series.length) return;
+
+      const rect = chartRoot.getBoundingClientRect();
+      const x = (rect.x - layoutConfig.rootX) * PX_TO_INCH * layoutConfig.scale + layoutConfig.offX;
+      const y = (rect.y - layoutConfig.rootY) * PX_TO_INCH * layoutConfig.scale + layoutConfig.offY;
+      const w = rect.width * PX_TO_INCH * layoutConfig.scale;
+      const h = rect.height * PX_TO_INCH * layoutConfig.scale;
+      const typeMap = {
+        bar: pptx.ChartType.bar,
+        column: pptx.ChartType.bar,
+        line: pptx.ChartType.line,
+        area: pptx.ChartType.area,
+        pie: pptx.ChartType.pie,
+        donut: pptx.ChartType.doughnut,
+        radar: pptx.ChartType.radar,
+      };
+      const showLegend = spec.legend === 'on' ||
+        (spec.legend === 'auto' && (spec.series.length > 1 || ['pie', 'donut'].includes(spec.type)));
+      const showValues = spec.show_values === 'on' ||
+        (spec.show_values === 'auto' && ['bar', 'column', 'pie', 'donut'].includes(spec.type));
+      const primary = chartCssColor(chartRoot, '--deck-primary', '1E2BFA');
+      const text = chartCssColor(chartRoot, '--deck-text', '111111');
+      const muted = chartCssColor(chartRoot, '--deck-muted', '6B6B6B');
+      const border = chartCssColor(chartRoot, '--deck-border', 'D1D2C8');
+      const chartText = [...spec.categories, ...spec.series.map((item) => item.name)].join(' ');
+      const displayFont = resolvePptxFontFace(
+        window.getComputedStyle(chartRoot).getPropertyValue('--deck-display').trim() || 'Arial',
+        chartText
+      );
+      const bodyFont = resolvePptxFontFace(
+        window.getComputedStyle(chartRoot).getPropertyValue('--deck-body').trim() || 'Arial',
+        chartText
+      );
+      const data = spec.series.map((item) => ({
+        name: item.name,
+        labels: spec.categories,
+        values: item.values,
+      }));
+      const options = {
+        x,
+        y,
+        w,
+        h,
+        showTitle: false,
+        showLegend,
+        legendPos: 'b',
+        legendFontFace: bodyFont,
+        legendFontSize: 10,
+        legendColor: muted,
+        showValue: showValues,
+        showCatName: ['pie', 'donut'].includes(spec.type) && showValues,
+        showPercent: false,
+        dataLabelColor: text,
+        dataLabelFormatCode: '0.##',
+        dataLabelPosition: ['bar', 'column'].includes(spec.type) ? 'outEnd' : undefined,
+        catAxisLabelFontFace: bodyFont,
+        catAxisLabelFontSize: 10,
+        catAxisLabelColor: text,
+        valAxisLabelFontFace: bodyFont,
+        valAxisLabelFontSize: 9,
+        valAxisLabelColor: muted,
+        catAxisLineColor: border,
+        valAxisLineColor: border,
+        valGridLine: { color: border, transparency: 35 },
+        chartColors: [primary, '6B75FF', text, muted],
+        showCatAxisTitle: false,
+        showValAxisTitle: false,
+        showBorder: false,
+        showLine: ['line', 'area', 'radar'].includes(spec.type),
+        lineSize: 2,
+        showMarker: ['line', 'area'].includes(spec.type),
+        markerSize: 5,
+        holeSize: spec.type === 'donut' ? 58 : undefined,
+        barDir: spec.type === 'bar' ? 'bar' : 'col',
+        barGrouping: spec.stacked === 'on' ? 'stacked' : 'clustered',
+        fontFace: displayFont,
+      };
+      Object.keys(options).forEach((key) => {
+        if (options[key] === undefined) delete options[key];
+      });
+      slide.addChart(typeMap[spec.type], data, options);
+    });
+  }
+
   async function processSlide(root, slide, pptx, globalOptions = {}) {
     const rootRect = root.getBoundingClientRect();
     const PPTX_WIDTH_IN = globalOptions._slideWidth || 10;
@@ -63881,6 +64040,9 @@
           nodeStyle.visibility === 'hidden' ||
           nodeStyle.opacity === '0'
         ) {
+          return;
+        }
+        if (node.matches('[data-pptx-chart][data-native-chart="true"]')) {
           return;
         }
         if (nodeStyle.zIndex !== 'auto') {
@@ -63954,6 +64116,9 @@
           fill: { color: 'FFFFFF', transparency: 100 },
         });
       }
+    }
+    if (globalOptions.nativeCharts !== false) {
+      addNativeCharts(root, slide, pptx, layoutConfig);
     }
   }
 
@@ -64189,7 +64354,7 @@
             textParts: [
               {
                 text: textContent,
-                options: getTextStyle(style, config.scale),
+                options: getTextStyle(style, config.scale, textContent),
               },
             ],
             options: { x, y, w: unrotatedW, h: unrotatedH, margin: 0, autoFit: true },
@@ -64772,7 +64937,7 @@
         if (nodeStyle.textTransform === 'lowercase') textVal = textVal.toLowerCase();
 
         if (textVal.length > 0) {
-          const textOpts = getTextStyle(nodeStyle, config.scale);
+          const textOpts = getTextStyle(nodeStyle, config.scale, textVal);
 
           // BUG FIX: Numbers 1 and 2 having background.
           // If this is a naked Text Node (nodeType 3), it inherits style from the parent container.

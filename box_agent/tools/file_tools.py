@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import tiktoken
 
-from ..model_history import is_model_history_placeholder
+from ..model_history import (
+    is_model_history_placeholder,
+    is_model_instruction_source_path,
+)
 from .base import Tool, ToolResult
 from .pptx_safety import detect_pptx_self_check_bypass
 from .safety import backup_file, validate_path_in_workspace
@@ -126,6 +129,8 @@ def _cap_preview_lines(lines: list[str], max_chars: int = 1200) -> list[str]:
 
 def _looks_like_generated_artifact(file_path: Path, content: str) -> bool:
     """Return true for files that should not be retained verbatim in model history."""
+    if is_model_instruction_source_path(file_path):
+        return False
     suffix = file_path.suffix.lower()
     if suffix in {".html", ".htm"}:
         return True

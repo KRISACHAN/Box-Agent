@@ -10,9 +10,10 @@ runtime probes remain the source of truth.
 The shared scope is defined by
 [`../.understand-anything/.understandignore`](../.understand-anything/.understandignore).
 The current configuration includes the core runtime, ACP adapters, tools,
-configuration, examples, and documentation. It intentionally excludes bundled
-skill assets, tests, workspaces, virtual environments, and generated output so
-the graph stays focused on product architecture.
+configuration, examples, documentation, and the controlled PPTX compiler under
+`box_agent/skills/document-skills/pptx/`. Other bundled skill assets, tests,
+workspaces, virtual environments, generated output, and vendored PPTX runtime
+payloads remain excluded so the graph stays focused on product architecture.
 
 Only these shared files belong in Git:
 

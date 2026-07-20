@@ -36,6 +36,15 @@ Rules:
 
 ## Required Artifact Shapes
 
+### Validation Report
+
+After the Markdown artifacts are complete, run the bundled validator with
+`--report {workspace}/research/qa/{topic}_research_check.json`. The report is
+the machine-readable handoff to downstream presentation/report workflows and
+contains `ok`, route, topic, actual/minimum dimension counts, checked files,
+issues, and warnings. Do not create this JSON by hand. If any checked research
+file changes, rerun the validator so the report is newer than its inputs.
+
 ### File Analysis
 
 ```markdown

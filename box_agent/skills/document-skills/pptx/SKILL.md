@@ -1,29 +1,173 @@
 ---
 name: pptx
-description: Create, inspect, edit, validate, render, and QA PowerPoint decks. Use when the user mentions PowerPoint, PPT, PPTX, slide deck, presentation, template slides, speaker notes, slide images, or asks to read, generate, create, make, design, or modify a .pptx artifact. New decks default to HTML-first editable export through the bundled `dom-to-pptx` exporter.
+description: Create, inspect, edit, validate, render, and QA presentation decks. Use when the user mentions PowerPoint, PPT, PPTX, HTML deck, slide deck, presentation, template slides, speaker notes, slide images, or asks to read, generate, create, make, design, or modify a presentation artifact. New decks default to controlled, editable HTML delivery; PPTX is an explicit optional export.
 keywords: [ppt, pptx, slide, slides, deck, presentation, powerpoint, pitch deck, speaker notes, ppt制作, 做ppt, 可编辑ppt, 幻灯片, 演示文稿, 投影片, 演示, 宣讲, 汇报材料, 路演, 路演材料, 融资路演, 商业计划书, BP, 提案, 讲稿, 模板页, 路演ppt]
-required_skills: [html-templates]
-related_skills: [research-synthesis, research-to-deck-outline]
+related_skills: [html-templates, research-synthesis, research-to-deck-outline]
 ---
 
 # PPTX Skill
 
-Use this skill whenever a PowerPoint deck is an input, output, or deliverable.
+Use this skill whenever a presentation deck is an input, output, or deliverable.
+
+### Theme preview intent (before deck authoring)
+
+Treat an explicit request such as “有什么主题”, “先看看主题”, “让我选风格”,
+“show me the themes”, or “theme options” as **theme discovery**, not as permission
+to start authoring the deck. Before writing `outline.json`, scaffolding
+`deck.json`, planning images, or researching content, render the representative
+built-in gallery:
+
+```bash
+cd "${BOX_AGENT_OUTPUT_DIR:-.}" && \
+${BOX_AGENT_NODE:-node} scripts/render_theme_gallery.js \
+  --out theme-previews/index.html
+```
+
+Show or link `theme-previews/index.html`, say that every card is rendered by the
+real controlled compiler, and ask the user to reply with the displayed
+`theme_id` (or describe a different desired mood). Stop that turn after the
+choice prompt. The next reply resumes the normal new-deck flow with that exact
+registered theme; do not regenerate the gallery or create a second deck. Use
+`--all` only when the user asks to see the complete catalog, and `--themes
+id,id,...` for a requested shortlist.
+
+This route is opt-in and must not slow the default path. A normal “帮我做 PPT”
+request without theme-discovery intent still auto-matches a registered theme and
+continues without asking the user to choose. If the user says “你选”, “随便”, or
+already names a registered theme, skip the gallery and continue. A preview
+gallery is disposable discovery output, not a deck checkpoint, so the new-deck
+hard start below has not begun yet.
+
+For normal authoring, pass `--theme auto`. The contract scores the brief and
+bound outline against the built-in theme metadata, including light/dark intent,
+mood, industry fit, formality, and explicit opt-outs such as “不要拼贴” or
+“不要复古手绘”. Pass `--theme <REGISTERED_THEME_ID> --lock-theme` only when the
+user explicitly named or selected that exact theme. Do not turn the fallback
+`blue-professional` id into an artificial explicit choice; a strongly
+mismatched fallback is normalized to the high-confidence auto match.
+
+### Composition comparison intent
+
+Theme discovery answers “which visual mood”; composition comparison answers
+“which page grammar”. When the user asks to see every composition type, compare
+families, or says several families look alike, render the standardized atlas:
+
+```bash
+cd "${BOX_AGENT_OUTPUT_DIR:-.}" && \
+${BOX_AGENT_NODE:-node} scripts/render_composition_gallery.js \
+  --out composition-previews/index.html
+```
+
+The atlas presents five user-facing directions, then renders the eleven internal
+families and all three deterministic variants per family with matched content.
+Users may choose a direction without knowing a family id; resolve that direction
+to the best compatible family from the displayed content signals. Use the atlas
+to compare hierarchy, module relationships, data regions, and page anchors
+without mistaking a palette change for a new composition. This is also opt-in
+discovery output and does not begin or alter a deck-authoring checkpoint.
+
+### New deck hard start
+
+For a new deck, do not hand-create the top-level `deck.json` structure. After
+the slide plan and ordered layout choices exist, the **first deck-authoring
+command** must scaffold the complete ordered deck, including repeated layouts:
+
+```bash
+cd "${BOX_AGENT_OUTPUT_DIR:-.}" && \
+${BOX_AGENT_NODE:-node} scripts/inspect_deck_contract.js \
+  <LAYOUT_ID_FOR_SLIDE_1> <LAYOUT_ID_FOR_SLIDE_2> ... \
+  --theme auto [--family <ALLOWED_FAMILY_ID>] \
+  --image-mode <auto|creative_image_mode> \
+  --outline outline.json \
+  --title "<DECK_TITLE>" \
+  --fact "<VERBATIM_USER_FACT>" \
+  --research-fact "<FACT_FROM_COMPLETED_EXTERNAL_RESEARCH>" \
+  --assumption "<ONLY_IF_USER_EXPLICITLY_AUTHORIZES_IT>" \
+  --require-field <SLIDE_NUMBER>:<MANDATORY_FIELD> \
+  --out deck.json
+```
+
+The command writes the canonical skeleton, the required `image_plan` key in
+`assets/generated/manifest.json`, and `qa/deck_contract.json`; it refuses to
+overwrite an existing deck. `BOX_AGENT_OUTPUT_DIR` is their shared canonical
+delivery root, so never add another `output/` prefix or create a sibling deck.
+The scaffold imports public-research outline evidence into `research_facts`;
+use `--fact`, `--research-fact`, and `--assumption` only for their declared
+truth buckets. `--require-field` values must be exact ids from the selected
+layout contract. Use `auto` unless the brief explicitly activates
+`creative_image_mode`. Do not replace either JSON file after scaffolding.
+The selected theme contract exposes `composition.directions`,
+`composition.default_family`, and `composition.allowed_families`. Directions are
+the five user-facing choices; match their family ids to
+`composition.families[].selection_signals` to decide which internal family best
+fits the actual content. Use the default family
+when there is no stronger signal. For product demos, image-led stories,
+decision/data reviews, or technical architecture, resolve the chosen or inferred
+direction to a compatible family and pass `--family`; never choose outside the
+allowlist. The scaffold writes only that family plus a seed into the persisted
+top-level `design` object; direction remains derived and cannot drift. Keep the
+entire object unchanged for ordinary content patches, render, editor save, and
+export. Only an explicit controlled redesign may replace it as described below.
+Fresh scaffolds vary by default. Use `--design-seed` only for tests or when the
+user explicitly needs a reproducible fresh composition.
+
+After scaffold, `write_file(path="deck.json", ...)` and
+`write_file(path="assets/generated/manifest.json", ...)` are forbidden. When
+`IMAGE_INPUT` is present, call `generate_image` directly for its entries with
+`watermark: false`, then run
+`${BOX_AGENT_NODE:-node} scripts/sync_image_manifest_status.js assets/generated/manifest.json`
+once. Do not reread those files merely to repeat checkpoint data. For a routine
+deck of roughly 12 slides or fewer, do not call
+`plan_write` or `todo_write`; avoid micro-turns that only update coordination.
+
+When `PATCH_INPUT` is present, immediately write one `deck.patch.json` with the
+exact envelope `{"slides":{"slide-01":{"props":{...}}}}`: every supplied
+slide id is nested under the top-level `slides` object, never used as a
+top-level key. Then run
+`${BOX_AGENT_NODE:-node} scripts/apply_deck_patch.js deck.json deck.patch.json`.
+The patch may change only `props`, `background`, and explicitly authorized
+`truth_contract.assumptions`; it may not change ids, order, theme, layout,
+truth mode, or scaffolded facts. Do not use `execute_code`, Python, or ad-hoc
+shell rewrites for deck JSON. Truth report paths contain the exact slide id;
+never reinterpret one as an array index.
+
+Treat “做一版汇报用的”, “换一种版式/构图”, “重新设计”, or a request for a
+visually distinct version as a **controlled redesign**, not as a content-only
+patch. Write one `deck.redesign.json` with optional top-level `design`
+(`family`/`seed`), optional registered `theme_id`, and slide entries shaped as
+`{"slides":{"slide-01":{"layout_id":"cover-editorial-v1","props":{...}}}}`,
+then run
+`${BOX_AGENT_NODE:-node} scripts/apply_deck_redesign.js deck.json deck.redesign.json`.
+This command preserves slide ids/order, truth buckets, bound `outline_intent`,
+and the previous layout's props in `layout_drafts`; it validates semantic
+outline/layout fit plus theme/family compatibility before writing. Use it only when the user actually requests
+recomposition. A normal wording/data correction still uses `deck.patch.json`.
+Never simulate a redesign by changing only subtitles or by rewriting
+`deck.json` directly.
+
+The scaffold stdout is the complete selected-layout contract. Copy prop names
+and shapes from `fields`/`editor.defaultProps`; do not guess aliases or inspect
+the same layout again. Common arrays are `cards-grid-v1.items`,
+`kpi-grid-v1.items`, `project-case-study-v1.metrics`, and
+`timeline-horizontal-v1.steps`.
 
 ## 0. Non-negotiable Rules
 
-1. New deck tasks use HTML-first editable generation by default.
+1. New deck tasks use the controlled HTML compiler by default: `deck.json` → `layout_id + props` → `index.html`. Deliver HTML by default; create PPTX only when the user explicitly requests it.
 2. Existing PPTX/template edits preserve the original PPTX structure.
 3. `python-pptx` must not create a new deck.
 4. Do not silently downgrade generation mode.
 5. Visual QA via rendering is optional, not required. See §4.2 for triggers.
 6. If render is attempted but blocked (missing `soffice`/PDF renderer), continue without it; do not treat it as a delivery blocker.
-8. Before writing any slide HTML, invoke the `html-templates` skill to fetch the Visual DNA profile (palette / typography / decoration tokens). See §3.0. This applies to every new HTML-first deck without exception.
-7. `.slide` must be exactly `1920px × 1080px` (16:9). **Do not author these dimensions from memory** — copy `references/starter/common.css` to `drafts/common.css` and use its `.slide` block verbatim. `html_self_check.js` and `html_to_editable_pptx.js` hard-assert this exact size against **every** slide (not auto-detected from slide 1), so 1280×720 / 1400×840 / 1600×900 / viewport units / scaled wrappers all fail. **Do not pass `--width`/`--height`** — those flags are rejected. For a deliberately non-standard deck the user must opt in: pass `--canvas WxH` to **both** scripts and set the same `WxH` in the `.slide` CSS. Mismatched dimensions are a hard failure, not a fixable warning.
-9. **Never re-serialize a whole multi-slide deck through a single `write_file` call.** Writing every slide's HTML in one tool call routinely overruns the provider output-token limit and the call is truncated mid-stream (`finish_reason=length`), losing the entire turn. For decks of 6+ slides, author per-range fragment files and merge them (see §3.4). When you already hold sub-agent drafts, the orchestrator merges them with `merge_html_fragments.js` — it must not paste their combined content back into one `write_file`.
+7. `.slide` must be exactly `1920px × 1080px` (16:9). The controlled renderer owns this contract. On the legacy/custom-HTML route, copy `references/starter/common.css` to `drafts/common.css` and use its `.slide` block verbatim. `html_self_check.js` and `html_to_editable_pptx.js` hard-assert this exact size against every slide. **Do not pass `--width`/`--height`**; non-standard decks require the same explicit `--canvas WxH` on both scripts.
+8. The controlled theme catalog bundled under `themes/` is the runtime source of truth and includes an executable base theme for all 32 bundled Visual DNA ids. Eleven built-in composition families and their variants are selected and persisted under `design`, so a machine without `html-templates` still has both theme grammar and structural variety. Use `html-templates` as an optional richer matcher when it is available, but never block or invent a theme when it is absent. See §3.0.
+9. The controlled route authors content through the scaffold plus `deck.patch.json`; do not hand-write the full `deck.json` or compiled multi-slide HTML. `scripts/render_deck_html.js` is the only writer of controlled `index.html`. The fragment workflow in §3.4 applies only to an explicit legacy/custom-HTML escape route.
 10. Any PPTX line geometry written by direct generation paths (`PptxGenJS` / OOXML / python-pptx / other direct generators, i.e., not `dom-to-pptx` HTML export) must avoid negative width/height. Normalize line geometry from start/end coordinates (`x1`,`y1`,`x2`,`y2`) into non-negative geometry before writing geometry boxes: `x=min(x1,x2)`, `y=min(y1,y2)`, `w=abs(x2-x1)`, `h=abs(y2-y1)`.
 11. When the task declares `creative_image_mode`, successful image generation is mandatory: at least one `generate_image` call must complete and the generated asset must be referenced in `assets/generated/manifest.json`. If `generate_image` is unavailable or every call fails, mark the deck as blocked and do not present the PPT as completed.
-12. New decks pass the content & outline gate before any HTML or image work (§1.1). A slide plan is the prerequisite for authoring slides. When the request is under-specified or under-sourced, **reject warmly, not coldly**: ask the user a focused clarifying question, or route the topic to `research-synthesis` — never fabricate facts and never write a flat refusal. (Hard `BLOCKED` is reserved for the `creative_image_mode` image rule above.)
+12. New decks pass the content & outline gate before any HTML or image work (§1.1). A slide plan is the prerequisite for authoring slides. When the request is under-specified or under-sourced, route the topic to `research-synthesis`, or call `request_user_input` once with one focused question and only the minimum required fields. After that call, end the turn without deleting or rebuilding any existing outline, scaffold, manifest, or QA output. The user's next reply resumes this same deck from its filesystem checkpoint. (Hard `BLOCKED` is reserved for the `creative_image_mode` image rule above.)
+13. Scaffold the full `deck.json` once, using only exact ids supplied by the current `SCAFFOLD_INPUT`; never guess a theme/layout id or reread the registry when that input is present. After validation fails, patch only the paths named in the fresh report. Once a repair patch has been applied, the old reports are stale: let the filesystem checkpoint invoke `finalize_controlled_deck.js` once instead of separately rerunning validators, render, self-check, and runtime probe. Never apply two repair patches from the same report. If the same refreshed truth/spec issue class recurs twice, stop automatic repair: re-read the existing contract once, then either use `request_user_input` for genuinely missing required user/private facts, use `--research-fact` after real research, record explicitly authorized assumptions, or omit the unsupported claim. Preserve every outline-bound title exactly plus the page's content anchors. Quantitative anchors may be split naturally across KPI/chart labels and values; do not duplicate a full source sentence in every cell merely to satisfy binding. Never make a truth report pass by replacing a protected title with `待补充`, because `deck_spec` must retain the same outline binding. A public-research deck must not expose visible `待补充` for an optional gap; use an evidence-backed page instead. Reserve visible `待补充` for required unavailable user/private fields. Never rewrite scaffolded fact buckets, regenerate the whole deck, or reset with `--force` to clear validation errors.
+14. Source-bound decks never invent named clients, projects, company/product names, financing rounds or stages, awards, publications, rankings, dates, team origins/sizes/history, project narratives, process steps, or future plans. User-authorized assumptions may support disclosed illustrative metrics or performance scenarios only; they do not authorize invented proper nouns, financing stages, dates, team facts, awards, or documentary claims. In a strict source-only request, factual fields such as statement/support copy, KPI detail, project positioning/caption, timeline step title/body, and card body must copy supplied wording, omit an optional field, or use `待补充` only when a required field is genuinely missing; polished generic prose is still unsupported. Do not infer a funding round, infer a founding year from “third year”, invent a prior team size, or turn missing evidence into generic positive copy such as “复购率持续提升”. Creative image direction permits visual imagination, not factual invention. A generated project/case-study image must use `origin: "generated"` and an explicit concept/placeholder alt or caption. Run `validate_deck_truth.js`; a failed truth report blocks delivery.
+15. Never create a fake bitmap with Pillow, SVG, a solid fill, or copied placeholder merely to satisfy a media field. If image generation fails, either block as required by `creative_image_mode`, switch to a layout whose media is optional, or retain the built-in editable placeholder and record the decision as `failed`/`skip`. Never relabel a placeholder as `generated`, and never reuse one placeholder as several supposedly distinct generated images.
 
 ## 1. Route Decision
 
@@ -31,24 +175,26 @@ Use this skill whenever a PowerPoint deck is an input, output, or deliverable.
 
 Use this path by default:
 
-1. **Pass the content & outline gate first (see §1.1 and `references/outline.md`).** Do not write any slide HTML — and do not start image planning — until a slide plan exists whose page-level content is either supplied by the user, carried over from an upstream expert/research step, or grounded by `research-synthesis`. If the material is too thin to build a faithful deck, do not fabricate and do not cold-reject — **ask the user one focused question, or route to `research-synthesis`** (§1.1).
-2. invoke the `html-templates` skill to fetch the Visual DNA profile (see §3.0)
-3. plan slide-level image decisions in `assets/generated/manifest.json`; record the whole deck theme in `deck_context`, and when the image service is available, covers, dividers, campaign/launch/vision pages, and abstract concept pages should normally choose `generate`. Investor pitch decks, product launch decks, and premium B2B SaaS-style decks with explicit visual direction (for example "VC", "融资路演", "高端", "贵气", "靠谱", "发布会", "深色背景") are strong visual-asset briefs: use `generate` for at least the cover and one solution/product/vision hero slide unless the user opts out or the image service is unavailable.
-4. call `generate_image` for every `generate` item before writing final slide HTML. Always pass `watermark: false` for PPT image generation — slides carry their own branding/watermark and the prompt already steers the model away from in-image watermarks, so the tool's default "AI 生成" stamp must be suppressed.
-5. for data charts, keep the source dataset/chart spec and use ECharts as the HTML preview for chart pages; final PPT must preserve chart data through native PowerPoint chart/table output, not through screenshots. If a chart/table dataset is written under `assets/data/*.json`, `deck.html` must reference it from a `data-pptx-chart` root with `data-chart-spec-src` (or embed the same recoverable spec with `data-chart-spec`); do not write a separate static SVG/bar layout with copied numbers.
-6. create the slide HTML using the slide plan, Visual DNA profile, generated local assets, and the density/composition rules in §3.1 as hard constraints. For decks with **6 or more slides** (or dense source material / likely-large HTML), you **must** use the fragment-drafting workflow in §3.4 — author per-range draft files and combine them with `merge_html_fragments.js`. Smaller decks may write `deck.html` directly in one pass.
-7. when `assets/generated/manifest.json` contains `layout_contract`, run image layout contract validation
-8. when `assets/generated/manifest.json` declares `creative_image_mode`, run image manifest validation before HTML self-check
-9. run HTML self-check
-10. export with `scripts/html_to_editable_pptx.js`
-11. run structural QA (package validation, text extraction, placeholder scan)
-12. render and inspect only if §4.2 triggers apply
+1. **Pass the content & outline gate first (see §1.1 and `references/outline.md`).** Every new controlled deck writes one `outline.json` and validates it to `qa/outline_check.json` before theme/layout selection. When the user already supplied a complete page list, this is a lightweight traceability mapping, not a new invented storyline. Do not write slide HTML or start image planning until that report is `ok`. If the material is too thin to build a faithful deck, do not fabricate and do not cold-reject — **call `request_user_input` once with one focused question and the minimum missing fields, or route to `research-synthesis`** (§1.1). End the clarification turn after the tool call; the next user reply continues this deck rather than starting a fresh HTML task.
+2. inspect the built-in theme catalog with `scripts/inspect_deck_contract.js` only when the current checkpoint does not already contain `SCAFFOLD_INPUT`. When it does, use its exact registered ids directly. For a normal request, pass `--theme auto`; the scaffold performs the built-in metadata match and reports `theme_selection`. If `html-templates` is available, its Visual DNA may inform the brief, but it is not required for selection. Use `--theme <REGISTERED_THEME_ID> --lock-theme` only after the user explicitly names or chooses that exact id. Use `default_theme_id` only when the matcher reports `fallback_default`; never copy it into the command merely because it is the default, and never invent a theme id (see §3.0).
+3. query layouts by page role/density/media needs, choose the **ordered layout id for every slide (including repeats)**, choose `--image-mode auto` or `creative_image_mode` from the brief, then run the hard-start scaffold command with `--outline outline.json --out deck.json` once. Semantic fidelity beats forced variety: a qualitative page must not use `chart-*` or `kpi-grid-v1` unless its outline evidence contains real quantities, and repeated layouts are allowed. The scaffold persists each page's title/message/layout/visual as `outline_intent`, normalizes strong visual mismatches (for example matrix→table, quadrant→cards, tagged text cover→editorial cover), and later QA checks explicit visual cardinality such as “三段式” or “四象限”. Do not discard or rewrite that intent metadata. Use `table-data-v1`, not `closing-next-steps-v1`, when a next-step page carries parallel fields such as task/action, role/owner, responsibility, member/name, status, or date; the closing layout is only for self-contained calls to action whose label and detail do not imply a responsibility matrix. The scaffold may enforce this distinction from the bound outline and reports any change under `layout_normalizations`; author only against the returned effective layout contract. For `source_mode=user_provided`, exact quantities in that page's message/bullets are evidence even when its external-link `evidence` array is empty; never downgrade a user-mandated editable chart or KPI page merely because the supplied facts do not need URLs. Use `project-case-study-v1` only for an actual source-backed project/case with proof metrics; it is not a generic image-plus-text layout for history, profiles, or other editorial narratives. Translate every explicit page-content requirement into an exact `--require-field SLIDE:FIELD` from that chosen contract: KPI grids use `items`, while project case studies use `metrics`. A project page that must contain 2-3 metrics must use a layout whose fields include `metrics` (do not substitute `image-hero-split-v1`, which has no metrics), and a requested KPI page stays on `kpi-grid-v1` rather than being weakened to a generic cards layout. The scaffold stdout returns the complete selected-layout contracts and bound outline pages; do not call `inspect_layout.js` once per selected slide before or after scaffolding. Valid props are under `layouts[].fields` and examples/defaults under `layouts[].editor.defaultProps`. Do not query nonexistent `.props` / `.required_fields`, read the full manifest in chunks, use `execute_code` to inspect it, grep the registry source, or repeatedly inspect the same layout. Use `inspect_deck_contract.js --list-themes` and `query_layouts.js --list` for compact discovery.
+4. plan slide-level image decisions in the scaffolded `assets/generated/manifest.json`. Derive one stable deck context/style anchor from the selected theme and repeat it inside every generated-image prompt; do not add a competing top-level manifest schema. For each declared slot choose `generate`, `use_existing`, or `skip` from the narrative job. A concrete subject normally uses a fixed-frame hero slot; atmosphere may use the slide-level background; typography/data-led pages may skip bitmap media. Prefer one dominant media treatment rather than filling both hero and background without a reason.
+5. call `generate_image` for every `generate` item before final validation. Emit independent image calls together in one assistant tool-call batch; the executor runs this parallel-safe tool concurrently. Do not create a sub-agent merely to wait for image generation—the parent still needs the returned asset paths before manifest binding and QA. Always pass `watermark: false`. Localize every `use_existing` asset. Once the files exist, run `sync_image_manifest_status.js` once instead of manually editing the manifest. Store artifact-root-relative paths in the declared media prop or `slide.background`, and set media `origin` to `generated` or `asset`; the final `deck.json` never contains an unresolved generation request.
+6. fill the scaffolded `deck.json` with one controlled batch patch when practical, then run the checkpoint's single `scripts/finalize_controlled_deck.js deck.json --out index.html` command. It validates spec, truth, and the image manifest in dependency order, compiles HTML only after those pass, then runs HTML self-check and `probe_deck_runtime.js` at `1440x900`. It stops at the first actionable failure and keeps successful validator payloads out of model history. On failure, patch only the named paths. If the same truth/spec issue class returns twice, follow rule 13 instead of starting another repair loop. For public-research decks, do not expose `待补充` merely because a nonessential claim was not researched: omit that claim and use an evidence-backed page instead. Reserve visible `待补充` for required user/private fields that genuinely cannot be obtained, then ask once if those fields materially block the deck.
+7. `finalize_controlled_deck.js` is the only normal finalization command. Do not hand-edit the compiled HTML, split finalization into separate successful validator/render calls, or add another `output/` prefix. The generated HTML is the default deliverable and includes the controlled editor runtime. A non-zero exit or a report with `"ok": false` blocks delivery: fix the deck props or layout and rerun the finalizer. Never present a failed truth check, self-check, editor-fit, contrast, or export-geometry artifact as complete.
+8. When the manifest contains `layout_contract`, run image layout contract validation after finalization.
+9. export with `scripts/html_to_editable_pptx.js` only when the user explicitly requests PPTX, then run PPTX structural QA.
+10. render and inspect when §4.2 triggers apply. Keep `deck.json` beside `index.html` as the reproducible generation source. After in-HTML edits, the saved HTML's embedded `#deck-document` is authoritative for that edited artifact; do not claim that the sibling `deck.json` was synchronized.
+
+Read `references/controlled-layouts.md` for the contract, output bundle, legacy escape route, and editor boundary.
 
 ### 1.1 Content & outline gate (new decks)
 
 The deck's page-level content is decided **before** layout and images. The skill
 owns the *slide plan* (page → message → layout intent → visual), not deep
-research. Run this gate at the start of every new deck:
+research. Materialize that plan as `outline.json` for every new controlled deck
+and run `scripts/validate_outline.js outline.json --report qa/outline_check.json`
+before scaffolding. Run this gate at the start of every new deck:
 
 1. **Enough content already?** If the user (or an upstream expert/research step)
    already supplied page-by-page content — titles, order, key points, data —
@@ -57,54 +203,123 @@ research. Run this gate at the start of every new deck:
    a new storyline over usable input.
 2. **Only structure is unclear?** If the *facts* are available but the framing is
    ambiguous (audience, page count, ordering, what to emphasise, plan-vs-build),
-   **ask back** — one to three focused questions, and where reasonable propose a
-   sensible default so the user can just confirm. Do not silently guess a whole
+   call `request_user_input` once with **one focused question** and only the
+   minimum missing fields; where reasonable propose a sensible default so the
+   user can just confirm. End that turn after asking, preserve any existing
+   artifacts, and resume from them after the reply. Do not silently guess a whole
    narrative, and do not stall with an open-ended "tell me more".
 3. **Topic needs facts you don't have?** If the deck needs evidence, market/
    industry/company/policy data, or claims that must be sourced, and the material
    is thin or absent, **do not fabricate and do not write a cold rejection.**
-   Hand off to research first:
+   Load the research workflow first:
 
    ```
-   Skill(skill="research-synthesis",
-         args="<the deck topic + what facts/evidence the slides need>")
+   get_skill(skill_name="research-synthesis")
    ```
 
-   Then build the slide plan from the returned, sourced findings. If
+   Run the selected `research-synthesis` route for the facts the slide plan
+   actually needs, preserve its dimension, cross-verification, and insight
+   artifacts under `research/`, then build the plan and scaffold those
+   statements with `--research-fact`. A short factual one-line brief is not a
+   reason to perform a shallow search; it is the strongest signal to finish the
+   research handoff before outlining.
+   On a `public_authoritative_research` outline, treat each page's `evidence`
+   array as its fact ledger: every Arabic-number literal used by that page's
+   title, message, or bullets must also occur verbatim in its evidence. Remove
+   decorative or structural numbers from narrative copy instead of laundering
+   them into evidence. Every page must have at least one evidence item, and each
+   item must contain the actual http(s) URL used for the claim, preferably as
+   `claim | source | URL`.
+   `AuthLevel` is a ranking hint, not proof: use a `site:`-constrained query for
+   known first-party domains, discard SEO/mirror/unrelated results, and never
+   call a source official unless the returned URL belongs to that institution.
+   Runtime provenance binding rejects a URL that did not come from a successful
+   search result, a user-supplied URL, a successful direct browser read, or the
+   fresh validated `RESEARCH_INPUT` handoff. The latter is the continuation path:
+   a resumed deck may reuse its already-validated research URLs without repeating
+   the broad search. If a `site:` query returns no matching host, do not invent the
+   expected official URL: either read a known exact first-party URL successfully
+   and use only its returned content, or ask once for the missing source/scope.
+   An ordinary request to make a factual deck already authorizes the normal use
+   of public, authoritative sources needed to complete it. Do not ask the user
+   for a second "permission to use public sources" after successful research;
+   ask only when the user required strict source-only output, named a source
+   boundary, the required evidence is private/unavailable, or conflicting
+   sources require a material choice.
+   Follow the selected research route's coarse-to-fine search budget. The PPT
+   workflow must not replace it with a separate four-query cap. Inspect the full
+   useful result returned by each search before narrowing. Cover distinct
+   slide-relevant evidence gaps instead of lightly rephrasing an already-run
+   entity/fact query. An empty authority-ranked or `site:` result does not by
+   itself justify repeating the same intent without the filter. If an exact
+   first-party URL is known, read it with an actually available direct browser
+   tool. In officev3, do not use the browser gateway's
+   `source_preference: playwright` as a substitute for standalone Playwright MCP;
+   use standalone Playwright tools, or gateway `auto` / `browser_connector`.
+   Persist durable
+   findings in `research/` (relative to the presentation artifact root; the host
+   stores it as `output/research/`), and stop only when the slide-relevant dimensions and
+   conflicts are covered or the runtime's normal global search limit is reached.
+   Before outline authoring, run the bundled research validator with
+   `--report research/qa/{topic}_research_check.json`; a reduced sequential run
+   still needs at least three distinct dimensions. Continue only from a fresh,
+   successful report rather than creating or editing the JSON by hand. Search and
+   direct browser evidence calls have their own bounded research allowance and do
+   not spend the downstream deck-production budget. Once that report passes, obey
+   the `outline` checkpoint immediately: do not search again, reread `outline.md`,
+   update todos/plans, or inspect the filesystem. Read only the named research
+   Markdown handoff once when its contents are absent from context, then write and
+   validate `outline.json`.
+   If outline validation fails, obey the checkpoint's self-contained
+   `REPAIR_INPUT`: it already contains the fresh issues, complete current
+   outline, allowed handoff URLs, and any unsupported URLs. The very next tool
+   call must write the corrected `outline.json`; do not reread the report,
+   outline, schema reference, or use shell/Python to bypass the write guard.
+   If officev3 or the runtime restarts, a terse continuation recovers an
+   incomplete controlled-deck gate from these durable artifacts. A deck whose
+   seven QA reports are already current and successful is not reopened.
+   Do not re-open the same
+   public pages through a browser merely to make already sufficient researched
+   text pass `--fact`; that is exactly what `--research-fact` represents. If a
+   browser backend is unavailable but search already supplied enough evidence,
+   continue instead of retrying every URL.
+   If
    `research-synthesis` is unavailable in this session, say so and ask the user to
-   provide the source material, rather than presenting unsourced content as fact.
+   provide the source material through one focused `request_user_input` call,
+   rather than presenting unsourced content as fact. Resume the same deck after
+   the user replies; do not scaffold a second `deck.json`.
 
 Reserve a hard `BLOCKED` for the `creative_image_mode` image requirement (§0
 rule 11) — a normal deck that is merely under-specified is handled by asking back
-or routing to research, never by a flat refusal. Mark assumed or illustrative
-figures as such in the slide plan's `evidence`/`notes`; never imply fabricated
-data is sourced.
+or routing to research, never by a flat refusal. Use assumptions only when the
+user explicitly authorizes them. Record them in the slide plan, pass them via
+`--assumption`, and visibly mark each affected slide `假设` or `示意`; never imply
+fabricated data is sourced.
 
-**`creative_image_mode` carve-out:** in `creative_image_mode` a short topic (e.g.
+**`creative_image_mode` carve-out:** only after the user's brief has actually
+activated `creative_image_mode`, a short topic (e.g.
 "茉莉花茶制作过程") is a *creative brief* — expand it imaginatively into a visual
 storyline; do **not** route it to `research-synthesis` or stall on questions
 unless the user explicitly wants sourced facts/figures. Branch 3 above applies to
-fact/evidence-driven decks, not creative/atmospheric ones.
+fact/evidence-driven decks, not creative/atmospheric ones. Do not use this
+carve-out to convert an ordinary factual biography or sports story into creative
+mode; `auto` can still generate its cover.
 
 ### `creative_image_mode`
 
-This mode is activated when the user explicitly asks for a creative/image-rich PPT, when an upstream expert/team instruction says `creative_image_mode`, or when the "Creative PPT / image-generation PPT" expert/team is selected.
+Activate this mode for an explicit creative/image-rich request or an explicitly
+visual pitch/launch/brand brief that asks for generated imagery; the literal
+mode name is not required. A topic being visually interesting is not sufficient.
+Its
+authoritative decision, manifest, prompt, provenance, failure, and concurrency
+rules live in `references/image-assets.md`. The short contract here is:
 
-Do not require the literal words `creative_image_mode` when the user's brief clearly asks for a polished, visual, pitch-style deck. A VC/investor pitch, launch, brand, or premium B2B SaaS deck with explicit art direction should be treated as image-generation-expected even if the user only says "图", "视觉", "高端", "贵气", "靠谱", "发布会感", "深色背景", or similar. Data charts remain editable charts/tables; the generated images are for hero visuals, product mockups, atmosphere, transformation metaphors, and controlled backgrounds.
+1. At least one real `generate_image` result—normally the cover—must be stored under `assets/generated/` and referenced by the manifest and deck.
+2. Keep charts, tables, and process data editable; generated images provide hero, atmosphere, mockup, or background value rather than replacing recoverable data.
+3. Full-slide/background images require a `layout_contract`; fixed-frame hero images use the inspected media slot.
+4. If every required generation fails, report the mode as blocked. Do not satisfy it with CSS/SVG filler or a relabeled placeholder.
 
-Mode contract:
-
-1. Treat the user input as a PPT creation brief even if it is only a short topic such as "茉莉花茶制作过程".
-2. The deck must include generated bitmap visuals. At minimum, the cover must use `decision: "generate"` and a successful `generate_image` output under `assets/generated/`.
-3. Prefer `generate` for cover, section divider, process hero, atmosphere/scene, poster-like, and closing slides. Dense data/table/process detail slides may use editable HTML/CSS/SVG, but they do not satisfy the mandatory generated-image requirement unless at least one other slide generated an asset.
-4. If using full-slide or background generated images, create `layout_contract` before writing the prompt and keep text regions calm, low-detail, and low-contrast. Do not make the non-focus side look empty; extend the scene with faint texture, atmospheric shapes, or soft background motifs that support the theme without competing with text.
-5. If `generate_image` is not configured or fails for all required images, stop before claiming completion. Return `BLOCKED: creative_image_mode requires generated images`, include the failure reason, the image plan, and any draft HTML/outline paths. Do not silently downgrade to a normal text-only PPT or a pure HTML-shape deck.
-6. Final delivery must list generated asset paths and the manifest path. If there are zero successful generated assets, the final status is blocked, not completed.
-
-If browser host preflight blocks HTML export, ask the user to choose one route:
-
-1. `HTML`: deliver `deck.html` first, export later after host setup
-2. `PPTX`: switch to native `PptxGenJS`
+HTML delivery does not require the browser export host. If a requested PPTX export is blocked by browser-host preflight, deliver `index.html + deck.json` and report only the PPTX export as blocked, or switch to native `PptxGenJS` with the user's agreement.
 
 ### Existing deck or template
 
@@ -130,31 +345,58 @@ Do not switch routes based on convenience.
 
 | Task | Command |
 |---|---|
-| Validate outline | `${BOX_AGENT_NODE:-node} scripts/validate_outline.js outline.json` |
+| Preview representative themes | `${BOX_AGENT_NODE:-node} scripts/render_theme_gallery.js --out theme-previews/index.html` (`--all` only on request) |
+| Compare every composition family | `${BOX_AGENT_NODE:-node} scripts/render_composition_gallery.js --out composition-previews/index.html` (11 families × 3 variants, matched content) |
+| Validate outline | `${BOX_AGENT_NODE:-node} scripts/validate_outline.js outline.json --report qa/outline_check.json` |
+| Scaffold ordered deck + image manifest + inspect exact contract | `cd "${BOX_AGENT_OUTPUT_DIR:-.}" && ${BOX_AGENT_NODE:-node} scripts/inspect_deck_contract.js cover-hero-v1 cards-grid-v1 cards-grid-v1 --theme auto --outline outline.json --title "Deck title" --out deck.json` |
+| Query controlled layouts | `${BOX_AGENT_NODE:-node} scripts/query_layouts.js --role comparison --density medium-high --media-count 0` |
+| Inspect a layout contract | `${BOX_AGENT_NODE:-node} scripts/inspect_layout.js comparison-two-column-v1` |
+| Sync generated image statuses | `${BOX_AGENT_NODE:-node} scripts/sync_image_manifest_status.js assets/generated/manifest.json` |
+| Apply one validated content patch | `${BOX_AGENT_NODE:-node} scripts/apply_deck_patch.js deck.json deck.patch.json` |
+| Apply an explicit controlled redesign | `${BOX_AGENT_NODE:-node} scripts/apply_deck_redesign.js deck.json deck.redesign.json` |
+| Validate deck spec | `${BOX_AGENT_NODE:-node} scripts/validate_deck_spec.js deck.json --report qa/deck_spec.json` |
+| Validate source facts and claims | `${BOX_AGENT_NODE:-node} scripts/validate_deck_truth.js deck.json --report qa/truth_check.json` |
+| Finalize controlled HTML (normal path) | `${BOX_AGENT_NODE:-node} scripts/finalize_controlled_deck.js deck.json --out index.html` |
+| Render editable HTML | `${BOX_AGENT_NODE:-node} scripts/render_deck_html.js deck.json --out index.html` |
+| Probe editor fit, contrast, and export geometry | `${BOX_AGENT_NODE:-node} scripts/probe_deck_runtime.js index.html --viewport 1440x900 --report qa/runtime_probe.json` |
+| Check layout manifest | `${BOX_AGENT_NODE:-node} scripts/build_layout_manifest.js --check` |
 | Extract text | `${BOX_AGENT_PYTHON:-python3} scripts/extract_text.py input.pptx` |
 | Validate package | `${BOX_AGENT_PYTHON:-python3} scripts/validate_pptx_package.py input.pptx` |
 | Render PPTX | `${BOX_AGENT_PYTHON:-python3} scripts/render_pptx.py input.pptx --out rendered` |
-| Validate image manifest | `${BOX_AGENT_NODE:-node} scripts/validate_image_manifest.js assets/generated/manifest.json --mode creative_image_mode --min-generated 1 --report qa/image_manifest.json` |
-| Validate image layout contract | `${BOX_AGENT_NODE:-node} scripts/validate_image_layout_contract.js deck.html assets/generated/manifest.json --report qa/image_layout_contract.json` |
-| HTML self-check | `${BOX_AGENT_NODE:-node} scripts/html_self_check.js deck.html --dom-to-pptx --allow-local-images --report qa/html_self_check.json` ⚠️ 画布固定 1920×1080，不要追加 `--width/--height`（已被拒绝）；非标准尺寸用 `--canvas WxH` |
-| Export HTML | `${BOX_AGENT_NODE:-node} scripts/html_to_editable_pptx.js deck.html output.pptx` ⚠️ 画布固定 1920×1080，不要追加 `--width/--height`（已被拒绝）；非标准尺寸用 `--canvas WxH` |
+| Validate image manifest | `${BOX_AGENT_NODE:-node} scripts/validate_image_manifest.js assets/generated/manifest.json --deck deck.json --report qa/image_manifest.json` (add `--mode creative_image_mode --min-generated 1` only when that mode is active) |
+| Validate image layout contract | `${BOX_AGENT_NODE:-node} scripts/validate_image_layout_contract.js index.html assets/generated/manifest.json --report qa/image_layout_contract.json` |
+| HTML self-check | `${BOX_AGENT_NODE:-node} scripts/html_self_check.js index.html --dom-to-pptx --allow-local-images --report qa/html_self_check.json` ⚠️ 画布固定 1920×1080，不要追加 `--width/--height`（已被拒绝）；非标准尺寸用 `--canvas WxH` |
+| Optional PPTX export | `${BOX_AGENT_NODE:-node} scripts/html_to_editable_pptx.js index.html output.pptx` ⚠️ 仅在用户明确要求 PPTX 时执行 |
 | Check local deps | `${BOX_AGENT_PYTHON:-python3} scripts/setup_check.py` |
 | Check HTML export env | `${BOX_AGENT_NODE:-node} scripts/check_html_export_env.js` |
+
+Shell note: assign runtime variables in an earlier command/line before expanding
+them. Do not write `PPTX_SKILL_DIR="..." "$PPTX_SKILL_DIR/scripts/..."`; the
+shell expands `$PPTX_SKILL_DIR` before that inline assignment takes effect.
 
 ⚠️ **Dependency probing**: never use bare `node -e "require.resolve('playwright')"` to check for installed packages. Box-Agent installs Node deps into the **office-raccoon managed prefix** (`~/Library/Application Support/office-raccoon/node_modules/` on macOS, `$APPDATA/office-raccoon/node_modules/` on Windows, `~/.config/office-raccoon/node_modules/` on Linux), which is **not** on the default `NODE_PATH`. A naked `node -e` process will report every managed package as `not found`. Always use `scripts/check_html_export_env.js` (Node) or `scripts/setup_check.py` (Python) — both look in the managed prefix.
 
 ## 3. HTML-first Requirements
 
-### 3.0 Before generating slide HTML (mandatory)
+### 3.0 Before selecting a controlled theme (mandatory)
 
-Always invoke the `html-templates` skill first to obtain the visual style constraints for this deck:
+The `pptx` skill is self-contained. Its versioned `themes/*.json` catalog is
+always authoritative and is exposed by `scripts/inspect_deck_contract.js` and
+`layouts/manifest.json`. Select from those registered ids only. Each theme
+includes selection signals, palette, typography, shape tokens, and finite
+visual-style axes. The catalog provides an executable base theme for all 32
+bundled Visual DNA ids, so a machine without the separate `html-templates`
+skill can still create the full built-in style range.
 
-```
-Skill(skill="html-templates",
-      args="<the user's original brief verbatim + deck goal/audience + intended density from the outline>")
-```
-
-That skill returns a structured Visual DNA profile (palette, typography, decoration tokens, style rules). Treat its output as **hard constraints** when writing the HTML. Do not generate slide HTML without running this step — model defaults to "stay in the current skill" and will not auto-route to `html-templates` unless explicitly called from here.
+When `html-templates` is available, invoke it with the original brief, deck
+goal/audience, and intended density. Treat the returned Visual DNA
+`template_id` as a matching hint, not an unchecked runtime id: resolve it to
+the same registered base theme, or to an explicitly registered variant when
+the brief calls for that variant. If a future matcher returns an id outside the
+catalog, choose the closest built-in theme from its selection metadata and
+report the visual limitation. The controlled renderer, not the model, applies
+concrete CSS. Never copy Visual DNA fields into slide props and never improvise
+CSS inside `deck.json`.
 
 Pass an explicit density target in the args whenever the deck is a business,
 product, launch, scenario-demo, consulting, board, investor, training, or
@@ -163,32 +405,37 @@ explicitly asks for sparse, manifesto, cinematic, or quote-led slides. This
 keeps the style matcher from selecting an atmospheric low-density profile when
 the page still needs working presentation substance.
 
-If `html-templates` is unavailable in this session, fall back to authoring the deck with the existing palette/typography conventions and note the absence in `Limitations`.
+If `html-templates` is unavailable, proceed directly from the built-in catalog.
+This is a supported path, not a blocker and not automatically a limitation.
+Use `default_theme_id` only when the brief does not clearly match another
+registered theme.
+
+For neo-brutalist block-frame briefs, keep palette intent explicit: select
+`block-frame-mono-blue` when the user asks for high-contrast black/white with
+only a restrained saturated-blue accent; keep `block-frame` for playful
+multi-color block compositions. Do not collapse these into one fixed look.
 
 ### 3.1 Layout constraints
 
-1. `.slide` must be exactly `1920px × 1080px` — copy `references/starter/common.css` rather than authoring the dimensions (see §0 rule 7; `--width/--height` are rejected, use `--canvas WxH` only for an opt-in non-standard deck).
+1. `.slide` must be exactly `1920px × 1080px`. The controlled renderer owns this geometry; copy `references/starter/common.css` only on the legacy/custom-HTML route (see §0 rule 7; `--width/--height` are rejected, use `--canvas WxH` only for an opt-in non-standard deck).
 2. Leave 16-24px text slack to reduce PowerPoint wrap drift.
 3. For top/middle/bottom layouts, center the main content group in the available middle area. Do not build slides by stacking blocks from the top with repeated `margin-top`; compute the content group's height and balance top/bottom whitespace with flex/grid alignment or explicit `top` values.
 4. Do not leave a content slide as "short cards on the top half + decorative empty background" unless the slide is intentionally a divider, quote, cover, or cinematic pause. For normal business/product/demo/training pages, the primary content plus primary visual should occupy the main body area. If the supplied text is sparse, convert the remaining canvas into substance: workflow arrows, before/after comparison, role swimlanes, demo steps, KPI strip, decision matrix, architecture/process schematic, or editable diagram. Decorative glow, texture, or grid alone does not count as content.
-5. Scenario, use-case, capability, and "four cards" pages need a second composition layer when each card only has a title and 1-2 short lines. Add one of: a bottom flow from trigger → agent action → business outcome, a per-card icon/metric/owner row, a horizontal journey line, a mini demo storyboard, or a capability matrix. Keep it editable HTML/CSS/SVG unless an actual bitmap visual is required.
+5. Scenario, use-case, capability, and "four cards" pages need a second composition layer when each card only has a title and 1-2 short lines. Choose a registered layout that can express a flow, metric row, journey, storyboard, or matrix; use custom HTML/CSS/SVG only on the explicit legacy route.
 6. Use relative asset paths.
 7. Do not inline large images as data URLs.
-8. Every slide must record an explicit image decision in `assets/generated/manifest.json`; each `generate` prompt must include the whole deck theme/context before the slide-specific visual subject. Covers, dividers, posters, campaign/launch/vision pages, abstract concept pages, investor-pitch/product-demo hero pages, premium B2B SaaS pages, and emotionally led closing pages must use `generate` via the `generate_image` tool unless the user opts out, the image service is unavailable, or a real/source-backed asset is required.
+8. Resolve every slide's image decision against its inspected slot/background contract. `references/image-assets.md` is authoritative for trigger, prompt, provenance, concurrency, manifest, and failure rules; do not duplicate or reinterpret them here.
 9. ECharts/canvas charts are allowed only as HTML preview surfaces backed by `data-pptx-chart` and recoverable chart data. They must not be baked into `assets/bg-capture/*.png` or delivered as screenshot-only chart images when the data is available.
 10. Keep page numbers on non-cover slides consistent with slide order.
-11. Read `references/html-first.md` and `references/html-editable.md`.
-12. Keep image generation rules in `references/image-assets.md`.
-13. For generated full-slide/background slides, text-bearing HTML elements that correspond to `layout_contract.text_regions` must carry `data-layout-region="<region name>"`, and `scripts/validate_image_layout_contract.js` must pass before HTML self-check. Small/medium hero images in fixed frames do not require this contract unless they overlap text-safe areas.
-14. In `creative_image_mode`, `assets/generated/manifest.json` must include `"mode": "creative_image_mode"` and at least one image-plan entry with `decision: "generate"`, `status: "generated"` (or equivalent success marker), and an existing `output_path`.
+11. Read `references/controlled-layouts.md`. Read `references/html-first.md` and `references/html-editable.md` only for the legacy/custom-HTML path or optional PPTX export internals.
 
 ### 3.2 Data charts and ECharts previews
 
 For data presentation slides, preserve data first:
 
 1. When a slide contains quantities, rankings, comparisons, trends, proportions, KPIs, financials, market sizing, benchmark results, time-series data, or operational metrics, prefer a visible data display by default: native table, KPI strip, bar/line/area/pie chart, matrix, comparison table, or mini-dashboard. Use plain bullets only when the data is too sparse or the user explicitly asks for text-only slides.
-2. Store chart/table data in `assets/data/*.json` or an equivalent local source file.
-3. In `deck.html`, use ECharts for browser preview and layout tuning when the slide is chart-led or backed by `assets/data/*.json`. The chart root must be marked with `data-pptx-chart` and must reference or embed a chart spec via `data-chart-spec`, `data-chart-spec-src`, or a child `<script type="application/json" data-chart-spec>`. If a dataset exists in `assets/data/`, do not duplicate the numbers into static SVG, absolute-positioned bars, or text-only chart markup without linking the dataset.
+2. Prefer registered controlled layouts when their contracts fit: `chart-bar-v1` for three to seven simple categorical/ranking values; `chart-data-v1` for animated bar, column, line, area, pie, donut, or radar charts with two to twelve categories and up to four series; `table-data-v1` for two to five columns and two to six rows; and `kpi-grid-v1` for headline metrics. Their `deck.json` props are the recoverable data source and the renderer emits the chart spec or editable cells; do not create a duplicate `assets/data` file for the same controlled data. Controlled charts bundle ECharts 6 locally, render with SVG, expose a registry-driven data grid, and export through the native PptxGenJS chart mapping.
+3. For unsupported controlled shapes (scatter, bubble, combo, heatmap, sankey, map, or larger tables), store data in `assets/data/*.json` and use the legacy/custom HTML data route. In `deck.html`, use ECharts for browser preview and layout tuning when the slide is chart-led or backed by `assets/data/*.json`. The chart root must be marked with `data-pptx-chart` and must reference or embed a chart spec via `data-chart-spec`, `data-chart-spec-src`, or a child `<script type="application/json" data-chart-spec>`. If a dataset exists in `assets/data/`, do not duplicate the numbers into static SVG, absolute-positioned bars, or text-only chart markup without linking the dataset.
 4. When creating the final PPTX, convert available chart data to native PowerPoint charts/tables whenever the recipient may edit numbers. Do not flatten an ECharts canvas/SVG into a screenshot just because it looks correct in HTML.
 5. If native chart conversion is unavailable, report the chart export as `BLOCKED` or switch to the confirmed native `PptxGenJS` chart route; do not silently deliver screenshot-only chart images.
 
@@ -218,9 +465,12 @@ For data presentation slides, preserve data first:
 - `.slide`'s own `background` can be any gradient / image / blend — it ends up in the bitmap layer.
 - If `html_self_check.js` flags a visual effect on a "text-bearing element", the fix is usually to split the element: one decoration sibling for the effect, one text element for the words.
 
-### 3.4 Fragment drafting (large decks — mandatory for 6+ slides)
+### 3.4 Legacy/custom-HTML fragment drafting
 
-A full multi-slide deck's HTML is large. Emitting it through a single
+This section is an escape route only when no registered layout can represent a
+required page and the user accepts legacy free-form HTML. A normal controlled
+deck writes `deck.json` and renders it with `render_deck_html.js`, regardless of
+slide count. On the legacy route, a full multi-slide deck's HTML is large. Emitting it through a single
 `write_file` call routinely exceeds the provider's output-token limit, so the
 call is truncated mid-stream (`finish_reason=length`) and the whole turn is
 lost. Avoid this by authoring the deck in fragments and merging them with a
@@ -277,23 +527,28 @@ truncation failure this workflow exists to prevent.
 
 ## 4. QA Gates
 
-Required for every created or modified deck:
-
-1. package validation
-2. text extraction
-3. placeholder scan
-4. slide count and order check
-
-For HTML-first, `qa/html_self_check.json` must exist before export.
-Fix self-check **issues** and retry up to 3 times. Self-check **warnings** never
-block export — record them in `Limitations` and move on; do not spend repair
-rounds on warnings.
-**Convergence cap (hard rule):** if the same issue set persists — or stops
-shrinking — after 3 repair rounds, STOP. Export with `--allow-self-check-issues`
-and record the residual issues in `Limitations`. Do **not** edit the same node a
-4th time, and never loop edit -> recheck on overflow/cosmetic nits — a recheck
-loop that fails to reduce the issue count is a failure mode, not progress.
+For controlled HTML, `qa/outline_check.json`, `qa/deck_contract.json`,
+`qa/deck_spec.json`, `qa/truth_check.json`, `qa/image_manifest.json`,
+`qa/html_self_check.json`, and `qa/runtime_probe.json` must exist with top-level
+`"ok": true` before delivery.
+For truth/spec failures, patch only named paths; if the same issue class returns
+twice, stop automatic repair and follow §0 rule 13. Never mutate scaffolded
+`source_facts` or `research_facts`
+or bypass a failed truth/spec report. For self-check **issues**, retry at most
+three focused repair rounds; if the issue set stops shrinking, stop and report
+the HTML as a blocked draft rather than looping or claiming completion. Warnings
+are diagnostic: inspect actual clipping/overflow or unreadable contrast, but do
+not loop on font-metric slack warnings alone. The self-check aggregates text
+slack into at most one summary warning per slide; record those summaries in
+`Limitations` rather than treating every text node as a separate defect.
+If any required QA report contains warnings, final delivery may say the gates
+passed, but must report the warning count and must not describe the run as
+"clean", "all green", or warning-free.
 If `assets/generated/manifest.json` contains `layout_contract`, `qa/image_layout_contract.json` must exist and pass before HTML self-check.
+
+For every created or modified `.pptx`, additionally run package validation,
+text extraction, placeholder scan, and slide count/order checks. These PPTX-only
+checks do not apply when the requested/default deliverable is HTML alone.
 
 Rendered visual inspection is **not** in the required list. See §4.2.
 
@@ -331,7 +586,10 @@ Cosmetic issues go directly into the `Limitations` section. They do not block de
 
 Rendered visual inspection (`scripts/render_pptx.py` + reading the resulting images) is **opt-in**, not a required gate.
 
-**Default behavior:** skip visual inspection. Structural QA (package validation, text extraction, placeholder scan, slide count) is sufficient for delivery. Do not call `render_pptx.py` for visual judgment on every deck.
+**Default behavior:** skip rendered visual inspection. The controlled HTML QA
+reports above are sufficient for an HTML-only delivery; PPTX structural QA is
+sufficient for an exported `.pptx`. Do not call `render_pptx.py` for visual
+judgment on every deck.
 
 **Trigger visual inspection only when:**
 1. The user explicitly asks to see / review / render the deck.
@@ -347,7 +605,9 @@ Rendering for the user's own preview (so they can open the PNGs) is fine and doe
 
 ## 5. Office Raccoon Runtime
 
-Read this order first:
+Default controlled HTML authoring needs no export preflight. Only when an
+explicit PPTX export or a runtime/dependency failure makes these details
+relevant, read in this order:
 
 1. `references/runtime-office-raccoon.md`
 2. `references/dependency-policy.md`
@@ -361,7 +621,8 @@ Use managed variables for all commands:
 
 Install only into managed Office Raccoon prefixes.
 No global, Homebrew, or system-wide installs without explicit approval.
-No `/tmp`, no `>/tmp`, and no writes outside workspace/output folder.
+No `/tmp`, no `>/tmp`, and no writes outside the canonical delivery root
+selected by the runtime. Never add another nested `output/` directory.
 
 ## 6. Final Response Format
 
@@ -391,7 +652,9 @@ If a QA step is blocked, write `BLOCKED` for that step.
 
 ## 8. Mode lock and fallback
 
-1. Lock the chosen route after preflight and explicit user confirmation.
+1. Lock the default controlled HTML route immediately. Preflight only an
+   explicit PPTX export; ask for confirmation only when a material route
+   change needs user choice.
 2. Do not switch from HTML-first to `PptxGenJS` to speed up completion.
 3. Do not switch to `python-pptx` for new deck creation.
 4. If preflight or host checks change while running, restart from current source with the new route decision.
@@ -402,5 +665,5 @@ If a QA step is blocked, write `BLOCKED` for that step.
 1. Support macOS, Linux, and Windows for this skill.
 2. Use managed runtime binaries first, then fallback checks.
 3. Keep generated files inside workspace or requested output folder.
-4. Prefer editable PPTX and source files over packaged archive delivery unless requested.
+4. Prefer editable `index.html + deck.json + assets/` delivery. Treat PPTX, PDF, portable single-file HTML, and packaged archives as explicit exports.
 5. Keep output deterministic for reruns.

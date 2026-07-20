@@ -1,7 +1,7 @@
 ---
 name: hyperframes-video
-description: Use when the user asks to create, render, export, preview, or faithfully convert a short video, animation, MP4/GIF, motion graphic, title card, explainer clip, existing HTML page, or frame-accurate HTML animation using the host-provided HyperFrames runtime.
-keywords: [video, videos, animation, mp4, gif, render, hyperframes, motion, motion-graphics, explainer, title-card, html-to-video, webpage-to-video, 视频, 动画, 短片, 渲染, 生成视频, 做视频, 导出视频, HTML转视频, 网页转视频, 页面转视频]
+description: HyperFrames MP4/GIF videos; motion graphics; explainer clips; 视频、短片、动图、动画成片。
+keywords: [video, videos, animation, mp4, gif, hyperframes, motion-graphics, explainer-clip, 视频, 动画, 短片, 动图]
 related_skills: [html-templates]
 ---
 

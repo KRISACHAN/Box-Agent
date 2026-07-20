@@ -16,6 +16,7 @@ import json
 import logging
 import mimetypes
 import re
+import shlex
 import traceback
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -56,22 +57,29 @@ from .events import (
 from .hooks import HookManager
 from .logger import AgentLogger
 from .llm.debug_logging import reset_llm_debug_sink, set_llm_debug_sink
-from .model_history import is_model_history_placeholder
+from .model_history import (
+    is_model_history_placeholder,
+    is_model_instruction_source_path,
+)
 from .loop_guards import (
+    CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
     TOOL_CALL_LIMITS,
     WEB_SEARCH_BATCH_SIZE,
     WEB_SEARCH_TOOL_NAME,
-    WEB_SEARCH_TOTAL_LIMIT,
     WRAPUP_REMAINING,
+    STREAM_REPEAT_MIN_CHUNKS,
     CompletionGate,
+    completion_budget_reserve_text,
     completion_gate_gaps,
+    completion_gate_progress_text,
     completion_gate_text,
     format_injected_message,
     looks_like_truncated_output,
     near_limit_wrapup_text,
     no_progress_wrapup_text,
+    repeated_stream_pattern,
     reply_is_substantial,
     total_tool_call_budget_message,
     total_tool_call_budget_wrapup_text,
@@ -116,6 +124,700 @@ _MODEL_HISTORY_PLACEHOLDER_REPAIR_GUIDANCE = (
     "tool argument. For long static artifacts, use write_file for the first real chunk "
     "and append_file for later real chunks; do not move the file body into execute_code."
 )
+
+_BROWSER_SNAPSHOT_OUTPUT_PATH_ERROR = (
+    "BROWSER_SNAPSHOT_OUTPUT_PATH_INVALID: relative snapshot filenames must stay "
+    "inside the current task artifact root. Use a path such as "
+    "research/page-snapshot.md, or omit filename when no persisted snapshot is needed."
+)
+
+_CONTROLLED_CONTENT_PATCH_BLOCKED_TOOLS: Final[frozenset[str]] = frozenset(
+    {"read_file", "execute_code", "bash"}
+)
+_CONTROLLED_CONTENT_PATCH_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_PATCH_INPUT_READY: PATCH_INPUT in the latest checkpoint "
+    "already contains the exact outline content, slide mapping, prop shapes, and ready "
+    "media paths. Do not inspect files again. Write deck.patch.json now with write_file "
+    "(and append_file only if the body exceeds the file-tool limit)."
+)
+_CONTROLLED_IMAGE_GENERATION_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_IMAGE_INPUT_READY: IMAGE_INPUT already contains the "
+    "missing image paths, page intent, and theme palette. Call generate_image now "
+    "with an exact listed output_path and watermark=false; do not inspect files or "
+    "invent another path."
+)
+_CONTROLLED_SCAFFOLD_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY: SCAFFOLD_INPUT in the latest "
+    "checkpoint already contains every registered theme/layout id and every page "
+    "intent. Invoke inspect_deck_contract.js once now with --outline outline.json "
+    "and --out deck.json; do not reread files, list the registry, or invent ids."
+)
+_CONTROLLED_REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
+    {"write_file", "append_file", "request_user_input"}
+)
+_CONTROLLED_REPAIR_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: REPAIR_INPUT in the latest "
+    "checkpoint already contains the fresh issues, affected current props, outline "
+    "evidence, and authorized fact buckets. Write the minimal deck.patch.json now, "
+    "or ask once for a genuinely required missing user/private fact; do not reread "
+    "stale inputs or run another command first."
+)
+_CONTROLLED_OUTLINE_REPAIR_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_OUTLINE_REPAIR_INPUT_READY: REPAIR_INPUT in the "
+    "latest checkpoint already contains the complete current outline and fresh "
+    "validator issues. Write the corrected outline.json now; do not reread files, "
+    "inspect the schema, update todos/plans, or run another command first."
+)
+_CONTROLLED_IMAGE_STATUS_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_IMAGE_STATUS_SYNC_REQUIRED: all planned image files "
+    "exist. Run sync_image_manifest_status.js once with bash; do not reread/edit "
+    "manifest.json or regenerate an existing image."
+)
+_CONTROLLED_FINALIZE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_FINALIZE_REQUIRED: run the single deterministic "
+    "finalizer now with bash using the absolute finalize_controlled_deck.js path "
+    "from the latest checkpoint, followed by deck.json --out "
+    "index.html. It validates spec/truth/media, compiles HTML, runs self-check, "
+    "and probes the editor in dependency order. Do not split that chain into "
+    "separate validator/render commands or add another shell command."
+)
+_CONTROLLED_APPLY_PATCH_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_APPLY_PATCH_REQUIRED: run the single deterministic "
+    "apply_deck_patch.js command from the latest checkpoint with deck.json and "
+    "deck.patch.json. Do not substitute another script, compound the command, or "
+    "rewrite deck.json directly."
+)
+_CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_APPLY_PATCH_REPAIR_REQUIRED: the latest deterministic "
+    "apply_deck_patch.js call returned an actionable error. You may only read, edit, "
+    "or rewrite deck.patch.json with the minimal named-field repair, "
+    "ask once for a genuinely missing required user/private fact, or rerun the exact "
+    "apply command. Do not read or rewrite deck.json or run discovery commands."
+)
+_CONTROLLED_APPLY_PATCH_FIELD_MISMATCH = (
+    "CONTROLLED_PRESENTATION_APPLY_PATCH_FIELD_MISMATCH: the proposed deck.patch.json "
+    "repair does not change any field named by the latest deterministic error. "
+    "Change one of these exact fields and leave unrelated slide content unchanged: {paths}."
+)
+_CONTROLLED_REPAIR_STALLED_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_REPAIR_STALLED: the same deterministic controlled-deck "
+    "step failed twice with the same error. Do not repeat that command or bypass the "
+    "stage guard with a compound shell command. Ask for user input only when the failure explicitly names "
+    "a genuinely missing required user/private fact; otherwise end this turn and "
+    "report the unresolved internal validation conflict."
+)
+_CONTROLLED_RESEARCH_HANDOFF_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_HANDOFF_READY: research QA is complete. "
+    "Do not search/browse, create or update todos/plans, reread outline.md or the "
+    "research QA report, or inspect/list the filesystem. Read only a Markdown "
+    "handoff file explicitly named in RESEARCH_INPUT when its content is missing "
+    "from context; otherwise write outline.json now."
+)
+_CONTROLLED_FINALIZER_SCRIPT = (
+    Path(__file__).resolve().parent
+    / "skills"
+    / "document-skills"
+    / "pptx"
+    / "scripts"
+    / "finalize_controlled_deck.js"
+)
+_CONTROLLED_INSPECT_SCRIPT = _CONTROLLED_FINALIZER_SCRIPT.parent / "inspect_deck_contract.js"
+_CONTROLLED_APPLY_PATCH_SCRIPT = (
+    _CONTROLLED_FINALIZER_SCRIPT.parent / "apply_deck_patch.js"
+)
+
+
+def _controlled_image_status_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    if stage != "image_status_sync":
+        return None
+    command = arguments.get("command")
+    if (
+        tool_name == "bash"
+        and isinstance(command, str)
+        and "sync_image_manifest_status.js" in command
+        and "assets/generated/manifest.json" in command
+    ):
+        return None
+    return _CONTROLLED_IMAGE_STATUS_TOOL_ERROR
+
+
+def _controlled_finalize_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    if stage != "finalize":
+        return None
+    command = arguments.get("command")
+    if tool_name != "bash" or not isinstance(command, str):
+        return _CONTROLLED_FINALIZE_TOOL_ERROR
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return _CONTROLLED_FINALIZE_TOOL_ERROR
+    script_indexes = [
+        index
+        for index, token in enumerate(tokens)
+        if Path(token).name == "finalize_controlled_deck.js"
+    ]
+    if len(script_indexes) != 1:
+        return _CONTROLLED_FINALIZE_TOOL_ERROR
+    script_index = script_indexes[0]
+    if script_index < 1:
+        return _CONTROLLED_FINALIZE_TOOL_ERROR
+    node_token = tokens[script_index - 1]
+    if not (
+        Path(node_token).name in {"node", "node.exe"}
+        or "BOX_AGENT_NODE" in node_token
+    ):
+        return _CONTROLLED_FINALIZE_TOOL_ERROR
+    supplied_script = Path(tokens[script_index])
+    if (
+        not supplied_script.is_absolute()
+        or supplied_script.resolve() != _CONTROLLED_FINALIZER_SCRIPT
+    ):
+        return _CONTROLLED_FINALIZE_TOOL_ERROR
+    command_prefix = tokens[: script_index - 1]
+    if command_prefix and not (
+        len(command_prefix) == 3
+        and command_prefix[0] == "cd"
+        and command_prefix[1]
+        and command_prefix[2] == "&&"
+    ):
+        return _CONTROLLED_FINALIZE_TOOL_ERROR
+    finalizer_args = tokens[script_index + 1 :]
+    if (
+        len(finalizer_args) == 3
+        and Path(finalizer_args[0]).name == "deck.json"
+        and finalizer_args[1] == "--out"
+        and Path(finalizer_args[2]).name == "index.html"
+    ):
+        return None
+    return _CONTROLLED_FINALIZE_TOOL_ERROR
+
+
+def _controlled_finalizer_failure_signature(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: ToolResult,
+) -> str | None:
+    """Return a stable semantic signature for a failed controlled finalizer call."""
+    if result.success or _controlled_finalize_error("finalize", tool_name, arguments):
+        return None
+    payload = "\n".join(
+        part for part in (result.error, result.content) if isinstance(part, str) and part
+    )
+    if not payload.strip():
+        return "empty-finalizer-failure"
+    marker = payload.find("FINALIZE_STOP")
+    semantic = payload[marker:] if marker >= 0 else payload
+    return re.sub(r"\s+", " ", semantic).strip()[:4000]
+
+
+_CONTROLLED_JSON_MISSING = object()
+
+
+def _controlled_failure_field_paths(result: ToolResult) -> tuple[str, ...]:
+    payload = "\n".join(
+        part for part in (result.error, result.content) if isinstance(part, str) and part
+    )
+    return tuple(dict.fromkeys(re.findall(
+        r"(?m)^((?:slides)(?:\.[A-Za-z0-9_-]+){2,}):",
+        payload,
+    )))
+
+
+def _controlled_patch_file(
+    workspace_dir: str | None,
+    requested_path: str,
+) -> Path | None:
+    requested = Path(requested_path)
+    candidates: list[Path] = []
+    if requested.is_absolute():
+        candidates.append(requested)
+    elif workspace_dir:
+        root = Path(workspace_dir)
+        candidates.extend((root / requested, root / "output" / requested))
+        if requested.name == "deck.patch.json":
+            candidates.extend((root / "output").rglob("deck.patch.json"))
+    existing = [path for path in candidates if path.is_file()]
+    if not existing:
+        return None
+    return max(existing, key=lambda path: path.stat().st_mtime_ns)
+
+
+def _controlled_json_path_value(document: Any, field_path: str) -> Any:
+    parts = field_path.split(".")
+    if (
+        parts[:1] == ["slides"]
+        and isinstance(document, dict)
+        and not isinstance(document.get("slides"), dict)
+        and len(parts) > 1
+        and isinstance(document.get(parts[1]), dict)
+    ):
+        parts = parts[1:]
+    current = document
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            return _CONTROLLED_JSON_MISSING
+    return current
+
+
+def _controlled_patch_repair_changes_named_field(
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    repair_paths: tuple[str, ...],
+) -> bool:
+    if not repair_paths:
+        return True
+    patch_arg = arguments.get("path")
+    if not isinstance(patch_arg, str):
+        return False
+    patch_file = _controlled_patch_file(workspace_dir, patch_arg)
+    try:
+        before_text = patch_file.read_text(encoding="utf-8") if patch_file else "{}"
+        before = json.loads(before_text)
+        if tool_name == "write_file":
+            after_text = arguments.get("content")
+        elif tool_name == "edit_file":
+            old_str = arguments.get("old_str")
+            new_str = arguments.get("new_str")
+            if (
+                not isinstance(old_str, str)
+                or not isinstance(new_str, str)
+                or old_str not in before_text
+            ):
+                return False
+            after_text = before_text.replace(old_str, new_str, 1)
+        else:
+            return False
+        if not isinstance(after_text, str):
+            return False
+        after = json.loads(after_text)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return any(
+        _controlled_json_path_value(before, path)
+        != _controlled_json_path_value(after, path)
+        for path in repair_paths
+    )
+
+
+def _controlled_apply_patch_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    repair_allowed: bool = False,
+    repair_paths: tuple[str, ...] = (),
+    workspace_dir: str | None = None,
+) -> str | None:
+    if stage != "apply_patch":
+        return None
+    if repair_allowed:
+        patch_path = arguments.get("path")
+        safe_patch_path = (
+            isinstance(patch_path, str)
+            and Path(patch_path).name == "deck.patch.json"
+            and ".." not in Path(patch_path).parts
+        )
+        if tool_name == "read_file" and safe_patch_path:
+            return None
+        if (
+            tool_name == "write_file"
+            and safe_patch_path
+            and isinstance(arguments.get("content"), str)
+        ):
+            return (
+                None
+                if _controlled_patch_repair_changes_named_field(
+                    tool_name,
+                    arguments,
+                    workspace_dir,
+                    repair_paths,
+                )
+                else _CONTROLLED_APPLY_PATCH_FIELD_MISMATCH.format(
+                    paths=", ".join(repair_paths)
+                )
+            )
+        if (
+            tool_name == "edit_file"
+            and safe_patch_path
+            and isinstance(arguments.get("old_str"), str)
+            and isinstance(arguments.get("new_str"), str)
+        ):
+            return (
+                None
+                if _controlled_patch_repair_changes_named_field(
+                    tool_name,
+                    arguments,
+                    workspace_dir,
+                    repair_paths,
+                )
+                else _CONTROLLED_APPLY_PATCH_FIELD_MISMATCH.format(
+                    paths=", ".join(repair_paths)
+                )
+            )
+        if tool_name == "request_user_input":
+            return None
+    command = arguments.get("command")
+    if tool_name != "bash" or not isinstance(command, str):
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    script_indexes = [
+        index
+        for index, token in enumerate(tokens)
+        if Path(token).name == "apply_deck_patch.js"
+    ]
+    if len(script_indexes) != 1:
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    script_index = script_indexes[0]
+    if script_index < 1:
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    node_token = tokens[script_index - 1]
+    if not (
+        Path(node_token).name in {"node", "node.exe"}
+        or "BOX_AGENT_NODE" in node_token
+    ):
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    supplied_script = Path(tokens[script_index])
+    if (
+        not supplied_script.is_absolute()
+        or supplied_script.resolve() != _CONTROLLED_APPLY_PATCH_SCRIPT
+    ):
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    command_prefix = tokens[: script_index - 1]
+    if command_prefix and not (
+        len(command_prefix) == 3
+        and command_prefix[0] == "cd"
+        and command_prefix[1]
+        and command_prefix[2] == "&&"
+    ):
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    if tokens[script_index + 1 :] != ["deck.json", "deck.patch.json"]:
+        return (
+            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
+            if repair_allowed
+            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
+        )
+    return None
+
+
+def _controlled_apply_patch_failure_signature(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: ToolResult,
+) -> str | None:
+    """Return a stable signature for a failed, valid controlled patch command."""
+    if result.success or _controlled_apply_patch_error(
+        "apply_patch",
+        tool_name,
+        arguments,
+    ):
+        return None
+    payload = "\n".join(
+        part for part in (result.error, result.content) if isinstance(part, str) and part
+    )
+    if not payload.strip():
+        return "empty-apply-patch-failure"
+    marker = payload.find("Error:")
+    semantic = payload[marker:] if marker >= 0 else payload
+    return re.sub(r"\s+", " ", semantic).strip()[:4000]
+
+
+def _controlled_repair_stalled_checkpoint() -> str:
+    return (
+        "Internal controlled-presentation checkpoint; the same deterministic "
+        "controlled-deck step failed twice with the same error, so filesystem writes are now "
+        "stopped to prevent an unbounded repair loop.\n"
+        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled\n"
+        "NEXT_ACTION=Do not call another write/apply/finalize or validation tool. "
+        "If the latest failure explicitly identifies a genuinely missing required "
+        "user/private fact, call request_user_input once with that exact question. "
+        "Otherwise end the turn and state that delivery is incomplete because of "
+        "a repeated internal validation conflict."
+    )
+
+
+def _controlled_checkpoint_json(
+    checkpoint_text: str,
+    label: str,
+) -> dict[str, Any] | None:
+    prefix = f"{label}="
+    for line in checkpoint_text.splitlines():
+        if not line.startswith(prefix):
+            continue
+        try:
+            value = json.loads(line[len(prefix) :])
+        except json.JSONDecodeError:
+            return None
+        return value if isinstance(value, dict) else None
+    return None
+
+
+def _controlled_research_handoff_urls(
+    checkpoint_text: str,
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> set[str]:
+    """Recover URL provenance from a fresh validated research handoff.
+
+    A controlled presentation may resume in a new ACP turn after research QA.
+    The runtime's in-memory search ledger is then empty even though the
+    filesystem checkpoint has accepted the fresh handoff.  Trust only the
+    Markdown files explicitly named by that authoritative checkpoint, keep all
+    reads inside the artifact root, and rebuild the URL set from those files.
+    """
+    research_input = _controlled_checkpoint_json(checkpoint_text, "RESEARCH_INPUT")
+    if not research_input or research_input.get("ready") is not True:
+        return set()
+    artifact_root = _artifact_scan_root(workspace_dir, artifact_root_dir)
+    if artifact_root is None:
+        return set()
+    artifact_root = artifact_root.resolve()
+    urls: set[str] = set()
+    files = research_input.get("files")
+    if not isinstance(files, list):
+        return urls
+    for relative_path in files:
+        if not isinstance(relative_path, str) or not relative_path.endswith(".md"):
+            continue
+        candidate = (artifact_root / relative_path).resolve()
+        if not candidate.is_relative_to(artifact_root):
+            continue
+        try:
+            if not candidate.is_file() or candidate.stat().st_size > 4 * 1024 * 1024:
+                continue
+            urls.update(_http_urls(candidate.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    return urls
+
+
+def _controlled_research_handoff_error(
+    stage: str | None,
+    research_mode: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    """Block backward workflow moves after deep-research QA has completed."""
+    if stage != "outline" or research_mode != "deep":
+        return None
+    if tool_name == "request_user_input":
+        return None
+    if tool_name == "write_file":
+        path = arguments.get("path")
+        if isinstance(path, str) and Path(path).name == "outline.json":
+            return None
+    if tool_name == "read_file":
+        path = arguments.get("path")
+        if isinstance(path, str):
+            candidate = Path(path)
+            if (
+                candidate.suffix.casefold() == ".md"
+                and candidate.name.casefold() != "outline.md"
+                and "research" in {part.casefold() for part in candidate.parts}
+            ):
+                return None
+    return _CONTROLLED_RESEARCH_HANDOFF_TOOL_ERROR
+
+
+def _controlled_scaffold_error(
+    tool_name: str,
+    arguments: dict[str, Any],
+    scaffold_input: dict[str, Any] | None,
+) -> str | None:
+    if scaffold_input is None:
+        return None
+    command = arguments.get("command")
+    if tool_name != "bash" or not isinstance(command, str):
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    script_indexes = [
+        index
+        for index, token in enumerate(tokens)
+        if Path(token).name == "inspect_deck_contract.js"
+    ]
+    script_index = script_indexes[0] if script_indexes else None
+    if (
+        script_index is None
+        or "--outline" not in tokens
+        or "--out" not in tokens
+    ):
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+
+    registered_layouts = {
+        item
+        for item in scaffold_input.get("registered_layout_ids", [])
+        if isinstance(item, str)
+    }
+    layout_ids: list[str] = []
+    for token in tokens[script_index + 1 :]:
+        if token.startswith("--"):
+            break
+        layout_ids.append(token)
+    invalid_layouts = [item for item in layout_ids if item not in registered_layouts]
+
+    registered_themes = {
+        item
+        for item in scaffold_input.get("registered_theme_ids", [])
+        if isinstance(item, str)
+    }
+    invalid_theme: str | None = None
+    if "--theme" in tokens:
+        theme_index = tokens.index("--theme") + 1
+        if theme_index >= len(tokens) or tokens[theme_index] not in registered_themes:
+            invalid_theme = tokens[theme_index] if theme_index < len(tokens) else "<missing>"
+    if invalid_layouts or invalid_theme is not None:
+        details = []
+        if invalid_theme is not None:
+            details.append(f"invalid theme id {invalid_theme!r}")
+        if invalid_layouts:
+            details.append(f"invalid layout ids {invalid_layouts!r}")
+        return (
+            "CONTROLLED_PRESENTATION_INVALID_REGISTRY_ID: "
+            + "; ".join(details)
+            + ". Choose exact ids from SCAFFOLD_INPUT and invoke "
+            "inspect_deck_contract.js once; the invalid command was not executed."
+        )
+
+    if len(script_indexes) != 1 or script_index is None or script_index < 1:
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    node_token = tokens[script_index - 1]
+    if not (
+        Path(node_token).name in {"node", "node.exe"}
+        or "BOX_AGENT_NODE" in node_token
+    ):
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    supplied_script = Path(tokens[script_index])
+    if (
+        not supplied_script.is_absolute()
+        or supplied_script.resolve() != _CONTROLLED_INSPECT_SCRIPT
+    ):
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    command_prefix = tokens[: script_index - 1]
+    if command_prefix and not (
+        len(command_prefix) == 3
+        and command_prefix[0] == "cd"
+        and command_prefix[1]
+        and command_prefix[2] == "&&"
+    ):
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    inspector_args = tokens[script_index + 1 :]
+    if any(token in {"&&", "||", ";", "|", "&", ">", ">>", "<", "<<"} for token in inspector_args):
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    if tokens.count("--outline") != 1 or tokens.count("--out") != 1:
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    outline_index = tokens.index("--outline") + 1
+    out_index = tokens.index("--out") + 1
+    if (
+        outline_index >= len(tokens)
+        or out_index >= len(tokens)
+        or Path(tokens[outline_index]).name != "outline.json"
+        or Path(tokens[out_index]).name != "deck.json"
+    ):
+        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
+    return None
+
+
+def _controlled_scaffold_failure_signature(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: ToolResult,
+    scaffold_input: dict[str, Any] | None,
+) -> str | None:
+    """Return a stable signature for a failed, valid scaffold command."""
+    if (
+        result.success
+        or scaffold_input is None
+        or _controlled_scaffold_error(tool_name, arguments, scaffold_input)
+    ):
+        return None
+    payload = "\n".join(
+        part for part in (result.error, result.content) if isinstance(part, str) and part
+    )
+    if not payload.strip():
+        return "empty-scaffold-failure"
+    marker = payload.find("Error:")
+    semantic = payload[marker:] if marker >= 0 else payload
+    return re.sub(r"\s+", " ", semantic).strip()[:4000]
+
+
+def _controlled_image_generation_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+    image_input: dict[str, Any] | None,
+) -> str | None:
+    if stage != "images" or image_input is None:
+        return None
+    entries = image_input.get("entries")
+    expected_paths = {
+        entry.get("output_path")
+        for entry in entries or []
+        if isinstance(entry, dict) and isinstance(entry.get("output_path"), str)
+    }
+    if (
+        tool_name == "generate_image"
+        and arguments.get("output_path") in expected_paths
+        and arguments.get("watermark") is False
+    ):
+        return None
+    return _CONTROLLED_IMAGE_GENERATION_TOOL_ERROR
+
+
+def _controlled_presentation_stage(checkpoint_text: str) -> str | None:
+    marker_index = checkpoint_text.find(CONTROLLED_PRESENTATION_CHECKPOINT_MARKER)
+    if marker_index < 0:
+        return None
+    stage_text = checkpoint_text[
+        marker_index + len(CONTROLLED_PRESENTATION_CHECKPOINT_MARKER) :
+    ]
+    stage = stage_text.splitlines()[0].strip()
+    return stage or None
 
 _PLAN_START_TRIGGERS = (
     "先做规划",
@@ -632,6 +1334,76 @@ def _artifact_scan_root(workspace_dir: str | None, artifact_root_dir: str | Path
         return None
     return Path(workspace_dir).expanduser().resolve() / OUTPUT_SUBDIR
 
+
+def _prepare_browser_snapshot_output(
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> tuple[Path | None, str | None]:
+    """Turn a Playwright snapshot filename into Box-Agent-managed persistence.
+
+    Standalone Playwright MCP servers run in their own process and therefore do
+    not share Box-Agent's workspace cwd.  They also intentionally restrict file
+    writes to their own temp roots.  For a filename inside the current artifact
+    root, request an inline snapshot from Playwright and persist that returned
+    Markdown in Box-Agent after the tool succeeds.
+    """
+    if tool_name.rsplit(".", 1)[-1] != "browser_snapshot":
+        return None, None
+    filename = arguments.get("filename")
+    if not isinstance(filename, str) or not filename.strip():
+        return None, None
+    supplied_path = Path(filename).expanduser()
+    artifact_root = _artifact_scan_root(workspace_dir, artifact_root_dir)
+    if artifact_root is None:
+        return None, None
+    artifact_root = artifact_root.resolve()
+    resolved_path = (
+        supplied_path.resolve()
+        if supplied_path.is_absolute()
+        else (artifact_root / supplied_path).resolve()
+    )
+    if not resolved_path.is_relative_to(artifact_root):
+        if supplied_path.is_absolute():
+            return None, None
+        return None, _BROWSER_SNAPSHOT_OUTPUT_PATH_ERROR
+    arguments.pop("filename", None)
+    return resolved_path, None
+
+
+def _persist_browser_snapshot_output(
+    result: ToolResult,
+    target_path: Path | None,
+) -> ToolResult:
+    """Persist an inline browser snapshot to its requested artifact path."""
+    if target_path is None or not result.success:
+        return result
+    content = result.content if isinstance(result.content, str) else ""
+    if not content.strip():
+        return result.model_copy(
+            update={
+                "success": False,
+                "error": (
+                    "browser_snapshot returned no inline content to persist at "
+                    f"{target_path}"
+                ),
+            }
+        )
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        return result.model_copy(
+            update={
+                "success": False,
+                "error": f"Could not persist browser snapshot at {target_path}: {exc}",
+            }
+        )
+    return result.model_copy(
+        update={"content": f"{content.rstrip()}\n\nSnapshot persisted to {target_path}"}
+    )
+
 # Pattern to match <!--PLOT_DATA:...--> markers embedded by code execution.
 # These carry interactive chart payloads already sent to the frontend via SSE;
 # they must NOT be fed back into the model context.
@@ -642,6 +1414,7 @@ _MODEL_CONTEXT_PATH_NAMES = {"qa.json", "html_self_check.json", "visual_review.m
 _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_CONTENT_THRESHOLD = 12_000
 _GENERIC_MODEL_CONTEXT_CHAR_LIMIT = 24_000
+_WEB_SEARCH_MODEL_CONTEXT_CHAR_LIMIT = 48_000
 
 
 def _strip_plot_data(text: str) -> str:
@@ -662,6 +1435,9 @@ def _path_needs_compact_model_context(path_value: Any, content: str) -> bool:
     if not isinstance(path_value, str) or not path_value:
         return len(content) > _MODEL_CONTEXT_CONTENT_THRESHOLD
 
+    if is_model_instruction_source_path(path_value):
+        return False
+
     path = Path(path_value)
     suffix = path.suffix.lower()
     if path.name in _MODEL_CONTEXT_PATH_NAMES:
@@ -681,18 +1457,34 @@ def _compact_visible_tool_content_for_model(
 ) -> str:
     """Fallback compaction for tool content before it is appended to history."""
     if tool_name == WEB_SEARCH_TOOL_NAME:
-        compacted = _compact_web_search_result_for_model(content)
+        # Search depth depends on the model seeing the returned evidence, not
+        # only five title/snippet previews. Keep ordinary structured results
+        # verbatim for the next reasoning step. Only pathological payloads are
+        # bounded here; old tool turns are still compacted later by
+        # ``_micro_compact`` after the model has had a chance to use them.
+        if len(content) <= _WEB_SEARCH_MODEL_CONTEXT_CHAR_LIMIT:
+            return content
+        compacted = _compact_web_search_result_for_model(
+            content,
+            max_items=12,
+            snippet_limit=2_500,
+        )
         if compacted is not None:
-            return compacted
-        if len(content) > _MODEL_CONTEXT_CONTENT_THRESHOLD:
-            first_line = _short_tool_text(content.split("\n", 1)[0], 240)
             return (
-                "[web_search result omitted from model history]\n"
+                "[Large web_search result bounded for model history; full output "
+                "remains available in the tool event/log]\n"
                 f"Characters returned: {len(content)}\n"
-                "Reason: large search output can bloat future LLM turns; "
-                "rerun a narrower web_search if exact raw output is needed.\n\n"
-                f"Preview: {first_line}"
+                f"{compacted}"
             )
+        head_limit = 36_000
+        tail_limit = 8_000
+        return (
+            "[Large unstructured web_search result bounded for model history]\n"
+            f"Characters returned: {len(content)}\n"
+            f"Characters omitted: {len(content) - head_limit - tail_limit}\n\n"
+            f"Beginning:\n{content[:head_limit]}\n\n"
+            f"End:\n{content[-tail_limit:]}"
+        )
 
     if tool_name != "read_file" or not _path_needs_compact_model_context(arguments.get("path"), content):
         if len(content) <= _GENERIC_MODEL_CONTEXT_CHAR_LIMIT:
@@ -1588,6 +2380,8 @@ _WEB_SEARCH_RESULT_KEYS: Final[tuple[str, ...]] = (
     "refs",
     "results",
     "Results",
+    "webResults",
+    "WebResults",
     "web_results",
     "items",
     "value",
@@ -1601,6 +2395,43 @@ _URL_TRACKING_PARAMS: Final[set[str]] = {
     "mc_cid",
     "mc_eid",
 }
+
+_SITE_QUERY_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:^|\s)site:([a-z0-9.-]+)",
+    re.IGNORECASE,
+)
+_SITE_QUERY_TOKEN_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:^|\s)site:[^\s]+",
+    re.IGNORECASE,
+)
+_SEARCH_QUERY_TERM_RE: Final[re.Pattern[str]] = re.compile(
+    r"[a-z0-9]+|[\u3400-\u9fff]+",
+    re.IGNORECASE,
+)
+_SEARCH_QUERY_STOPWORDS: Final[frozenset[str]] = frozenset(
+    {"a", "all", "and", "for", "in", "of", "on", "the", "to"}
+)
+_HTTP_URL_RE: Final[re.Pattern[str]] = re.compile(
+    r"https?://[^\s<>\"'\]\[{}()]+",
+    re.IGNORECASE,
+)
+_DIRECT_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
+    {
+        "browser_open_url",
+        "browser_read_page",
+        "browser_read_article",
+        "browser_navigate",
+    }
+)
+
+# Deep-research evidence gathering has its own bounded search controller and
+# must not consume the downstream deck-production budget.  The exemption is
+# active only while the filesystem checkpoint is actually in ``research``;
+# after research QA passes these tools count normally again.
+_PRESENTATION_RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
+    _DIRECT_RESEARCH_READ_TOOLS | frozenset({WEB_SEARCH_TOOL_NAME})
+)
+_PRESENTATION_RESEARCH_READ_BATCH_SIZE: Final[int] = 2
 
 
 def _normalize_web_search_query(arguments: dict[str, Any]) -> str:
@@ -1619,6 +2450,51 @@ def _normalize_web_search_query(arguments: dict[str, Any]) -> str:
     if query is None:
         return ""
     return " ".join(str(query).casefold().split())
+
+
+def _web_search_query_terms(query: str) -> set[str]:
+    """Return conservative intent terms for near-duplicate search detection."""
+    site_match = _SITE_QUERY_RE.search(query)
+    site_term = f"site-{site_match.group(1).strip('.').casefold()}" if site_match else ""
+    without_site_path = _SITE_QUERY_TOKEN_RE.sub(" ", query)
+    terms = {
+        term.casefold()
+        for term in _SEARCH_QUERY_TERM_RE.findall(without_site_path)
+        if term.casefold() not in _SEARCH_QUERY_STOPWORDS
+    }
+    if site_term:
+        terms.add(site_term)
+    return terms
+
+
+def _web_search_queries_are_near_duplicates(first: str, second: str) -> bool:
+    """Detect only high-overlap rewrites while preserving distinct research gaps."""
+    if not first or not second:
+        return False
+    if first == second:
+        return True
+    first_site = _SITE_QUERY_RE.search(first)
+    second_site = _SITE_QUERY_RE.search(second)
+    first_domain = first_site.group(1).strip(".").casefold() if first_site else ""
+    second_domain = second_site.group(1).strip(".").casefold() if second_site else ""
+    if first_domain != second_domain:
+        return False
+    first_terms = _web_search_query_terms(first)
+    second_terms = _web_search_query_terms(second)
+    if min(len(first_terms), len(second_terms)) < 3:
+        return False
+    overlap = len(first_terms & second_terms)
+    containment = overlap / min(len(first_terms), len(second_terms))
+    coverage = overlap / max(len(first_terms), len(second_terms))
+    return containment >= 0.9 and coverage >= 0.65
+
+
+def _requested_site_domain(arguments: dict[str, Any]) -> str:
+    query = _normalize_web_search_query(arguments)
+    match = _SITE_QUERY_RE.search(query)
+    if match is None:
+        return ""
+    return match.group(1).strip(".").casefold()
 
 
 def _normalize_search_url(value: Any) -> str:
@@ -1660,6 +2536,81 @@ def _web_search_result_key(item: dict[str, Any]) -> str:
     return f"title:{domain}:{title}"
 
 
+def _search_item_url(item: dict[str, Any]) -> str:
+    return str(_first_present(item, ("url", "Url", "href", "link", "Link")) or "").strip()
+
+
+def _url_matches_domain(value: Any, domain: str) -> bool:
+    if not domain:
+        return True
+    try:
+        hostname = (urlsplit(str(value or "")).hostname or "").casefold().strip(".")
+    except ValueError:
+        return False
+    return hostname == domain or hostname.endswith(f".{domain}")
+
+
+def _http_urls(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return {
+            normalized
+            for match in _HTTP_URL_RE.findall(value)
+            if (normalized := _normalize_search_url(match.rstrip(".,;:!?，。；：！？")))
+        }
+    if isinstance(value, dict):
+        urls: set[str] = set()
+        for item in value.values():
+            urls.update(_http_urls(item))
+        return urls
+    if isinstance(value, (list, tuple, set)):
+        urls: set[str] = set()
+        for item in value:
+            urls.update(_http_urls(item))
+        return urls
+    return set()
+
+
+def _unverified_public_outline_evidence_error(
+    tool_name: str,
+    arguments: dict[str, Any],
+    verified_urls: set[str],
+) -> str | None:
+    if tool_name != "write_file":
+        return None
+    path_value = arguments.get("path")
+    if not isinstance(path_value, str) or Path(path_value).name != "outline.json":
+        return None
+    content = arguments.get("content")
+    if not isinstance(content, str):
+        return None
+    try:
+        outline = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(outline, dict) or outline.get("source_mode") != "public_authoritative_research":
+        return None
+    slides = outline.get("slides")
+    if not isinstance(slides, list):
+        return None
+    evidence_urls: set[str] = set()
+    for slide in slides:
+        if isinstance(slide, dict):
+            evidence_urls.update(_http_urls(slide.get("evidence")))
+    unverified = sorted(evidence_urls - verified_urls)
+    if not unverified:
+        return None
+    preview = ", ".join(unverified[:3])
+    suffix = "" if len(unverified) <= 3 else f" (+{len(unverified) - 3} more)"
+    return (
+        "CONTROLLED_PRESENTATION_UNVERIFIED_EVIDENCE_URL: public-research outline "
+        "URLs must come from a successful web_search result, a URL supplied by the "
+        "user, or a successful direct browser read in this turn. Unverified URL(s): "
+        f"{preview}{suffix}. Do not invent or relabel a URL. If no authoritative "
+        "source was retrieved, call request_user_input once for the missing source "
+        "or scope, preserving the current artifacts."
+    )
+
+
 def _with_filtered_search_items(payload: Any, filtered_items: list[dict[str, Any]]) -> Any:
     if isinstance(payload, list):
         return filtered_items
@@ -1671,6 +2622,12 @@ def _with_filtered_search_items(payload: Any, filtered_items: list[dict[str, Any
         if isinstance(value, list) and any(isinstance(item, dict) for item in value):
             updated = dict(payload)
             updated[key] = filtered_items
+            return updated
+
+    for key, value in payload.items():
+        if isinstance(value, dict) and _candidate_search_items(value):
+            updated = dict(payload)
+            updated[key] = _with_filtered_search_items(value, filtered_items)
             return updated
 
     return payload
@@ -1704,9 +2661,22 @@ def _candidate_search_items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _web_search_urls(content: str) -> set[str]:
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return set()
+    return {
+        normalized
+        for item in _candidate_search_items(payload)
+        if (normalized := _normalize_search_url(_search_item_url(item)))
+    }
+
+
 def _dedupe_web_search_content(
     content: str,
     seen_result_keys: set[str],
+    arguments: dict[str, Any] | None = None,
 ) -> tuple[str, int, int, list[str], bool]:
     """Filter duplicate web_search rows for this turn.
 
@@ -1727,6 +2697,30 @@ def _dedupe_web_search_content(
     if not items:
         return content, 0, 0, [], False
 
+    requested_site = _requested_site_domain(arguments or {})
+    site_filtered_count = 0
+    if requested_site:
+        matched_items = [
+            item for item in items if _url_matches_domain(_search_item_url(item), requested_site)
+        ]
+        site_filtered_count = len(items) - len(matched_items)
+        if site_filtered_count:
+            payload = _with_filtered_search_items(payload, matched_items)
+            if isinstance(payload, dict):
+                payload = {
+                    **payload,
+                    "RequestedSiteDomain": requested_site,
+                    "SiteFilterDroppedCount": site_filtered_count,
+                    "SiteFilterMatchedCount": len(matched_items),
+                    "SiteFilterNotice": (
+                        f"Only URLs hosted on {requested_site} are valid for this site: query. "
+                        "Do not cite or relabel dropped results, and do not invent a replacement URL."
+                    ),
+                }
+            items = matched_items
+            if not items:
+                return json.dumps(payload, ensure_ascii=False), 0, 0, [], True
+
     filtered_items: list[dict[str, Any]] = []
     new_labels: list[str] = []
     duplicate_count = 0
@@ -1744,7 +2738,7 @@ def _dedupe_web_search_content(
         if label:
             new_labels.append(_short_tool_text(label, 100))
 
-    if duplicate_count == 0:
+    if duplicate_count == 0 and site_filtered_count == 0:
         return content, len(filtered_items), 0, new_labels, True
 
     updated_payload = _with_filtered_search_items(payload, filtered_items)
@@ -1757,7 +2751,12 @@ def _dedupe_web_search_content(
     return json.dumps(updated_payload, ensure_ascii=False), len(filtered_items), duplicate_count, new_labels, True
 
 
-def _compact_web_search_result_for_model(content: str) -> str | None:
+def _compact_web_search_result_for_model(
+    content: str,
+    *,
+    max_items: int = 5,
+    snippet_limit: int = 220,
+) -> str | None:
     """Preserve usable search evidence when compacting old web_search results."""
     try:
         payload = json.loads(content)
@@ -1786,7 +2785,7 @@ def _compact_web_search_result_for_model(content: str) -> str | None:
     lines[0] += "]"
 
     items = _candidate_search_items(payload)
-    for index, item in enumerate(items[:5], start=1):
+    for index, item in enumerate(items[:max_items], start=1):
         title = _first_present(item, ("title", "Title", "name", "Name"))
         url = _first_present(item, ("url", "Url", "href", "link", "Link"))
         snippet = _first_present(
@@ -1808,7 +2807,7 @@ def _compact_web_search_result_for_model(content: str) -> str | None:
         if url:
             parts.append(_short_tool_text(url, 160))
         if snippet:
-            parts.append(_short_tool_text(snippet, 220))
+            parts.append(_short_tool_text(snippet, snippet_limit))
         if parts:
             lines.append(f"{index}. " + " | ".join(parts))
 
@@ -2100,6 +3099,27 @@ async def run_agent_loop(
     """
     cancelled = is_cancelled or (lambda: False)
     hook_mgr = HookManager(hooks)
+    if (
+        max_tool_calls is None
+        and completion_gate is not None
+        and completion_gate.max_tool_calls is not None
+    ):
+        max_tool_calls = completion_gate.max_tool_calls
+    budget_exempt_tools = (
+        completion_gate.budget_exempt_tools
+        if completion_gate is not None
+        else frozenset()
+    )
+    tool_call_limits = dict(TOOL_CALL_LIMITS)
+    if (
+        completion_gate is not None
+        and completion_gate.web_search_total_limit is not None
+    ):
+        tool_call_limits[WEB_SEARCH_TOOL_NAME] = max(
+            0,
+            completion_gate.web_search_total_limit,
+        )
+    web_search_total_limit = tool_call_limits[WEB_SEARCH_TOOL_NAME]
 
     if logger:
         logger.start_new_run()
@@ -2232,6 +3252,85 @@ async def run_agent_loop(
     # disabled (None).
     succeeded_tools: set[str] = set()
     gate_continuations = 0
+    workflow_checkpoint_message: Message | None = None
+    last_workflow_checkpoint_text: str | None = None
+    workflow_checkpoint_stage: str | None = None
+    workflow_checkpoint_has_patch_input = False
+    workflow_checkpoint_has_scaffold_input = False
+    workflow_checkpoint_has_image_input = False
+    workflow_checkpoint_has_repair_input = False
+    workflow_checkpoint_scaffold_input: dict[str, Any] | None = None
+    workflow_checkpoint_image_input: dict[str, Any] | None = None
+    controlled_step_failure_counts: dict[str, int] = {}
+    controlled_repair_stalled = False
+    controlled_apply_patch_repair_allowed = False
+    controlled_apply_patch_repair_paths: tuple[str, ...] = ()
+
+    def _record_controlled_step_result(
+        stage: str | None,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+    ) -> None:
+        nonlocal controlled_apply_patch_repair_allowed
+        nonlocal controlled_apply_patch_repair_paths
+        nonlocal controlled_repair_stalled
+        if stage == "apply_patch" and result.success:
+            patch_path = arguments.get("path")
+            wrote_patch = (
+                tool_name in {"write_file", "edit_file"}
+                and isinstance(patch_path, str)
+                and Path(patch_path).name == "deck.patch.json"
+                and ".." not in Path(patch_path).parts
+            )
+            applied_patch = (
+                tool_name == "bash"
+                and _controlled_apply_patch_error(stage, tool_name, arguments) is None
+            )
+            if wrote_patch or applied_patch:
+                for key in tuple(controlled_step_failure_counts):
+                    if key.startswith("apply_patch:"):
+                        controlled_step_failure_counts.pop(key, None)
+                controlled_apply_patch_repair_allowed = False
+                controlled_apply_patch_repair_paths = ()
+        if stage == "finalize":
+            signature = _controlled_finalizer_failure_signature(
+                tool_name,
+                arguments,
+                result,
+            )
+        elif stage == "apply_patch":
+            signature = _controlled_apply_patch_failure_signature(
+                tool_name,
+                arguments,
+                result,
+            )
+            if signature is not None:
+                controlled_apply_patch_repair_allowed = True
+                named_paths = _controlled_failure_field_paths(result)
+                if named_paths:
+                    controlled_apply_patch_repair_paths = named_paths
+        elif stage == "scaffold":
+            signature = _controlled_scaffold_failure_signature(
+                tool_name,
+                arguments,
+                result,
+                workflow_checkpoint_scaffold_input,
+            )
+        else:
+            signature = None
+        if signature is None:
+            return
+        scoped_signature = f"{stage}:{signature}"
+        repeat_count = controlled_step_failure_counts.get(scoped_signature, 0) + 1
+        controlled_step_failure_counts[scoped_signature] = repeat_count
+        if repeat_count >= 2:
+            controlled_repair_stalled = True
+            _log.warning(
+                "controlled_presentation/repair_stalled stage=%s repeated_failure=%d",
+                stage,
+                repeat_count,
+            )
 
     # Suspected-truncation continuation (opt-in via
     # ``truncation_continuation_enabled``). Bounds how many times the loop
@@ -2300,12 +3399,14 @@ async def run_agent_loop(
     # valid while nudging the model to synthesize.
     tool_call_counts: dict[str, int] = {}
     tool_call_total = 0
+    completion_reserve_injected = False
     tool_budget_wrapup_injected: set[str] = set()
     visible_tool_call_total = 0
     final_summary_guidance_injected = False
     final_summary_empty_retry_injected = False
     web_search_seen_queries: set[str] = set()
     web_search_seen_result_keys: set[str] = set()
+    verified_research_urls: set[str] = set()
     web_search_unique_results = 0
     web_search_duplicate_results = 0
     web_search_no_new_batches = 0
@@ -2330,6 +3431,10 @@ async def run_agent_loop(
         pending.tool_calls = _tool_calls_for_model_history(pending.tool_calls)
 
     for step in range(max_steps):
+        for message in messages:
+            if message.role == "user":
+                verified_research_urls.update(_http_urls(message.content))
+
         # ── Cancellation check (top of step) ────────────────
         # No cleanup needed here — messages are consistent at step boundaries.
         if cancelled():
@@ -2338,6 +3443,21 @@ async def run_agent_loop(
                 await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
             yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
             return
+
+        # A workflow checkpoint is regenerated from disk before each model
+        # request. Remove the prior object before compaction so it cannot
+        # accumulate in history or be folded into a summary. The current
+        # checkpoint is appended again below even when the stage is unchanged:
+        # tool output (especially search/discovery output) must not displace the
+        # authoritative next action and let a long deck run drift sideways.
+        # Only the injected event/log is deduplicated for an unchanged stage.
+        if workflow_checkpoint_message is not None:
+            messages[:] = [
+                message
+                for message in messages
+                if message is not workflow_checkpoint_message
+            ]
+            workflow_checkpoint_message = None
 
         step_start = perf_counter()
         web_search_step_seen = False
@@ -2348,6 +3468,7 @@ async def run_agent_loop(
         web_search_step_duplicate_results = 0
         web_search_step_structured_results = 0
         web_search_step_labels: list[str] = []
+        presentation_research_read_step_executed = 0
         model_history_placeholder_auto_repair_requested = False
 
         # ── Drain inject queue (in-stream injection) ───────
@@ -2411,7 +3532,7 @@ async def run_agent_loop(
             )
             yield PlanSnapshotEvent(payload=_plan_start_payload(approval))
 
-        for tool_name, limit in TOOL_CALL_LIMITS.items():
+        for tool_name, limit in tool_call_limits.items():
             if (
                 tool_call_counts.get(tool_name, 0) >= limit
                 and tool_name not in tool_budget_wrapup_injected
@@ -2422,6 +3543,37 @@ async def run_agent_loop(
                     Message(role="user", content=format_injected_message(budget_text))
                 )
                 yield InjectedMessageEvent(content=budget_text, injection_id=None, user_visible=False)
+        if (
+            completion_gate is not None
+            and max_tool_calls is not None
+            and completion_gate.completion_reserve_tool_calls > 0
+            and not completion_reserve_injected
+            and tool_call_total
+            >= max_tool_calls - completion_gate.completion_reserve_tool_calls
+            and completion_gate.pause_tools.isdisjoint(succeeded_tools)
+        ):
+            gaps = completion_gate_gaps(
+                completion_gate,
+                succeeded_tools,
+                workspace_dir,
+            )
+            if gaps:
+                completion_reserve_injected = True
+                reserve_text = completion_budget_reserve_text(
+                    gaps,
+                    completion_gate.completion_reserve_tool_calls,
+                )
+                messages.append(
+                    Message(
+                        role="user",
+                        content=format_injected_message(reserve_text),
+                    )
+                )
+                yield InjectedMessageEvent(
+                    content=reserve_text,
+                    injection_id=None,
+                    user_visible=False,
+                )
         if (
             max_tool_calls is not None
             and tool_call_total >= max_tool_calls
@@ -2530,6 +3682,67 @@ async def run_agent_loop(
             )
             yield InjectedMessageEvent(content=stall_text, injection_id=None, user_visible=False)
 
+        # ── Filesystem-backed workflow checkpoint ─────────
+        # Long controlled-deck runs can outgrow the provider's reliable
+        # attention span even when the full conversation is still present.
+        # Re-derive the current stage from canonical artifacts and make the
+        # single next action the freshest instruction. This is intentionally
+        # skipped once any terminal wrap-up or total tool budget has fired.
+        if (
+            completion_gate is not None
+            and not wrapup_injected
+            and (max_tool_calls is None or tool_call_total < max_tool_calls)
+        ):
+            checkpoint_text = completion_gate_progress_text(
+                completion_gate,
+                workspace_dir,
+            )
+            if checkpoint_text is not None and controlled_repair_stalled:
+                checkpoint_text = _controlled_repair_stalled_checkpoint()
+            if checkpoint_text is not None:
+                workflow_checkpoint_stage = _controlled_presentation_stage(
+                    checkpoint_text
+                )
+                workflow_checkpoint_has_patch_input = "\nPATCH_INPUT=" in checkpoint_text
+                workflow_checkpoint_has_scaffold_input = (
+                    "\nSCAFFOLD_INPUT=" in checkpoint_text
+                )
+                workflow_checkpoint_scaffold_input = _controlled_checkpoint_json(
+                    checkpoint_text,
+                    "SCAFFOLD_INPUT",
+                )
+                workflow_checkpoint_has_image_input = (
+                    "\nIMAGE_INPUT=" in checkpoint_text
+                )
+                workflow_checkpoint_image_input = _controlled_checkpoint_json(
+                    checkpoint_text,
+                    "IMAGE_INPUT",
+                )
+                workflow_checkpoint_has_repair_input = (
+                    "\nREPAIR_INPUT=" in checkpoint_text
+                )
+                checkpoint_changed = checkpoint_text != last_workflow_checkpoint_text
+                if checkpoint_changed:
+                    verified_research_urls.update(
+                        _controlled_research_handoff_urls(
+                            checkpoint_text,
+                            workspace_dir,
+                            artifact_root_dir,
+                        )
+                    )
+                workflow_checkpoint_message = Message(
+                    role="user",
+                    content=format_injected_message(checkpoint_text),
+                )
+                messages.append(workflow_checkpoint_message)
+                if checkpoint_changed:
+                    last_workflow_checkpoint_text = checkpoint_text
+                    yield InjectedMessageEvent(
+                        content=checkpoint_text,
+                        injection_id=CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
+                        user_visible=False,
+                    )
+
         # ── Step start ──────────────────────────────────────
         yield StepStart(step=step + 1, max_steps=max_steps)
         if hook_mgr.hooks:
@@ -2537,6 +3750,17 @@ async def run_agent_loop(
 
         # ── LLM call (streaming) ──────────────────────────────
         tool_list = list(tools.values())
+        if (
+            completion_gate is not None
+            and completion_gate.restrict_tools_until_required_succeed
+        ):
+            pending_required_tools = completion_gate.required_tools - succeeded_tools
+            if pending_required_tools:
+                tool_list = [
+                    tool
+                    for tool_name, tool in tools.items()
+                    if tool_name in pending_required_tools
+                ]
         cache_fingerprint = build_cache_fingerprint(
             messages=messages,
             tools=tool_list,
@@ -2566,24 +3790,72 @@ async def run_agent_loop(
             thinking_content = ""
             finish_event: StreamEvent | None = None
             thinking_header_yielded = False
+            stream_repeat_pattern: str | None = None
+            text_chunk_count = 0
+            thinking_chunk_count = 0
 
-            async for chunk in llm.generate_stream(
+            llm_stream = llm.generate_stream(
                 messages=messages, tools=tool_list, thinking_enabled=thinking_enabled,
                 session_id=session_id,
-            ):
+            )
+            async for chunk in llm_stream:
                 if cancelled():
                     break
                 if chunk.type == "thinking":
+                    thinking_chunk_count += 1
+                    candidate = thinking_content + (chunk.delta or "")
+                    stream_repeat_pattern = (
+                        repeated_stream_pattern(candidate)
+                        if thinking_chunk_count >= STREAM_REPEAT_MIN_CHUNKS
+                        else None
+                    )
+                    if stream_repeat_pattern is not None:
+                        break
                     if not thinking_header_yielded:
                         yield ThinkingEvent(content="", _streaming=True, _header=True)
                         thinking_header_yielded = True
-                    thinking_content += chunk.delta
-                    yield ThinkingEvent(content=chunk.delta, _streaming=True)
+                    thinking_content = candidate
+                    yield ThinkingEvent(content=chunk.delta or "", _streaming=True)
                 elif chunk.type == "text":
-                    text_content += chunk.delta
-                    yield ContentEvent(content=chunk.delta, _streaming=True)
+                    text_chunk_count += 1
+                    candidate = text_content + (chunk.delta or "")
+                    stream_repeat_pattern = (
+                        repeated_stream_pattern(candidate)
+                        if text_chunk_count >= STREAM_REPEAT_MIN_CHUNKS
+                        else None
+                    )
+                    if stream_repeat_pattern is not None:
+                        break
+                    text_content = candidate
+                    yield ContentEvent(content=chunk.delta or "", _streaming=True)
                 elif chunk.type == "finish":
                     finish_event = chunk
+
+            if stream_repeat_pattern is not None:
+                closer = getattr(llm_stream, "aclose", None)
+                if closer is not None:
+                    try:
+                        await closer()
+                    except Exception:
+                        _log.debug("failed to close repetitive LLM stream", exc_info=True)
+                _cleanup_incomplete_messages(messages)
+                _compact_pending_tool_call_history()
+                _log.warning(
+                    "repetitive_llm_stream_aborted: pattern=%r text_len=%d thinking_len=%d",
+                    stream_repeat_pattern,
+                    len(text_content),
+                    len(thinking_content),
+                )
+                msg = (
+                    "LLM stream aborted after repetitive output was detected. "
+                    "Retry the turn; the repeated output was not saved to conversation history."
+                )
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                    await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+                yield ErrorEvent(message=msg, is_fatal=True)
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
 
             if cancelled():
                 _cleanup_incomplete_messages(messages)
@@ -2961,7 +4233,14 @@ async def run_agent_loop(
             # gate releases rather than trapping the agent forever.
             if (
                 completion_gate is not None
+                and workflow_checkpoint_stage != "repair_stalled"
                 and gate_continuations < completion_gate.max_continuations
+                and completion_gate.pause_tools.isdisjoint(succeeded_tools)
+                # Once the hard tool budget is exhausted, another completion
+                # continuation cannot close an artifact gap. Let the model's
+                # current wrap-up end the turn instead of nudging it into an
+                # impossible tool-call loop.
+                and (max_tool_calls is None or tool_call_total < max_tool_calls)
                 and (
                     completion_gate.deadline_seconds is None
                     or (perf_counter() - run_start) < completion_gate.deadline_seconds
@@ -3099,10 +4378,46 @@ async def run_agent_loop(
             empty_args_signature = None
             empty_args_repeats = 0
 
-        # Split into regular (sequential) and parallel_safe groups.
+        # Deduplicate identical calls emitted in the same assistant response.
+        # Some providers occasionally repeat a mutation call byte-for-byte;
+        # executing both can corrupt state or turn the second call into a
+        # misleading conflict. Keep every original tool_call in model history,
+        # but execute only the first occurrence and synthesize hidden replies
+        # for its duplicates below so the protocol remains valid.
+        unique_tool_calls = []
+        duplicate_tool_calls = []
+        first_tool_call_by_signature: dict[tuple[str, str], Any] = {}
+        duplicate_source_by_id: dict[str, str] = {}
+        for tc in response.tool_calls:
+            signature = (
+                tc.function.name,
+                json.dumps(
+                    tc.function.arguments,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            )
+            first = first_tool_call_by_signature.get(signature)
+            if first is None:
+                first_tool_call_by_signature[signature] = tc
+                unique_tool_calls.append(tc)
+            else:
+                duplicate_source_by_id[tc.id] = first.id
+                duplicate_tool_calls.append(tc)
+
+        if duplicate_tool_calls:
+            _log.info(
+                "tool/dedupe skipped=%d unique=%d",
+                len(duplicate_tool_calls),
+                len(unique_tool_calls),
+            )
+
+        # Split unique calls into regular (sequential) and parallel_safe groups.
         regular_calls = []
         parallel_calls = []
-        for tc in response.tool_calls:
+        for tc in unique_tool_calls:
             fn_name = tc.function.name
             if _model_history_placeholder_argument(fn_name, tc.function.arguments):
                 # Placeholder repair is stateful and must be handled by the
@@ -3131,17 +4446,34 @@ async def run_agent_loop(
         # Track whether this step produced any useful tool result, for the
         # no-progress circuit breaker. Set True in either execution branch.
         step_made_progress = False
+        step_tool_success_by_id: dict[str, bool] = {}
 
         def _reserve_tool_budget(tool_name: str) -> tuple[bool, str | None]:
             nonlocal tool_call_total
-            if max_tool_calls is not None and tool_call_total >= max_tool_calls:
+            is_research_evidence_call = (
+                completion_gate is not None
+                and completion_gate.workflow_checkpoint_kind
+                == "controlled_presentation"
+                and workflow_checkpoint_stage == "research"
+                and tool_name in _PRESENTATION_RESEARCH_BUDGET_EXEMPT_TOOLS
+            )
+            is_budgeted = (
+                tool_name not in budget_exempt_tools
+                and not is_research_evidence_call
+            )
+            if (
+                is_budgeted
+                and max_tool_calls is not None
+                and tool_call_total >= max_tool_calls
+            ):
                 return False, total_tool_call_budget_message(max_tool_calls)
-            limit = TOOL_CALL_LIMITS.get(tool_name)
+            limit = tool_call_limits.get(tool_name)
             if limit is not None and tool_call_counts.get(tool_name, 0) >= limit:
                 return False, tool_call_budget_message(tool_name, limit)
             if limit is not None:
                 tool_call_counts[tool_name] = tool_call_counts.get(tool_name, 0) + 1
-            tool_call_total += 1
+            if is_budgeted:
+                tool_call_total += 1
             return True, None
 
         def _reserve_web_search_call(arguments: dict[str, Any]) -> tuple[bool, str | None]:
@@ -3152,12 +4484,25 @@ async def run_agent_loop(
 
             web_search_step_seen = True
             query_key = _normalize_web_search_query(arguments)
-            if query_key and query_key in web_search_seen_queries:
+            duplicate_query = next(
+                (
+                    seen_query
+                    for seen_query in web_search_seen_queries
+                    if _web_search_queries_are_near_duplicates(
+                        query_key,
+                        seen_query,
+                    )
+                ),
+                None,
+            )
+            if duplicate_query is not None:
                 web_search_step_duplicate_queries += 1
                 return (
                     False,
-                    "Duplicate web_search query skipped by runtime batching. "
-                    "Use the evidence already returned for this query and search only remaining gaps.",
+                    "Duplicate web_search query skipped by runtime batching "
+                    "(exact or near-duplicate). "
+                    f"It substantially overlaps {duplicate_query!r}. Use the evidence already "
+                    "returned and search a genuinely different evidence gap.",
                 )
             if web_search_step_executed >= WEB_SEARCH_BATCH_SIZE:
                 web_search_step_deferred += 1
@@ -3175,11 +4520,41 @@ async def run_agent_loop(
             web_search_step_executed += 1
             return True, None
 
+        def _reserve_presentation_research_read_call(
+            tool_name: str,
+        ) -> tuple[bool, str | None]:
+            nonlocal presentation_research_read_step_executed
+            if (
+                presentation_research_read_step_executed
+                >= _PRESENTATION_RESEARCH_READ_BATCH_SIZE
+            ):
+                return (
+                    False,
+                    "Public-source page read deferred by runtime batching "
+                    f"(batch size {_PRESENTATION_RESEARCH_READ_BATCH_SIZE}). Review the "
+                    "completed page reads and search evidence before requesting another "
+                    "specific missing source.",
+                )
+            allowed_by_budget, budget_error = _reserve_tool_budget(tool_name)
+            if not allowed_by_budget:
+                return False, budget_error
+            presentation_research_read_step_executed += 1
+            return True, None
+
         # 1. Sequential execution for regular tools (preserves ordering)
         for tc in regular_calls:
             tc_id = tc.id
             fn_name = tc.function.name
             fn_args = tc.function.arguments
+            (
+                browser_snapshot_target,
+                browser_snapshot_path_error,
+            ) = _prepare_browser_snapshot_output(
+                fn_name,
+                fn_args,
+                workspace_dir,
+                artifact_root_dir,
+            )
             placeholder_argument = _model_history_placeholder_argument(fn_name, fn_args)
             can_auto_repair_placeholder = (
                 placeholder_argument is not None
@@ -3195,11 +4570,136 @@ async def run_agent_loop(
                 )
                 if can_auto_repair_placeholder:
                     model_history_placeholder_auto_repair_requested = True
+            elif browser_snapshot_path_error is not None:
+                allowed_to_execute = False
+                internal_skip_error = browser_snapshot_path_error
             elif plan_approval_gate_active and fn_name != "plan_write":
                 allowed_to_execute = False
                 internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
+            elif (
+                workflow_checkpoint_stage == "repair_stalled"
+                and fn_name != "request_user_input"
+            ):
+                allowed_to_execute = False
+                internal_skip_error = _CONTROLLED_REPAIR_STALLED_TOOL_ERROR
+            elif (
+                handoff_error := _controlled_research_handoff_error(
+                    workflow_checkpoint_stage,
+                    (
+                        completion_gate.presentation_research_mode
+                        if completion_gate is not None
+                        else None
+                    ),
+                    fn_name,
+                    fn_args,
+                )
+            ) is not None:
+                allowed_to_execute = False
+                internal_skip_error = handoff_error
+            elif (
+                workflow_checkpoint_stage
+                in {"outline", "outline_qa", "outline_repair", "outline_backfill"}
+                and (
+                    evidence_error := _unverified_public_outline_evidence_error(
+                        fn_name,
+                        fn_args,
+                        verified_research_urls,
+                    )
+                )
+                is not None
+            ):
+                allowed_to_execute = False
+                internal_skip_error = evidence_error
+            elif (
+                workflow_checkpoint_stage == "content_patch"
+                and workflow_checkpoint_has_patch_input
+                and fn_name in _CONTROLLED_CONTENT_PATCH_BLOCKED_TOOLS
+            ):
+                allowed_to_execute = False
+                internal_skip_error = _CONTROLLED_CONTENT_PATCH_TOOL_ERROR
+            elif (
+                workflow_checkpoint_stage == "scaffold"
+                and workflow_checkpoint_has_scaffold_input
+                and (
+                    scaffold_error := _controlled_scaffold_error(
+                        fn_name,
+                        fn_args,
+                        workflow_checkpoint_scaffold_input,
+                    )
+                )
+                is not None
+            ):
+                allowed_to_execute = False
+                internal_skip_error = scaffold_error
+            elif (
+                workflow_checkpoint_stage == "images"
+                and workflow_checkpoint_has_image_input
+                and (
+                    image_generation_error := _controlled_image_generation_error(
+                        workflow_checkpoint_stage,
+                        fn_name,
+                        fn_args,
+                        workflow_checkpoint_image_input,
+                    )
+                )
+                is not None
+            ):
+                allowed_to_execute = False
+                internal_skip_error = image_generation_error
+            elif (
+                workflow_checkpoint_stage == "outline_repair"
+                and workflow_checkpoint_has_repair_input
+                and fn_name not in {"write_file", "request_user_input"}
+            ):
+                allowed_to_execute = False
+                internal_skip_error = _CONTROLLED_OUTLINE_REPAIR_TOOL_ERROR
+            elif (
+                workflow_checkpoint_stage in {"deck_spec_repair", "truth_repair"}
+                and workflow_checkpoint_has_repair_input
+                and fn_name not in _CONTROLLED_REPAIR_ALLOWED_TOOLS
+            ):
+                allowed_to_execute = False
+                internal_skip_error = _CONTROLLED_REPAIR_TOOL_ERROR
+            elif (
+                image_status_error := _controlled_image_status_error(
+                    workflow_checkpoint_stage,
+                    fn_name,
+                    fn_args,
+                )
+            ) is not None:
+                allowed_to_execute = False
+                internal_skip_error = image_status_error
+            elif (
+                apply_patch_error := _controlled_apply_patch_error(
+                    workflow_checkpoint_stage,
+                    fn_name,
+                    fn_args,
+                    repair_allowed=controlled_apply_patch_repair_allowed,
+                    repair_paths=controlled_apply_patch_repair_paths,
+                    workspace_dir=workspace_dir,
+                )
+            ) is not None:
+                allowed_to_execute = False
+                internal_skip_error = apply_patch_error
+            elif (
+                finalize_error := _controlled_finalize_error(
+                    workflow_checkpoint_stage,
+                    fn_name,
+                    fn_args,
+                )
+            ) is not None:
+                allowed_to_execute = False
+                internal_skip_error = finalize_error
             elif fn_name == WEB_SEARCH_TOOL_NAME:
                 allowed_to_execute, internal_skip_error = _reserve_web_search_call(fn_args)
+            elif (
+                workflow_checkpoint_stage == "research"
+                and fn_name in _DIRECT_RESEARCH_READ_TOOLS
+            ):
+                (
+                    allowed_to_execute,
+                    internal_skip_error,
+                ) = _reserve_presentation_research_read_call(fn_name)
             else:
                 allowed_to_execute, internal_skip_error = _reserve_tool_budget(fn_name)
             tool_user_visible = (
@@ -3367,7 +4867,18 @@ async def run_agent_loop(
                     decision="requested",
                 )
 
+            result = _persist_browser_snapshot_output(
+                result,
+                browser_snapshot_target,
+            )
             result = _activate_skill_result(fn_name, fn_args, result)
+            _record_controlled_step_result(
+                workflow_checkpoint_stage,
+                fn_name,
+                fn_args,
+                result,
+            )
+            step_tool_success_by_id[tc_id] = result.success
 
             # Progress signal for the no-progress breaker: a successful tool
             # call with non-empty content counts as making progress.
@@ -3391,7 +4902,11 @@ async def run_agent_loop(
                     duplicate_count,
                     new_labels,
                     inspected,
-                ) = _dedupe_web_search_content(tc_content, web_search_seen_result_keys)
+                ) = _dedupe_web_search_content(
+                    tc_content,
+                    web_search_seen_result_keys,
+                    fn_args,
+                )
                 web_search_step_new_results += new_count
                 web_search_step_duplicate_results += duplicate_count
                 web_search_unique_results += new_count
@@ -3399,6 +4914,12 @@ async def run_agent_loop(
                 if inspected:
                     web_search_step_structured_results += 1
                 web_search_step_labels.extend(new_labels[:3])
+                verified_research_urls.update(_web_search_urls(tc_content))
+            elif result.success and fn_name in _DIRECT_RESEARCH_READ_TOOLS:
+                direct_url = _first_present(fn_args, ("url", "URL", "href"))
+                normalized_direct_url = _normalize_search_url(direct_url)
+                if normalized_direct_url:
+                    verified_research_urls.add(normalized_direct_url)
 
             # Append the tool message BEFORE yielding any events. The yields
             # below hand control back to the consumer, which may suspend or
@@ -3468,7 +4989,7 @@ async def run_agent_loop(
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 return
 
-        # 2. Parallel execution for parallel_safe tools (e.g. sub_agent)
+        # 2. Parallel execution for parallel_safe tools (e.g. generate_image, sub_agent)
         if parallel_calls:
             # Snapshot the workspace BEFORE any parallel tool runs. Per-tool
             # snapshots are impossible under concurrency, so the diff layer uses
@@ -3480,11 +5001,39 @@ async def run_agent_loop(
             par_args_map: dict[str, dict[str, Any]] = {}  # tc.id → (possibly modified) args
             par_budget_errors: dict[str, str] = {}
             par_user_visible: dict[str, bool] = {}
+            par_browser_snapshot_targets: dict[str, Path | None] = {}
             for tc in parallel_calls:
                 par_fn_args = tc.function.arguments
-                if plan_approval_gate_active and tc.function.name != "plan_write":
+                (
+                    browser_snapshot_target,
+                    browser_snapshot_path_error,
+                ) = _prepare_browser_snapshot_output(
+                    tc.function.name,
+                    par_fn_args,
+                    workspace_dir,
+                    artifact_root_dir,
+                )
+                par_browser_snapshot_targets[tc.id] = browser_snapshot_target
+                if browser_snapshot_path_error is not None:
+                    allowed_to_execute = False
+                    internal_skip_error = browser_snapshot_path_error
+                elif plan_approval_gate_active and tc.function.name != "plan_write":
                     allowed_to_execute = False
                     internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
+                elif (
+                    handoff_error := _controlled_research_handoff_error(
+                        workflow_checkpoint_stage,
+                        (
+                            completion_gate.presentation_research_mode
+                            if completion_gate is not None
+                            else None
+                        ),
+                        tc.function.name,
+                        par_fn_args,
+                    )
+                ) is not None:
+                    allowed_to_execute = False
+                    internal_skip_error = handoff_error
                 elif tc.function.name == WEB_SEARCH_TOOL_NAME:
                     allowed_to_execute, internal_skip_error = _reserve_web_search_call(par_fn_args)
                 else:
@@ -3762,6 +5311,18 @@ async def run_agent_loop(
                         decision="requested",
                     )
 
+                result = _persist_browser_snapshot_output(
+                    result,
+                    par_browser_snapshot_targets.get(tc_id),
+                )
+                _record_controlled_step_result(
+                    workflow_checkpoint_stage,
+                    fn_name,
+                    fn_args,
+                    result,
+                )
+                step_tool_success_by_id[tc_id] = result.success
+
                 # Progress signal for the no-progress breaker.
                 if result.success and (result.content or "").strip():
                     step_made_progress = True
@@ -3783,7 +5344,11 @@ async def run_agent_loop(
                         duplicate_count,
                         new_labels,
                         inspected,
-                    ) = _dedupe_web_search_content(par_content, web_search_seen_result_keys)
+                    ) = _dedupe_web_search_content(
+                        par_content,
+                        web_search_seen_result_keys,
+                        par_fn_args,
+                    )
                     web_search_step_new_results += new_count
                     web_search_step_duplicate_results += duplicate_count
                     web_search_unique_results += new_count
@@ -3791,6 +5356,12 @@ async def run_agent_loop(
                     if inspected:
                         web_search_step_structured_results += 1
                     web_search_step_labels.extend(new_labels[:3])
+                    verified_research_urls.update(_web_search_urls(par_content))
+                elif result.success and fn_name in _DIRECT_RESEARCH_READ_TOOLS:
+                    direct_url = _first_present(par_fn_args, ("url", "URL", "href"))
+                    normalized_direct_url = _normalize_search_url(direct_url)
+                    if normalized_direct_url:
+                        verified_research_urls.add(normalized_direct_url)
 
                 # Append the tool message BEFORE yielding any events — see
                 # the equivalent comment in the sequential branch above for
@@ -3869,6 +5440,59 @@ async def run_agent_loop(
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 return
 
+        # Reply to same-response duplicates without executing them. The source
+        # result is already present in the immediately preceding tool messages,
+        # so a compact reference is enough for the model and avoids duplicating
+        # large tool output in history.
+        for tc in duplicate_tool_calls:
+            source_id = duplicate_source_by_id[tc.id]
+            source_succeeded = step_tool_success_by_id.get(source_id)
+            if source_succeeded is True:
+                duplicate_content = (
+                    "Duplicate tool call skipped: identical call "
+                    f"{source_id} already executed successfully in this response. "
+                    "Reuse its result."
+                )
+                duplicate_error = None
+            elif source_succeeded is False:
+                duplicate_content = ""
+                duplicate_error = (
+                    "Duplicate tool call skipped: identical call "
+                    f"{source_id} already failed in this response. "
+                    "Fix that failure before retrying."
+                )
+            else:
+                duplicate_content = ""
+                duplicate_error = (
+                    "Duplicate tool call skipped because its identical source "
+                    f"call {source_id} did not produce a result."
+                )
+
+            yield ToolCallStart(
+                tool_call_id=tc.id,
+                tool_name=tc.function.name,
+                arguments=tc.function.arguments,
+                user_visible=False,
+            )
+            messages.append(
+                Message(
+                    role="tool",
+                    content=duplicate_content or duplicate_error or "",
+                    tool_call_id=tc.id,
+                    name=tc.function.name,
+                )
+            )
+            yield ToolCallResult(
+                tool_call_id=tc.id,
+                tool_name=tc.function.name,
+                success=source_succeeded is True,
+                content=duplicate_content,
+                error=duplicate_error,
+                raw_output=None,
+                user_visible=False,
+                policy_decision=None,
+            )
+
         if model_history_placeholder_auto_repair_requested:
             model_history_placeholder_repairs += 1
             messages.append(
@@ -3918,7 +5542,7 @@ async def run_agent_loop(
                 "Search batch controller update (internal; do not mention this controller to the user):",
                 (
                     f"- Executed this batch: {web_search_step_executed}; "
-                    f"total executed this turn: {total_web_search_calls}/{WEB_SEARCH_TOTAL_LIMIT}; "
+                    f"total executed this turn: {total_web_search_calls}/{web_search_total_limit}; "
                     f"batch size: {WEB_SEARCH_BATCH_SIZE}."
                 ),
             ]
@@ -3936,7 +5560,7 @@ async def run_agent_loop(
             if web_search_step_labels:
                 examples = "; ".join(web_search_step_labels[:5])
                 guidance_lines.append(f"- New result examples: {examples}.")
-            if total_web_search_calls >= WEB_SEARCH_TOTAL_LIMIT:
+            if total_web_search_calls >= web_search_total_limit:
                 guidance_lines.append(
                     "- The web_search total limit has been reached. Do not call web_search again; "
                     "synthesize the final answer from gathered evidence and briefly mark gaps."
@@ -3958,6 +5582,17 @@ async def run_agent_loop(
         if (
             visible_tool_call_total > FINAL_SUMMARY_TOOL_CALL_THRESHOLD
             and not final_summary_guidance_injected
+            # Controlled presentations already have a filesystem-backed next
+            # action, a total delivery budget, and a completion gate.  A generic
+            # "stop calling tools" nudge while that workflow is incomplete
+            # conflicts with the authoritative checkpoint and caused research-
+            # complete runs to stop before outline/deck/HTML authoring.
+            and not (
+                completion_gate is not None
+                and completion_gate.workflow_checkpoint_kind
+                == "controlled_presentation"
+                and workflow_checkpoint_stage not in {None, "complete", "repair_stalled"}
+            )
         ):
             final_summary_guidance_injected = True
             summary_text = final_summary_wrapup_text(visible_tool_call_total)

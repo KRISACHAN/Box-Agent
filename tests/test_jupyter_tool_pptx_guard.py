@@ -71,3 +71,53 @@ print(df.describe())
 """
 
     assert not JupyterSandboxTool._looks_like_python_pptx_new_deck(code)
+
+
+def test_execute_code_detects_controlled_deck_json_rewrite_but_allows_read() -> None:
+    rewrite = """\
+import json
+with open("/tmp/output/deck.json", "w") as handle:
+    json.dump(deck, handle)
+"""
+    read_only = """\
+import json
+with open("/tmp/output/deck.json") as handle:
+    deck = json.load(handle)
+print(len(deck["slides"]))
+"""
+
+    assert JupyterSandboxTool._looks_like_controlled_deck_rewrite(rewrite)
+    assert not JupyterSandboxTool._looks_like_controlled_deck_rewrite(read_only)
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        'from pathlib import Path\nPath("deck.json").open("w").write("{}")',
+        'from pathlib import Path\ndeck_path = Path("deck.json")\ndeck_path.write_text("{}")',
+        'from pathlib import Path\ndeck_path = Path("output") / "deck.json"\ndeck_path.write_text("{}")',
+        'deck_path = "/tmp/output/deck.json"\nopen(deck_path, "w").write("{}")',
+    ],
+)
+def test_execute_code_detects_indirect_controlled_deck_rewrites(rewrite: str) -> None:
+    assert JupyterSandboxTool._looks_like_controlled_deck_rewrite(rewrite)
+
+
+@pytest.mark.asyncio
+async def test_execute_code_blocks_controlled_deck_rewrite_before_kernel_start(
+    monkeypatch,
+) -> None:
+    def fail_if_sandbox_requested(self):
+        raise AssertionError("deck rewrite should be rejected before sandbox startup")
+
+    monkeypatch.setattr(JupyterSandboxTool, "_get_sandbox_env", fail_if_sandbox_requested)
+    tool = JupyterSandboxTool()
+
+    result = await tool.execute(
+        code='from pathlib import Path\nPath("deck.json").write_text("{}")'
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("CONTROLLED_DECK_REWRITE_BLOCKED")
+    assert "apply_deck_patch.js" in result.error

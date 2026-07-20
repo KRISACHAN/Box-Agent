@@ -1,0 +1,543 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+
+const {
+  getLayout,
+  mergeDefaults,
+  readJson,
+  resolveArtifactPath,
+  runtimeSourceBinding,
+  validateAssumptionsAgainstRuntime,
+  validateAndNormalizeDeck,
+} = require("./deck_spec_core.js");
+const {
+  sanitizeStrictSourceDeck,
+  validateSourceBoundDeck,
+} = require("./validate_deck_truth.js");
+
+function usage(exitCode = 2) {
+  console.log("Usage: apply_deck_patch.js deck.json deck.patch.json");
+  process.exit(exitCode);
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function clone(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function recordChange(changes, message) {
+  if (!changes.includes(message)) changes.push(message);
+}
+
+function readPatchJson(filePath, changes) {
+  const resolved = resolveArtifactPath(filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`File not found: ${resolved}`);
+  }
+  const raw = fs.readFileSync(resolved, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch (initialError) {
+    let candidate = raw.trimEnd();
+    for (let removed = 1; removed <= 8; removed += 1) {
+      if (!/[}\]]$/.test(candidate)) break;
+      candidate = candidate.slice(0, -1).trimEnd();
+      try {
+        const parsed = JSON.parse(candidate);
+        if (!isPlainObject(parsed)) break;
+        recordChange(
+          changes,
+          `patch: removed ${removed} redundant trailing JSON closer(s)`
+        );
+        return parsed;
+      } catch (_error) {
+        // Only keep trying while the invalid suffix consists of closing tokens.
+      }
+    }
+    throw new Error(`Invalid JSON in ${resolved}: ${initialError.message}`);
+  }
+}
+
+function generatedMedia(value, fallbackAlt, changes, fieldPath) {
+  if (value === null || value === undefined) return value;
+  const media = typeof value === "string"
+    ? { src: value, alt: fallbackAlt }
+    : isPlainObject(value)
+      ? clone(value)
+      : value;
+  if (isPlainObject(media)) {
+    if (media.src === undefined && isPlainObject(media.image)) {
+      const nestedImage = media.image;
+      ["src", "alt", "origin", "fit", "position", "treatment"].forEach(key => {
+        if (media[key] === undefined && nestedImage[key] !== undefined) {
+          media[key] = nestedImage[key];
+        }
+      });
+      delete media.image;
+      recordChange(changes, `${fieldPath}.image: flattened nested media object`);
+    }
+    if (media.src === undefined) {
+      const sourceAlias = ["path", "image"].find(
+        key => typeof media[key] === "string"
+      );
+      if (sourceAlias) {
+        media.src = media[sourceAlias];
+        recordChange(changes, `${fieldPath}.${sourceAlias}: mapped to src`);
+      }
+    }
+    if (media.path !== undefined) delete media.path;
+    if (media.image !== undefined) delete media.image;
+    if (media.alt === undefined && media.alt_text !== undefined) {
+      media.alt = media.alt_text;
+      recordChange(changes, `${fieldPath}.alt_text: mapped to alt`);
+    }
+    if (media.alt_text !== undefined) delete media.alt_text;
+    const allowed = ["src", "alt", "origin", "fit", "position", "treatment"];
+    Object.keys(media).forEach(key => {
+      if (allowed.includes(key)) return;
+      delete media[key];
+      recordChange(changes, `${fieldPath}.${key}: dropped unknown media field`);
+    });
+  }
+  if (!isPlainObject(media) || typeof media.src !== "string") return media;
+  if (/^(?:\.\/)?assets\/generated\//i.test(media.src.trim())) {
+    if (media.origin !== "generated") {
+      media.origin = "generated";
+      recordChange(changes, `${fieldPath}.origin: inferred generated provenance from asset path`);
+    }
+    if (!media.alt || !String(media.alt).trim()) media.alt = fallbackAlt;
+  }
+  if (typeof value === "string") {
+    recordChange(changes, `${fieldPath}: converted image path to a media object`);
+  }
+  return media;
+}
+
+function applyAlias(target, destination, aliases, changes, fieldPath) {
+  if (target[destination] !== undefined) return;
+  const source = aliases.find(alias => target[alias] !== undefined);
+  if (!source) return;
+  target[destination] = target[source];
+  recordChange(changes, `${fieldPath}.${source}: mapped to ${destination}`);
+}
+
+function normalizeArrayItem(layoutId, fieldName, item, changes, fieldPath) {
+  if (
+    layoutId === "statement-focus-v1" &&
+    fieldName === "proofs" &&
+    typeof item === "string"
+  ) {
+    recordChange(changes, `${fieldPath}: converted proof text to an object`);
+    return { value: item, label: "" };
+  }
+  if (!isPlainObject(item)) return item;
+  const normalized = clone(item);
+  if (layoutId === "cards-grid-v1" && fieldName === "items") {
+    applyAlias(normalized, "title", ["name", "label"], changes, fieldPath);
+    applyAlias(normalized, "body", ["description", "text", "content"], changes, fieldPath);
+  } else if (layoutId === "kpi-grid-v1" && fieldName === "items") {
+    applyAlias(normalized, "detail", ["trend", "description", "body"], changes, fieldPath);
+    if (normalized.unit && normalized.value !== undefined) {
+      normalized.value = `${normalized.value}${normalized.unit}`;
+      recordChange(changes, `${fieldPath}.unit: folded into value`);
+    }
+  } else if (layoutId === "timeline-horizontal-v1" && fieldName === "steps") {
+    applyAlias(normalized, "title", ["step", "name"], changes, fieldPath);
+    applyAlias(normalized, "body", ["description", "text", "content"], changes, fieldPath);
+  } else if (layoutId === "project-case-study-v1" && fieldName === "metrics") {
+    applyAlias(normalized, "label", ["name", "title"], changes, fieldPath);
+    applyAlias(normalized, "value", ["metric", "result"], changes, fieldPath);
+  } else if (layoutId === "statement-focus-v1" && fieldName === "proofs") {
+    applyAlias(normalized, "label", ["title", "description"], changes, fieldPath);
+    applyAlias(normalized, "value", ["metric", "result"], changes, fieldPath);
+  }
+  return normalized;
+}
+
+function normalizeValueToContract(value, contract, layoutId, fieldName, changes, fieldPath) {
+  if (contract.type === "media") {
+    const alt = layoutId === "project-case-study-v1"
+      ? "AI 概念视觉，实际项目图待补充"
+      : "AI 生成的概念视觉";
+    return generatedMedia(value, alt, changes, fieldPath);
+  }
+  if (contract.type === "enum") {
+    if (typeof value === "string" && contract.values.includes(value)) return value;
+    recordChange(changes, `${fieldPath}: dropped invalid enum value ${JSON.stringify(value)}`);
+    return undefined;
+  }
+  if (contract.type === "array" && Array.isArray(value)) {
+    return value.map((item, index) => {
+      const itemPath = `${fieldPath}.${index}`;
+      const normalizedItem = normalizeArrayItem(
+        layoutId,
+        fieldName,
+        item,
+        changes,
+        itemPath
+      );
+      if (!isPlainObject(normalizedItem) || !isPlainObject(contract.itemShape)) {
+        return normalizedItem;
+      }
+      const allowed = Object.keys(contract.itemShape);
+      const filtered = {};
+      Object.entries(normalizedItem).forEach(([key, nested]) => {
+        if (allowed.includes(key)) filtered[key] = nested;
+        else recordChange(changes, `${itemPath}.${key}: dropped unknown item field`);
+      });
+      Object.entries(contract.itemShape).forEach(([key, nestedContract]) => {
+        if (!nestedContract.required || filtered[key] !== undefined) return;
+        if (nestedContract.type === "text") {
+          filtered[key] = "待补充";
+          recordChange(changes, `${itemPath}.${key}: filled required text placeholder`);
+        } else if (nestedContract.type === "enum" && nestedContract.default !== undefined) {
+          filtered[key] = clone(nestedContract.default);
+          recordChange(changes, `${itemPath}.${key}: filled required enum default`);
+        }
+      });
+      return filtered;
+    });
+  }
+  return clone(value);
+}
+
+function normalizePatchProps(slide, supplied, changes) {
+  const layout = getLayout(slide.layout_id);
+  if (!layout) return supplied;
+  const normalized = clone(supplied);
+  const basePath = `slides.${slide.id}.props`;
+  if (slide.layout_id === "cover-hero-v1") {
+    applyAlias(normalized, "title", ["headline"], changes, basePath);
+    applyAlias(normalized, "subtitle", ["subhead"], changes, basePath);
+    applyAlias(normalized, "eyebrow", ["kicker"], changes, basePath);
+    applyAlias(normalized, "meta", ["caption"], changes, basePath);
+    applyAlias(normalized, "hero", ["image"], changes, basePath);
+  } else if (slide.layout_id === "statement-focus-v1") {
+    applyAlias(normalized, "support", ["context", "subtitle"], changes, basePath);
+  } else if (slide.layout_id === "project-case-study-v1") {
+    applyAlias(normalized, "positioning", ["summary", "description", "subtitle"], changes, basePath);
+  }
+
+  const result = {};
+  Object.entries(normalized).forEach(([key, value]) => {
+    const contract = layout.fields[key];
+    if (!contract) {
+      recordChange(changes, `${basePath}.${key}: dropped unknown field for ${slide.layout_id}`);
+      return;
+    }
+    const normalizedValue = normalizeValueToContract(
+      value,
+      contract,
+      slide.layout_id,
+      key,
+      changes,
+      `${basePath}.${key}`
+    );
+    if (normalizedValue === undefined) return;
+    if (contract.type === "array" && Array.isArray(normalizedValue)) {
+      const bounded = normalizedValue.slice(0, contract.maxItems);
+      if (bounded.length !== normalizedValue.length) {
+        recordChange(changes, `${basePath}.${key}: truncated to ${contract.maxItems} items`);
+      }
+      const fallbacks = Array.isArray(slide.props[key]) ? slide.props[key] : [];
+      let fallbackIndex = 0;
+      while (bounded.length < contract.minItems && fallbackIndex < fallbacks.length) {
+        bounded.push(clone(fallbacks[fallbackIndex]));
+        fallbackIndex += 1;
+      }
+      if (bounded.length !== normalizedValue.length) {
+        recordChange(changes, `${basePath}.${key}: restored required collection size`);
+      }
+      result[key] = bounded;
+      return;
+    }
+    result[key] = normalizedValue;
+  });
+  return result;
+}
+
+function restoreBoundOutlineTitles(deck, deckPath, changes) {
+  const artifactRoot = path.dirname(deckPath);
+  const outlinePath = path.join(artifactRoot, "outline.json");
+  const contractPath = path.join(artifactRoot, "qa", "deck_contract.json");
+  if (!fs.existsSync(outlinePath) || !fs.existsSync(contractPath)) return;
+  let outline;
+  let contract;
+  try {
+    outline = readJson(outlinePath);
+    contract = readJson(contractPath);
+  } catch (_error) {
+    return;
+  }
+  if (!contract || !contract.outline_binding || !Array.isArray(outline.slides)) return;
+  deck.slides.forEach((slide, index) => {
+    const outlinePage = Number.isInteger(slide.source_outline_page)
+      ? outline.slides[slide.source_outline_page - 1]
+      : outline.slides[index];
+    const expectedTitle = outlinePage && typeof outlinePage.title === "string"
+      ? outlinePage.title.trim()
+      : "";
+    const layout = getLayout(slide.layout_id);
+    if (!expectedTitle || !layout || !layout.fields.title) return;
+    if (slide.props.title === expectedTitle) return;
+    slide.props.title = expectedTitle;
+    recordChange(
+      changes,
+      `slides.${slide.id}.props.title: restored bound outline page title`
+    );
+  });
+}
+
+function omitUnsupportedOptionalResearchProofs(deck, issues, changes) {
+  const truth = deck && deck.truth_contract;
+  const sourceFacts = truth && Array.isArray(truth.source_facts)
+    ? truth.source_facts
+    : [];
+  const researchFacts = truth && Array.isArray(truth.research_facts)
+    ? truth.research_facts
+    : [];
+  if (sourceFacts.length || !researchFacts.length) return false;
+
+  const removals = new Map();
+  issues.forEach(issue => {
+    const match = String(issue || "").match(
+      /^slides\.([^.]+)\.props\.proofs\.(\d+)(?:\.|:)/u
+    );
+    if (!match) return;
+    const slideId = match[1];
+    const proofIndex = Number(match[2]);
+    if (!Number.isInteger(proofIndex)) return;
+    if (!removals.has(slideId)) removals.set(slideId, new Set());
+    removals.get(slideId).add(proofIndex);
+  });
+
+  let changed = false;
+  deck.slides.forEach(slide => {
+    const indexes = removals.get(slide.id);
+    if (!indexes || !Array.isArray(slide.props && slide.props.proofs)) return;
+    [...indexes]
+      .sort((left, right) => right - left)
+      .forEach(index => {
+        if (index < 0 || index >= slide.props.proofs.length) return;
+        slide.props.proofs.splice(index, 1);
+        recordChange(
+          changes,
+          `slides.${slide.id}.props.proofs.${index}: omitted unsupported optional research proof`
+        );
+        changed = true;
+      });
+  });
+  return changed;
+}
+
+function main() {
+  const argv = process.argv.slice(2);
+  if (argv[0] === "--help" || argv[0] === "-h") usage(0);
+  if (argv.length !== 2) usage();
+
+  const deckPath = resolveArtifactPath(argv[0]);
+  const patchPath = resolveArtifactPath(argv[1]);
+  const normalizationChanges = [];
+  const deck = readJson(deckPath);
+  let patch = readPatchJson(patchPath, normalizationChanges);
+  if (!isPlainObject(patch)) throw new Error("Deck patch must be an object");
+
+  const allowedTopLevel = ["title", "truth_contract", "slides"];
+  let unknownTopLevel = Object.keys(patch).filter(key => !allowedTopLevel.includes(key));
+  if (
+    patch.slides === undefined &&
+    unknownTopLevel.length > 0 &&
+    unknownTopLevel.every(key => /^slide-\d+$/i.test(key))
+  ) {
+    const directSlides = Object.fromEntries(
+      unknownTopLevel.map(slideId => [slideId, patch[slideId]])
+    );
+    patch = Object.fromEntries(
+      Object.entries(patch).filter(([key]) => !unknownTopLevel.includes(key))
+    );
+    patch.slides = directSlides;
+    recordChange(
+      normalizationChanges,
+      'patch: nested direct slide-id keys under the top-level "slides" object'
+    );
+    unknownTopLevel = [];
+  }
+  if (unknownTopLevel.length) {
+    const sourceFactHint = unknownTopLevel.includes("source_facts")
+      ? "; source facts are scaffold-only under truth_contract.source_facts. " +
+        "For user-authorized illustrative data, patch truth_contract.assumptions instead"
+      : "";
+    const slideEnvelopeHint = unknownTopLevel.every(key => /^slide-\d+$/i.test(key))
+      ? '; slide ids must be nested under the top-level "slides" object, for example ' +
+        '{"slides":{"slide-01":{"props":{...}}}}'
+      : "";
+    throw new Error(
+      `Unknown deck patch field(s): ${unknownTopLevel.join(", ")}` +
+      `${sourceFactHint}${slideEnvelopeHint}`
+    );
+  }
+  const sourceBinding = runtimeSourceBinding();
+  if (patch.title !== undefined) deck.title = patch.title;
+  if (patch.truth_contract !== undefined) {
+    if (!isPlainObject(patch.truth_contract)) {
+      throw new Error("truth_contract patch must be an object");
+    }
+    const unknownTruthFields = Object.keys(patch.truth_contract)
+      .filter(key => !["mode", "source_facts", "research_facts", "assumptions"].includes(key));
+    if (unknownTruthFields.length) {
+      throw new Error(
+        `Unknown truth_contract patch field(s): ${unknownTruthFields.join(", ")}`
+      );
+    }
+    if (!isPlainObject(deck.truth_contract)) {
+      throw new Error(
+        "deck.json is missing the scaffolded truth_contract; recreate only the initial scaffold"
+      );
+    }
+    if (patch.truth_contract.mode !== undefined) {
+      recordChange(
+        normalizationChanges,
+        "truth_contract.mode: ignored patch mutation and preserved scaffold mode"
+      );
+    }
+    if (patch.truth_contract.source_facts !== undefined) {
+      recordChange(
+        normalizationChanges,
+        "truth_contract.source_facts: ignored patch mutation and preserved scaffold facts"
+      );
+    }
+    if (patch.truth_contract.research_facts !== undefined) {
+      recordChange(
+        normalizationChanges,
+        "truth_contract.research_facts: ignored patch mutation and preserved scaffold research facts"
+      );
+    }
+    if (patch.truth_contract.assumptions !== undefined) {
+      const assumptionBinding = validateAssumptionsAgainstRuntime(
+        patch.truth_contract.assumptions
+      );
+      if (assumptionBinding.issues.length) {
+        throw new Error(`Assumption binding failed:\n${assumptionBinding.issues.join("\n")}`);
+      }
+      deck.truth_contract.assumptions = clone(patch.truth_contract.assumptions);
+    }
+  }
+
+  const slidePatches = patch.slides === undefined ? {} : patch.slides;
+  if (!isPlainObject(slidePatches)) {
+    throw new Error("deck.patch.json slides must be an object keyed by existing slide id");
+  }
+  const slidesById = new Map(deck.slides.map(slide => [slide.id, slide]));
+  const patchedSlides = [];
+  for (const [slideId, slidePatch] of Object.entries(slidePatches)) {
+    const slide = slidesById.get(slideId);
+    if (!slide) throw new Error(`Unknown slide id in patch: ${slideId}`);
+    if (!isPlainObject(slidePatch)) {
+      throw new Error(`slides.${slideId}: expected object`);
+    }
+    const unknownSlideFields = Object.keys(slidePatch)
+      .filter(key => !["props", "background"].includes(key));
+    if (unknownSlideFields.length) {
+      throw new Error(
+        `slides.${slideId}: only props/background may be patched; rejected ` +
+        unknownSlideFields.join(", ")
+      );
+    }
+    if (slidePatch.props !== undefined) {
+      if (!isPlainObject(slidePatch.props)) {
+        throw new Error(`slides.${slideId}.props: expected object`);
+      }
+      const normalizedPatch = normalizePatchProps(
+        slide,
+        slidePatch.props,
+        normalizationChanges
+      );
+      slide.props = mergeDefaults(slide.props, normalizedPatch);
+    }
+    if (slidePatch.background === null) delete slide.background;
+    else if (slidePatch.background !== undefined) {
+      slide.background = generatedMedia(
+        slidePatch.background,
+        "AI 生成的背景概念视觉",
+        normalizationChanges,
+        `slides.${slide.id}.background`
+      );
+    }
+    patchedSlides.push(slideId);
+  }
+
+  restoreBoundOutlineTitles(deck, deckPath, normalizationChanges);
+
+  let validation = validateAndNormalizeDeck(deck);
+  if (!validation.ok) {
+    throw new Error(`Patched deck is invalid:\n${validation.issues.join("\n")}`);
+  }
+  let truthGuard = { changes: [], issues: [] };
+  const truthContract = validation.normalized.truth_contract;
+  const shouldGuardSourceTruth = Boolean(
+    truthContract
+    && truthContract.mode === "source_bound"
+    && sourceBinding.available
+    && !sourceBinding.allows_assumptions
+  );
+  if (shouldGuardSourceTruth) {
+    const sanitized = sanitizeStrictSourceDeck(validation.normalized);
+    validation = validateAndNormalizeDeck(sanitized.deck);
+    if (!validation.ok) {
+      throw new Error(`Truth-normalized deck is invalid:\n${validation.issues.join("\n")}`);
+    }
+    let truthResult = validateSourceBoundDeck(validation.normalized);
+    truthGuard = {
+      changes: sanitized.changes,
+      issues: truthResult.issues,
+    };
+    if (
+      truthResult.issues.length
+      && !sourceBinding.strict
+      && omitUnsupportedOptionalResearchProofs(
+        validation.normalized,
+        truthResult.issues,
+        truthGuard.changes
+      )
+    ) {
+      validation = validateAndNormalizeDeck(validation.normalized);
+      if (!validation.ok) {
+        throw new Error(`Research-proof-normalized deck is invalid:\n${validation.issues.join("\n")}`);
+      }
+      truthResult = validateSourceBoundDeck(validation.normalized);
+      truthGuard.issues = truthResult.issues;
+    }
+    if (truthResult.issues.length) {
+      throw new Error(
+        "Patched deck still violates the source-bound truth contract after normalization:\n" +
+        truthResult.issues.join("\n")
+      );
+    }
+  }
+  fs.mkdirSync(path.dirname(deckPath), { recursive: true });
+  fs.writeFileSync(deckPath, `${JSON.stringify(validation.normalized, null, 2)}\n`, "utf8");
+  console.log(JSON.stringify({
+    ok: true,
+    deck: deckPath,
+    patch: patchPath,
+    patched_slides: patchedSlides,
+    normalization_changes: normalizationChanges,
+    truth_guard_changes: truthGuard.changes,
+    truth_mode: validation.normalized.truth_contract
+      ? validation.normalized.truth_contract.mode
+      : null,
+  }, null, 2));
+}
+
+try {
+  main();
+} catch (error) {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+}

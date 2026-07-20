@@ -11,11 +11,19 @@ import pytest
 from box_agent.config import ImageGenerationConfig, ToolsConfig
 from box_agent.llm.debug_logging import reset_llm_debug_sink, set_llm_debug_sink
 from box_agent.tools.image_generation_tool import GenerateImageTool
-from box_agent.tools.setup import add_workspace_tools
+from box_agent.tools.setup import (
+    add_workspace_tools,
+    build_image_generation_prompt,
+    image_generation_service_configured,
+)
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nimage-bytes"
 JPEG_BYTES = b"\xff\xd8\xff\xe0jpeg-bytes"
+
+
+def test_generate_image_is_parallel_safe() -> None:
+    assert GenerateImageTool.parallel_safe is True
 
 
 def patch_async_client(monkeypatch: pytest.MonkeyPatch, handler) -> None:
@@ -294,6 +302,71 @@ async def test_generate_image_upscales_too_small_explicit_size_for_openai_style_
     assert result.raw_output["size"] == "1366x768"
     assert result.raw_output["width"] == 1366
     assert result.raw_output["height"] == 768
+
+
+@pytest.mark.asyncio
+async def test_generate_image_preserves_host_16_9_explicit_size_with_alignment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["size"] == "1536x864"
+        return httpx.Response(
+            200,
+            json={"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/api/web/llm/v2/images/gen",
+    )
+
+    result = await tool.execute(
+        prompt="wide infographic",
+        output_path="assets/generated/wide-host.png",
+        size="1280x720",
+    )
+
+    assert result.success, result.error
+    assert result.raw_output
+    assert result.raw_output["size"] == "1536x864"
+    assert result.raw_output["width"] % 16 == 0
+    assert result.raw_output["height"] % 16 == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_image_preserves_host_16_9_legacy_dimensions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["size"] == "1536x864"
+        return httpx.Response(
+            200,
+            json={"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")},
+        )
+
+    patch_async_client(monkeypatch, handler)
+    tool = GenerateImageTool(
+        workspace_dir=str(tmp_path),
+        allow_full_access=False,
+        endpoint="https://image.example.test/api/web/llm/v2/images/gen",
+    )
+
+    result = await tool.execute(
+        prompt="wide infographic",
+        output_path="assets/generated/wide-legacy.png",
+        width=1024,
+        height=576,
+    )
+
+    assert result.success, result.error
+    assert result.raw_output
+    assert result.raw_output["size"] == "1536x864"
 
 
 @pytest.mark.asyncio
@@ -669,7 +742,7 @@ async def test_generate_image_edit_logs_full_multipart_request(
     assert "multipart/form-data" in request_record["headers"]["content-type"]
     assert request_record["payload"]["multipart_fields"] == {
         "prompt": prompt,
-        "size": "1366x768",
+        "size": "1376x768",
     }
     assert "model" not in request_record["payload"]["multipart_fields"]
     assert request_record["payload"]["files"] == [
@@ -742,7 +815,7 @@ async def test_generate_image_edit_upscales_too_small_explicit_size_for_openai_s
     def handler(request: httpx.Request) -> httpx.Response:
         body = request.read()
         assert b'name="size"' in body
-        assert b"1366x768" in body
+        assert b"1536x864" in body
         return httpx.Response(
             200,
             json={"b64_json": base64.b64encode(JPEG_BYTES).decode("ascii")},
@@ -765,9 +838,9 @@ async def test_generate_image_edit_upscales_too_small_explicit_size_for_openai_s
 
     assert result.success, result.error
     assert result.raw_output
-    assert result.raw_output["size"] == "1366x768"
-    assert result.raw_output["width"] == 1366
-    assert result.raw_output["height"] == 768
+    assert result.raw_output["size"] == "1536x864"
+    assert result.raw_output["width"] == 1536
+    assert result.raw_output["height"] == 864
 
 
 @pytest.mark.asyncio
@@ -831,6 +904,43 @@ def test_add_workspace_tools_registers_generate_image(tmp_path: Path) -> None:
     add_workspace_tools(tools, Config(), tmp_path, allow_full_access=False, output=lambda *_: None)
 
     assert any(tool.name == "generate_image" for tool in tools)
+
+
+def test_image_generation_service_is_box_agent_configured_for_cli_and_acp() -> None:
+    class Config:
+        image_generation = ImageGenerationConfig(
+            endpoint="https://image.example.test/api/web/llm/v2/images/gen"
+        )
+
+    assert image_generation_service_configured(Config(), {}) is True
+    prompt = build_image_generation_prompt(Config(), {})
+    assert "Box-Agent 的标准工具" in prompt
+    assert "CLI 与 ACP 共用" in prompt
+    assert "不由宿主 `env_context` 控制" in prompt
+    assert "优先调用 `generate_image`" in prompt
+
+
+def test_image_generation_service_accepts_cli_environment_override() -> None:
+    class Config:
+        image_generation = ImageGenerationConfig()
+
+    env = {
+        "BOX_AGENT_IMAGE_GENERATION_ENDPOINT": (
+            "https://image.example.test/api/web/llm/v2/images/gen"
+        )
+    }
+    assert image_generation_service_configured(Config(), env) is True
+    assert "已配置" in build_image_generation_prompt(Config(), env)
+
+
+def test_image_generation_prompt_reports_unconfigured_service() -> None:
+    class Config:
+        image_generation = ImageGenerationConfig()
+
+    assert image_generation_service_configured(Config(), {}) is False
+    prompt = build_image_generation_prompt(Config(), {})
+    assert "未配置" in prompt
+    assert "不得假装已生成图片" in prompt
 
 
 def test_add_workspace_tools_passes_image_generation_config(tmp_path: Path) -> None:
@@ -937,6 +1047,7 @@ async def test_output_mode_tools_share_artifact_relative_root(
     assert not (artifact_root / "output/legacy.txt").exists()
     assert by_name["bash"].workspace_dir == str(artifact_root)
     assert by_name["bash"].scope_root_dir == str(workspace)
+    assert by_name["bash"]._subprocess_env["BOX_AGENT_OUTPUT_DIR"] == str(artifact_root)
 
     node = shutil.which("node")
     if node is None:

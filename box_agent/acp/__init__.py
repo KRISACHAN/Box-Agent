@@ -27,11 +27,13 @@ kernel persists across prompts within the same session.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json as _json
 import logging
 import platform
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -72,6 +74,7 @@ from box_agent.tools.setup import (
     await_mcp_tools,
     await_skill_discovery,
     build_file_delivery_prompt,
+    build_image_generation_prompt,
     build_sandbox_info_prompt,
     initialize_base_tools,
     merge_mcp_tools,
@@ -104,7 +107,13 @@ from box_agent.events import (
 )
 from box_agent.llm import LLMClient
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
-from box_agent.loop_guards import CompletionGate, build_auto_completion_gate
+from box_agent.loop_guards import (
+    CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
+    CompletionGate,
+    build_auto_completion_gate,
+    completion_gate_gaps,
+    completion_gate_progress_text,
+)
 from box_agent.acp.action_hints import (
     ActionHintStreamNormalizer,
     build_action_hints_prompt,
@@ -134,6 +143,7 @@ from box_agent.tools.runtime import (
     build_skill_runtime_prompt,
 )
 from box_agent.tools.skill_preload import (
+    SkillPreloadAttribution,
     build_auto_loaded_skills_prompt,
     document_preload_skill_names,
     host_runtime_preload_skill_names,
@@ -629,9 +639,141 @@ class SessionState:
     pending_plan_approval: dict[str, Any] | None = None
     preloaded_skill_names: list[str] = field(default_factory=list)
     preloaded_skill_hashes: dict[str, str] = field(default_factory=dict)
+    preloaded_skill_attributions: dict[str, SkillPreloadAttribution] = field(
+        default_factory=dict
+    )
     follow_up_suggestions_enabled: bool = False
     turn_counter: int = 0
     current_turn_id: str = ""
+    source_text: str = ""  # accumulated real user requests for source-bound artifact checks
+    pending_completion_gate: CompletionGate | None = None
+    waiting_for_user_input: bool = False
+
+
+_MAX_SOURCE_TEXT_ENV_CHARS = 120_000
+
+_PENDING_GATE_CANCEL_PHRASES = (
+    "取消",
+    "不用继续",
+    "不要继续",
+    "不做这个",
+    "先不做",
+    "换个任务",
+    "新任务",
+    "stop",
+    "cancel",
+    "never mind",
+)
+_PENDING_GATE_CONTINUE_PHRASES = (
+    "继续",
+    "接着",
+    "补完",
+    "完成",
+    "输出html",
+    "生成html",
+    "渲染html",
+    "continue",
+    "resume",
+    "finish",
+    "go on",
+    "output html",
+    "render html",
+)
+
+
+def _cancels_pending_completion_gate(user_text: str) -> bool:
+    normalized = " ".join(user_text.casefold().split())
+    return bool(normalized) and any(
+        phrase in normalized for phrase in _PENDING_GATE_CANCEL_PHRASES
+    )
+
+
+def _should_resume_pending_completion_gate(
+    user_text: str,
+    *,
+    waiting_for_user_input: bool,
+) -> bool:
+    """Recognize an answer or terse continuation of a retained delivery task."""
+    normalized = " ".join(user_text.casefold().split()).strip()
+    if not normalized or _cancels_pending_completion_gate(normalized):
+        return False
+    if waiting_for_user_input:
+        return True
+    compact = normalized.replace(" ", "")
+    if len(normalized) <= 80 and any(
+        phrase in normalized or phrase.replace(" ", "") in compact
+        for phrase in _PENDING_GATE_CONTINUE_PHRASES
+    ):
+        return True
+    return text_is_short_acknowledgement(normalized)
+
+
+def _recover_controlled_presentation_gate(
+    user_text: str,
+    workspace_dir: str | Path,
+) -> CompletionGate | None:
+    """Rebuild a lost controlled-deck gate from durable artifacts.
+
+    An officev3 app/runtime restart creates a new ACP ``SessionState`` and loses
+    the in-memory pending gate.  Each task already has an isolated workspace, so
+    a terse continuation may safely recover only when that workspace contains an
+    incomplete controlled-presentation checkpoint.  Completed decks are not
+    reopened implicitly.
+    """
+    if not _should_resume_pending_completion_gate(
+        user_text,
+        waiting_for_user_input=False,
+    ):
+        return None
+    workspace = Path(workspace_dir)
+    output = workspace / "output"
+    if not output.is_dir():
+        return None
+    research_root = output / "research"
+    has_research = research_root.is_dir() and any(
+        path.is_file() for path in research_root.rglob("*")
+    )
+    has_checkpoint = has_research or any(
+        path.is_file()
+        for filename in ("outline.json", "deck.json", "index.html")
+        for path in output.rglob(filename)
+    )
+    if not has_checkpoint:
+        return None
+    gate = build_auto_completion_gate("继续制作 PPT", workspace)
+    if gate is None:
+        return None
+    gate = replace(
+        gate,
+        presentation_research_mode="deep" if has_research else "auto",
+    )
+    checkpoint = completion_gate_progress_text(gate, str(workspace))
+    if checkpoint and (
+        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}complete" in checkpoint
+    ):
+        return None
+    return gate
+
+
+def _bind_user_source_text(state: SessionState, user_request: str) -> None:
+    """Expose accumulated real user text to local provenance-aware tools.
+
+    The value is base64 encoded only to preserve arbitrary punctuation and
+    newlines across subprocess boundaries; it is not a secrecy mechanism.
+    """
+    request = user_request.strip()
+    if request:
+        state.source_text = (
+            f"{state.source_text.rstrip()}\n\n{request}"
+            if state.source_text.strip()
+            else request
+        )
+        if len(state.source_text) > _MAX_SOURCE_TEXT_ENV_CHARS:
+            state.source_text = state.source_text[-_MAX_SOURCE_TEXT_ENV_CHARS:]
+    encoded = base64.b64encode(state.source_text.encode("utf-8")).decode("ascii")
+    bash_tool = state.agent.tools.get("bash")
+    if bash_tool is not None and hasattr(bash_tool, "update_runtime_env"):
+        bash_tool.update_runtime_env({"BOX_AGENT_SOURCE_TEXT_B64": encoded})
 
 
 class BoxACPAgent:
@@ -731,16 +873,27 @@ class BoxACPAgent:
         self,
         matched_skill_names: tuple[str, ...],
         env_context: EnvContext | None,
+        user_text: str | None,
     ) -> list[str]:
-        return host_runtime_preload_skill_names(matched_skill_names, env_context)
+        return host_runtime_preload_skill_names(
+            matched_skill_names,
+            env_context,
+            user_text,
+        )
 
     def _turn_preload_skill_names(
         self,
         matched_skill_names: tuple[str, ...],
         completion_gate: CompletionGate | None,
         env_context: EnvContext | None,
+        user_text: str | None,
     ) -> list[str]:
-        return turn_preload_skill_names(matched_skill_names, completion_gate, env_context)
+        return turn_preload_skill_names(
+            matched_skill_names,
+            completion_gate,
+            env_context,
+            user_text,
+        )
 
     def _apply_auto_loaded_skills(
         self,
@@ -757,6 +910,7 @@ class BoxACPAgent:
             state.agent.system_prompt,
             skill_names,
             existing_skill_names=state.preloaded_skill_names,
+            existing_attributions=state.preloaded_skill_attributions,
             include_disabled=include_disabled,
         )
         for skill_name in result.missing_names:
@@ -764,6 +918,10 @@ class BoxACPAgent:
         state.preloaded_skill_names = list(result.loaded_names)
         state.preloaded_skill_hashes.clear()
         state.preloaded_skill_hashes.update(result.loaded_skill_hashes)
+        state.preloaded_skill_attributions = {
+            attribution.skill_name: attribution
+            for attribution in result.loaded_attributions
+        }
         self._sync_cache_fingerprint_context(state)
         if not result.loaded_names:
             return
@@ -1103,6 +1261,10 @@ class BoxACPAgent:
                 artifact_root_dir=output_dir,
                 env_context=env_context,
             )
+            system_prompt = (
+                f"{system_prompt.rstrip()}\n\n"
+                f"{build_image_generation_prompt(self._config)}"
+            )
         agent = Agent(
             llm_client=self._llm,
             system_prompt=system_prompt,
@@ -1369,6 +1531,7 @@ class BoxACPAgent:
         state.cancelled = False
         user_text = "\n".join(block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "") for block in params.prompt)
         plan_detection_text = _latest_user_request_for_plan_detection(user_text)
+        _bind_user_source_text(state, plan_detection_text)
         prompt_meta = getattr(params, "field_meta", None) or {}
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")
@@ -1486,7 +1649,7 @@ class BoxACPAgent:
             except Exception as exc:
                 log.warn("skills/filter_error", session_id=session_id, message=str(exc))
 
-        completion_gate = (
+        fresh_completion_gate = (
             None
             if state.artifact_mode == "project"
             else build_auto_completion_gate(
@@ -1494,11 +1657,54 @@ class BoxACPAgent:
                 state.agent.workspace_dir,
             )
         )
+        resume_pending_gate = (
+            state.pending_completion_gate is not None
+            and _should_resume_pending_completion_gate(
+                plan_detection_text,
+                waiting_for_user_input=state.waiting_for_user_input,
+            )
+        )
+        recovered_completion_gate = (
+            None
+            if state.artifact_mode == "project" or resume_pending_gate
+            else _recover_controlled_presentation_gate(
+                plan_detection_text,
+                state.agent.workspace_dir,
+            )
+        )
+        if resume_pending_gate:
+            completion_gate = state.pending_completion_gate
+            state.waiting_for_user_input = False
+            completion_gate_source = "resumed"
+        elif recovered_completion_gate is not None:
+            completion_gate = recovered_completion_gate
+            state.pending_completion_gate = recovered_completion_gate
+            state.waiting_for_user_input = False
+            completion_gate_source = "filesystem"
+        else:
+            completion_gate = fresh_completion_gate
+            completion_gate_source = "new"
+            if fresh_completion_gate is not None:
+                state.waiting_for_user_input = False
+                if (
+                    fresh_completion_gate.workflow_checkpoint_kind
+                    == "controlled_presentation"
+                ):
+                    state.pending_completion_gate = fresh_completion_gate
+                elif state.pending_completion_gate is not None:
+                    # A distinct deliverable request replaces the older pending
+                    # presentation. Terse continuations such as "输出 HTML" are
+                    # handled by the resume branch above.
+                    state.pending_completion_gate = None
+            elif _cancels_pending_completion_gate(plan_detection_text):
+                state.pending_completion_gate = None
+                state.waiting_for_user_input = False
         if completion_gate is not None:
             log.info(
                 "completion_gate/enabled",
                 session_id=session_id,
                 patterns=",".join(completion_gate.required_changed_artifact_globs),
+                source=completion_gate_source,
             )
 
         if state.skill_selector is not None:
@@ -1506,6 +1712,7 @@ class BoxACPAgent:
                 state.skill_selector.matched_skill_names,
                 completion_gate,
                 state.env_context,
+                plan_detection_text,
             )
             if preload_names:
                 self._apply_auto_loaded_skills(state, session_id, preload_names)
@@ -1600,6 +1807,31 @@ class BoxACPAgent:
             state.turn_active = False
             turn_meter = get_token_meter()
             reset_token_meter(meter_token)
+        if (
+            completion_gate is not None
+            and completion_gate.workflow_checkpoint_kind
+            == "controlled_presentation"
+        ):
+            remaining_gaps = completion_gate_gaps(
+                completion_gate,
+                set(),
+                state.agent.workspace_dir,
+            )
+            if remaining_gaps:
+                state.pending_completion_gate = completion_gate
+                log.info(
+                    "completion_gate/pending",
+                    session_id=session_id,
+                    gap_count=len(remaining_gaps),
+                    waiting_for_user=state.waiting_for_user_input,
+                )
+            else:
+                state.pending_completion_gate = None
+                state.waiting_for_user_input = False
+                log.info(
+                    "completion_gate/complete",
+                    session_id=session_id,
+                )
         turn_total_tokens = turn_meter.total_tokens if turn_meter else 0
         duration_ms = int((perf_counter() - prompt_start) * 1000)
 
@@ -2215,6 +2447,8 @@ class BoxACPAgent:
             preloaded_skill_name = preloaded_skill_name.strip()
             if preloaded_skill_name and preloaded_skill_name not in used_skill_names:
                 used_skill_names.append(preloaded_skill_name)
+        skill_invocations: list[dict[str, Any]] = []
+        recorded_skill_invocation_ids: set[str] = set()
         used_tool_counts: dict[str, int] = {}
         used_mcp_tool_counts: dict[tuple[str, str], int] = {}
         turn_token_usage = {
@@ -2234,11 +2468,92 @@ class BoxACPAgent:
             value = value.strip()
             return value or None
 
+        def _record_skill_invocation(
+            skill_name: str,
+            activation_source: str,
+            *,
+            usage_role: str = "primary",
+            dependency_of: str | None = None,
+        ) -> dict[str, Any] | None:
+            invocation_key = "\x1f".join(
+                (
+                    billing_session_id or state.upstream_session_id or session_id,
+                    turn_id,
+                    skill_name,
+                )
+            )
+            invocation_id = f"skill_{sha256(invocation_key.encode('utf-8')).hexdigest()[:32]}"
+            if invocation_id in recorded_skill_invocation_ids:
+                return None
+
+            invocation: dict[str, Any] = {
+                "invocationId": invocation_id,
+                "skillName": skill_name,
+                "activationSource": activation_source,
+                "status": "succeeded",
+                "usageRole": usage_role,
+            }
+            if usage_role == "dependency" and dependency_of:
+                invocation["dependencyOf"] = dependency_of
+
+            if self._skill_loader is not None:
+                skill = self._skill_loader.get_skill(
+                    skill_name,
+                    include_disabled=state.expert_context is not None,
+                )
+                # A broken SKILL.md returns a diagnostic from get_skill but does
+                # not activate usable instructions, so it is not a billable fact.
+                if skill is not None and skill.broken:
+                    return None
+                if skill is not None:
+                    invocation["skillSource"] = skill.source
+                    raw_version = (
+                        skill.metadata.get("version")
+                        if isinstance(skill.metadata, dict)
+                        else None
+                    )
+                    if isinstance(raw_version, (str, int, float)) and not isinstance(
+                        raw_version, bool
+                    ):
+                        skill_version = str(raw_version).strip()
+                        if skill_version:
+                            invocation["skillVersion"] = skill_version
+                    if skill.skill_path is not None:
+                        try:
+                            invocation["instructionDigest"] = sha256(
+                                skill.skill_path.read_bytes()
+                            ).hexdigest()
+                        except OSError:
+                            # Identity enrichment is best-effort. The successful
+                            # runtime activation remains the source of truth.
+                            pass
+
+            expert_context = state.expert_context
+            if expert_context is not None:
+                if expert_context.expert is not None:
+                    invocation["contextExpertId"] = expert_context.expert.id
+                if expert_context.team is not None:
+                    invocation["contextTeamId"] = expert_context.team.id
+
+            recorded_skill_invocation_ids.add(invocation_id)
+            skill_invocations.append(invocation)
+            return invocation
+
+        for preloaded_skill_name in used_skill_names:
+            attribution = state.preloaded_skill_attributions.get(preloaded_skill_name)
+            _record_skill_invocation(
+                preloaded_skill_name,
+                "preloaded",
+                usage_role=attribution.usage_role if attribution else "primary",
+                dependency_of=attribution.dependency_of if attribution else None,
+            )
+
         def _record_skill_usage(skill_name: str | None) -> dict[str, Any] | None:
             if not skill_name:
                 return None
             if skill_name not in used_skill_names:
                 used_skill_names.append(skill_name)
+            _record_skill_invocation(skill_name, "get_skill")
             return {
                 "type": "skills_usage",
                 "skills": list(used_skill_names),
@@ -2326,13 +2641,14 @@ class BoxACPAgent:
             )
             payload: dict[str, Any] = {
                 "type": "turn_usage",
-                "version": 1,
+                "version": 3,
                 "sessionId": billing_session_id or state.upstream_session_id or session_id,
                 "session_id": billing_session_id or state.upstream_session_id or session_id,
                 "acpSessionId": session_id,
                 "turnId": turn_id,
                 "turn_id": turn_id,
                 "skills": list(used_skill_names),
+                "skillInvocations": list(skill_invocations),
                 "tools": [
                     {"name": name, "count": count}
                     for name, count in used_tool_counts.items()
@@ -2602,6 +2918,13 @@ class BoxACPAgent:
                             log.info("tool/end", session_id=session_id, tool_call_id=tid, tool_name=tname, result=text, user_visible=user_visible)
                         else:
                             log.warn("tool/fail", session_id=session_id, tool_call_id=tid, tool_name=tname, error=err, user_visible=user_visible)
+                        if ok and tname == "request_user_input":
+                            state.waiting_for_user_input = True
+                            log.info(
+                                "completion_gate/waiting_for_user",
+                                session_id=session_id,
+                                tool_call_id=tid,
+                            )
                         _update_pending_plan_approval_from_raw(state, raw_output)
                         skill_usage_payload = (
                             _record_skill_usage(skill_name_by_tool_call_id.get(tid))

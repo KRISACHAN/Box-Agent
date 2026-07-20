@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
+const {
+  TRUTH_TEXT_MAX_CHARACTERS,
+  resolveArtifactPath,
+} = require("./deck_spec_core.js");
 
 function usage() {
-  console.error("Usage: validate_outline.js outline.json [--min-slides N] [--max-slides N]");
+  console.error(
+    "Usage: validate_outline.js outline.json [--min-slides N] " +
+    "[--max-slides N] [--report qa/outline_check.json]"
+  );
   process.exit(2);
 }
 
@@ -13,6 +20,7 @@ function parseArgs(argv) {
     outlinePath: argv[0],
     minSlides: 3,
     maxSlides: 40,
+    report: null,
   };
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -22,6 +30,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--max-slides" && value) {
       opts.maxSlides = Number(value);
+      i += 1;
+    } else if (arg === "--report" && value) {
+      opts.report = value;
       i += 1;
     } else {
       usage();
@@ -33,7 +44,7 @@ function parseArgs(argv) {
 }
 
 function readOutline(outlinePath) {
-  const resolved = path.resolve(outlinePath);
+  const resolved = resolveArtifactPath(outlinePath);
   if (!fs.existsSync(resolved)) {
     throw new Error(`Outline file not found: ${resolved}`);
   }
@@ -61,15 +72,50 @@ function includesAny(value, needles) {
   return needles.some(needle => normalized.includes(needle));
 }
 
+function numberTokens(value) {
+  return (String(value || "").match(/\d+(?:,\d{3})*(?:\.\d+)?%?/g) || [])
+    .map(token => {
+      const percent = token.endsWith("%");
+      const bare = token.replace(/,/g, "").replace(/%$/, "");
+      const numeric = Number(bare);
+      return `${Number.isFinite(numeric) ? numeric : bare}${percent ? "%" : ""}`;
+    });
+}
+
+function hasHttpUrl(value) {
+  return /https?:\/\/[^\s|]+/i.test(String(value || ""));
+}
+
+function isPublicResearchOutline(outline) {
+  const sourceMode = normalize(outline && outline.source_mode);
+  if (!sourceMode) return false;
+  if (includesAny(sourceMode, ["illustrative", "fictional", "hypothetical", "示意", "虚构"])) {
+    return false;
+  }
+  return includesAny(sourceMode, [
+    "public",
+    "research",
+    "authoritative",
+    "公开",
+    "研究",
+    "权威",
+  ]);
+}
+
 function hasEvidence(slide) {
   return Array.isArray(slide.evidence) && slide.evidence.some(item => text(item));
 }
 
+const ASSUMPTION_EVIDENCE_RE = /假设|示意|假定|assum(?:e|ed|ption)|illustrative|hypothetical/i;
+const MISSING_PRIVATE_FACT_RE = /未提供|未给出|待补充|待确认|缺失|未知|not\s+provided|not\s+supplied|missing|unknown|tbd/i;
+const PRIVATE_IDENTITY_FACT_RE = /(?:融资(?:阶段|轮次)|(?:种子|天使|成长)轮|pre[-\s]?a|series\s+[a-z]|[a-f]\s*轮|(?:公司|项目|产品)(?:名称|名为)|成立(?:年份|时间)|创始人|团队(?:成员姓名|姓名|履历|规模|人数|来源)|客户(?:名称|名单)|奖项|获奖|排名)/i;
+
 function validate(outline, opts) {
   const issues = [];
   const warnings = [];
+  const publicResearch = isPublicResearchOutline(outline);
 
-  for (const field of ["deck_goal", "audience", "storyline"]) {
+  for (const field of ["deck_goal", "audience", "storyline", "source_mode"]) {
     if (!text(outline[field])) issues.push(`Missing top-level field: ${field}`);
   }
 
@@ -88,6 +134,7 @@ function validate(outline, opts) {
 
   const seenTitles = new Map();
   const seenMessages = new Map();
+  const evidenceUsage = new Map();
   const dataHeavyTerms = [
     "market",
     "市场",
@@ -144,6 +191,30 @@ function validate(outline, opts) {
     "漏斗",
     "热力",
     "矩阵",
+    "规模图",
+    "曲线",
+    "环形",
+    "用途图",
+  ];
+  const chartWorthyTerms = [
+    "market",
+    "市场规模",
+    "tam",
+    "sam",
+    "som",
+    "growth",
+    "增长",
+    "traction",
+    "financial",
+    "财务",
+    "cost",
+    "成本",
+    "roi",
+    "benchmark",
+    "竞品",
+    "competition",
+    "chart",
+    "图表",
   ];
 
   slides.forEach((slide, index) => {
@@ -164,7 +235,7 @@ function validate(outline, opts) {
     }
 
     if (!Array.isArray(slide.bullets)) {
-      warnings.push(`${label}: bullets missing, consider adding 2-5 supporting points`);
+      issues.push(`${label}: bullets must be an array with 2-5 supporting points`);
     } else if (slide.bullets.length < 2) {
       warnings.push(`${label}: bullets has fewer than 2 items; add more substance`);
     } else if (slide.bullets.length > 5) {
@@ -173,6 +244,72 @@ function validate(outline, opts) {
 
     if (!Array.isArray(slide.evidence)) {
       issues.push(`${label}: evidence must be an array, use [] for non-evidence slides`);
+    } else {
+      if (publicResearch && slide.evidence.length === 0) {
+        issues.push(
+          `${label}: public-authoritative research requires at least one ` +
+          "claim | source | http(s) URL evidence item on every slide"
+        );
+      }
+      slide.evidence.forEach((item, evidenceIndex) => {
+        const key = normalize(item);
+        if (!key) return;
+        if (wordLikeLength(item) > TRUTH_TEXT_MAX_CHARACTERS) {
+          issues.push(
+            `${label}: evidence.${evidenceIndex} exceeds ` +
+            `${TRUTH_TEXT_MAX_CHARACTERS} characters; the scaffold imports each ` +
+            "evidence entry as one truth-contract fact, so split it into separate " +
+            "evidence items and keep the source URL on each item"
+          );
+        }
+        const labels = evidenceUsage.get(key) || [];
+        labels.push(label);
+        evidenceUsage.set(key, labels);
+        if (publicResearch && !hasHttpUrl(item)) {
+          issues.push(
+            `${label}: evidence.${evidenceIndex} must include the actual http(s) ` +
+            "source URL used for this public-research claim; do not relabel an " +
+            "unbound search snippet as official/authoritative evidence"
+          );
+        }
+        if (
+          ASSUMPTION_EVIDENCE_RE.test(String(item || ""))
+          && PRIVATE_IDENTITY_FACT_RE.test(String(item || ""))
+          && !MISSING_PRIVATE_FACT_RE.test(String(item || ""))
+        ) {
+          issues.push(
+            `${label}: evidence.${evidenceIndex} assumes a private identity fact ` +
+            "(such as a company/project name, financing round, founding/team/client " +
+            "fact, award, or ranking). Assumptions are allowed only for visibly " +
+            "disclosed illustrative metrics/scenarios; use 待补充, ask once, or omit " +
+            "this private fact"
+          );
+        }
+      });
+      if (publicResearch) {
+        const evidenceNumbers = new Set(numberTokens(slide.evidence.join(" ")));
+        const claimEntries = [
+          { path: "title", value: slide.title },
+          { path: "message", value: slide.message },
+          ...(Array.isArray(slide.bullets)
+            ? slide.bullets.map((value, bulletIndex) => ({
+              path: `bullets.${bulletIndex}`,
+              value,
+            }))
+            : []),
+        ];
+        claimEntries.forEach(entry => {
+          numberTokens(entry.value).forEach(token => {
+            if (!evidenceNumbers.has(token)) {
+              issues.push(
+                `${label}: ${entry.path} numeric literal ${JSON.stringify(token)} ` +
+                "is not present in this page's evidence; add an exact evidence fact " +
+                "or remove the unsupported/decorative number"
+              );
+            }
+          });
+        });
+      }
     }
 
     const title = text(slide.title);
@@ -203,14 +340,31 @@ function validate(outline, opts) {
 
     const combined = [slide.title, slide.message, slide.layout, slide.visual, slide.notes].map(text).join(" ");
     const isDataHeavy = includesAny(combined, dataHeavyTerms);
-    if (isDataHeavy && !hasEvidence(slide)) {
+    const isCoverLike = index === 0 || includesAny(
+      `${slide.layout || ""} ${slide.visual || ""}`,
+      ["cover", "封面"]
+    );
+    const chartWorthy = numberTokens(combined).length > 0
+      || includesAny(combined, chartWorthyTerms);
+    if (isDataHeavy && publicResearch && !hasEvidence(slide)) {
       warnings.push(`${label}: appears data/evidence-heavy but evidence is empty`);
     }
-    if (isDataHeavy && !includesAny(slide.visual, dataDisplayTerms)) {
+    if (
+      isDataHeavy
+      && !isCoverLike
+      && chartWorthy
+      && !includesAny(slide.visual, dataDisplayTerms)
+    ) {
       warnings.push(`${label}: appears data-heavy but visual does not name a chart/table/KPI/dashboard data display`);
     }
 
-    if (includesAny(message, [" and ", "；", ";", "、"]) && wordLikeLength(message) > 60) {
+    const quantitativeSummary = numberTokens(message).length >= 2
+      && includesAny(slide.visual, dataDisplayTerms);
+    if (
+      !quantitativeSummary
+      && includesAny(message, [" and ", "；", ";", "、"])
+      && wordLikeLength(message) > 60
+    ) {
       warnings.push(`${label}: message may contain multiple claims; consider splitting`);
     }
   });
@@ -219,6 +373,14 @@ function validate(outline, opts) {
   if (slides.length >= 6 && wordLikeLength(storyline) < 20) {
     warnings.push("storyline is very short for a multi-slide deck; make the narrative arc explicit");
   }
+  evidenceUsage.forEach(labels => {
+    if (labels.length > 2) {
+      warnings.push(
+        `evidence is reused across ${labels.length} slides (${labels.join(", ")}); ` +
+        "use distinct evidence or combine repetitive pages"
+      );
+    }
+  });
 
   return { ok: issues.length === 0, issues, warnings, slideCount: slides.length };
 }
@@ -228,7 +390,13 @@ function main() {
   const { outline, resolved } = readOutline(opts.outlinePath);
   const result = validate(outline, opts);
   const output = { ...result, outline: resolved };
-  console.log(JSON.stringify(output, null, 2));
+  const outputText = JSON.stringify(output, null, 2);
+  if (opts.report) {
+    const reportPath = resolveArtifactPath(opts.report);
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(reportPath, `${outputText}\n`);
+  }
+  console.log(outputText);
   if (!result.ok) process.exit(1);
 }
 

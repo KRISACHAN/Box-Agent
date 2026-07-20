@@ -1,4 +1,4 @@
-"""Image generation tool backed by a host-provided HTTP service."""
+"""Image generation tool backed by the configured Box-Agent image service."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import mimetypes
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 import httpx
 
@@ -34,6 +34,17 @@ _TIMEOUT_ENV = "BOX_AGENT_IMAGE_GENERATION_TIMEOUT"
 _DEFAULT_TIMEOUT = 120.0
 _MIN_IMAGE_DIMENSION = 1024
 _MIN_OPENAI_IMAGE_PIXELS = _MIN_IMAGE_DIMENSION * _MIN_IMAGE_DIMENSION
+_HOST_IMAGE_DIMENSION_ALIGNMENT = 16
+_CANONICAL_IMAGE_RATIOS: tuple[tuple[int, int], ...] = (
+    (1, 1),
+    (16, 9),
+    (9, 16),
+    (4, 3),
+    (3, 4),
+    (3, 2),
+    (2, 3),
+    (21, 9),
+)
 _SEEDREAM_PRESETS: dict[tuple[int, int], list[tuple[int, int]]] = {
     (1, 1): [(2048, 2048), (3072, 3072), (4096, 4096)],
     (3, 4): [(1728, 2304), (2592, 3456), (3520, 4704)],
@@ -66,6 +77,7 @@ _URL_IMAGE_KEYS = ("url", "image_url", "imageUrl", "image_urls", "imageUrls", "o
 _NESTED_IMAGE_KEYS = ("data", "images", "output", "outputs", "result", "results")
 _EDIT_ENDPOINT_SUFFIXES = ("/images/gen", "/images/generations")
 _OPENAI_IMAGE_ENDPOINT_HINTS = ("/images/gen", "/images/generations", "/images/edits")
+_HOST_ALIGNED_IMAGE_ENDPOINT_SUFFIXES = ("/images/gen",)
 _IMAGE_EDIT_MODES = {"image_to_image", "edit", "image_edit"}
 
 
@@ -104,6 +116,21 @@ def _seedream_size_for_ratio(width: int, height: int) -> tuple[str, int, int]:
 def _first_env(names: tuple[str, ...]) -> str:
     for name in names:
         value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def resolve_image_generation_endpoint(
+    endpoint: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    configured = str(endpoint or "").strip()
+    if configured:
+        return configured
+    source = os.environ if env is None else env
+    for name in _ENDPOINT_ENV:
+        value = str(source.get(name, "") or "").strip()
         if value:
             return value
     return ""
@@ -201,6 +228,74 @@ def _is_openai_image_service(endpoint: str | None) -> bool:
     return any(normalized.endswith(suffix) for suffix in _OPENAI_IMAGE_ENDPOINT_HINTS)
 
 
+def _is_host_aligned_image_service(endpoint: str | None) -> bool:
+    normalized = (endpoint or "").strip().lower().rstrip("/")
+    return any(
+        normalized.endswith(suffix)
+        for suffix in _HOST_ALIGNED_IMAGE_ENDPOINT_SUFFIXES
+    )
+
+
+def _round_up_to_alignment(value: float) -> int:
+    return (
+        math.ceil(value / _HOST_IMAGE_DIMENSION_ALIGNMENT)
+        * _HOST_IMAGE_DIMENSION_ALIGNMENT
+    )
+
+
+def _normalize_host_image_size(width: int, height: int) -> tuple[str, int, int]:
+    """Preserve common ratios while satisfying the host image API constraints."""
+    width = max(int(width), 1)
+    height = max(int(height), 1)
+
+    for ratio_width, ratio_height in _CANONICAL_IMAGE_RATIOS:
+        if width * ratio_height != height * ratio_width:
+            continue
+        width_alignment_factor = _HOST_IMAGE_DIMENSION_ALIGNMENT // math.gcd(
+            ratio_width,
+            _HOST_IMAGE_DIMENSION_ALIGNMENT,
+        )
+        height_alignment_factor = _HOST_IMAGE_DIMENSION_ALIGNMENT // math.gcd(
+            ratio_height,
+            _HOST_IMAGE_DIMENSION_ALIGNMENT,
+        )
+        ratio_multiplier = math.lcm(
+            width_alignment_factor,
+            height_alignment_factor,
+        )
+        unit_width = ratio_width * ratio_multiplier
+        unit_height = ratio_height * ratio_multiplier
+        units = max(
+            1,
+            math.ceil(width / unit_width),
+            math.ceil(height / unit_height),
+            math.ceil(
+                math.sqrt(
+                    _MIN_OPENAI_IMAGE_PIXELS / float(unit_width * unit_height)
+                )
+            ),
+        )
+        normalized_width = unit_width * units
+        normalized_height = unit_height * units
+        return (
+            f"{normalized_width}x{normalized_height}",
+            normalized_width,
+            normalized_height,
+        )
+
+    scale = max(
+        1.0,
+        math.sqrt(_MIN_OPENAI_IMAGE_PIXELS / float(width * height)),
+    )
+    normalized_width = _round_up_to_alignment(width * scale)
+    normalized_height = _round_up_to_alignment(height * scale)
+    return (
+        f"{normalized_width}x{normalized_height}",
+        normalized_width,
+        normalized_height,
+    )
+
+
 def _normalize_explicit_size(size: str) -> tuple[str, int, int]:
     match = _SIZE_RE.match(size)
     if not match:
@@ -270,7 +365,7 @@ class GenerateImageTool(Tool):
         self.output_dir = Path(output_dir).absolute() if output_dir else self.workspace_dir
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
-        self.endpoint = endpoint or _first_env(_ENDPOINT_ENV)
+        self.endpoint = resolve_image_generation_endpoint(endpoint)
         self.api_key = api_key if api_key is not None else _first_env(_API_KEY_ENV)
         self.model = model or _DEFAULT_MODEL
         self.auth_file = auth_file or ""
@@ -283,12 +378,16 @@ class GenerateImageTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Generate or edit a bitmap image with the host-configured image service, save it inside "
+            "Standard Box-Agent image tool shared by CLI and ACP. Generate or edit a bitmap image "
+            "with the Box-Agent-configured image service, save it inside "
             "the active project/artifact root, and return a local path for use in HTML/PPTX assets. "
-            "Use text-to-image when the user "
+            "For explicit native image, illustration, poster, cover, or bitmap infographic requests, "
+            "prefer this tool over HTML/CSS, SVG, PIL, or screenshot generation unless the user asks "
+            "for one of those editable/rendered formats. Use text-to-image when the user "
             "asks for a new image. Use image-to-image with reference_images when the user asks to modify, "
             "redraw, restyle, or preserve a supplied image/logo/sketch. Use for PPT image_plan items marked "
-            "`generate`. If the service is not configured, report the blocked image generation instead of "
+            "`generate`. If the user forbids fallback and this tool fails, report the request as blocked. "
+            "If the service is not configured, report the blocked image generation instead of "
             "pretending an asset exists. Configuration: image_generation.endpoint in config.yaml; optional "
             "image_generation.api_key for a dedicated bearer token. Environment overrides are also supported."
         )
@@ -415,7 +514,10 @@ class GenerateImageTool(Tool):
             requested_width = width
             requested_height = height
             if size and size.strip():
-                if _is_openai_image_service(self.endpoint):
+                if _is_host_aligned_image_service(self.endpoint):
+                    _, width, height = _normalize_explicit_size(size)
+                    size, width, height = _normalize_host_image_size(width, height)
+                elif _is_openai_image_service(self.endpoint):
                     size, width, height = _normalize_openai_explicit_size(size)
                 else:
                     size, width, height = _normalize_explicit_size(size)
@@ -423,7 +525,10 @@ class GenerateImageTool(Tool):
                 size, width, height = _seedream_size_for_ratio(width, height)
             else:
                 if not size or not size.strip():
-                    size, width, height = _openai_image_size(width, height)
+                    if _is_host_aligned_image_service(self.endpoint):
+                        size, width, height = _normalize_host_image_size(width, height)
+                    else:
+                        size, width, height = _openai_image_size(width, height)
 
             target = self._resolve_output_path(output_path)
             permission_error = self._check_write_permission(target)

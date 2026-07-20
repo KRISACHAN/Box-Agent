@@ -446,6 +446,9 @@ async function main() {
       return {
         slideCount: slideElements.length,
         bytes: blob.size,
+        nativeChartCount: document.querySelectorAll(
+          '[data-pptx-chart][data-native-chart="true"]'
+        ).length,
       };
     },
     { fileName: path.basename(pptxPath), svgVector: opts.svgVector }
@@ -459,6 +462,7 @@ async function main() {
         pptx: pptxPath,
         slideCount: exportResult.slideCount,
         bytes: exportResult.bytes,
+        nativeChartCount: exportResult.nativeChartCount,
         previews,
         htmlSelfCheck: selfCheckReport,
         editableExport: "dom-to-pptx",

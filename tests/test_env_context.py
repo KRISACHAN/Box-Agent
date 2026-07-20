@@ -250,8 +250,8 @@ def test_browser_policy_uses_playwright_when_connector_missing() -> None:
     out = build_env_context_prompt(ctx)
 
     assert "当前只有 Playwright 可用或连接器未连接" in out
-    assert "必须使用 Playwright" in out
-    assert "不要因为连接器更适合而要求用户先安装或连接插件" in out
+    assert "不依赖真实浏览器状态" in out
+    assert "不要假装 Playwright 继承了这些状态" in out
     assert "extension_not_connected" in out
 
 
@@ -266,7 +266,8 @@ def test_browser_policy_prefers_playwright_when_both_missing() -> None:
     out = build_env_context_prompt(ctx)
 
     assert "当前两类浏览器能力都不可用" in out
-    assert "优先引导用户启用 Playwright" in out
+    assert "普通公开网页或隔离自动化任务" in out
+    assert "连接真实浏览器扩展" in out
 
 
 def test_browser_policy_distinguishes_both_available() -> None:
@@ -282,6 +283,28 @@ def test_browser_policy_distinguishes_both_available() -> None:
     assert "两者都可用" in out
     assert "普通公开网页" in out
     assert "当前页" in out
+    assert "必须按页面上下文选择" in out
+    assert "browser_connector_click" in out
+    assert "同一操作链必须保持同一后端" in out
+    assert "browser_connector_submit" in out
+    assert "standalone Playwright MCP tools" in out
+    assert "source_preference:playwright" in out
+    assert "browser_connector" in out
+
+
+def test_browser_policy_connector_only_supports_allowlisted_actions() -> None:
+    ctx = EnvContext.from_meta(
+        {
+            "browser_tools": {"installed": False, "enabled": False, "available": False},
+            "browser_connector": {"enabled": True, "connected": True, "available": True},
+        }
+    )
+
+    out = build_env_context_prompt(ctx)
+
+    assert "当前只有真实浏览器连接器可用" in out
+    assert "snapshot、点击、填写和经确认的提交" in out
+    assert "截图、任意脚本、文件上传、网络检查" in out
 
 
 def test_prompt_renders_image_service_available() -> None:
@@ -293,6 +316,7 @@ def test_prompt_renders_image_service_available() -> None:
     assert "生图服务状态" in out
     assert "可用" in out
     assert "generate_image" in out
+    assert "以 Box-Agent 自身" in out
 
 
 def test_prompt_renders_image_service_unavailable() -> None:
@@ -301,6 +325,8 @@ def test_prompt_renders_image_service_unavailable() -> None:
     out = build_env_context_prompt(ctx)
     assert "生图服务状态" in out
     assert "不可用" in out
+    assert "以 Box-Agent 自身" in out
+    assert "不要计划调用" not in out
 
 
 def test_prompt_renders_hyperframes_available_policy() -> None:

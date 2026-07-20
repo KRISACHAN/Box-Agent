@@ -5,8 +5,8 @@ Two trigger scenarios:
 
 * ``onboarding``: the user's MEMORY.md is scarce (very short, or contains no
   identity hint such as a name).
-* ``browser-tools``: the user is asking about browser automation / web
-  scraping but the Playwright MCP server is missing or disabled.
+* ``browser-tools``: the user needs a capability that the available browser
+  backend cannot provide and the Playwright MCP server is missing or disabled.
 
 The model decides at generation time *whether* a hint fits the conversation;
 this module only injects the contract and lists which tabs are eligible for
@@ -116,9 +116,10 @@ def build_action_hints_prompt(
         )
     if playwright_unavailable:
         rules.append(
-            "- 用户提出需要浏览器操作的需求（打开网页、抓取页面、截图、自动化点击、Playwright 等），"
-            '但当前会话没有可用的 Playwright 基础浏览器工具时 → 使用 `"tab": "browser-tools"`，'
-            "优先引导用户启用 Playwright；真实浏览器连接器只作为当前页/登录态页面读取的增强项。"
+            "- 用户提出不依赖当前真实浏览器状态的自动化测试、截图、网络检查、批量网页操作等需求，"
+            '但当前会话没有可用的 Playwright 工具时 → 使用 `"tab": "browser-tools"`，引导用户启用 Playwright。'
+            "若需求依赖当前页、登录态或内网，且连接器读取工具或 `browser_connector_*` 动作可用，"
+            "应直接使用连接器，不要仅因 Playwright 缺失就输出该提示。"
         )
 
     if not rules:

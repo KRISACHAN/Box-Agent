@@ -1,12 +1,28 @@
 # PPTX QA Reference
 
-Use this checklist after creating or editing a `.pptx`.
+Use the applicable part of this checklist after creating a controlled HTML deck
+or creating/editing a `.pptx` export.
 
 ## Required Checks
 
 Keep every temporary report, helper script, extracted text file, and rendered
-image inside the current workspace or requested output folder. Do not write to
-`/tmp`, `/var/tmp`, or another absolute temp path.
+image inside the current canonical delivery root selected by the runtime. Do
+not add another `output/` prefix, and do not write to `/tmp`, `/var/tmp`, or an
+unrelated absolute temp path.
+
+For the default controlled HTML route, validate the semantic source before any
+optional PPTX checks: `qa/outline_check.json`, `qa/deck_contract.json`,
+`qa/deck_spec.json`, `qa/truth_check.json`, `qa/image_manifest.json`,
+`qa/html_self_check.json`, and `qa/runtime_probe.json` must exist and pass. Run
+self-check against `index.html`.
+`deck_spec` also verifies bound `outline_intent`: every contract-v2 page keeps
+the exact outline title/message/layout/visual metadata, uses a compatible
+registered layout, and honors explicit visual counts such as three stages,
+four tags, four milestones, or four quadrants. A schema-valid deck that fails
+this semantic check is not complete.
+If a truth/spec issue class repeats twice, stop automatic repair and follow the
+missing-fact/authorized-assumption rules in `SKILL.md`; never rewrite
+scaffolded `source_facts`/`research_facts` or bypass the failed report.
 
 For HTML-first decks exported with `scripts/html_to_editable_pptx.js` and
 `dom-to-pptx`, inspect both the source HTML preview PNGs and the rendered PPTX
@@ -17,7 +33,7 @@ Editable export can reflow text, shift layers, or lose CSS effects, so source
 previews alone are not enough.
 
 0. HTML self-check for HTML-first decks:
-   - Run `${BOX_AGENT_NODE:-node} scripts/html_self_check.js deck.html --dom-to-pptx --allow-local-images --report qa/html_self_check.json` before export, or rely on `scripts/html_to_editable_pptx.js` which writes the same check internally.
+   - Run `${BOX_AGENT_NODE:-node} scripts/html_self_check.js index.html --dom-to-pptx --allow-local-images --report qa/html_self_check.json` for controlled decks before export (use `deck.html` only on the legacy/custom route), or rely on `scripts/html_to_editable_pptx.js` which writes the same check internally.
    - Always use the stricter `--dom-to-pptx` compatibility profile for new HTML-first decks.
    - Confirm every `.slide` reports exactly `1920x1080` unless the user explicitly requested a nonstandard output size.
    - Confirm `qa/html_self_check.json` exists, is non-empty, and has `"ok": true`. If it is missing, report HTML self-check as `BLOCKED`.

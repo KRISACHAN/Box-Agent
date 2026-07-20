@@ -128,14 +128,14 @@ image_generation:
   # auth_file defaults to the top-level auth_file / auth.json next to config.yaml.
   # auth_file: "/path/to/auth.json"
 #
-# Environment variables remain supported for host/runtime overrides:
+# Environment variables remain supported as process-level overrides in CLI and ACP:
 # BOX_AGENT_IMAGE_GENERATION_ENDPOINT, BOX_AGENT_IMAGE_GENERATION_API_KEY,
 # BOX_AGENT_IMAGE_GENERATION_TIMEOUT, BOX_AGENT_IMAGE_GEN_ENDPOINT,
 # BOX_AGENT_IMAGE_GEN_API_KEY.
-# Explicit `size` values are usually forwarded as-is, but OpenAI-style
-# `/images/gen` / `/images/generations` endpoints are first normalized to avoid
-# undersized requests. Doubao/Seedream models still map width/height to their
-# supported presets when no exact passthrough size is requested.
+# Explicit `size` values are usually forwarded as-is. The standard hosted
+# `/images/gen` endpoint preserves common aspect ratios while scaling to the
+# minimum pixel budget and aligning both dimensions to 16. OpenAI
+# `/images/generations` and Doubao/Seedream keep their provider-specific rules.
 
 # ===== officev3 Permission Settings =====
 # Optional. Only honored when this whole block is present in the loaded

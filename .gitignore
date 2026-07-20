@@ -46,6 +46,11 @@ graphify-out
 workspace/
 *.log
 
+# Local test, browser, and rendered-artifact output
+output/
+.playwright-cli/
+.pytest_cache/
+
 # OS
 .DS_Store
 Thumbs.db

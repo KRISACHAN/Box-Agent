@@ -250,9 +250,9 @@ class BrowserToolsState(BaseModel):
 class BrowserConnectorState(BaseModel):
     """Whether the real-browser connector extension is usable.
 
-    The connector is a read-only enhancement for the user's real browser
-    context. It is separate from Playwright automation: an enabled gateway is
-    not enough if the extension is not connected or is paused.
+    The connector can read and perform allowlisted actions in the user's real
+    browser context. It is separate from Playwright automation: an enabled
+    gateway is not enough if the extension is not connected or is paused.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -264,12 +264,11 @@ class BrowserConnectorState(BaseModel):
 
 
 class ImageServiceState(BaseModel):
-    """Whether the host-side image generation service is reachable.
+    """Legacy host advisory about image generation reachability.
 
-    ``available`` signals that the model may call ``generate_image`` and
-    expect a usable bitmap back. Hosts that have not wired up an image
-    backend should pass ``available=False`` so the model falls back to
-    HTML/CSS/icons instead of planning unreachable generate calls.
+    This field is retained for protocol compatibility but is not authoritative.
+    The standard ``generate_image`` capability is owned by Box-Agent and reads
+    its own ``image_generation`` config in both CLI and ACP modes.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -478,30 +477,47 @@ def _format_browser_capability_policy(
         connector_available = _state_available(browser_connector.available, fallback)
 
     lines = [
-        "- 浏览器能力策略：Playwright 是基础网页能力，真实浏览器连接器是读取用户真实浏览器上下文的增强能力。"
+        "- 浏览器能力策略：Playwright 是隔离网页自动化通道；真实浏览器连接器是用户当前浏览器上下文的读写通道。"
+        "必须按页面上下文选择，而不是按点击/填写等动作类型选择。"
     ]
     if playwright_available and connector_available:
         lines.append(
-            "  - 两者都可用：普通公开网页、后台打开、点击、填写、截图、页面结构/网络检查等自动化任务优先使用 Playwright；"
-            "当前页、用户已登录页面、内网页、公众号等需要真实浏览器上下文的只读任务优先使用连接器。"
+            "  - 两者都可用：用户提到“当前页/这个页面/帮我翻页”，或任务依赖现有登录、Cookie、内网、公众号等"
+            "真实浏览器状态时，使用连接器读取工具以及 `browser_connector_snapshot`、`browser_connector_click`、"
+            "`browser_connector_fill`、`browser_connector_submit`；"
+            "普通公开网页、批量采集、自动化测试、截图、页面结构/网络检查等不依赖用户浏览器状态的任务使用 Playwright。"
         )
     elif playwright_available:
         lines.append(
-            "  - 当前只有 Playwright 可用或连接器未连接：凡是 Playwright 能完成的网页任务必须使用 Playwright；"
-            "不要因为连接器更适合而要求用户先安装或连接插件。"
+            "  - 当前只有 Playwright 可用或连接器未连接：不依赖真实浏览器状态的网页任务使用 Playwright；"
+            "若任务明确依赖当前页、既有登录或内网状态，应说明连接器不可用，不要假装 Playwright 继承了这些状态。"
         )
     elif connector_available:
         lines.append(
-            "  - 当前只有真实浏览器连接器可用：可用于只读读取当前页或链接；需要点击、填写、截图、自动化时提示用户启用 Playwright。"
+            "  - 当前只有真实浏览器连接器可用：可读取当前页或链接，并执行允许的 snapshot、点击、填写和经确认的提交；"
+            "截图、任意脚本、文件上传、网络检查和独立批量自动化仍需 Playwright。"
         )
     else:
         lines.append(
-            "  - 当前两类浏览器能力都不可用：优先引导用户启用 Playwright 浏览器工具；"
-            "连接器只作为当前页、登录态页面、内网页读取的增强项。"
+            "  - 当前两类浏览器能力都不可用：普通公开网页或隔离自动化任务引导用户启用 Playwright；"
+            "依赖当前页、登录态或内网状态的任务引导用户连接真实浏览器扩展。"
         )
     lines.append(
-        "  - 如果连接器工具返回 `extension_not_connected`，且 Playwright 可用且任务有普通公开 URL，改用 Playwright；"
-        "不要把插件未连接作为普通网页任务的终点。"
+        "  - 用户明确指定 Playwright 或真实浏览器时，优先遵从。选定后同一操作链必须保持同一后端："
+        "`browser_connector_snapshot` 的 ref 只能交给 `browser_connector_*` 动作，Playwright snapshot/ref 只能交给 Playwright 工具。"
+    )
+    lines.append(
+        "  - 真实浏览器中的翻页、展开、切换等低风险操作可在用户明确要求后执行；填写不等于提交；"
+        "发送、发布、购买、删除等有外部副作用的提交必须先获得本次操作的明确确认，再调用 `browser_connector_submit`。"
+    )
+    lines.append(
+        "  - 如果连接器返回 `extension_not_connected`：仅当任务不依赖真实浏览器状态且有普通公开 URL 时才改用 Playwright；"
+        "依赖当前页、登录态或内网状态时不得静默切换，应提示用户连接扩展。"
+    )
+    lines.append(
+        "  - 这里的 Playwright 指 standalone Playwright MCP tools；不要把浏览器网关的 "
+        "`source_preference:playwright` 当作替代。调用浏览器网关的读取工具时使用 `auto` 或 "
+        "`browser_connector`；`browser_connector_*` 动作始终操作真实浏览器。只有实际提供的 Playwright MCP 工具才走 Playwright。"
     )
     return lines
 
@@ -509,8 +525,11 @@ def _format_browser_capability_policy(
 def _format_image_service(state: ImageServiceState) -> list[str]:
     if state.available is None:
         return []
-    label = "可用（可调用 generate_image）" if state.available else "不可用（不要计划调用 generate_image，请改用 HTML/CSS/图标）"
-    return [f"- 生图服务状态：{label}"]
+    label = "可用" if state.available else "不可用"
+    return [
+        f"- 生图服务状态（宿主兼容信息）：{label}；"
+        "`generate_image` 标准能力以 Box-Agent 自身 `image_generation` 配置为准。"
+    ]
 
 
 def _format_hyperframes(state: HyperFramesState) -> list[str]:

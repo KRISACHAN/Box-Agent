@@ -9,7 +9,10 @@ Box-Agent 使用 Understand Anything 作为本地架构索引，用于代码导�
 共享分析范围由
 [`../.understand-anything/.understandignore`](../.understand-anything/.understandignore)
 定义。当前配置包含核心运行时、ACP 适配层、工具、配置、示例和文档；同时排除内置
-skill 资源、测试、workspace、虚拟环境和生成产物，使图谱聚焦产品架构。
+skill 资源、测试、workspace、虚拟环境和生成产物，使图谱聚焦产品架构。受控 PPTX
+编译器 `box_agent/skills/document-skills/pptx/` 是明确例外：其 DeckDocument、主题与
+构图解析、布局注册表、HTML runtime 和架构文档会进入共享图谱；其中 vendored runtime
+与生成 bundle 仍然排除。
 
 Git 中只应提交以下共享文件：
 

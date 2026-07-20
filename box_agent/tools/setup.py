@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Mapping, Optional
 
 from box_agent.config import Config
 from box_agent.tools.base import Tool
@@ -22,7 +22,10 @@ from box_agent.tools.file_tools import (
     ReadTool,
     WriteTool,
 )
-from box_agent.tools.image_generation_tool import GenerateImageTool
+from box_agent.tools.image_generation_tool import (
+    GenerateImageTool,
+    resolve_image_generation_endpoint,
+)
 from box_agent.tools.jupyter_tool import (
     JupyterSandboxTool,
     MAX_EXECUTE_CODE_CHARS,
@@ -33,6 +36,7 @@ from box_agent.tools.mcp_loader import load_mcp_tools_async, set_mcp_timeout_con
 from box_agent.tools.memory_tool import MemoryReadTool, MemorySearchTool, MemoryWriteTool
 from box_agent.tools.obsidian_tool import create_obsidian_tools
 from box_agent.tools.plan_tool import PlanReadTool, PlanStore, PlanWriteTool
+from box_agent.tools.request_user_input_tool import RequestUserInputTool
 from box_agent.tools.runtime import SkillRuntimeContext, build_skill_runtime_context
 from box_agent.tools.mcp_config_tool import McpConfigTool
 from box_agent.tools.schedule_tool import CreateScheduledTaskTool
@@ -102,6 +106,40 @@ def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
     return (
         "- **目录**：这是现有项目工作区。交付物可以在项目树中合适的位置；不要默认创建或使用 `output/`。\n"
         "- **桌面交付**：完成后说明文件名和项目内相对位置即可。宿主会根据文件变更渲染可验证的文件入口。"
+    )
+
+
+def image_generation_service_configured(
+    config: Config,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """Return the standard Box-Agent image service state for CLI and ACP."""
+    image_config = getattr(config, "image_generation", None)
+    configured_endpoint = getattr(image_config, "endpoint", "") or None
+    return bool(resolve_image_generation_endpoint(configured_endpoint, env))
+
+
+def build_image_generation_prompt(
+    config: Config,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Build the image-generation policy shared by CLI and ACP sessions."""
+    configured = image_generation_service_configured(config, env)
+    status = (
+        "已配置，可以调用 `generate_image`。"
+        if configured
+        else "未配置；调用失败时必须如实报告阻塞，不得假装已生成图片。"
+    )
+    return (
+        "## Native Image Generation\n\n"
+        "- `generate_image` 是 Box-Agent 的标准工具，CLI 与 ACP 共用；"
+        "是否可用只由 Box-Agent 自身的 `image_generation.endpoint` 或对应环境变量决定，"
+        "不由宿主 `env_context` 控制。\n"
+        f"- 当前生图服务：{status}\n"
+        "- 用户明确要求生图、生成新图片、插画、海报或位图信息图，且没有要求可编辑 HTML 时，"
+        "优先调用 `generate_image`。\n"
+        "- 用户明确禁止 HTML/CSS/SVG、PIL 或截图回退时，`generate_image` 失败后必须如实报告阻塞，"
+        "不得擅自改用这些路径。"
     )
 
 
@@ -421,6 +459,14 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
 
     # Relative tool paths use the project root or the active artifact root.
     runtime_context = skill_runtime_context or build_skill_runtime_context(sandbox_mode=sandbox_mode)
+    runtime_env = runtime_context.env()
+    if artifact_root is not None:
+        # Make the canonical delivery root available to subprocess-backed
+        # skills even when a generated command unnecessarily changes cwd.
+        # File tools and generate_image already resolve relative paths from
+        # this directory; exposing the same root keeps shell authoring on the
+        # identical boundary.
+        runtime_env["BOX_AGENT_OUTPUT_DIR"] = str(artifact_root)
     if config.tools.enable_bash:
         sandbox_venv_path = None
         if sandbox_mode and not getattr(sys, "frozen", False):
@@ -432,7 +478,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             non_interactive=non_interactive,
             sandbox_venv_path=sandbox_venv_path,
             permission_engine=permission_engine,
-            runtime_env=runtime_context.env(),
+            runtime_env=runtime_env,
         )
         tools.append(bash_tool)
         _out(f"{Colors.GREEN}✅ Loaded Bash tool (cwd: {relative_root}){Colors.RESET}")
@@ -486,6 +532,12 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         tools.append(PlanReadTool(store))
         _out(f"{Colors.GREEN}✅ Loaded plan tools (plan_write, plan_read){Colors.RESET}")
 
+    # Structured clarification pause. The core completion gate recognizes this
+    # tool as a resumable wait state instead of forcing the model to fabricate
+    # missing facts or abandon an in-progress artifact workflow.
+    tools.append(RequestUserInputTool())
+    _out(f"{Colors.GREEN}✅ Loaded user-input request tool{Colors.RESET}")
+
     # Jupyter sandbox tool - Python code execution environment
     if sandbox_mode:
         sandbox_tool = JupyterSandboxTool(
@@ -515,7 +567,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         )
         _out(f"{Colors.GREEN}✅ Loaded vision review tool (vision_review){Colors.RESET}")
 
-    # Image generation tool — saves host-generated bitmap assets into the workspace
+    # Image generation tool — standard Box-Agent capability shared by CLI and ACP
     image_generation_config = getattr(config, "image_generation", None)
     tools.append(
         GenerateImageTool(

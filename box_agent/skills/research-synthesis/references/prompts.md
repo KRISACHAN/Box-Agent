@@ -19,6 +19,10 @@ Search requirements:
   original company or government materials.
 - Avoid content farms, anonymous blogs, and SEO aggregators.
 - Perform varied coarse-to-fine searches; do not recycle one keyword pattern.
+- Before another batch, state the uncovered evidence gap it will resolve. Do not
+  retry a near-equivalent entity/fact query just because a `site:` or authority-
+  ranked variant returned no results; use an exact known first-party URL or mark
+  the gap unresolved.
 
 Output path: [workspace]/research/[topic]_wide[NN].md
 Output format:

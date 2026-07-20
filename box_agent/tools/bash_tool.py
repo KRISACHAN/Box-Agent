@@ -504,6 +504,21 @@ class BashTool(Tool):
         if runtime_env:
             self._subprocess_env.update(runtime_env)
 
+    def update_runtime_env(self, values: dict[str, str | None]) -> None:
+        """Update environment values inherited by future subprocesses.
+
+        ACP uses this for turn-scoped provenance such as the accumulated user
+        source text.  Existing commands are unaffected; only subprocesses
+        created after this call inherit the new values.
+        """
+        if self._subprocess_env is None:
+            self._subprocess_env = os.environ.copy()
+        for key, value in values.items():
+            if value is None:
+                self._subprocess_env.pop(key, None)
+            elif isinstance(value, str):
+                self._subprocess_env[key] = value
+
     def approve_permission_request(self, permission_request: dict[str, Any]) -> None:
         """Record a one-shot approval before core retries a safety-gated command."""
         if permission_request.get("scope") != _SAFETY_SCOPE:

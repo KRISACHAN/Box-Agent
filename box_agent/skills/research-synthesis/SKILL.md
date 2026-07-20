@@ -65,9 +65,12 @@ simple factual lookup, one-source Q&A, or ordinary code changes.
 
 - Inspect the real provided files, logs, repo paths, or source artifacts before
   explaining behavior or generating conclusions.
-- Save every research artifact under `{workspace}/research/`; create the
-  directory before writing.
-- Never save research artifacts directly in `{workspace}/`.
+- Save every research artifact under `research/`, relative to the current
+  working/artifact root; create the directory before writing.
+- In officev3 session-output mode, the current working directory is already the
+  artifact root whose host path ends in `output/`. Never prepend another
+  `output/` segment (for example, do not use `$(pwd)/output/research`).
+- Never save research artifacts directly in the current working/artifact root.
 - Avoid CLI-specific assumptions. Use only tools actually available in the
   current host runtime.
 - Use native subagents only when the user explicitly asks for multi-agent,
@@ -81,16 +84,25 @@ simple factual lookup, one-source Q&A, or ordinary code changes.
 - For current or time-sensitive claims, check the current date/time before
   analysis and make search windows explicit.
 - Match the user's search language unless the task requires a specific locale.
+- Search depth comes from covering distinct evidence gaps, not from rephrasing a
+  query that already returned usable evidence. Before every later batch, name
+  the still-uncovered dimension or conflict; do not rerun a near-equivalent
+  entity/fact query merely because an authority-ranked or `site:` query was empty.
+- If an exact public URL is already known, read it with an actually available
+  browser tool. In officev3, standalone Playwright MCP tools are separate from
+  the read-only browser gateway: do not request `source_preference: playwright`
+  on the gateway as a substitute; use the standalone tools, or gateway `auto` /
+  `browser_connector` for real-browser reads.
 - Use standard Markdown footnotes in research artifacts: `[^id]` inline plus
   `[^id]: Title. Date. URL` definitions.
 
 ## Start
 
-1. Resolve `{workspace}` to the current working directory.
+1. Treat the current working directory as `{workspace}` and the artifact root.
 2. Resolve `{skill_dir}` to the active installed directory containing this
    `SKILL.md`. Do not assume the current working directory is the skill
    directory.
-3. Create `{workspace}/research/`.
+3. Create `research/` directly under that root.
 4. Pick a stable topic slug:
    - Prefer short ASCII, lowercase, hyphenated words.
    - If the topic is mostly non-ASCII or ambiguous, use
@@ -140,7 +152,7 @@ Use [prompts.md](references/prompts.md) for subagent/local-round templates.
 
 ## Required Outputs
 
-All files live under `{workspace}/research/`.
+All files live under `research/`, relative to the current working/artifact root.
 
 | File | Route | Purpose |
 | --- | --- | --- |
@@ -166,11 +178,14 @@ if [ ! -f "$RESEARCH_SYNTHESIS_SKILL_DIR/scripts/validate_research_artifacts.py"
   echo "ERROR: validate_research_artifacts.py not found under $RESEARCH_SYNTHESIS_SKILL_DIR/scripts" >&2
   exit 1
 fi
-${BOX_AGENT_PYTHON:-python3} "$RESEARCH_SYNTHESIS_SKILL_DIR/scripts/validate_research_artifacts.py" --research-dir "{workspace}/research" --topic "{topic}" --route A
+${BOX_AGENT_PYTHON:-python3} "$RESEARCH_SYNTHESIS_SKILL_DIR/scripts/validate_research_artifacts.py" --research-dir "research" --topic "{topic}" --route A --report "research/qa/{topic}_research_check.json"
 ```
 
 Adjust `--route` for the selected route. Add `--min-dimensions N` when the
-dimension count differs from the default.
+dimension count differs from the default. For a sequential reduced-budget run,
+keep at least three distinct dimensions and record the actual budget in the
+cross-verification file; the downstream presentation checkpoint requires this
+fresh successful JSON report before outline authoring.
 
 ## Final Handoff
 

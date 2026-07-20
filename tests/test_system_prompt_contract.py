@@ -65,3 +65,12 @@ def test_system_prompt_sub_agent_routing_is_cost_aware_and_capability_explicit()
     assert "最多修正重试一次" in prompt
     assert "只有完全没有 `capabilities` 的旧调用" in prompt
     assert "最终合并、交叉校验" in prompt
+
+
+def test_system_prompt_makes_missing_input_a_resumable_pause():
+    prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
+
+    assert "调用一次 `request_user_input`" in prompt
+    assert "只问一个聚焦问题并列出最少必要字段" in prompt
+    assert "用户补充后从当前检查点继续" in prompt
+    assert "可省略或可标为待补充的非必要内容不得阻塞" in prompt

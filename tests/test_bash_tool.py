@@ -416,6 +416,17 @@ def test_empty_runtime_env_does_not_inject_python_vars():
         assert "BOX_AGENT_PYTHON3" not in tool._subprocess_env
 
 
+def test_runtime_env_can_be_updated_for_future_subprocesses():
+    tool = BashTool()
+
+    tool.update_runtime_env({"BOX_AGENT_SOURCE_TEXT_B64": "c291cmNl"})
+
+    assert tool._subprocess_env is not None
+    assert tool._subprocess_env["BOX_AGENT_SOURCE_TEXT_B64"] == "c291cmNl"
+    tool.update_runtime_env({"BOX_AGENT_SOURCE_TEXT_B64": None})
+    assert "BOX_AGENT_SOURCE_TEXT_B64" not in tool._subprocess_env
+
+
 def test_no_sandbox_uses_login_shell():
     """Without sandbox_venv_path, login shell flag should be enabled."""
     import platform

@@ -166,11 +166,11 @@ function extractActionHints(text) {
 
 ### 6.2 触发 browser-tools 的对话
 
-**用户：** 帮我打开 example.com 看看页面内容
+**用户：** 帮我对 example.com 做自动化测试，截图并检查网络请求
 
 **模型回复：**
 
-> 我目前还没有可用的 Playwright 浏览器工具，无法直接访问普通网页。你可以先启用 Playwright 后再试；真实浏览器连接器适合读取当前页、登录态页面或内网页。
+> 这个任务需要 Playwright 的隔离自动化、截图和网络检查能力。当前会话还没有可用的 Playwright 浏览器工具，你可以先启用后再试。若任务只是操作当前已登录页面，则应直接使用真实浏览器连接器，而不是显示本提示。
 >
 > ```action_hint
 > {"action":"open_settings","params":{"tab":"browser-tools"},"display_text":"点击启用浏览器工具"}
@@ -181,6 +181,6 @@ function extractActionHints(text) {
 ## 7. 已知局限
 
 1. **依赖模型遵守 prompt：** 检测条件命中只是给模型"许可"，模型自行决定是否输出。极小概率会漏出。后续可考虑事后正则补齐，目前不做。
-2. **运行时状态只接入 Playwright 可用性：** 静态检测仍读 `mcp.json` 和 `enable_mcp`；如果 ACP 宿主传入 `env_context.browser_tools.available=false`，会补充触发 browser-tools hint。没有 env_context 的 CLI 场景仍不感知 Playwright 进程启动失败。
+2. **提示段是否注入仍由 Playwright 可用性决定：** 静态检测读取 `mcp.json` 和 `enable_mcp`；如果 ACP 宿主传入 `env_context.browser_tools.available=false`，会补充注入 browser-tools hint 规则。模型还必须结合 `env_context.browser_connector` 判断当前页、登录态或内网任务能否直接由连接器完成，不能仅因 Playwright 缺失就展示提示。没有 env_context 的 CLI 场景仍不感知 Playwright 进程启动失败。
 3. **CLI 不支持：** CLI 没有设置弹窗，不注入此 prompt 段。
 4. **白名单仅含 2 个 tab：** 新增 tab 需要后端 `action_hints.py` 加规则 + 前端白名单同步更新。

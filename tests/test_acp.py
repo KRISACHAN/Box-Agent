@@ -1,7 +1,9 @@
 """Integration tests for the Box ACP adapter."""
 
 import asyncio
+import base64
 import json
+from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +14,8 @@ from box_agent.acp import (
     _inject_item_id,
     _latest_user_request_for_plan_detection,
     _looks_like_plan_approval_text,
+    _recover_controlled_presentation_gate,
+    _should_resume_pending_completion_gate,
     _tool_result_raw_output,
 )
 from box_agent.acp.stdio_compat import _READ_LIMIT
@@ -19,6 +23,7 @@ from box_agent.config import (
     AgentConfig,
     Config,
     FilesystemPermissions,
+    ImageGenerationConfig,
     LLMConfig,
     Officev3Config,
     Officev3Paths,
@@ -26,6 +31,7 @@ from box_agent.config import (
     ToolsConfig,
 )
 from box_agent.memory import MemoryManager
+from box_agent.loop_guards import CompletionGate
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS
@@ -399,6 +405,37 @@ class SkillUsageLLM:
         return LLMResponse(content="done", finish_reason="stop")
 
 
+class RepeatedSkillUsageLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def generate_stream(self, messages, tools=None, **_):
+        self.calls += 1
+        requested_skills = ["paid-skill", "paid-skill", "missing-skill"]
+        if self.calls <= len(requested_skills):
+            skill_name = requested_skills[self.calls - 1]
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id=f"skill-repeat-{self.calls}",
+                        type="function",
+                        function=FunctionCall(
+                            name="get_skill",
+                            arguments={"skill_name": skill_name},
+                        ),
+                    )
+                ],
+            )
+            return
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+    async def generate(self, messages, tools=None):
+        return LLMResponse(content="done", finish_reason="stop")
+
+
 class SkillTool(Tool):
     @property
     def name(self):
@@ -417,6 +454,8 @@ class SkillTool(Tool):
         }
 
     async def execute(self, skill_name: str):
+        if skill_name == "missing-skill":
+            return ToolResult(success=False, content="", error="missing skill")
         return ToolResult(success=True, content=f"loaded {skill_name}")
 
 
@@ -694,6 +733,92 @@ class PrematurePptLLM:
         return LLMResponse(content="done", finish_reason="stop")
 
 
+class CompleteDeckTool(Tool):
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+        self.calls = 0
+
+    @property
+    def name(self):
+        return "complete_deck"
+
+    @property
+    def description(self):
+        return "Writes a deterministic controlled-deck fixture"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {}}
+
+    async def execute(self):
+        self.calls += 1
+        qa_dir = self.output_dir / "qa"
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "index.html").write_text(
+            "<html><body><section class='slide'>ready</section></body></html>",
+            encoding="utf-8",
+        )
+        for name in (
+            "outline_check.json",
+            "deck_contract.json",
+            "deck_spec.json",
+            "truth_check.json",
+            "image_manifest.json",
+            "html_self_check.json",
+            "runtime_probe.json",
+        ):
+            (qa_dir / name).write_text('{"ok": true}', encoding="utf-8")
+        return ToolResult(success=True, content="controlled deck complete")
+
+
+class ClarifyThenResumePptLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def generate_stream(self, messages, tools=None, **_):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="ask-market-size",
+                        type="function",
+                        function=FunctionCall(
+                            name="request_user_input",
+                            arguments={
+                                "question": "请补充市场规模口径。",
+                                "missing_fields": ["TAM", "SAM", "SOM"],
+                                "reason": "融资路演不能虚构市场数据。",
+                            },
+                        ),
+                    )
+                ],
+            )
+        elif self.calls == 2:
+            yield StreamEvent(type="text", delta="请补充 TAM、SAM 和 SOM。")
+            yield StreamEvent(type="finish", finish_reason="stop")
+        elif self.calls == 3:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="complete-deck",
+                        type="function",
+                        function=FunctionCall(name="complete_deck", arguments={}),
+                    )
+                ],
+            )
+        else:
+            yield StreamEvent(type="text", delta="已根据补充数据继续完成 HTML。")
+            yield StreamEvent(type="finish", finish_reason="stop")
+
+    async def generate(self, messages, tools=None):
+        return LLMResponse(content="done", finish_reason="stop")
+
+
 class UsageLLM:
     """Mimics the ``LLMClient`` choke point: records usage on each finish.
 
@@ -861,6 +986,30 @@ def acp_agent(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_binds_cumulative_real_user_text_to_bash_env(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "原始事实 A"}])
+    )
+    await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "补充事实 B"}])
+    )
+
+    bash_env = agent._sessions[session.sessionId].agent.tools["bash"]._subprocess_env
+    source_text = base64.b64decode(bash_env["BOX_AGENT_SOURCE_TEXT_B64"]).decode("utf-8")
+    assert source_text == "原始事实 A\n\n补充事实 B"
+
+
+@pytest.mark.asyncio
 async def test_acp_turn_executes_tool(acp_agent):
     agent, conn = acp_agent
     # Explicit session_mode is consumed at session creation; DummyLLM's first
@@ -951,6 +1100,116 @@ async def test_acp_emits_skills_usage_raw_output(tmp_path):
     ]
     assert any(item["skills"] == ["theme-factory"] for item in turn_usage_outputs)
     assert turn_usage_outputs[-1]["skills"] == ["theme-factory", "html-templates"]
+    assert turn_usage_outputs[-1]["version"] == 3
+    assert [
+        {
+            key: invocation[key]
+            for key in ("skillName", "activationSource", "status")
+        }
+        for invocation in turn_usage_outputs[-1]["skillInvocations"]
+    ] == [
+        {
+            "skillName": "theme-factory",
+            "activationSource": "get_skill",
+            "status": "succeeded",
+        },
+        {
+            "skillName": "html-templates",
+            "activationSource": "get_skill",
+            "status": "succeeded",
+        },
+    ]
+    assert len(
+        {
+            invocation["invocationId"]
+            for invocation in turn_usage_outputs[-1]["skillInvocations"]
+        }
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_acp_skill_invocations_are_idempotent_and_keep_context(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "paid-skill"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "---\n"
+        "name: paid-skill\n"
+        "description: A versioned installable skill.\n"
+        "metadata:\n"
+        '  version: "1.2.3"\n'
+        "---\n"
+        "# Paid skill instructions\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=5, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_todo=False, enable_sub_agent=False),
+    )
+    conn = DummyConn()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        RepeatedSkillUsageLLM(),
+        [SkillTool()],
+        "system",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=None,
+            field_meta={
+                "session_mode": "general",
+                "session_id": "office-session-skill",
+                "expert": {"id": "expert-a", "name": "Expert A"},
+                "expert_team": {"id": "team-a", "name": "Team A"},
+            },
+        )
+    )
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "use paid skill twice, then try a missing skill"}],
+            field_meta={"turnId": "office-turn-skill"},
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    turn_usage_outputs = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "rawOutput", None)
+        and isinstance(update.update.rawOutput, dict)
+        and update.update.rawOutput.get("type") == "turn_usage"
+    ]
+    final_invocations = turn_usage_outputs[-1]["skillInvocations"]
+    assert len(final_invocations) == 1
+    invocation = final_invocations[0]
+    assert invocation["skillName"] == "paid-skill"
+    assert invocation["skillVersion"] == "1.2.3"
+    assert invocation["skillSource"] == "builtin"
+    assert invocation["activationSource"] == "get_skill"
+    assert invocation["status"] == "succeeded"
+    assert invocation["usageRole"] == "primary"
+    assert invocation["contextExpertId"] == "expert-a"
+    assert invocation["contextTeamId"] == "team-a"
+    assert invocation["instructionDigest"] == sha256(skill_file.read_bytes()).hexdigest()
+    invocation_ids = {
+        item["invocationId"]
+        for payload in turn_usage_outputs
+        for item in payload["skillInvocations"]
+    }
+    assert invocation_ids == {invocation["invocationId"]}
+    assert all(
+        item["skillName"] != "missing-skill"
+        for payload in turn_usage_outputs
+        for item in payload["skillInvocations"]
+    )
 
 
 @pytest.mark.asyncio
@@ -1348,6 +1607,29 @@ async def test_acp_default_artifact_mode_creates_output(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_injects_standard_box_agent_image_generation_policy(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+        image_generation=ImageGenerationConfig(
+            endpoint="https://image.example.test/api/web/llm/v2/images/gen"
+        ),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"session_mode": "general"})
+    )
+    prompt = agent._sessions[session.sessionId].agent.system_prompt
+
+    assert "## Native Image Generation" in prompt
+    assert "CLI 与 ACP 共用" in prompt
+    assert "不由宿主 `env_context` 控制" in prompt
+    assert "当前生图服务：已配置" in prompt
+
+
+@pytest.mark.asyncio
 async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
@@ -1569,6 +1851,212 @@ async def test_acp_completion_gate_ignores_historical_deliverable_on_plain_conti
     assert "尚未满足完成条件" not in rendered
 
 
+def test_pending_completion_gate_resume_detection_is_session_scoped():
+    assert _should_resume_pending_completion_gate(
+        "输出 HTML",
+        waiting_for_user_input=False,
+    )
+    assert _should_resume_pending_completion_gate(
+        "TAM 120 亿元，SAM 30 亿元，SOM 3 亿元",
+        waiting_for_user_input=True,
+    )
+    assert not _should_resume_pending_completion_gate(
+        "这个主题色是什么意思？",
+        waiting_for_user_input=False,
+    )
+    assert not _should_resume_pending_completion_gate(
+        "取消，不用继续",
+        waiting_for_user_input=True,
+    )
+
+
+def test_recover_controlled_presentation_gate_from_deep_research_checkpoint(tmp_path):
+    research = tmp_path / "output" / "research"
+    research.mkdir(parents=True)
+    (research / "topic_insight.md").write_text("validated evidence", encoding="utf-8")
+
+    gate = _recover_controlled_presentation_gate("继续完成 PPT", tmp_path)
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert gate.presentation_research_mode == "deep"
+
+
+def test_recover_controlled_presentation_gate_from_source_first_outline(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
+
+    gate = _recover_controlled_presentation_gate("继续", tmp_path)
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert gate.presentation_research_mode == "auto"
+
+
+def test_recover_controlled_presentation_gate_does_not_reopen_complete_deck(tmp_path):
+    output = tmp_path / "output"
+    qa = output / "qa"
+    qa.mkdir(parents=True)
+    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
+    (output / "deck.json").write_text('{"slides": []}', encoding="utf-8")
+    (output / "index.html").write_text("<html></html>", encoding="utf-8")
+    for report_name in (
+        "outline_check.json",
+        "deck_contract.json",
+        "deck_spec.json",
+        "truth_check.json",
+        "image_manifest.json",
+        "html_self_check.json",
+        "runtime_probe.json",
+    ):
+        (qa / report_name).write_text('{"ok": true}', encoding="utf-8")
+
+    gate = _recover_controlled_presentation_gate("继续", tmp_path)
+
+    assert gate is None
+
+
+@pytest.mark.asyncio
+async def test_acp_recovers_controlled_deck_after_new_session_from_filesystem(tmp_path):
+    research = tmp_path / "output" / "research"
+    research.mkdir(parents=True)
+    (research / "topic_insight.md").write_text("validated evidence", encoding="utf-8")
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    state = agent._sessions[session.sessionId]
+    captured: dict[str, object] = {}
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured["gate"] = kwargs.get("completion_gate")
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[
+                {
+                    "text": (
+                        "继续完成 PPT。沿用已经通过 QA 的 research，不要重复搜索；"
+                        "从当前文件系统检查点继续，交付 index.html。"
+                    )
+                }
+            ],
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    assert captured["gate"] is not None
+    assert captured["gate"] is state.pending_completion_gate
+    assert state.pending_completion_gate.presentation_research_mode == "deep"
+
+
+@pytest.mark.asyncio
+async def test_acp_output_html_followup_reuses_pending_presentation_gate(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    state = agent._sessions[session.sessionId]
+    pending_gate = CompletionGate(
+        required_changed_artifact_globs=("output/**/*.html",),
+        workflow_checkpoint_kind="controlled_presentation",
+    )
+    state.pending_completion_gate = pending_gate
+    captured: dict[str, object] = {}
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured["gate"] = kwargs.get("completion_gate")
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "输出 HTML"}],
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    assert captured["gate"] is pending_gate
+    assert state.pending_completion_gate is pending_gate
+
+
+@pytest.mark.asyncio
+async def test_acp_resumes_controlled_deck_after_required_user_input(tmp_path):
+    output_dir = tmp_path / "output"
+    completion_tool = CompleteDeckTool(output_dir)
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=6, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = ClarifyThenResumePptLLM()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        llm,
+        [completion_tool],
+        "system",
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    first = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[
+                {
+                    "text": (
+                        "制作一份融资路演 PPT，市场规模必须使用用户提供的真实数字"
+                    )
+                }
+            ],
+        )
+    )
+    state = agent._sessions[session.sessionId]
+
+    assert first.stopReason == "end_turn"
+    assert state.pending_completion_gate is not None
+    assert state.waiting_for_user_input is True
+    assert not (output_dir / "index.html").exists()
+
+    second = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "TAM 120 亿元，SAM 30 亿元，SOM 3 亿元"}],
+        )
+    )
+
+    assert second.stopReason == "end_turn"
+    assert llm.calls == 4
+    assert completion_tool.calls == 1
+    assert (output_dir / "index.html").is_file()
+    assert state.pending_completion_gate is None
+    assert state.waiting_for_user_input is False
+    assert "TAM 120 亿元" in state.source_text
+    rendered = "\n".join(str(update) for update in conn.updates)
+    assert "已根据补充数据继续完成 HTML" in rendered
+    assert "尚未满足完成条件" not in rendered
+
+
 @pytest.mark.asyncio
 async def test_acp_preloads_matched_pptx_skill_for_deliverable(tmp_path):
     skills_dir = tmp_path / "skills"
@@ -1763,6 +2251,19 @@ async def test_acp_preloads_hyperframes_skill_when_runtime_available(tmp_path):
         and update.update.rawOutput.get("type") == "turn_usage"
     ]
     assert turn_usage_outputs[-1]["skills"] == ["hyperframes-video"]
+    assert [
+        {
+            key: invocation[key]
+            for key in ("skillName", "activationSource", "status")
+        }
+        for invocation in turn_usage_outputs[-1]["skillInvocations"]
+    ] == [
+        {
+            "skillName": "hyperframes-video",
+            "activationSource": "preloaded",
+            "status": "succeeded",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1904,6 +2405,24 @@ async def test_acp_preloads_required_skill_for_document_deliverable(tmp_path):
         and update.update.rawOutput.get("type") == "turn_usage"
     ]
     assert turn_usage_outputs[-1]["skills"] == ["pptx", "html-templates"]
+    assert [
+        {
+            key: invocation.get(key)
+            for key in ("skillName", "usageRole", "dependencyOf")
+        }
+        for invocation in turn_usage_outputs[-1]["skillInvocations"]
+    ] == [
+        {
+            "skillName": "pptx",
+            "usageRole": "primary",
+            "dependencyOf": None,
+        },
+        {
+            "skillName": "html-templates",
+            "usageRole": "dependency",
+            "dependencyOf": "pptx",
+        },
+    ]
 
 
 @pytest.mark.asyncio

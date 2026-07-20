@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
+const { createHash } = require("crypto");
+const { resolveArtifactPath } = require("./deck_spec_core.js");
 
 function usage() {
   console.error(
-    "Usage: validate_image_manifest.js assets/generated/manifest.json [--mode creative_image_mode] [--min-generated 1] [--report qa/image_manifest.json]",
+    "Usage: validate_image_manifest.js assets/generated/manifest.json [--mode creative_image_mode] [--min-generated 1] [--deck deck.json] [--report qa/image_manifest.json]",
   );
   process.exit(2);
 }
@@ -15,6 +17,7 @@ function parseArgs(argv) {
     manifest: argv[0],
     mode: null,
     minGenerated: 0,
+    deck: null,
     report: null,
   };
   for (let i = 1; i < argv.length; i += 1) {
@@ -28,6 +31,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--report" && value) {
       opts.report = value;
+      i += 1;
+    } else if (arg === "--deck" && value) {
+      opts.deck = value;
       i += 1;
     } else {
       usage();
@@ -47,33 +53,68 @@ function imagePlanFromManifest(manifest) {
   return [];
 }
 
-function fileExistsForOutputPath(outputPath, manifestPath) {
+function resolveOutputPath(outputPath, manifestPath) {
   if (typeof outputPath !== "string" || !outputPath.trim()) return false;
   const normalized = outputPath.trim();
   const candidates = [
-    path.resolve(normalized),
+    resolveArtifactPath(normalized),
     path.resolve(path.dirname(manifestPath), normalized),
     path.resolve(path.dirname(path.dirname(manifestPath)), normalized),
+    path.resolve(path.dirname(path.dirname(path.dirname(manifestPath))), normalized),
   ];
-  return candidates.some(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+  return candidates.find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) || null;
 }
 
 function isSuccessfulGenerate(item, manifestPath) {
   if (!item || item.decision !== "generate") return false;
   const status = typeof item.status === "string" ? item.status.toLowerCase() : "";
   if (["blocked", "failed", "error", "skipped"].includes(status)) return false;
-  return fileExistsForOutputPath(item.output_path, manifestPath);
+  return Boolean(resolveOutputPath(item.output_path, manifestPath));
+}
+
+function isSuccessfulExisting(item, manifestPath) {
+  if (!item || item.decision !== "use_existing") return false;
+  const status = typeof item.status === "string" ? item.status.toLowerCase() : "";
+  if (["blocked", "failed", "error", "skipped"].includes(status)) return false;
+  return Boolean(resolveOutputPath(item.output_path, manifestPath));
+}
+
+function fileHash(filePath) {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function collectDeckMedia(deck) {
+  const refs = [];
+  function visit(value) {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    if (typeof value.src === "string" && value.src.trim()) {
+      refs.push({ src: value.src.trim(), origin: value.origin || null });
+    }
+    Object.values(value).forEach(visit);
+  }
+  (deck.slides || []).forEach(visit);
+  return refs;
+}
+
+function resolveDeckMediaPath(src, deckPath) {
+  if (!src || src.startsWith("data:") || /^[a-z]+:\/\//i.test(src)) return null;
+  return path.resolve(path.dirname(deckPath), src);
 }
 
 function writeReport(reportPath, payload) {
   if (!reportPath) return;
-  fs.mkdirSync(path.dirname(path.resolve(reportPath)), { recursive: true });
-  fs.writeFileSync(reportPath, JSON.stringify(payload, null, 2), "utf8");
+  const resolved = resolveArtifactPath(reportPath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, JSON.stringify(payload, null, 2), "utf8");
 }
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const manifestPath = path.resolve(opts.manifest);
+  const manifestPath = resolveArtifactPath(opts.manifest);
   const issues = [];
   const warnings = [];
 
@@ -88,6 +129,14 @@ function main() {
   const manifest = readJson(manifestPath);
   const imagePlan = imagePlanFromManifest(manifest);
   const successfulGenerated = imagePlan.filter(item => isSuccessfulGenerate(item, manifestPath));
+  const successfulExisting = imagePlan.filter(item => isSuccessfulExisting(item, manifestPath));
+  const unresolvedGenerated = imagePlan.filter(
+    item => item && item.decision === "generate" && !isSuccessfulGenerate(item, manifestPath)
+  );
+  const unresolvedRequired = imagePlan.filter(item => {
+    if (!item || item.required !== true || item.decision === "generate") return false;
+    return !isSuccessfulExisting(item, manifestPath);
+  });
 
   if (!imagePlan.length) {
     issues.push("manifest.image_plan is missing or empty.");
@@ -96,17 +145,103 @@ function main() {
   if (opts.mode && manifest.mode !== opts.mode) {
     issues.push(`manifest.mode must be "${opts.mode}", got ${JSON.stringify(manifest.mode)}.`);
   }
+  if (!["auto", "creative_image_mode"].includes(manifest.mode)) {
+    issues.push(`manifest.mode must be "auto" or "creative_image_mode", got ${JSON.stringify(manifest.mode)}.`);
+  }
 
-  if (successfulGenerated.length < opts.minGenerated) {
+  unresolvedGenerated.forEach(item => {
     issues.push(
-      `expected at least ${opts.minGenerated} successful generated image(s), found ${successfulGenerated.length}.`,
+      `generate entry is unresolved for slide ${item.slide || "?"}: ` +
+      `${item.output_path || "missing output_path"}`
+    );
+  });
+  unresolvedRequired.forEach(item => {
+    issues.push(
+      `required image entry is unresolved for slide ${item.slide || "?"}: ` +
+      `${item.decision || "missing decision"}; generate it or bind an existing asset`
+    );
+  });
+
+  const effectiveMode = opts.mode || manifest.mode;
+  const minimumGenerated = effectiveMode === "creative_image_mode"
+    ? Math.max(opts.minGenerated, 1)
+    : opts.minGenerated;
+  if (successfulGenerated.length < minimumGenerated) {
+    issues.push(
+      `expected at least ${minimumGenerated} successful generated image(s), found ${successfulGenerated.length}.`,
     );
   }
 
-  if (opts.mode === "creative_image_mode") {
+  if (effectiveMode === "creative_image_mode") {
     const blocked = imagePlan.filter(item => item && item.decision === "blocked");
     if (blocked.length && successfulGenerated.length === 0) {
       warnings.push("creative_image_mode has blocked image-plan entries and no successful generated assets.");
+    }
+  }
+
+  const generatedAssetRecords = successfulGenerated.map(item => {
+    const resolvedPath = resolveOutputPath(item.output_path, manifestPath);
+    return {
+      item,
+      resolvedPath,
+      hash: resolvedPath ? fileHash(resolvedPath) : null,
+    };
+  });
+  const existingAssetRecords = successfulExisting.map(item => {
+    const resolvedPath = resolveOutputPath(item.output_path, manifestPath);
+    return {
+      item,
+      resolvedPath,
+      hash: resolvedPath ? fileHash(resolvedPath) : null,
+    };
+  });
+  const duplicateGroups = new Map();
+  generatedAssetRecords.forEach(record => {
+    if (!record.hash) return;
+    const group = duplicateGroups.get(record.hash) || [];
+    group.push(record);
+    duplicateGroups.set(record.hash, group);
+  });
+  for (const records of duplicateGroups.values()) {
+    if (records.length < 2) continue;
+    const reuseGroups = new Set(
+      records.map(record => record.item.reuse_group).filter(value => typeof value === "string" && value.trim())
+    );
+    if (reuseGroups.size === 1 && records.every(record => record.item.reuse_group)) continue;
+    issues.push(
+      "generated image content is reused across multiple image-plan entries without one explicit reuse_group: " +
+      records.map(record => `${record.item.slide || "?"}:${record.item.output_path}`).join(", "),
+    );
+  }
+
+  if (opts.deck) {
+    const deckPath = resolveArtifactPath(opts.deck);
+    if (!fs.existsSync(deckPath)) {
+      issues.push(`deck not found: ${deckPath}`);
+    } else {
+      const deck = readJson(deckPath);
+      const deckMedia = collectDeckMedia(deck).map(ref => ({
+        ...ref,
+        resolvedPath: resolveDeckMediaPath(ref.src, deckPath),
+      }));
+      const deckPaths = new Set(
+        deckMedia.map(ref => ref.resolvedPath).filter(Boolean).map(filePath => path.resolve(filePath))
+      );
+      const manifestPaths = new Set(
+        generatedAssetRecords.map(record => record.resolvedPath).filter(Boolean).map(filePath => path.resolve(filePath))
+      );
+      [...generatedAssetRecords, ...existingAssetRecords].forEach(record => {
+        if (record.resolvedPath && !deckPaths.has(path.resolve(record.resolvedPath))) {
+          issues.push(`planned image asset is not referenced by deck.json: ${record.item.output_path}`);
+        }
+      });
+      deckMedia
+        .filter(ref => ref.origin === "generated" && ref.resolvedPath)
+        .forEach(ref => {
+          if (!manifestPaths.has(path.resolve(ref.resolvedPath))) {
+            issues.push(`deck generated media is missing from manifest.image_plan: ${ref.src}`);
+          }
+        });
     }
   }
 
@@ -115,12 +250,15 @@ function main() {
     manifest: manifestPath,
     mode: manifest.mode || null,
     imagePlanCount: imagePlan.length,
+    requiredImageCount: imagePlan.filter(item => item && item.required === true).length,
     successfulGeneratedCount: successfulGenerated.length,
+    successfulExistingCount: successfulExisting.length,
     successfulGenerated: successfulGenerated.map(item => ({
       slide: item.slide || null,
       kind: item.kind || null,
       output_path: item.output_path || null,
     })),
+    deck: opts.deck ? resolveArtifactPath(opts.deck) : null,
     issues,
     warnings,
   };

@@ -50,18 +50,25 @@ def loader() -> SkillLoader:
         ),
         "hyperframes-video": Skill(
             name="hyperframes-video",
-            description="create render export short video animation MP4 motion graphics",
+            description=(
+                "HyperFrames MP4/GIF videos; motion graphics; explainer clips; "
+                "视频、短片、动图、动画成片。"
+            ),
             content="",
             source="builtin",
             keywords=[
                 "video",
+                "videos",
                 "mp4",
+                "gif",
                 "animation",
                 "hyperframes",
+                "motion-graphics",
+                "explainer-clip",
                 "视频",
                 "动画",
-                "生成视频",
-                "做视频",
+                "短片",
+                "动图",
             ],
             related_skills=["html-templates"],
         ),
@@ -151,6 +158,26 @@ class TestFilterByQuery:
     def test_mp4_query_matches_hyperframes_video(self, loader: SkillLoader):
         names = [s.name for s in loader.filter_by_query("render this animation as mp4")]
         assert "hyperframes-video" in names
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "生成一张海报",
+            "生成一个PPT",
+            "帮我做一个网页",
+            "把这个页面改一下",
+            "导出 PDF",
+            "render this chart",
+            "create a landing page",
+        ],
+    )
+    def test_non_video_deliverables_do_not_match_hyperframes_video(
+        self,
+        loader: SkillLoader,
+        query: str,
+    ):
+        names = [s.name for s in loader.filter_by_query(query)]
+        assert "hyperframes-video" not in names
 
     def test_industry_research_query_matches_research_synthesis(
         self, loader: SkillLoader

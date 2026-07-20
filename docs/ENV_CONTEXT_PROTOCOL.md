@@ -84,7 +84,7 @@ env_context 与 [Action Hint](./ACTION_HINT_PROTOCOL.md) 是**互补但不强耦
 | `browser_connector.connected` | bool | 否 | 浏览器扩展是否已连接到宿主 daemon。 |
 | `browser_connector.paused` | bool | 否 | 用户是否在扩展里暂停了连接器。 |
 | `browser_connector.available` | bool | 否 | 连接器是否可实际读取：通常为 enabled + connected + 未暂停。 |
-| `image_service.available` | bool | 否 | 宿主端生图服务是否可用。`true` → 模型可放心 plan `generate_image`；`false` → 模型应改用 HTML/CSS/图标，不要排上生图调用。仅作为事实展示。 |
+| `image_service.available` | bool | 否 | 兼容字段，仅展示宿主观察到的状态，不控制 `generate_image`。标准生图能力由 Box-Agent 自身的 `image_generation.endpoint` 或进程环境变量决定，CLI 与 ACP 行为一致。新宿主无需传此字段。 |
 | `memory_configured` | bool | 否 | 用户是否完成过 onboarding 设置。仅作为事实展示，不影响 action_hint 的 onboarding 触发。 |
 | `runtimes.python` / `runtimes.node` | object | 否 | 宿主提供的运行时元数据（已知字段，会被渲染）。`python` 接受 `path` / `shell_path` / `sandbox_path` / `ready`(bool) / `provider`；`node` 接受 `path` / `npm` / `npx` / `node_modules` / `ready`(bool) / `provider`。其他 runtime kind 会被丢弃并 WARNING。 |
 | `obsidian` | object | 否 | 宿主提供的 Obsidian 集成状态（已知字段，会被渲染为 Obsidian 工具引导）。接受 `enabled` / `cli_available` / `app_running`(bool)、`vault_name`(label)、`vault_path` / `cli_path` / `app_path`(path)。 |
@@ -158,9 +158,11 @@ env_context 与 [Action Hint](./ACTION_HINT_PROTOCOL.md) 是**互补但不强耦
 - 未安装 CLI（不要假装能调用）：`wecom-cli`
 - 浏览器工具状态：installed=true, enabled=true, available=true
 - 真实浏览器连接器状态：enabled=true, connected=false, paused=false, available=false
-- 浏览器能力策略：Playwright 是基础网页能力，真实浏览器连接器是读取用户真实浏览器上下文的增强能力。
-  - 当前只有 Playwright 可用或连接器未连接：凡是 Playwright 能完成的网页任务必须使用 Playwright；不要因为连接器更适合而要求用户先安装或连接插件。
-  - 如果连接器工具返回 `extension_not_connected`，且 Playwright 可用且任务有普通公开 URL，改用 Playwright；不要把插件未连接作为普通网页任务的终点。
+- 浏览器能力策略：Playwright 是隔离网页自动化通道；真实浏览器连接器是用户当前浏览器上下文的读写通道。必须按页面上下文选择，而不是按点击/填写等动作类型选择。
+  - 当前只有 Playwright 可用或连接器未连接：不依赖真实浏览器状态的网页任务使用 Playwright；若任务明确依赖当前页、既有登录或内网状态，应说明连接器不可用，不要假装 Playwright 继承了这些状态。
+  - 用户明确指定 Playwright 或真实浏览器时，优先遵从。选定后同一操作链必须保持同一后端：`browser_connector_snapshot` 的 ref 只能交给 `browser_connector_*` 动作，Playwright snapshot/ref 只能交给 Playwright 工具。
+  - 真实浏览器中的翻页、展开、切换等低风险操作可在用户明确要求后执行；填写不等于提交；发送、发布、购买、删除等有外部副作用的提交必须先获得本次操作的明确确认，再调用 `browser_connector_submit`。
+  - 如果连接器返回 `extension_not_connected`：仅当任务不依赖真实浏览器状态且有普通公开 URL 时才改用 Playwright；依赖当前页、登录态或内网状态时不得静默切换，应提示用户连接扩展。
 - 生图服务状态：可用（可调用 generate_image）
 - 个人记忆配置：已完成
 
@@ -250,6 +252,6 @@ async function buildEnvContext() {
 
 1. **session 内不可变。** session/prompt 不接受 env_context 覆盖。如果用户在会话中途装上了 lark-cli，本会话不会感知，需要新建会话。
 2. **不是工具发现机制。** prompt 里说"可用 CLI 是 X"只是减少模型的否认倾向。模型真正调用 X 时，仍然走 bash 工具，仍然会被沙箱/权限层拦截。
-3. **只对 browser-tools hint 做窄补充。** `memory_configured` / `image_service` 只是叙述，不改变 action_hint 触发；`browser_tools.available=false` 会作为宿主运行时事实补充 browser-tools hint。静态触发仍继续读 `MEMORY.md` 和 `mcp.json`，避免把所有 env_context 字段都变成控制开关。
+3. **只对 browser-tools hint 做窄补充。** `memory_configured` / `image_service` 只是兼容性叙述，不改变 action_hint 或工具可用性；尤其 `generate_image` 由 Box-Agent 自身配置控制。`browser_tools.available=false` 会作为宿主运行时事实补充 browser-tools hint。静态触发仍继续读 `MEMORY.md` 和 `mcp.json`，避免把所有 env_context 字段都变成控制开关。
 4. **校验是单字段、不是组合。** 后端只检查每个字段单独是否合法，不检查组合（比如 `platform=darwin` 但路径是 `C:\...`）。宿主可以自己做组合一致性，后端不强制。
 5. **校验后字段被静默丢弃。** 宿主不会从协议返回里收到"哪条被丢了"——只能去 `~/.box-agent/log/` 里看后端日志。如果发现某个字段没生效，先看日志。

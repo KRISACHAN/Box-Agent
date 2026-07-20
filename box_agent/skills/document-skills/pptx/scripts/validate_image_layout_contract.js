@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const { chromiumLaunchOptions } = require("./playwright_host");
+const { resolveArtifactPath } = require("./deck_spec_core.js");
 
 function officeRaccoonPrefix() {
   if (process.env.BOX_AGENT_NODE_PREFIX) return process.env.BOX_AGENT_NODE_PREFIX;
@@ -95,8 +96,8 @@ function overlaps(a, b) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const htmlPath = path.resolve(opts.html);
-  const manifestPath = path.resolve(opts.manifest);
+  const htmlPath = resolveArtifactPath(opts.html);
+  const manifestPath = resolveArtifactPath(opts.manifest);
   const manifest = readJson(manifestPath);
   const imagePlan = imagePlanFromManifest(manifest);
   const issues = [];
@@ -205,7 +206,7 @@ async function main() {
   };
 
   if (opts.report) {
-    const reportPath = path.resolve(opts.report);
+    const reportPath = resolveArtifactPath(opts.report);
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   }

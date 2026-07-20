@@ -14,6 +14,7 @@ from box_agent.core import (
     text_requests_plan_start,
 )
 from box_agent.core import FINAL_SUMMARY_TOOL_CALL_THRESHOLD as _FS_THRESHOLD
+from box_agent.loop_guards import CompletionGate, repeated_stream_pattern
 from box_agent.events import (
     ArtifactEvent,
     ContentEvent,
@@ -247,6 +248,27 @@ class CountingWebSearchTool(Tool):
         return ToolResult(success=True, content=f"result:{query}")
 
 
+class CountingBrowserReadTool(Tool):
+    def __init__(self):
+        self.urls: list[str] = []
+
+    @property
+    def name(self):
+        return "browser_read_page"
+
+    @property
+    def description(self):
+        return "Reads a public web page"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {"url": {"type": "string"}}}
+
+    async def execute(self, url: str = "", source_preference: str | None = None):
+        self.urls.append(url)
+        return ToolResult(success=True, content=f"page:{url}")
+
+
 class JsonWebSearchTool(Tool):
     def __init__(self, urls_by_query: dict[str, str]):
         self.calls: list[str] = []
@@ -278,6 +300,42 @@ class JsonWebSearchTool(Tool):
                             "snippet": f"Snippet for {query}",
                         }
                     ]
+                }
+            ),
+        )
+
+
+class NestedWebResultsTool(Tool):
+    @property
+    def name(self):
+        return "web_search"
+
+    @property
+    def description(self):
+        return "Searches the web"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {"query": {"type": "string"}}}
+
+    async def execute(self, query: str = ""):
+        return ToolResult(
+            success=True,
+            content=json.dumps(
+                {
+                    "Result": {
+                        "ResultCount": 2,
+                        "WebResults": [
+                            {
+                                "Title": "Unrelated result",
+                                "Url": "https://irrelevant.example.com/brazil-world-cup",
+                            },
+                            {
+                                "Title": "FIFA result",
+                                "Url": "https://www.fifa.com/tournaments/mens/worldcup",
+                            },
+                        ],
+                    }
                 }
             ),
         )
@@ -469,6 +527,30 @@ class NamedTool(Tool):
         return ToolResult(success=True, content=f"{self._name}:{text}")
 
 
+class RecordingBrowserSnapshotTool(Tool):
+    def __init__(self):
+        self.filenames: list[str] = []
+
+    @property
+    def name(self):
+        return "browser_snapshot"
+
+    @property
+    def description(self):
+        return "Persist the current browser accessibility snapshot"
+
+    @property
+    def parameters(self):
+        return {
+            "type": "object",
+            "properties": {"filename": {"type": "string"}},
+        }
+
+    async def execute(self, filename: str = ""):
+        self.filenames.append(filename)
+        return ToolResult(success=True, content=f"snapshot:{filename}")
+
+
 def _named_tool_calls(name: str, count: int) -> list[ToolCall]:
     return [
         ToolCall(
@@ -519,6 +601,31 @@ async def test_long_plain_answer_streams_before_finish_without_duplicate():
     content_events = [e for e in events if isinstance(e, ContentEvent)]
     assert any(e._streaming for e in content_events)
     assert "".join(e.content for e in content_events) == "".join(chunks)
+
+
+def test_repeated_stream_pattern_ignores_normal_prose_and_finds_tag_loop():
+    assert repeated_stream_pattern("正常回答里可以有重复词，但不会连续复制八次。") is None
+    assert repeated_stream_pattern(("`</think>`\n\n" * 8)) == "`</think>`"
+
+
+@pytest.mark.asyncio
+async def test_repetitive_stream_is_aborted_before_it_floods_history():
+    loop_chunk = "`</think>`\n\n"
+    messages = _msgs()
+    llm = ChunkedStreamLLM([loop_chunk] * 20)
+
+    events = await collect(
+        run_agent_loop(llm=llm, messages=messages, tools={}, max_steps=5)
+    )
+
+    content_events = [event for event in events if isinstance(event, ContentEvent)]
+    errors = [event for event in events if isinstance(event, ErrorEvent)]
+    done = [event for event in events if isinstance(event, DoneEvent)]
+    assert len(content_events) == 7
+    assert len(errors) == 1 and errors[0].is_fatal is True
+    assert "repetitive output" in errors[0].message
+    assert done and done[-1].stop_reason == StopReason.ERROR
+    assert not any(message.role == "assistant" for message in messages)
 
 
 @pytest.mark.asyncio
@@ -979,6 +1086,58 @@ async def test_read_file_artifact_keeps_full_event_but_compacts_model_history(tm
     assert "[Full file content omitted from model history]" in tool_msg.content
     assert "deck.html" in tool_msg.content
     assert marker not in tool_msg.content
+
+
+@pytest.mark.asyncio
+async def test_read_file_skill_reference_stays_available_for_next_model_turn(tmp_path):
+    marker = '"deck_goal": "required schema marker"'
+    reference = tmp_path / "skills" / "pptx" / "references" / "outline.md"
+    reference.parent.mkdir(parents=True)
+    reference.write_text(
+        "# Outline contract\n" + ("workflow instruction\n" * 600) + marker,
+        encoding="utf-8",
+    )
+    msgs = _msgs()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": str(reference)},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=msgs,
+            tools={"read_file": ReadTool(workspace_dir=str(tmp_path))},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    second_request_tool_results = [
+        message.content
+        for message in llm.message_calls[1]
+        if message.role == "tool"
+    ]
+    assert any(marker in content for content in second_request_tool_results)
+    assert all(
+        "[Full file content omitted from model history]" not in content
+        for content in second_request_tool_results
+    )
 
 
 @pytest.mark.asyncio
@@ -1568,6 +1727,149 @@ async def test_tool_heavy_turn_injects_hidden_final_summary_guidance():
 
 
 @pytest.mark.asyncio
+async def test_controlled_presentation_does_not_receive_conflicting_final_summary_nudge(
+    tmp_path,
+):
+    """An incomplete filesystem-backed deck stage owns the next action.
+
+    The generic >50-call wrap-up instruction must not tell the model to stop
+    before outline/deck/HTML delivery is complete.
+    """
+    gate = CompletionGate(workflow_checkpoint_kind="controlled_presentation")
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=_echo_tool_calls(_FS_THRESHOLD + 1),
+                finish_reason="tool",
+            ),
+            LLMResponse(content="continuing", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": EchoTool()},
+            max_steps=5,
+            completion_gate=gate,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    injected = [e for e in events if isinstance(e, InjectedMessageEvent)]
+    assert any("CONTROLLED_PRESENTATION_STAGE=outline" in e.content for e in injected)
+    assert not any("many visible tool calls" in e.content for e in injected)
+
+
+@pytest.mark.asyncio
+async def test_research_evidence_calls_preserve_controlled_deck_delivery_budget(tmp_path):
+    """Search/browser evidence has a separate guard from artifact production."""
+    browser = NamedTool("browser_read_page")
+    echo = EchoTool()
+    gate = CompletionGate(
+        workflow_checkpoint_kind="controlled_presentation",
+        presentation_research_mode="deep",
+        max_tool_calls=1,
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="browser-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="browser_read_page",
+                            arguments={"text": "source"},
+                        ),
+                    ),
+                    ToolCall(
+                        id="artifact-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="echo",
+                            arguments={"text": "artifact"},
+                        ),
+                    ),
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"browser_read_page": browser, "echo": echo},
+            max_steps=5,
+            completion_gate=gate,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    results = [e for e in events if isinstance(e, ToolCallResult)]
+    assert [result.success for result in results[:2]] == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_controlled_research_batches_public_page_reads(tmp_path):
+    browser = CountingBrowserReadTool()
+    calls = [
+        ToolCall(
+            id=f"browser-{index}",
+            type="function",
+            function=FunctionCall(
+                name="browser_read_page",
+                arguments={"url": f"https://example.com/source-{index}"},
+            ),
+        )
+        for index in range(1, 5)
+    ]
+    llm = MockLLM(
+        [
+            LLMResponse(content="", tool_calls=calls, finish_reason="tool"),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"browser_read_page": browser},
+            max_steps=5,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                presentation_research_mode="deep",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert browser.urls == [
+        "https://example.com/source-1",
+        "https://example.com/source-2",
+    ]
+    results = {
+        event.tool_call_id: event
+        for event in events
+        if isinstance(event, ToolCallResult)
+    }
+    for call_id in ("browser-3", "browser-4"):
+        assert results[call_id].success is False
+        assert results[call_id].user_visible is False
+        assert "page read deferred by runtime batching" in (
+            results[call_id].error or ""
+        )
+
+
+@pytest.mark.asyncio
 async def test_at_threshold_does_not_inject_final_summary_guidance():
     """Exactly at the threshold (boundary) does not trigger the wrap-up nudge."""
     llm = MockLLM(
@@ -1736,6 +2038,63 @@ async def test_web_search_budget_synthesizes_result_and_allows_final_answer():
 
 
 @pytest.mark.asyncio
+async def test_completion_gate_can_apply_a_stricter_web_search_budget():
+    tool_calls = [
+        ToolCall(
+            id=f"web-presentation-{index}",
+            type="function",
+            function=FunctionCall(
+                name="web_search",
+                arguments={"query": f"presentation fact {index}"},
+            ),
+        )
+        for index in range(6)
+    ]
+    web_search = CountingWebSearchTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=MockLLM(
+                [
+                    LLMResponse(content="", tool_calls=tool_calls, finish_reason="tool"),
+                    LLMResponse(content="final", finish_reason="stop"),
+                ]
+            ),
+            messages=_msgs(),
+            tools={"web_search": web_search},
+            max_steps=5,
+            completion_gate=CompletionGate(web_search_total_limit=4),
+        )
+    )
+
+    assert web_search.calls == 4
+    starts = [
+        event
+        for event in events
+        if isinstance(event, ToolCallStart) and event.tool_name == "web_search"
+    ]
+    assert len([event for event in starts if event.user_visible]) == 4
+    assert len([event for event in starts if not event.user_visible]) == 2
+    hidden_errors = [
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_name == "web_search"
+        and not event.user_visible
+        and not event.success
+    ]
+    assert len(hidden_errors) == 2
+    assert all("budget reached" in (event.error or "") for event in hidden_errors)
+    injected = [
+        event
+        for event in events
+        if isinstance(event, InjectedMessageEvent) and not event.user_visible
+    ]
+    assert any("total executed this turn: 4/4" in event.content for event in injected)
+    assert any("web_search 调用已达到预算上限（4 次）" in event.content for event in injected)
+
+
+@pytest.mark.asyncio
 async def test_total_tool_call_budget_is_a_hard_loop_limit():
     tool_calls = [
         ToolCall(
@@ -1770,6 +2129,52 @@ async def test_total_tool_call_budget_is_a_hard_loop_limit():
     assert "Total tool call budget reached" in (results[-1].error or "")
     injected = [event for event in events if isinstance(event, InjectedMessageEvent)]
     assert any("工具调用总预算已达到上限" in event.content for event in injected)
+
+
+@pytest.mark.asyncio
+async def test_identical_tool_calls_in_one_response_execute_only_once():
+    messages = _msgs()
+    duplicate_calls = [
+        ToolCall(
+            id=call_id,
+            type="function",
+            function=FunctionCall(name="echo", arguments={"text": "same"}),
+        )
+        for call_id in ("echo-first", "echo-duplicate")
+    ]
+    llm = MockLLM(
+        [
+            LLMResponse(content="", tool_calls=duplicate_calls, finish_reason="tool"),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+    echo = CountingEchoTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"echo": echo},
+            max_steps=3,
+        )
+    )
+
+    assert echo.calls == 1
+    starts = [event for event in events if isinstance(event, ToolCallStart)]
+    assert [event.tool_call_id for event in starts] == ["echo-first", "echo-duplicate"]
+    assert starts[0].user_visible is True
+    assert starts[1].user_visible is False
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    assert len(results) == 2
+    assert results[0].content == "echo:same"
+    assert results[1].success is True
+    assert results[1].user_visible is False
+    assert "Duplicate tool call skipped" in results[1].content
+    tool_messages = [message for message in messages if message.role == "tool"]
+    assert [message.tool_call_id for message in tool_messages] == [
+        "echo-first",
+        "echo-duplicate",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1876,7 +2281,175 @@ async def test_web_search_skips_duplicate_queries_and_dedupes_result_urls():
 
 
 @pytest.mark.asyncio
-async def test_web_search_tool_result_is_compacted_only_for_model_history():
+async def test_web_search_skips_high_overlap_query_rewrites_but_keeps_new_gaps():
+    profile_query = (
+        "site:fcbarcelona.com/en/football/first-team/players "
+        "Lamine Yamal profile"
+    )
+    rewritten_profile_query = (
+        "site:fcbarcelona.com Lamine Yamal first team profile"
+    )
+    award_query = (
+        "site:uefa.com Lamine Yamal Young Player of the Tournament EURO 2024"
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="web-profile",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": profile_query},
+                        ),
+                    ),
+                    ToolCall(
+                        id="web-profile-rewrite",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": rewritten_profile_query},
+                        ),
+                    ),
+                    ToolCall(
+                        id="web-award",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": award_query},
+                        ),
+                    ),
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="final", finish_reason="stop"),
+        ]
+    )
+    web_search = JsonWebSearchTool(
+        {
+            profile_query: "https://www.fcbarcelona.com/en/football/first-team/players/129404",
+            award_query: "https://www.uefa.com/euro2024/news/yamal-award/",
+        }
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"web_search": web_search},
+            max_steps=5,
+        )
+    )
+
+    assert web_search.calls == [profile_query, award_query]
+    rewritten_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "web-profile-rewrite"
+    )
+    assert rewritten_result.success is False
+    assert rewritten_result.user_visible is False
+    assert "near-duplicate" in (rewritten_result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_web_search_site_query_drops_off_domain_results():
+    query = "site:fifa.com Brazil World Cup history"
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="web-site",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": query},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="final", finish_reason="stop"),
+        ]
+    )
+    web_search = JsonWebSearchTool(
+        {query: "https://irrelevant.example.com/brazil-world-cup"}
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"web_search": web_search},
+            max_steps=5,
+        )
+    )
+
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_call_id == "web-site"
+    )
+    payload = json.loads(result.content)
+    assert payload["refs"] == []
+    assert payload["RequestedSiteDomain"] == "fifa.com"
+    assert payload["SiteFilterDroppedCount"] == 1
+    assert payload["SiteFilterMatchedCount"] == 0
+    assert "Do not cite or relabel dropped results" in payload["SiteFilterNotice"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_site_query_filters_nested_web_results_payload():
+    query = "site:fifa.com Brazil World Cup history"
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="web-site-nested",
+                        type="function",
+                        function=FunctionCall(name="web_search", arguments={"query": query}),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="final", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"web_search": NestedWebResultsTool()},
+            max_steps=5,
+        )
+    )
+
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_call_id == "web-site-nested"
+    )
+    payload = json.loads(result.content)
+    nested_results = payload["Result"]["WebResults"]
+    assert [item["Url"] for item in nested_results] == [
+        "https://www.fifa.com/tournaments/mens/worldcup"
+    ]
+    assert payload["RequestedSiteDomain"] == "fifa.com"
+    assert payload["SiteFilterDroppedCount"] == 1
+    assert payload["SiteFilterMatchedCount"] == 1
+    assert "irrelevant.example.com" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_web_search_tool_result_is_preserved_for_the_next_model_step():
     tool_call = ToolCall(
         id="web-large",
         type="function",
@@ -1909,13 +2482,13 @@ async def test_web_search_tool_result_is_compacted_only_for_model_history():
         for m in llm.message_calls[1]
         if m.role == "tool" and m.name == "web_search" and m.tool_call_id == "web-large"
     )
-    assert "compacted evidence retained" in tool_message.content
-    assert "query=policy 400g" in tool_message.content
+    assert tool_message.content == visible_result.content
+    assert '"Query": "policy 400g"' in tool_message.content
     assert "Official policy result" in tool_message.content
     assert "https://example.gov/policy" in tool_message.content
     assert "A concise summary of the policy" in tool_message.content
-    assert "RAW_SEARCH_BODY_" not in tool_message.content
-    assert len(tool_message.content) < 1000
+    assert "RAW_SEARCH_BODY_" in tool_message.content
+    assert len(tool_message.content) > 20_000
 
 
 @pytest.mark.asyncio
@@ -2216,6 +2789,92 @@ def test_artifact_detect_in_explicit_artifact_root(tmp_path):
     assert len(arts) == 1
     assert arts[0].rel_path == "session-a/output/chart.png"
     assert arts[0].abs_path == str(session_out / "chart.png")
+
+
+@pytest.mark.asyncio
+async def test_browser_snapshot_relative_filename_uses_artifact_root(tmp_path):
+    output_dir = tmp_path / "session-a" / "output"
+    (output_dir / "research").mkdir(parents=True)
+    snapshot = RecordingBrowserSnapshotTool()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="capture source",
+                tool_calls=[
+                    ToolCall(
+                        id="snapshot-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="browser_snapshot",
+                            arguments={"filename": "research/source.md"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"browser_snapshot": snapshot},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+            artifact_root_dir=output_dir,
+        )
+    )
+
+    assert snapshot.filenames == [""]
+    persisted = output_dir / "research" / "source.md"
+    assert persisted.read_text(encoding="utf-8") == "snapshot:"
+    assert any(
+        isinstance(event, ArtifactEvent) and event.abs_path == str(persisted)
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_browser_snapshot_relative_filename_cannot_escape_artifact_root(tmp_path):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    snapshot = RecordingBrowserSnapshotTool()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="capture source",
+                tool_calls=[
+                    ToolCall(
+                        id="snapshot-escape",
+                        type="function",
+                        function=FunctionCall(
+                            name="browser_snapshot",
+                            arguments={"filename": "../outside.md"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"browser_snapshot": snapshot},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+            artifact_root_dir=output_dir,
+        )
+    )
+
+    assert snapshot.filenames == []
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    assert "BROWSER_SNAPSHOT_OUTPUT_PATH_INVALID" in (result.error or "")
 
 
 def test_artifact_detect_data_kind(tmp_path):

@@ -23,6 +23,7 @@ contracts.
 | Context compaction and summarization | [Context Compression](CONTEXT_COMPRESSION.md) | [上下文压缩](CONTEXT_COMPRESSION_CN.md) |
 | Explicit sub-agent capabilities and strategies | [Sub-agent Delegation](SUB_AGENT_DELEGATION.md) | [子 Agent 委派](SUB_AGENT_DELEGATION_CN.md) |
 | Persistent memory integration | [Memory Integration](MEMORY_INTEGRATION.md) | Same document |
+| Controlled HTML PPTX compiler | [PPTX Architecture](PPTX_CONTROLLED_HTML_ARCHITECTURE.md) | [PPTX 架构](PPTX_CONTROLLED_HTML_ARCHITECTURE_CN.md) |
 
 ## ACP host integration
 
