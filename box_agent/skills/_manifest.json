@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "box_agent_version": "0.8.79",
-  "generated_at": "2026-07-13T15:29:49Z",
+  "generated_at": "2026-07-21T06:03:33Z",
   "skills": [
     {
       "name": "artifacts-builder",
@@ -46,6 +46,10 @@
     {
       "name": "internal-comms",
       "path": "internal-comms/SKILL.md"
+    },
+    {
+      "name": "landscape-drawing-review-skill",
+      "path": "landscape-drawing-review-skill/SKILL.md"
     },
     {
       "name": "mcp-config",
