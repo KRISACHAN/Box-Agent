@@ -735,6 +735,24 @@ class ExpertSessionContext:
                 unique.append(term)
         return " ".join(unique)
 
+    def skill_names(self) -> list[str]:
+        """Return explicit expert skill contracts in priority order."""
+        names: list[str] = []
+        profiles: list[Any] = [self.expert] if self.expert else []
+        if self.team:
+            profiles.extend([self.team.leader, *self.team.members])
+        for profile in profiles:
+            if profile is None:
+                continue
+            for name in (
+                *getattr(profile, "required_skills", []),
+                *getattr(profile, "default_skills", []),
+                *getattr(profile, "optional_skills", []),
+            ):
+                if name and name not in names:
+                    names.append(name)
+        return names
+
     def team_progress_payload(self) -> dict[str, object] | None:
         if not self.team:
             return None

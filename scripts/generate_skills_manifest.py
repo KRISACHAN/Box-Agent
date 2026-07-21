@@ -45,6 +45,7 @@ EXCLUDED_SKILL_DIRS: frozenset[str] = frozenset(
         "worldcup-prediction",
         "world-cup-briefing",
         "football-star-poster",
+        "landscape-drawing-review-skill",
         "skill-navigation-assistant-sl",
     }
 )

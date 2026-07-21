@@ -269,6 +269,52 @@ class SkillLoader:
     def skills_dir(self) -> Path:
         return self._sources[0].directory if self._sources else Path("./skills")
 
+    def with_expert_skill_sources(self, skill_names: List[str]) -> "SkillLoader":
+        """Clone this loader with uninstalled bundled skills requested by an expert.
+
+        Recommended skills intentionally stay out of the builtin manifest until
+        a user installs them. The clone adds only the exact requested skill
+        directories, keeping this capability scoped to the expert session.
+        """
+        requested_names = [
+            name.strip()
+            for name in skill_names
+            if isinstance(name, str) and _SKILL_NAME_RE.match(name.strip())
+        ]
+        if not requested_names:
+            return self
+
+        extra_sources: List[Tuple[Path, SkillSource]] = []
+        seen_names: Set[str] = set()
+        for name in requested_names:
+            if name in seen_names or self.get_skill(name, include_disabled=True):
+                continue
+            seen_names.add(name)
+            for entry in self._sources:
+                if entry.source != "builtin":
+                    continue
+                candidate = entry.directory / name
+                skill_path = candidate / "SKILL.md"
+                if not skill_path.is_file():
+                    continue
+                skill = self.load_skill(skill_path, source="builtin")
+                if skill is not None and skill.name == name:
+                    extra_sources.append((candidate, "builtin"))
+                    break
+
+        if not extra_sources:
+            return self
+
+        loader = SkillLoader(
+            sources=[
+                *((entry.directory, entry.source) for entry in self._sources),
+                *extra_sources,
+            ],
+            skill_settings_path=self._skill_settings_path,
+        )
+        loader.discover_skills()
+        return loader
+
     def _default_skill_settings_path(self) -> Optional[Path]:
         """Use officev3 skill settings only for the officev3 user-skill source.
 

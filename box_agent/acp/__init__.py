@@ -631,6 +631,7 @@ class SessionState:
     thinking_enabled: bool = False  # extended thinking toggle from _meta.deep_think
     env_context: "EnvContext | None" = None  # cached env_context, re-applied when mode switches
     skill_runtime_context: "SkillRuntimeContext | None" = None
+    skill_loader: Any | None = None  # session-local loader for expert-only recommended skills
     skill_selector: Any | None = None  # SkillSelector — filters skill metadata per turn
     expert_context: ExpertSessionContext | None = None
     upstream_session_id: str = ""  # caller-owned session id from _meta.session_id; forwarded as X-RACCOON-Session-ID
@@ -901,12 +902,13 @@ class BoxACPAgent:
         session_id: str,
         skill_names: list[str],
     ) -> None:
-        if not self._skill_loader:
+        skill_loader = state.skill_loader or self._skill_loader
+        if not skill_loader:
             self._sync_cache_fingerprint_context(state)
             return
         include_disabled = state.expert_context is not None
         result = build_auto_loaded_skills_prompt(
-            self._skill_loader,
+            skill_loader,
             state.agent.system_prompt,
             skill_names,
             existing_skill_names=state.preloaded_skill_names,
@@ -1193,6 +1195,11 @@ class BoxACPAgent:
             sandbox_mode=True,
             env_context=env_context,
         )
+        session_skill_loader = self._skill_loader
+        if expert_context is not None and self._skill_loader is not None:
+            session_skill_loader = self._skill_loader.with_expert_skill_sources(
+                expert_context.skill_names()
+            )
 
         # Build per-session system prompt with conditional mode injection
         system_prompt = self._build_session_prompt(
@@ -1223,12 +1230,12 @@ class BoxACPAgent:
                      message="Utility session: tools disabled (no memory recall/extraction)")
         else:
             tools = list(self._base_tools)
-            if self._skill_loader:
+            if session_skill_loader:
                 from box_agent.tools.skill_tool import GetSkillTool
 
                 tools = [
                     GetSkillTool(
-                        self._skill_loader,
+                        session_skill_loader,
                         include_disabled=expert_context is not None,
                         preloaded_skill_hashes=preloaded_skill_hashes,
                     )
@@ -1255,7 +1262,7 @@ class BoxACPAgent:
                 llm=self._llm,
                 permission_engine=perm_engine,
                 skill_runtime_context=skill_runtime_context,
-                skill_loader=self._skill_loader,
+                skill_loader=session_skill_loader,
                 capability_state_provider=self._sub_agent_capability_state,
                 use_output_dir=artifact_mode != "project",
                 artifact_root_dir=output_dir,
@@ -1321,6 +1328,7 @@ class BoxACPAgent:
             thinking_enabled=deep_think,
             env_context=env_context,
             skill_runtime_context=skill_runtime_context,
+            skill_loader=session_skill_loader,
             expert_context=expert_context,
             upstream_session_id=upstream_session_id,
             force_plan_start=force_plan_start,
@@ -1332,14 +1340,14 @@ class BoxACPAgent:
         # Skill selector: per-turn keyword-based filter on the skill catalog.
         # Agent.__init__ appends session/runtime/workspace context first; then
         # the skill slot is moved to the tail to keep catalog churn localized.
-        if self._skill_loader:
+        if session_skill_loader:
             from box_agent.tools.skill_loader import SkillSelector, move_skill_slot_to_end
 
             relocated_prompt = move_skill_slot_to_end(agent.messages[0].content)
             if relocated_prompt != agent.messages[0].content:
                 self._set_agent_system_prompt(agent, relocated_prompt)
             selector = SkillSelector(
-                self._skill_loader,
+                session_skill_loader,
                 include_disabled=expert_context is not None,
             )
             selector.bind(agent.messages[0].content)
@@ -1354,7 +1362,11 @@ class BoxACPAgent:
 
         kwargs: dict[str, Any] = {"sessionId": session_id}
         response_meta: dict[str, Any] = {}
-        skills = self._skills_meta()
+        skills = (
+            session_skill_loader.list_skills_metadata()
+            if session_skill_loader is not None
+            else self._skills_meta()
+        )
         if skills is not None:
             response_meta["skills"] = skills
         if expert_context is not None:
@@ -1622,9 +1634,9 @@ class BoxACPAgent:
         await self._ensure_skills_loaded()
 
         # Refresh skills so officev3-authored skills are available mid-session
-        if self._skill_loader:
+        if state.skill_loader:
             try:
-                self._skill_loader.maybe_reload()
+                state.skill_loader.maybe_reload()
             except Exception as exc:
                 log.warn("skills/reload_error", session_id=session_id, message=str(exc))
 
@@ -2496,8 +2508,8 @@ class BoxACPAgent:
             if usage_role == "dependency" and dependency_of:
                 invocation["dependencyOf"] = dependency_of
 
-            if self._skill_loader is not None:
-                skill = self._skill_loader.get_skill(
+            if state.skill_loader is not None:
+                skill = state.skill_loader.get_skill(
                     skill_name,
                     include_disabled=state.expert_context is not None,
                 )

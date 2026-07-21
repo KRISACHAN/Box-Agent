@@ -294,6 +294,55 @@ async def test_acp_expert_session_can_select_disabled_skill(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_acp_expert_can_use_uninstalled_recommended_skill_without_leaking_to_normal_session(tmp_path) -> None:
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    _write_skill(skills_dir, "expert-only-skill", "Bundled recommendation for one expert")
+    (skills_dir / "_manifest.json").write_text('{"skills": []}', encoding="utf-8")
+
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+    assert skill_loader.get_skill("expert-only-skill") is None
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_mcp=False),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [GetSkillTool(skill_loader)],
+        f"base system\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+
+    normal_session = await agent.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+    normal_state = agent._sessions[normal_session.sessionId]
+    normal_result = await normal_state.agent.tools["get_skill"].execute("expert-only-skill")
+    assert normal_result.success is False
+
+    expert_session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "expert": {
+                    "id": "expert-with-recommendation",
+                    "name": "推荐技能专家",
+                    "requiredSkills": ["expert-only-skill"],
+                },
+            },
+        )
+    )
+    expert_state = agent._sessions[expert_session.sessionId]
+    assert "expert-only-skill" in expert_state.agent.system_prompt
+    expert_result = await expert_state.agent.tools["get_skill"].execute("expert-only-skill")
+    assert expert_result.success is True
+    assert "expert-only-skill content" in expert_result.content
+
+
+@pytest.mark.asyncio
 async def test_acp_prompt_emits_expert_team_progress_without_internal_rules(tmp_path) -> None:
     config = Config(
         llm=LLMConfig(api_key="test-key"),
