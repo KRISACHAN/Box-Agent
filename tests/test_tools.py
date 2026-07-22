@@ -16,6 +16,7 @@ from box_agent.tools import (
     WriteTool,
     add_workspace_tools,
 )
+from box_agent.tools.file_tools import MAX_SEARCH_OFFSET, MAX_SEARCH_OUTPUT_CHARS
 from box_agent.tools.permissions import CapabilityPolicy, PermissionEngine
 
 
@@ -181,6 +182,114 @@ async def test_search_files_stops_after_page_plus_one_match(tmp_path, monkeypatc
     assert result.raw_output["scanned_files"] == 3
     assert result.raw_output["matched_through"] == 3
     assert result.raw_output["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_files_bounds_total_output_and_paginates_from_returned_count(tmp_path):
+    for index in range(60):
+        (tmp_path / f"file-{index:03d}.txt").write_text(
+            f"needle {'x' * 1_990}", encoding="utf-8"
+        )
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="needle",
+        target="content",
+    )
+
+    assert result.success is True
+    assert len(result.content) <= MAX_SEARCH_OUTPUT_CHARS
+    assert result.raw_output["output_limited"] is True
+    assert result.raw_output["limit_reason"] == "output_budget"
+    assert result.raw_output["returned_matches"] < 50
+    assert result.raw_output["next_offset"] == result.raw_output["returned_matches"]
+    assert "output budget reached" in result.content
+    assert (
+        f"Use offset={result.raw_output['next_offset']}, limit=50 to continue"
+        in result.content
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_files_rejects_offset_above_bounded_maximum(tmp_path):
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="*.txt",
+        target="files",
+        offset=MAX_SEARCH_OFFSET + 1,
+    )
+
+    assert result.success is False
+    assert f"at most {MAX_SEARCH_OFFSET:,}" in result.error
+
+
+@pytest.mark.asyncio
+async def test_search_files_discards_matches_before_offset(tmp_path, monkeypatch):
+    for index in range(8):
+        (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")
+    tool = SearchFilesTool(workspace_dir=str(tmp_path))
+    retained_page_sizes = []
+    original_search = tool._search_sync
+
+    def observe_page(**kwargs):
+        scan = original_search(**kwargs)
+        retained_page_sizes.append(len(scan["selected"]))
+        return scan
+
+    monkeypatch.setattr(tool, "_search_sync", observe_page)
+    result = await tool.execute(
+        pattern="*.txt",
+        target="files",
+        offset=5,
+        limit=2,
+    )
+
+    assert result.success is True
+    assert retained_page_sizes == [2]
+    assert "file-5.txt" in result.content
+    assert "file-0.txt" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_files_only_paginates_unique_files(tmp_path):
+    (tmp_path / "a.txt").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "c.txt").write_text("needle\n", encoding="utf-8")
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="needle",
+        target="content",
+        output_mode="files_only",
+        limit=2,
+    )
+
+    assert result.success is True
+    assert result.content.count("a.txt") == 1
+    assert "b.txt" in result.content
+    assert "c.txt" not in result.content
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["next_offset"] == 2
+
+
+@pytest.mark.asyncio
+async def test_search_files_count_mode_streams_and_paginates_file_counts(tmp_path):
+    (tmp_path / "a.txt").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "c.txt").write_text("needle\nneedle\nneedle\n", encoding="utf-8")
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="needle",
+        target="content",
+        output_mode="count",
+        offset=1,
+        limit=1,
+    )
+
+    assert result.success is True
+    assert result.content.startswith("b.txt:1")
+    assert "a.txt" not in result.content
+    assert "c.txt" not in result.content
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["returned_matches"] == 1
+    assert result.raw_output["next_offset"] == 2
 
 
 @pytest.mark.asyncio

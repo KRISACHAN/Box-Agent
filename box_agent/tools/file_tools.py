@@ -35,6 +35,9 @@ MAX_READ_LINES = 2_000
 MAX_READ_CHARS = 100_000
 DEFAULT_SEARCH_LIMIT = 50
 MAX_SEARCH_RESULTS = 200
+MAX_SEARCH_OFFSET = 10_000
+MAX_SEARCH_OUTPUT_CHARS = 50_000
+SEARCH_OUTPUT_HINT_RESERVE_CHARS = 1_000
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 60.0
 SEARCH_HEARTBEAT_SECONDS = 10.0
 _BINARY_EXTENSIONS = {
@@ -520,7 +523,8 @@ class SearchFilesTool(EventEmittingTool):
             "Search file contents or find files by name. Use this instead of grep/rg/find/ls "
             "in bash. target='content' performs a regular-expression text search; "
             "target='files' finds files by glob pattern and is the correct way to inspect "
-            "a directory. Results are bounded and support offset/limit pagination."
+            "a directory. Results are bounded by count and total characters and support "
+            "offset/limit pagination."
         )
 
     @property
@@ -552,7 +556,12 @@ class SearchFilesTool(EventEmittingTool):
                     "minimum": 1,
                     "maximum": MAX_SEARCH_RESULTS,
                 },
-                "offset": {"type": "integer", "default": 0, "minimum": 0},
+                "offset": {
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": MAX_SEARCH_OFFSET,
+                },
                 "output_mode": {
                     "type": "string",
                     "enum": ["content", "files_only", "count"],
@@ -663,32 +672,48 @@ class SearchFilesTool(EventEmittingTool):
         offset: int,
         output_mode: str,
         context: int,
+        result_char_budget: int,
         stop_event: threading.Event,
         deadline: float,
     ) -> dict[str, Any]:
         """Run a cooperative, streaming search outside the asyncio loop."""
         expression = re.compile(pattern) if target == "content" else None
         base = search_path if search_path.is_dir() else search_path.parent
-        required_results = offset + limit
         matches: list[str] = []
-        counts: dict[str, int] = {}
-        seen_files: set[str] = set()
+        selected_chars = 0
         scanned_files = 0
         matched_results = 0
         has_more = False
+        output_limited = False
 
         def stopped() -> bool:
             return stop_event.is_set() or time.monotonic() >= deadline
 
         def add_result(value: str) -> bool:
-            """Keep only the requested prefix and stop after one extra match."""
-            nonlocal matched_results, has_more
+            """Discard skipped matches and retain only one bounded result page."""
+            nonlocal matched_results, has_more, output_limited, selected_chars
             matched_results += 1
-            if len(matches) < required_results:
-                matches.append(value)
+            if matched_results <= offset:
                 return False
-            has_more = True
-            return True
+            if len(matches) >= limit:
+                has_more = True
+                return True
+
+            separator_chars = 1 if matches else 0
+            remaining = result_char_budget - selected_chars - separator_chars
+            if len(value) > remaining:
+                output_limited = True
+                has_more = True
+                if not matches and remaining > 0:
+                    marker = "\n...[match truncated to search_files output budget]"
+                    keep = max(0, remaining - len(marker))
+                    matches.append(value[:keep] + marker)
+                    selected_chars += separator_chars + len(matches[-1])
+                return True
+
+            matches.append(value)
+            selected_chars += separator_chars + len(value)
+            return False
 
         for file_path in self._iter_files(
             search_path,
@@ -715,6 +740,7 @@ class SearchFilesTool(EventEmittingTool):
             if _binary_file_error(file_path):
                 continue
 
+            file_match_count = 0
             try:
                 if context > 0:
                     # Context rendering needs neighbouring lines, but remains
@@ -735,16 +761,12 @@ class SearchFilesTool(EventEmittingTool):
                         line = raw_line.rstrip("\r\n")
                         if expression is None or not expression.search(line):
                             continue
-                        counts[relative] = counts.get(relative, 0) + 1
+                        file_match_count += 1
                         if output_mode == "count":
                             continue
                         if output_mode == "files_only":
-                            if relative in seen_files:
-                                continue
-                            seen_files.add(relative)
-                            if add_result(relative):
-                                break
-                            continue
+                            add_result(relative)
+                            break
 
                         if lines is None:
                             rendered = f"{relative}:{line_index + 1}:>{self._line_text(line)}"
@@ -767,25 +789,21 @@ class SearchFilesTool(EventEmittingTool):
             except OSError:
                 continue
 
-            if has_more and output_mode != "count":
+            if output_mode == "count" and file_match_count and not stopped():
+                add_result(f"{relative}:{file_match_count}")
+
+            if has_more:
                 break
 
         timed_out = not stop_event.is_set() and time.monotonic() >= deadline
-        if output_mode == "count" and target == "content":
-            matches = [f"{relative}:{count}" for relative, count in sorted(counts.items())]
-            matched_results = len(matches)
-            selected = matches[offset : offset + limit]
-            has_more = len(matches) > offset + limit
-            exact_total = not timed_out
-        else:
-            selected = matches[offset : offset + limit]
-            exact_total = not has_more and not timed_out
+        exact_total = not has_more and not timed_out
 
         return {
-            "selected": selected,
+            "selected": matches,
             "matched_results": matched_results,
             "scanned_files": scanned_files,
             "has_more": has_more,
+            "output_limited": output_limited,
             "timed_out": timed_out,
             "cancelled": stop_event.is_set(),
             "exact_total": exact_total,
@@ -813,6 +831,18 @@ class SearchFilesTool(EventEmittingTool):
                 return ToolResult(success=False, error="target must be 'content' or 'files'")
             if output_mode not in {"content", "files_only", "count"}:
                 return ToolResult(success=False, error="Invalid output_mode")
+            if (
+                isinstance(offset, int)
+                and not isinstance(offset, bool)
+                and offset > MAX_SEARCH_OFFSET
+            ):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f"offset must be at most {MAX_SEARCH_OFFSET:,}; narrow the path or "
+                        "pattern instead of skipping an unbounded result set"
+                    ),
+                )
             offset, limit = _normalize_search_pagination(offset, limit)
             context = max(0, min(context if isinstance(context, int) else 0, 10))
             search_path = self._resolve_path(path)
@@ -841,6 +871,9 @@ class SearchFilesTool(EventEmittingTool):
                     offset=offset,
                     output_mode=output_mode,
                     context=context,
+                    result_char_budget=(
+                        MAX_SEARCH_OUTPUT_CHARS - SEARCH_OUTPUT_HINT_RESERVE_CHARS
+                    ),
                     stop_event=stop_event,
                     deadline=deadline,
                 )
@@ -858,6 +891,7 @@ class SearchFilesTool(EventEmittingTool):
                             "matched_results": 0,
                             "scanned_files": 0,
                             "has_more": False,
+                            "output_limited": False,
                             "timed_out": True,
                             "cancelled": False,
                             "exact_total": False,
@@ -886,6 +920,7 @@ class SearchFilesTool(EventEmittingTool):
                 raise
 
             selected = scan["selected"]
+            output_limited = bool(scan.get("output_limited", False))
             truncated = scan["has_more"] or scan["timed_out"]
             content = "\n".join(selected)
             if not content:
@@ -896,15 +931,31 @@ class SearchFilesTool(EventEmittingTool):
                     else "No matches found."
                 )
             if scan["has_more"]:
+                next_offset = offset + len(selected)
+                limit_label = (
+                    "output budget reached; " if output_limited else ""
+                )
                 content += (
-                    f"\n\n[Hint: showing results {offset + 1}-{offset + len(selected)} "
-                    f"with more available. Use offset={offset + limit}, limit={limit} to continue.]"
+                    f"\n\n[Hint: {limit_label}showing results "
+                    f"{offset + 1}-{offset + len(selected)} with more available. "
+                    f"Use offset={next_offset}, limit={limit} to continue.]"
                 )
             if scan["timed_out"] and selected:
                 content += (
                     f"\n\n[Warning: search timed out after {self.search_timeout_seconds:g} seconds. "
                     "Partial results are shown; narrow the search before retrying.]"
                 )
+            if len(content) > MAX_SEARCH_OUTPUT_CHARS:
+                content = content[:MAX_SEARCH_OUTPUT_CHARS]
+
+            limit_reason = None
+            if scan["timed_out"]:
+                limit_reason = "search_timeout"
+            elif output_limited:
+                limit_reason = "output_budget"
+            elif scan["has_more"]:
+                limit_reason = "result_limit"
+
             return ToolResult(
                 success=True,
                 content=content,
@@ -918,10 +969,13 @@ class SearchFilesTool(EventEmittingTool):
                     "total_is_exact": scan["exact_total"],
                     "returned_matches": len(selected),
                     "truncated": truncated,
-                    "next_offset": offset + limit if truncated else None,
+                    "next_offset": offset + len(selected) if truncated else None,
                     "scanned_files": scan["scanned_files"],
                     "timed_out": scan["timed_out"],
-                    "limit_reason": "search_timeout" if scan["timed_out"] else None,
+                    "output_limited": output_limited,
+                    "output_chars": len(content),
+                    "max_output_chars": MAX_SEARCH_OUTPUT_CHARS,
+                    "limit_reason": limit_reason,
                 },
             )
         except Exception as exc:
