@@ -32,7 +32,7 @@ from box_agent.events import (
     ToolCallStart,
 )
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
-from box_agent.tools.base import Tool, ToolResult
+from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
 
 
@@ -1047,7 +1047,7 @@ async def test_tool_model_context_is_used_only_for_message_history():
 
 
 @pytest.mark.asyncio
-async def test_read_file_artifact_keeps_full_event_but_compacts_model_history(tmp_path):
+async def test_read_file_artifact_keeps_bounded_page_in_model_history(tmp_path):
     marker = "SHOULD_NOT_STAY_IN_MODEL_HISTORY"
     deck = tmp_path / "deck.html"
     deck.write_text(
@@ -1083,9 +1083,8 @@ async def test_read_file_artifact_keeps_full_event_but_compacts_model_history(tm
     assert marker in result.content
 
     tool_msg = next(m for m in msgs if m.role == "tool")
-    assert "[Full file content omitted from model history]" in tool_msg.content
-    assert "deck.html" in tool_msg.content
-    assert marker not in tool_msg.content
+    assert "[Full file content omitted from model history]" not in tool_msg.content
+    assert marker in tool_msg.content
 
 
 @pytest.mark.asyncio
@@ -1108,7 +1107,7 @@ async def test_read_file_skill_reference_stays_available_for_next_model_turn(tmp
                         type="function",
                         function=FunctionCall(
                             name="read_file",
-                            arguments={"path": str(reference)},
+                            arguments={"path": str(reference), "limit": 1000},
                         ),
                     )
                 ],
@@ -1668,6 +1667,72 @@ async def test_cancellation_after_tool():
     done = [e for e in events if isinstance(e, DoneEvent)]
     assert len(done) == 1
     assert done[0].stop_reason == StopReason.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancellation_interrupts_opted_in_event_tool():
+    """A cancellable long-running tool must not wait for execute() to return."""
+
+    class BlockingSearchTool(EventEmittingTool):
+        cancel_on_agent_cancel = True
+
+        def __init__(self):
+            super().__init__()
+            self.started = False
+            self.cancelled = False
+
+        @property
+        def name(self):
+            return "search_files"
+
+        @property
+        def description(self):
+            return "Blocks until cancelled"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self):
+            self.started = True
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    tool = BlockingSearchTool()
+    llm = MockLLM([
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="search-1",
+                    type="function",
+                    function=FunctionCall(name="search_files", arguments={}),
+                )
+            ],
+            finish_reason="tool",
+        )
+    ])
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"search_files": tool},
+            max_steps=5,
+            is_cancelled=lambda: tool.started,
+        )
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    done = [event for event in events if isinstance(event, DoneEvent)]
+    assert tool.cancelled is True
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "cancelled" in (results[0].error or "")
+    assert done[-1].stop_reason == StopReason.CANCELLED
 
 
 @pytest.mark.asyncio

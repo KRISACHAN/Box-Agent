@@ -886,10 +886,21 @@ class TestAcpPermissionOverride:
         assert isinstance(req["temporary_supported"], bool)
 
     def test_no_escalation_request_is_none(self, engine: PermissionEngine):
-        """Paths outside home return None permission_request (no escalation available)."""
+        """Implicit system-root paths outside home have no escalation option."""
         decision = engine.check(FILESYSTEM_READ, {"path": "/etc/passwd"})
         assert decision.allowed is False
         assert decision.permission_request is None
+
+    def test_explicit_windows_path_reports_request_to_host(self, engine: PermissionEngine):
+        """A user-named drive path reaches officev3 for directory approval."""
+        requested = r"Z:\external-project"
+        decision = engine.check(FILESYSTEM_READ, {"path": requested})
+
+        assert decision.allowed is False
+        assert decision.permission_request is not None
+        assert decision.permission_request["scope"] == "filesystem"
+        assert decision.permission_request["requested_scope"] == "user_home"
+        assert decision.permission_request["path"] == requested
 
 
 # ── Allowed directories + custom/user_home scopes ────────────

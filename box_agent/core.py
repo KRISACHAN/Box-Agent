@@ -1851,6 +1851,13 @@ def _tool_message_content_for_model(
     if not result.success:
         return f"Error: {visible_error}"
 
+    # read_file now enforces bounded line pagination and rejects pages above
+    # its character safety limit. Preserve each successful page verbatim so
+    # offset/limit can reliably retrieve content instead of replacing the
+    # requested region with another history preview.
+    if tool_name == "read_file" and (result.raw_output or {}).get("truncated") is False:
+        return visible_content
+
     if result.model_context is not None and visible_content == result.content:
         return result.model_context
 
@@ -4962,7 +4969,16 @@ async def run_agent_loop(
                             exec_done.set()
 
                     exec_task = asyncio.create_task(_seq_exec())
+                    tool_cancelled = False
                     while not exec_done.is_set() or not event_queue.empty():
+                        if (
+                            getattr(tool, "cancel_on_agent_cancel", False)
+                            and cancelled()
+                            and not exec_task.done()
+                        ):
+                            tool_cancelled = True
+                            exec_task.cancel()
+                            break
                         try:
                             evt = await asyncio.wait_for(event_queue.get(), timeout=0.1)
                             yield evt
@@ -4970,8 +4986,22 @@ async def run_agent_loop(
                             continue
                     while not event_queue.empty():
                         yield event_queue.get_nowait()
-                    await exec_task
-                    result = exec_result  # type: ignore[assignment]
+                    if tool_cancelled:
+                        try:
+                            await asyncio.wait_for(
+                                exec_task,
+                                timeout=PARALLEL_TOOL_CANCEL_GRACE_SECONDS,
+                            )
+                        except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
+                            pass
+                        result = ToolResult(
+                            success=False,
+                            content="",
+                            error="Tool execution cancelled before completion.",
+                        )
+                    else:
+                        await exec_task
+                        result = exec_result  # type: ignore[assignment]
                 else:
                     try:
                         result = await tools[fn_name].execute(**fn_args)

@@ -36,6 +36,64 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Maximum stdout+stderr payload retained in a single bash tool result. Beyond
+# this we keep the beginning and end and add a marker guiding the model to
+# narrow the command. Motivated by a live incident where two `rg` full-tree
+# searches returned 3.7M chars combined and the next LLM request exceeded its
+# context limit. The marker itself is intentionally additional to this payload
+# budget. This mirrors Hermes terminal's 50K, 40%-head/60%-tail policy.
+MAX_BASH_OUTPUT_CHARS = 50_000
+
+
+def _truncate_bash_output(text: str, label: str, limit: int = MAX_BASH_OUTPUT_CHARS) -> tuple[str, int]:
+    """Truncate bash output to ``limit`` payload chars using head 40% + tail 60%.
+
+    Returns ``(truncated_text, dropped_chars)``. Empty / short-enough text is
+    returned unchanged with ``dropped_chars == 0``.
+
+    The middle marker embeds an actionable hint (use narrower patterns,
+    ``head -N``, ``rg -m N``, ...) so the model sees the guidance in the
+    same visual position where it would otherwise conclude "no more matches
+    beyond here" mid-scroll.
+    """
+    if not text or len(text) <= limit:
+        return text, 0
+    head_n = limit * 2 // 5
+    tail_n = limit - head_n
+    dropped = len(text) - limit
+    head, tail = text[:head_n], text[-tail_n:]
+    marker = (
+        f"\n\n...[{label} truncated: dropped {dropped:,} chars "
+        f"(showing first {head_n:,} + last {tail_n:,} of {len(text):,}). "
+        f"Tip: use narrower search patterns, `rg -m N`, or restrict the "
+        f"search path; cap displayed lines with `head -N` on POSIX or "
+        f"`Select-Object -First N` on PowerShell.]...\n\n"
+    )
+    return head + marker + tail, dropped
+
+
+def _truncate_bash_streams(
+    stdout: str,
+    stderr: str,
+    limit: int = MAX_BASH_OUTPUT_CHARS,
+) -> tuple[str, str, int]:
+    """Apply one shared payload budget to a command's stdout and stderr.
+
+    Small outputs preserve the structured streams. Oversized output is first
+    formatted exactly as the model would see it, then truncated as one unit so
+    stdout and stderr cannot each consume a separate 50K allowance. The
+    bounded combined representation is returned in ``stdout``; ``raw_output``
+    metadata tells hosts that the original streams were combined.
+    """
+    combined = stdout
+    if stderr:
+        combined += f"\n[stderr]:\n{stderr}"
+    if len(combined) <= limit:
+        return stdout, stderr, 0
+    truncated, dropped = _truncate_bash_output(combined, "combined stdout/stderr", limit)
+    return truncated, "", dropped
+
+
 # Shells whose syntax is POSIX-compatible (supports &&, ||, for/do/done, etc.)
 _POSIX_SHELLS = frozenset({"bash", "zsh", "sh", "dash", "ksh", "ash"})
 _LARK_CLI_RE = re.compile(
@@ -345,6 +403,16 @@ class BackgroundShellManager:
                     except Exception:
                         await asyncio.sleep(0.1)
                         continue
+
+                # A short-lived process can exit before the monitor gets its
+                # first iteration. Drain everything still buffered after exit
+                # so fast commands do not silently lose their output.
+                if process.stdout:
+                    remaining = await process.stdout.read()
+                    if remaining:
+                        decoded = remaining.decode("utf-8", errors="replace")
+                        for line in decoded.splitlines():
+                            shell.add_output(line)
 
                 # Process ended, wait for exit code
                 try:
@@ -772,7 +840,9 @@ class BashTool(Tool):
         shell_examples = {
             "Windows": """Execute PowerShell commands in foreground or background.
 
-For terminal operations like git, npm, docker, etc. DO NOT use for file operations - use specialized tools.
+Do NOT use Get-Content/type to read files; use read_file instead.
+Do NOT use Select-String/Get-ChildItem/dir to search or list files; use search_files instead.
+Reserve bash for git, builds, tests, package managers, processes, scripts, and system commands.
 
 Parameters:
   - command (required): PowerShell command to execute
@@ -791,7 +861,9 @@ Examples:
   - python -m http.server 8080 (with run_in_background=true)""",
             "Unix": """Execute bash commands in foreground or background.
 
-For terminal operations like git, npm, docker, etc. DO NOT use for file operations - use specialized tools.
+Do NOT use cat/head/tail to read files; use read_file instead.
+Do NOT use grep/rg/find/ls to search or list files; use search_files instead.
+Reserve bash for git, builds, tests, package managers, processes, scripts, and system commands.
 
 Parameters:
   - command (required): Bash command to execute
@@ -1049,12 +1121,40 @@ Examples:
                 stdout_text = stdout.decode("utf-8", errors="replace")
                 stderr_text = stderr.decode("utf-8", errors="replace")
 
+                original_stdout_chars = len(stdout_text)
+                original_stderr_chars = len(stderr_text)
+                stdout_text, stderr_text, dropped = _truncate_bash_streams(
+                    stdout_text, stderr_text
+                )
+                raw_output: dict | None = None
+                if dropped:
+                    raw_output = {
+                        "dropped_chars": dropped,
+                        "original_stdout_chars": original_stdout_chars,
+                        "original_stderr_chars": original_stderr_chars,
+                        "streams_combined": True,
+                        "max_output_chars": MAX_BASH_OUTPUT_CHARS,
+                    }
+                    log.warning(
+                        "bash/output_truncated command=%r dropped=%d stdout_chars=%d stderr_chars=%d",
+                        command[:120], dropped, original_stdout_chars, original_stderr_chars,
+                    )
+
                 # Create result (content auto-formatted by model_validator)
                 is_success = process.returncode == 0
                 error_msg = None
                 if not is_success:
                     error_msg = f"Command failed with exit code {process.returncode}"
-                    if stderr_text:
+                    if dropped:
+                        # Failed tool messages use ``error`` (not ``content``)
+                        # in model history. Keep a smaller bounded diagnostic
+                        # there so the model can still diagnose the failure
+                        # without duplicating the full 50K visible result.
+                        diagnostic, _ = _truncate_bash_output(
+                            stdout_text, "error context", limit=8_000
+                        )
+                        error_msg += f"\n{diagnostic.strip()}"
+                    elif stderr_text:
                         error_msg += f"\n{stderr_text.strip()}"
 
                 return BashOutputResult(
@@ -1063,6 +1163,7 @@ Examples:
                     stdout=stdout_text,
                     stderr=stderr_text,
                     exit_code=process.returncode or 0,
+                    raw_output=raw_output,
                 )
 
         except Exception as e:
@@ -1151,12 +1252,31 @@ class BashOutputTool(Tool):
             new_lines = bg_shell.get_new_output(filter_pattern=filter_str)
             stdout = "\n".join(new_lines) if new_lines else ""
 
+            # Truncate large batches for the same reason foreground execution
+            # does — `bash_output` can pull a very large accumulated stream
+            # (e.g. a long-running server that emitted MBs since the last read).
+            stdout, _stderr, dropped = _truncate_bash_streams(stdout, "")
+            raw_output: dict | None = None
+            if dropped:
+                raw_output = {
+                    "dropped_chars": dropped,
+                    "original_stdout_chars": len("\n".join(new_lines)),
+                    "original_stderr_chars": 0,
+                    "streams_combined": False,
+                    "max_output_chars": MAX_BASH_OUTPUT_CHARS,
+                }
+                log.warning(
+                    "bash/background_output_truncated bash_id=%s stdout_dropped=%d",
+                    bash_id, dropped,
+                )
+
             return BashOutputResult(
                 success=True,
                 stdout=stdout,
                 stderr="",  # Background shells combine stdout/stderr
                 exit_code=bg_shell.exit_code if bg_shell.exit_code is not None else 0,
                 bash_id=bash_id,
+                raw_output=raw_output,
             )
 
         except Exception as e:

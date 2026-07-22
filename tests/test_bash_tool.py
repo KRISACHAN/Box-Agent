@@ -5,7 +5,15 @@ import unittest.mock
 
 import pytest
 
-from box_agent.tools.bash_tool import BackgroundShellManager, BashKillTool, BashOutputTool, BashTool
+from box_agent.tools.bash_tool import (
+    MAX_BASH_OUTPUT_CHARS,
+    BackgroundShellManager,
+    BashKillTool,
+    BashOutputTool,
+    BashTool,
+    _truncate_bash_output,
+    _truncate_bash_streams,
+)
 
 
 @pytest.mark.asyncio
@@ -28,7 +36,12 @@ async def test_foreground_command_with_stderr():
     print("\n=== Testing Stdout/Stderr Separation ===")
 
     bash_tool = BashTool()
-    result = await bash_tool.execute(command="echo 'stdout message' && echo 'stderr message' >&2")
+    import platform
+    if platform.system() == "Windows":
+        command = "Write-Output 'stdout message'; [Console]::Error.WriteLine('stderr message')"
+    else:
+        command = "echo 'stdout message' && echo 'stderr message' >&2"
+    result = await bash_tool.execute(command=command)
 
     assert result.success
     assert "stdout message" in result.stdout
@@ -599,3 +612,193 @@ async def test_foreground_timeout_kills_grandchild_windows(tmp_path):
         f"Windows grandchild kept writing after timeout kill: "
         f"{count_after_kill} -> {count_later}"
     )
+
+
+# ── output truncation (P2b) ──────────────────────────────────────────
+
+
+def test_truncate_bash_output_small_passthrough():
+    """Under-limit text is returned unchanged with dropped_chars=0."""
+    text = "small output"
+    out, dropped = _truncate_bash_output(text, "stdout")
+    assert out == text
+    assert dropped == 0
+
+
+def test_truncate_bash_output_empty_passthrough():
+    """Empty input short-circuits, no marker."""
+    out, dropped = _truncate_bash_output("", "stdout")
+    assert out == ""
+    assert dropped == 0
+
+
+def test_truncate_bash_output_at_boundary():
+    """Exactly-at-limit text is not truncated (>, not >=)."""
+    text = "a" * MAX_BASH_OUTPUT_CHARS
+    out, dropped = _truncate_bash_output(text, "stdout")
+    assert out == text
+    assert dropped == 0
+
+
+def test_truncate_bash_output_head_tail_shape():
+    """Over-limit text: Hermes-style head 40% + tail 60%."""
+    limit = 1000  # small custom limit for a readable test
+    head_n = limit * 2 // 5  # 400
+    tail_n = limit - head_n  # 600
+
+    # Distinct head/tail sentinels so we can verify which slice was kept.
+    text = "H" * 2000 + "T" * 2000
+    out, dropped = _truncate_bash_output(text, "stdout", limit=limit)
+
+    assert dropped == len(text) - limit == 3000
+    assert out.startswith("H" * head_n)
+    assert out.endswith("T" * tail_n)
+    assert "truncated" in out
+    assert "Tip:" in out
+    # No leakage of head/tail sentinels into the marker. We can't just check
+    # "H not in marker" because the marker text itself contains letters
+    # (e.g. "Tip:"); check that no long run of H or T sentinels bled through.
+    marker_start = head_n
+    marker_end = len(out) - tail_n
+    marker = out[marker_start:marker_end]
+    assert "HH" not in marker  # any two consecutive H would be a sentinel leak
+    assert "TT" not in marker
+
+
+def test_truncate_bash_output_marker_includes_actionable_hint():
+    """The middle marker must carry the guidance, not just a passive notice."""
+    text = "x" * (MAX_BASH_OUTPUT_CHARS + 10_000)
+    out, dropped = _truncate_bash_output(text, "stdout")
+    assert dropped == 10_000
+    # Regression: models used to read to the marker and conclude "no matches".
+    # The tip inside the marker is what breaks that pattern.
+    assert "narrower search patterns" in out or "narrower" in out
+    assert "head -N" in out or "rg -m N" in out
+
+
+def test_truncate_bash_streams_uses_one_shared_budget():
+    """stdout and stderr must not receive independent 50K allowances."""
+    stdout = "O" * 40_000
+    stderr = "E" * 40_000
+
+    bounded_stdout, bounded_stderr, dropped = _truncate_bash_streams(stdout, stderr)
+
+    assert bounded_stderr == ""
+    assert dropped > 0
+    assert len(bounded_stdout) <= MAX_BASH_OUTPUT_CHARS + 500
+    assert bounded_stdout.startswith("O" * 100)
+    assert bounded_stdout.endswith("E" * 100)
+    assert "combined stdout/stderr truncated" in bounded_stdout
+
+
+def test_truncate_bash_streams_preserves_small_streams():
+    stdout, stderr, dropped = _truncate_bash_streams("out", "err")
+    assert (stdout, stderr, dropped) == ("out", "err", 0)
+
+
+@pytest.mark.asyncio
+async def test_foreground_output_truncated_when_oversize():
+    """Foreground `rg`-style large output must be truncated at the tool
+    boundary — this is the direct regression guard for the 3.7M-char
+    context-overflow incident."""
+    # Portable way to produce > MAX_BASH_OUTPUT_CHARS of output on both
+    # POSIX shells and PowerShell without depending on `rg` / `yes`.
+    import platform
+    if platform.system() == "Windows":
+        # PowerShell: emit a 60000-char string
+        command = "$s = 'x' * 60000; Write-Output $s"
+    else:
+        command = "python3 -c \"print('x' * 60000)\""
+
+    bash_tool = BashTool()
+    result = await bash_tool.execute(command=command)
+
+    assert result.success, f"command failed: {result.error}"
+    assert len(result.stdout) <= MAX_BASH_OUTPUT_CHARS + 500, (
+        f"expected truncated output, got {len(result.stdout)} chars"
+    )
+    assert "truncated" in result.stdout
+    assert result.raw_output is not None
+    assert result.raw_output["dropped_chars"] > 0
+    assert result.raw_output["original_stdout_chars"] > MAX_BASH_OUTPUT_CHARS
+    assert result.raw_output["streams_combined"] is True
+    assert result.raw_output["max_output_chars"] == MAX_BASH_OUTPUT_CHARS
+
+
+@pytest.mark.asyncio
+async def test_foreground_output_normal_size_no_raw_output():
+    """Normal-sized output must not attach the raw_output truncation payload
+    (host UIs would otherwise show a "truncated" badge on every command)."""
+    bash_tool = BashTool()
+    result = await bash_tool.execute(command="echo hello")
+    assert result.success
+    assert "hello" in result.stdout
+    assert result.raw_output is None
+
+
+@pytest.mark.asyncio
+async def test_foreground_large_stderr_failure_is_bounded_without_error_duplication():
+    """A failing command with huge stderr keeps one shared bounded payload."""
+    import platform
+    if platform.system() == "Windows":
+        command = "[Console]::Error.Write('e' * 60000); exit 7"
+    else:
+        command = "python3 -c \"import sys; sys.stderr.write('e' * 60000); raise SystemExit(7)\""
+
+    result = await BashTool().execute(command=command)
+
+    assert not result.success
+    assert result.exit_code == 7
+    assert len(result.content) <= MAX_BASH_OUTPUT_CHARS + 600
+    assert result.error is not None
+    assert result.error.startswith("Command failed with exit code 7")
+    assert len(result.error) <= 8_500
+    assert "error context truncated" in result.error
+    assert result.raw_output is not None
+    assert result.raw_output["dropped_chars"] > 0
+    assert result.raw_output["original_stderr_chars"] >= 60_000
+
+
+@pytest.mark.asyncio
+async def test_background_output_truncated_when_oversize():
+    """`bash_output` reads on a background shell that accumulated a large
+    stream must also truncate — otherwise the incident just moves to the
+    background path."""
+    bg_shell_cls = BackgroundShellManager  # for cleanup access
+    bash_tool = BashTool()
+
+    # A quick background command that emits a big single line then exits.
+    import platform
+    if platform.system() == "Windows":
+        command = "$s = 'x' * 60000; Write-Output $s"
+    else:
+        command = "python3 -c \"print('x' * 60000)\""
+
+    start_result = await bash_tool.execute(command=command, run_in_background=True)
+    assert start_result.success
+    bash_id = start_result.bash_id
+    assert bash_id is not None
+
+    # Wait for the monitor to observe exit and drain the pipe. A bounded poll
+    # avoids the fixed-sleep race that originally exposed the missing drain.
+    for _ in range(100):
+        shell = BackgroundShellManager.get(bash_id)
+        if shell is not None and shell.status != "running":
+            break
+        await asyncio.sleep(0.05)
+
+    bash_output_tool = BashOutputTool()
+    output_result = await bash_output_tool.execute(bash_id=bash_id)
+    try:
+        assert output_result.success
+        assert len(output_result.stdout) <= MAX_BASH_OUTPUT_CHARS + 500
+        assert "truncated" in output_result.stdout
+        assert output_result.raw_output is not None
+        assert output_result.raw_output["dropped_chars"] > 0
+    finally:
+        # Best-effort cleanup so the test doesn't leak a monitor task.
+        try:
+            await BashKillTool().execute(bash_id=bash_id)
+        except Exception:
+            pass
+        _ = bg_shell_cls  # silence unused

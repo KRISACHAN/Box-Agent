@@ -164,6 +164,35 @@ class TestDetectScopeEscape:
         assert detect_scope_escape("cp /etc/passwd local.txt") is not None
         assert detect_scope_escape("mv /var/log/app.log archive/") is not None
 
+    def test_windows_drive_cd_blocked(self):
+        """`cd C:\\Users\\...` on Windows must be caught (regression for
+        Windows drive-letter blind spot — models used to bypass workspace
+        controls by switching to Windows path style)."""
+        assert detect_scope_escape(r"cd C:\Users\me") is not None
+        assert detect_scope_escape("cd D:/projects") is not None
+
+    def test_windows_drive_read_blocked(self):
+        """`cat/type/Get-Content D:\\secrets\\key.txt` on Windows must be caught."""
+        assert detect_scope_escape(r"cat D:\secrets\key.txt") is not None
+        assert detect_scope_escape(r"type C:\Windows\System32\config") is not None
+        assert detect_scope_escape(r"Get-Content D:\logs\app.log") is not None
+        assert detect_scope_escape(r"gc D:\logs\app.log") is not None
+
+    def test_windows_drive_write_blocked(self):
+        """`cp/mv/copy D:\\... ...` and `>` to drive path must be caught."""
+        assert detect_scope_escape(r"cp D:\src\a.txt B:\dst\b.txt") is not None
+        assert detect_scope_escape(r"echo x > D:\out.txt") is not None
+        assert detect_scope_escape(r"copy D:\a.txt D:\b.txt") is not None
+
+    def test_windows_drive_inside_workspace_allowed(self):
+        """Drive path inside the workspace on Windows must pass — the whole
+        point of Bug B's fix is not to over-block."""
+        import platform
+        if platform.system() != "Windows":
+            pytest.skip("Windows-specific path semantics")
+        assert detect_scope_escape(r"cat D:\ws\file.txt", workspace_dir=r"D:\ws") is None
+        assert detect_scope_escape(r"cd D:\ws\sub", workspace_dir=r"D:\ws") is None
+
 
 # ── validate_path_in_workspace ────────────────────────────────────────
 
@@ -196,6 +225,28 @@ class TestValidatePathInWorkspace:
         workspace.mkdir()
         # Accessing workspace root itself is OK
         assert validate_path_in_workspace(workspace, workspace) is None
+
+    def test_windows_deep_path_inside_workspace_allowed(self, tmp_path):
+        """Regression for Bug A: `startswith(ws + "/")` never matched on
+        Windows because the separator is `\\`, so workspace-internal files
+        were all denied. `Path.relative_to` fixes it cross-platform."""
+        workspace = tmp_path / "ws"
+        (workspace / "sub").mkdir(parents=True)
+        deep_file = workspace / "sub" / "nested.txt"
+        assert validate_path_in_workspace(deep_file, workspace) is None
+
+    def test_sibling_prefix_not_confused_with_workspace(self, tmp_path):
+        """`/x/Downloads` must NOT match workspace root `/x/Download` — the
+        old `startswith(root + "/")` fell for this on POSIX; the new
+        `relative_to` check is component-wise and immune."""
+        workspace = tmp_path / "Download"
+        workspace.mkdir()
+        sibling = tmp_path / "Downloads" / "file.txt"
+        sibling.parent.mkdir()
+        sibling.write_text("x")
+        error = validate_path_in_workspace(sibling, workspace)
+        assert error is not None
+        assert "outside the workspace" in error
 
 
 # ── backup_file ───────────────────────────────────────────────────────

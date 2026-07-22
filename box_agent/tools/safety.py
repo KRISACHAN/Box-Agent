@@ -39,18 +39,30 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern, str]] = [
 _ESCAPE_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bcd\s+/"), "cd to absolute path"),
     (re.compile(r"\bcd\s+~"), "cd to home directory"),
+    # Windows: `cd C:\...` / `cd D:/...`. Single drive letter only so URL
+    # schemes (`http:`, `file:`) aren't mistaken for drives.
+    (re.compile(r"\bcd\s+[A-Za-z]:[\\/]"), "cd to Windows absolute path"),
     (re.compile(r'(?:^|\s|;|&&|\|\|)(?:cat|less|head|tail|grep|awk|sed)\s+/'), "read from absolute path"),
+    # Windows read tools: `cat/type/Get-Content C:\...`. Include PowerShell
+    # equivalents that models reach for on Windows once POSIX tools are blocked.
+    (re.compile(r'(?:^|\s|;|&&|\|\|)(?:cat|type|less|head|tail|grep|awk|sed|Get-Content|gc)\s+[A-Za-z]:[\\/]'),
+     "read from Windows absolute path"),
     # `cp`/`mv`/`ln` writing to an absolute path. Match only when the FIRST
     # argument (source) starts with `/`. The previous form `\s+.*/` matched
     # any `cp ... /` anywhere on the line, which falsely flagged commands like
     # `cp slides/x.png output/rendered/` (all relative, just contains a slash).
     (re.compile(r'(?:^|\s|;|&&|\|\|)(?:cp|mv|ln)\s+/'), "file operation with absolute path"),
+    # Windows copy/move first-arg drive-letter path.
+    (re.compile(r'(?:^|\s|;|&&|\|\|)(?:cp|mv|ln|copy|move|Copy-Item|Move-Item)\s+[A-Za-z]:[\\/]'),
+     "file operation with Windows absolute path"),
     # Real shell redirects: `>`/`>>` (optionally with fd prefix like `2>`) followed
     # by `/`. Must be preceded by whitespace, start-of-string, or an fd digit so
     # that `>/` appearing inside an HTML tag or a sed/perl substitution body
     # (e.g. `<\/h1>/<h1>` after the closing `>` of the previous tag) is not
     # mis-classified as a redirect to an absolute path.
     (re.compile(r'(?:^|[\s\d])>{1,2}\s*/'), "redirect to absolute path"),
+    # Redirect to Windows absolute path.
+    (re.compile(r'(?:^|[\s\d])>{1,2}\s*[A-Za-z]:[\\/]'), "redirect to Windows absolute path"),
     # Home directory references: ~ and $HOME anywhere as path tokens
     (re.compile(r'(?<!\w)~(?=/|\s|;|"|\'|&|\||$)'), "command references home directory via ~"),
     (re.compile(r'\$HOME\b'), "command references home directory via $HOME"),
@@ -102,17 +114,24 @@ def detect_dangerous_command(command: str) -> str | None:
 def _extract_path_token(command: str, match: re.Match, reason: str) -> str | None:
     """Extract the path token from a scope-escape match.
 
-    Handles absolute paths, ``cd`` arguments, ``~`` and ``$HOME`` expansion.
+    Handles absolute paths (POSIX and Windows drive-letter), ``cd`` arguments,
+    ``~`` and ``$HOME`` expansion.
     Factored out so both the /dev/ allowlist and workspace check can use it
     regardless of whether ``workspace_dir`` is set.
     """
     path_token = None
     matched_text = command[match.start():]
 
-    # Try absolute path first
-    abs_match = re.search(r'(/[^\s;|&]*)', matched_text)
-    if abs_match:
-        path_token = abs_match.group(1)
+    # Try Windows drive-letter path first (`C:\...` / `D:/...`).
+    win_match = re.search(r'([A-Za-z]:[\\/][^\s;|&"\']*)', matched_text)
+    if win_match:
+        path_token = win_match.group(1)
+
+    # Try POSIX absolute path next
+    if path_token is None:
+        abs_match = re.search(r'(/[^\s;|&]*)', matched_text)
+        if abs_match:
+            path_token = abs_match.group(1)
 
     # For "cd" specifically, grab the argument directly
     if reason.startswith("cd"):
@@ -137,8 +156,30 @@ def _extract_path_token(command: str, match: re.Match, reason: str) -> str | Non
 # Excludes URL schemes (://path) and protocol-relative (//host) patterns.
 _ABS_PATH_SCAN_RE = re.compile(r'(?<![:/])(/(?!/)[^\s;|&"\']+)')
 
+# Windows drive-letter absolute path scanner. Must be at a token boundary
+# (start-of-string or shell separator) with a single letter drive so URL
+# schemes (`http:`, `file:`) are not mistaken for drives.
+_WIN_ABS_PATH_SCAN_RE = re.compile(r'(?:^|[\s;|&])([A-Za-z]:[\\/][^\s;|&"\']*)')
+
 # URL pattern stripped before scanning for filesystem paths.
 _URL_RE = re.compile(r'https?://[^\s;|&"\']+')
+
+
+def _is_path_inside(target: Path, root: Path) -> bool:
+    """Component-wise containment check (both paths must be resolved).
+
+    Uses ``Path.relative_to`` instead of ``str.startswith`` so it works with
+    both ``/`` and ``\\`` separators (the old ``startswith(root + "/")`` form
+    never matched on Windows) and does not false-match sibling prefixes like
+    ``/x/Downloads`` against root ``/x/Download``.
+    """
+    if target == root:
+        return True
+    try:
+        target.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def _path_is_safe(path: str, workspace_dir: str | None) -> bool:
@@ -147,10 +188,7 @@ def _path_is_safe(path: str, workspace_dir: str | None) -> bool:
         return True
     if workspace_dir:
         try:
-            resolved = str(Path(path).resolve())
-            ws_resolved = str(Path(workspace_dir).resolve())
-            if resolved == ws_resolved or resolved.startswith(ws_resolved + "/"):
-                return True
+            return _is_path_inside(Path(path).resolve(), Path(workspace_dir).resolve())
         except Exception:
             pass
     return False
@@ -172,6 +210,10 @@ def _command_has_unsafe_paths(command: str, workspace_dir: str | None) -> bool:
     # `extract_absolute_paths`).
     cleaned = _SED_SUBST_RE.sub(" ", cleaned)
     for m in _ABS_PATH_SCAN_RE.finditer(cleaned):
+        p = m.group(1).rstrip(";")
+        if not _path_is_safe(p, workspace_dir):
+            return True
+    for m in _WIN_ABS_PATH_SCAN_RE.finditer(cleaned):
         p = m.group(1).rstrip(";")
         if not _path_is_safe(p, workspace_dir):
             return True
@@ -255,7 +297,7 @@ def validate_path_in_workspace(file_path: Path, workspace_dir: Path) -> str | No
     try:
         resolved = file_path.resolve()
         workspace_resolved = workspace_dir.resolve()
-        if not str(resolved).startswith(str(workspace_resolved) + "/") and resolved != workspace_resolved:
+        if not _is_path_inside(resolved, workspace_resolved):
             return (
                 f"Access denied: {file_path} is outside the workspace ({workspace_dir}). "
                 f"Set 'allow_full_access: true' in config to allow full system access."

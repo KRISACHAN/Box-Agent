@@ -249,7 +249,7 @@ class PermissionEngine:
         if self._path_allowed_by_scope(resolved, scope, operation, tool_name):
             return PermissionDecision(allowed=True)
 
-        escalation = self._compute_escalation(resolved, scope)
+        escalation = self._compute_escalation(resolved, scope, requested_path=path)
 
         if escalation is None:
             log.warning(
@@ -283,17 +283,27 @@ class PermissionEngine:
             },
         )
 
-    def _compute_escalation(self, resolved: Path, current_scope: str) -> str | None:
-        """Determine which scope escalation would grant access, or None.
+    def _compute_escalation(
+        self,
+        resolved: Path,
+        current_scope: str,
+        *,
+        requested_path: Path,
+    ) -> str | None:
+        """Return the host protocol escalation for an out-of-scope path.
 
-        Only suggest escalation when the target path actually falls
-        within a broader scope that could be granted. ``user_home`` is
-        currently the only escalation target: even when the base scope
-        is ``custom`` (or future variants), the protocol-level
-        ``requested_scope`` stays ``user_home``.
+        Existing home-directory escalation semantics remain unchanged.
+        officev3 also persists explicit Windows drive/UNC approvals as
+        path-specific custom directories. The host protocol currently uses
+        ``requested_scope=user_home`` as the filesystem approval discriminator
+        even when the approved grant is a narrower directory outside home.
         """
         if current_scope in ("session_workspace", "custom"):
             if self._is_under_home(resolved):
+                return "user_home"
+            raw = str(requested_path)
+            explicit_windows_path = bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", raw))
+            if explicit_windows_path:
                 return "user_home"
         return None
 

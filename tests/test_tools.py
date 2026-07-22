@@ -12,10 +12,12 @@ from box_agent.tools import (
     BashTool,
     EditTool,
     ReadTool,
+    SearchFilesTool,
     WriteTool,
     add_workspace_tools,
 )
-from box_agent.tools.file_tools import truncate_text_by_tokens
+from box_agent.tools.file_tools import MAX_SEARCH_OFFSET, MAX_SEARCH_OUTPUT_CHARS
+from box_agent.tools.permissions import CapabilityPolicy, PermissionEngine
 
 
 @pytest.mark.asyncio
@@ -40,7 +42,10 @@ async def test_read_tool():
             "source_char_count": len("Hello, World!"),
             "selected_char_count": len("Hello, World!"),
             "selected_line_count": 1,
+            "total_lines": 1,
             "truncated": False,
+            "has_more": False,
+            "next_offset": None,
         }
         print("✅ ReadTool test passed")
     finally:
@@ -63,15 +68,374 @@ async def test_read_tool_reports_selected_range_completeness(tmp_path):
         "source_char_count": len("one\ntwo\nthree\n"),
         "selected_char_count": len("two\n"),
         "selected_line_count": 1,
+        "total_lines": 3,
         "truncated": False,
+        "has_more": True,
+        "next_offset": 3,
     }
 
 
-def test_read_truncation_marker_is_stable():
-    truncated = truncate_text_by_tokens("token " * 40_000, 32_000)
+@pytest.mark.asyncio
+async def test_read_tool_defaults_to_bounded_page_with_continuation_hint(tmp_path):
+    path = tmp_path / "large.txt"
+    path.write_text("".join(f"line-{index}\n" for index in range(1, 601)), encoding="utf-8")
 
-    assert "[Content truncated:" in truncated
-    assert "tokens -> ~32000 tokens limit" in truncated
+    result = await ReadTool(workspace_dir=str(tmp_path)).execute(path="large.txt")
+
+    assert result.success is True
+    assert "line-500" in result.content
+    assert "line-501" not in result.content
+    assert "Use offset=501, limit=500 to continue" in result.content
+    assert result.raw_output["selected_line_count"] == 500
+    assert result.raw_output["total_lines"] == 600
+    assert result.raw_output["next_offset"] == 501
+
+
+@pytest.mark.asyncio
+async def test_read_tool_rejects_oversized_page_instead_of_truncating_middle(tmp_path):
+    path = tmp_path / "long-line.txt"
+    path.write_text("x" * 100_001, encoding="utf-8")
+
+    result = await ReadTool(workspace_dir=str(tmp_path)).execute(path="long-line.txt")
+
+    assert result.success is False
+    assert "100,000-character safety limit" in result.error
+    assert "smaller limit" in result.error
+    assert "Content truncated" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_read_tool_rejects_binary_and_directory_paths(tmp_path):
+    binary = tmp_path / "payload.bin"
+    binary.write_bytes(b"\x00\x01\x02")
+    tool = ReadTool(workspace_dir=str(tmp_path))
+
+    binary_result = await tool.execute(path="payload.bin")
+    directory_result = await tool.execute(path=".")
+
+    assert binary_result.success is False
+    assert "binary file" in binary_result.error
+    assert directory_result.success is False
+    assert "Use search_files" in directory_result.error
+
+
+@pytest.mark.asyncio
+async def test_search_files_lists_and_searches_without_bash(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("alpha\nneedle here\nomega\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("needle docs\n", encoding="utf-8")
+    tool = SearchFilesTool(workspace_dir=str(tmp_path))
+
+    files_result = await tool.execute(pattern="*.py", target="files", path=".")
+    content_result = await tool.execute(
+        pattern="needle",
+        target="content",
+        path=".",
+        file_glob="*.py",
+    )
+
+    assert files_result.success is True
+    assert files_result.content == "src/app.py"
+    assert content_result.success is True
+    assert "src/app.py:2:>needle here" in content_result.content
+    assert "README.md" not in content_result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_paginates_results(tmp_path):
+    for index in range(5):
+        (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="*.txt",
+        target="files",
+        limit=2,
+    )
+
+    assert result.success is True
+    assert result.raw_output["total_matches"] is None
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["total_is_exact"] is False
+    assert result.raw_output["returned_matches"] == 2
+    assert result.raw_output["next_offset"] == 2
+    assert "more available" in result.content
+    assert "Use offset=2, limit=2 to continue" in result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_stops_after_page_plus_one_match(tmp_path, monkeypatch):
+    for index in range(100):
+        (tmp_path / f"file-{index:03d}.txt").write_text("value", encoding="utf-8")
+    tool = SearchFilesTool(workspace_dir=str(tmp_path))
+    checked = 0
+
+    def count_allowed(_path):
+        nonlocal checked
+        checked += 1
+        return True
+
+    monkeypatch.setattr(tool, "_file_allowed", count_allowed)
+    result = await tool.execute(pattern="*.txt", target="files", limit=2)
+
+    assert result.success is True
+    assert checked == 3
+    assert result.raw_output["scanned_files"] == 3
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_files_bounds_total_output_and_paginates_from_returned_count(tmp_path):
+    for index in range(60):
+        (tmp_path / f"file-{index:03d}.txt").write_text(
+            f"needle {'x' * 1_990}", encoding="utf-8"
+        )
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="needle",
+        target="content",
+    )
+
+    assert result.success is True
+    assert len(result.content) <= MAX_SEARCH_OUTPUT_CHARS
+    assert result.raw_output["output_limited"] is True
+    assert result.raw_output["limit_reason"] == "output_budget"
+    assert result.raw_output["returned_matches"] < 50
+    assert result.raw_output["next_offset"] == result.raw_output["returned_matches"]
+    assert "output budget reached" in result.content
+    assert (
+        f"Use offset={result.raw_output['next_offset']}, limit=50 to continue"
+        in result.content
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_files_rejects_offset_above_bounded_maximum(tmp_path):
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="*.txt",
+        target="files",
+        offset=MAX_SEARCH_OFFSET + 1,
+    )
+
+    assert result.success is False
+    assert f"at most {MAX_SEARCH_OFFSET:,}" in result.error
+
+
+@pytest.mark.asyncio
+async def test_search_files_discards_matches_before_offset(tmp_path, monkeypatch):
+    for index in range(8):
+        (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")
+    tool = SearchFilesTool(workspace_dir=str(tmp_path))
+    retained_page_sizes = []
+    original_search = tool._search_sync
+
+    def observe_page(**kwargs):
+        scan = original_search(**kwargs)
+        retained_page_sizes.append(len(scan["selected"]))
+        return scan
+
+    monkeypatch.setattr(tool, "_search_sync", observe_page)
+    result = await tool.execute(
+        pattern="*.txt",
+        target="files",
+        offset=5,
+        limit=2,
+    )
+
+    assert result.success is True
+    assert retained_page_sizes == [2]
+    assert "file-5.txt" in result.content
+    assert "file-0.txt" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_files_only_paginates_unique_files(tmp_path):
+    (tmp_path / "a.txt").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "c.txt").write_text("needle\n", encoding="utf-8")
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="needle",
+        target="content",
+        output_mode="files_only",
+        limit=2,
+    )
+
+    assert result.success is True
+    assert result.content.count("a.txt") == 1
+    assert "b.txt" in result.content
+    assert "c.txt" not in result.content
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["next_offset"] == 2
+
+
+@pytest.mark.asyncio
+async def test_search_files_count_mode_streams_and_paginates_file_counts(tmp_path):
+    (tmp_path / "a.txt").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "c.txt").write_text("needle\nneedle\nneedle\n", encoding="utf-8")
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="needle",
+        target="content",
+        output_mode="count",
+        offset=1,
+        limit=1,
+    )
+
+    assert result.success is True
+    assert result.content.startswith("b.txt:1")
+    assert "a.txt" not in result.content
+    assert "c.txt" not in result.content
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["returned_matches"] == 1
+    assert result.raw_output["next_offset"] == 2
+
+
+@pytest.mark.asyncio
+async def test_search_files_timeout_returns_bounded_partial_result(tmp_path, monkeypatch):
+    for index in range(10):
+        (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")
+    tool = SearchFilesTool(
+        workspace_dir=str(tmp_path),
+        search_timeout_seconds=0.02,
+        heartbeat_seconds=0.01,
+    )
+
+    def slow_allowed(_path):
+        import time
+
+        time.sleep(0.03)
+        return True
+
+    monkeypatch.setattr(tool, "_file_allowed", slow_allowed)
+    result = await tool.execute(pattern="*.txt", target="files", limit=5)
+
+    assert result.success is True
+    assert result.raw_output["timed_out"] is True
+    assert result.raw_output["limit_reason"] == "search_timeout"
+    assert result.raw_output["truncated"] is True
+    assert "timed out" in result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_hard_timeout_returns_even_if_worker_is_stuck(tmp_path, monkeypatch):
+    import time
+
+    tool = SearchFilesTool(
+        workspace_dir=str(tmp_path),
+        search_timeout_seconds=0.02,
+        heartbeat_seconds=0.01,
+    )
+
+    def stuck_worker(**_kwargs):
+        time.sleep(0.2)
+        return {
+            "selected": [],
+            "matched_results": 0,
+            "scanned_files": 0,
+            "has_more": False,
+            "timed_out": False,
+            "cancelled": False,
+            "exact_total": True,
+        }
+
+    monkeypatch.setattr(tool, "_search_sync", stuck_worker)
+    started = time.monotonic()
+    result = await tool.execute(pattern="*.txt", target="files")
+
+    assert time.monotonic() - started < 0.15
+    assert result.success is True
+    assert result.raw_output["timed_out"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_files_emits_heartbeat_and_stops_worker_on_cancel(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    tool = SearchFilesTool(
+        workspace_dir=str(tmp_path),
+        search_timeout_seconds=5,
+        heartbeat_seconds=0.01,
+    )
+    worker_stopped = threading.Event()
+
+    def wait_for_cancel(**kwargs):
+        stop_event = kwargs["stop_event"]
+        while not stop_event.wait(0.005):
+            pass
+        worker_stopped.set()
+        return {
+            "selected": [],
+            "matched_results": 0,
+            "scanned_files": 0,
+            "has_more": False,
+            "timed_out": False,
+            "cancelled": True,
+            "exact_total": False,
+        }
+
+    monkeypatch.setattr(tool, "_search_sync", wait_for_cancel)
+    queue = asyncio.Queue()
+    task = asyncio.create_task(
+        tool.execute_with_event_context(
+            event_queue=queue,
+            parent_tool_call_id="search-1",
+            pattern="*.txt",
+            target="files",
+        )
+    )
+
+    await asyncio.sleep(0.03)
+    assert not queue.empty()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await asyncio.to_thread(worker_stopped.wait, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_search_files_returns_permission_request_for_host(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    engine = PermissionEngine(CapabilityPolicy(), workspace)
+    outside = Path.home() / "box-agent-search-permission-probe"
+    tool = SearchFilesTool(workspace_dir=str(workspace), permission_engine=engine)
+
+    result = await tool.execute(pattern="*", target="files", path=str(outside))
+
+    assert result.success is False
+    assert result.permission_request is not None
+    assert result.permission_request["scope"] == "filesystem"
+    assert result.permission_request["path"] == str(outside)
+
+
+def test_workspace_tools_register_search_files(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_skills=False,
+            enable_mcp=False,
+        ),
+    )
+    tools = []
+
+    add_workspace_tools(
+        tools,
+        config,
+        tmp_path,
+        allow_full_access=False,
+        output=lambda *_: None,
+        use_output_dir=False,
+    )
+
+    assert "search_files" in {tool.name for tool in tools}
 
 
 @pytest.mark.asyncio
