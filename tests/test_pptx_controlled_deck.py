@@ -95,7 +95,7 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     if NODE is None:
         pytest.skip("Node.js is required to test the controlled deck compiler")
-    return subprocess.run(
+    result = subprocess.run(
         [str(NODE), str(SCRIPTS_DIR / script), *args],
         capture_output=True,
         text=True,
@@ -103,6 +103,16 @@ def _run(
         cwd=cwd,
         env=env,
     )
+    # ── playwright probe ──────────────────────────────────────────
+    # Several scripts need playwright but CI runners don't have it.
+    # Skip the whole test instead of failing with an opaque exit code.
+    if result.returncode != 0 and (
+        "Cannot find module 'playwright'" in result.stderr
+        or "Executable doesn't exist" in result.stderr
+        or "Missing dependency: playwright" in result.stderr
+    ):
+        pytest.skip("Managed Playwright browser is unavailable")
+    return result
 
 
 def _write_outline(
