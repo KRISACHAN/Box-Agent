@@ -2027,6 +2027,204 @@
       }
     },
     {
+      "id": "comic-panel",
+      "name": "Comic Panel",
+      "description": "Editorial comic-book panels with ink-black frames, halftone paper, caption boxes, speech-bubble surfaces, action labels, and a high-contrast pop palette. Technical diagrams stay clean and schematic inside a framed panel.",
+      "source_reference": "beautiful-html-templates/block-frame",
+      "selection": {
+        "visual_dna_ids": [
+          "comic-panel"
+        ],
+        "mood_keywords": [
+          "comic book",
+          "comic panel",
+          "graphic novel",
+          "storyboard",
+          "speech bubble",
+          "halftone",
+          "pop art",
+          "manga",
+          "漫画",
+          "分镜",
+          "对话气泡",
+          "拟声词",
+          "网点纸",
+          "波普漫画"
+        ],
+        "industry_fit": [
+          "storytelling",
+          "education",
+          "creative presentation",
+          "product scenario",
+          "technology explainer"
+        ],
+        "density": "medium-high",
+        "scheme": "comic-light",
+        "formality": "medium-low",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#FFF8E8",
+        "surface": "#FFFFFF",
+        "surface_strong": "#76E5F3",
+        "primary": "#FF4D3D",
+        "primary_text": "#111111",
+        "primary_soft": "#FFD84D",
+        "text": "#111111",
+        "muted": "#343434",
+        "border": "#111111",
+        "inverse": "#111111",
+        "chart": [
+          "#FF4D3D",
+          "#FFD84D",
+          "#76E5F3",
+          "#7BD56F"
+        ]
+      },
+      "typography": {
+        "display": "Arial Black, Impact, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, Arial, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "Arial Black, Impact, PingFang SC, Microsoft YaHei, sans-serif"
+      },
+      "shape": {
+        "radius_small": 0,
+        "radius_medium": 0,
+        "radius_large": 0,
+        "border_width": 5
+      },
+      "style": {
+        "canvas": "dots",
+        "surface": "hard",
+        "shadow": "hard",
+        "heading": "poster",
+        "label": "boxed",
+        "accent": "block",
+        "alternation": "none"
+      },
+      "composition": {
+        "family": "brutalist-frame",
+        "direction": "expressive-objects",
+        "variants": [
+          "block-grid",
+          "offset-frame",
+          "ledger-frame"
+        ],
+        "default_family": "brutalist-frame",
+        "default_direction": "expressive-objects",
+        "allowed_families": [
+          "brutalist-frame",
+          "poster-asymmetric",
+          "product-showcase",
+          "technical-schematic",
+          "playful-collage"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "visual-impact",
+          "interface-modules",
+          "expressive-objects"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "visual-impact",
+            "label": "视觉冲击",
+            "families": [
+              "poster-asymmetric"
+            ]
+          },
+          {
+            "id": "interface-modules",
+            "label": "产品与界面",
+            "families": [
+              "product-showcase"
+            ]
+          },
+          {
+            "id": "expressive-objects",
+            "label": "表达性构件",
+            "families": [
+              "playful-collage",
+              "brutalist-frame"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "brutalist-frame",
+            "selection_signals": [
+              "强态度",
+              "密集模块",
+              "硬边视觉"
+            ],
+            "variants": [
+              "block-grid",
+              "offset-frame",
+              "ledger-frame"
+            ]
+          },
+          {
+            "family": "poster-asymmetric",
+            "selection_signals": [
+              "品牌宣言",
+              "强封面",
+              "少量大字"
+            ],
+            "variants": [
+              "offset-hero",
+              "stacked-poster",
+              "split-poster"
+            ]
+          },
+          {
+            "family": "product-showcase",
+            "selection_signals": [
+              "UI 截图",
+              "功能演示",
+              "产品流程"
+            ],
+            "variants": [
+              "device-stage",
+              "browser-story",
+              "annotated-flow"
+            ]
+          },
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "playful-collage",
+            "selection_signals": [
+              "教育与社区",
+              "工作坊",
+              "轻松表达"
+            ],
+            "variants": [
+              "mosaic",
+              "staggered",
+              "capsule"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "consulting-navy",
       "name": "Consulting Navy",
       "description": "Cool white, deep navy, and steel gray with restrained grids for procurement reviews, enterprise solutions, and consulting delivery decks.",
@@ -2734,6 +2932,185 @@
               "split-spread",
               "feature-spread",
               "banded-spread"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "data-intelligence",
+      "name": "Data Intelligence",
+      "description": "A high-density intelligence console for KPI reviews, analytics narratives, evidence rails, operating dashboards, and decision-ready data.",
+      "source_reference": "beautiful-html-templates/signal",
+      "selection": {
+        "visual_dna_ids": [
+          "data-intelligence"
+        ],
+        "mood_keywords": [
+          "analytical",
+          "intelligent",
+          "evidence-led",
+          "precise",
+          "authoritative",
+          "high density",
+          "分析",
+          "智能",
+          "证据驱动",
+          "数据驱动",
+          "理性",
+          "严谨",
+          "高密度"
+        ],
+        "industry_fit": [
+          "business intelligence",
+          "data analytics",
+          "KPI review",
+          "finance",
+          "operations",
+          "growth analytics",
+          "商业智能",
+          "数据分析",
+          "经营分析",
+          "财务分析",
+          "指标复盘"
+        ],
+        "density": "high",
+        "scheme": "dark",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#10182A",
+        "surface": "#17243B",
+        "surface_strong": "#203252",
+        "primary": "#42D3B2",
+        "primary_soft": "#173D3B",
+        "text": "#F4F7FB",
+        "muted": "#A7B3C7",
+        "border": "#39506F",
+        "inverse": "#10182A",
+        "alt_background": "#EDF2F7",
+        "alt_surface": "#FFFFFF",
+        "alt_text": "#16233A",
+        "alt_muted": "#53657D",
+        "alt_border": "#B5C1D1",
+        "alt_primary": "#087E6A",
+        "chart": [
+          "#42D3B2",
+          "#67A8FF",
+          "#DAB76C",
+          "#E47C68"
+        ]
+      },
+      "typography": {
+        "display": "IBM Plex Sans, Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 4,
+        "radius_medium": 8,
+        "radius_large": 12,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "grid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "condensed",
+        "label": "mono",
+        "accent": "line",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "analytical-exhibit",
+        "direction": "structured-systems",
+        "variants": [
+          "exhibit-grid",
+          "evidence-rail",
+          "decision-board"
+        ],
+        "default_family": "analytical-exhibit",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "analytical-exhibit",
+          "institutional-grid",
+          "technical-schematic",
+          "product-showcase"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "interface-modules"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "interface-modules",
+            "label": "产品与界面",
+            "families": [
+              "product-showcase"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "product-showcase",
+            "selection_signals": [
+              "UI 截图",
+              "功能演示",
+              "产品流程"
+            ],
+            "variants": [
+              "device-stage",
+              "browser-story",
+              "annotated-flow"
             ]
           }
         ]
@@ -4540,6 +4917,198 @@
       }
     },
     {
+      "id": "product-console",
+      "name": "Product Console",
+      "description": "A polished B2B product console with browser chrome, app-shell panels, status chips, feature stages, and UI-first storytelling.",
+      "source_reference": "beautiful-html-templates/blue-professional",
+      "selection": {
+        "visual_dna_ids": [
+          "product-console"
+        ],
+        "mood_keywords": [
+          "modern",
+          "clean",
+          "product-led",
+          "polished",
+          "professional",
+          "modular",
+          "现代",
+          "清爽",
+          "产品化",
+          "专业",
+          "模块化"
+        ],
+        "industry_fit": [
+          "SaaS",
+          "software product",
+          "AI product",
+          "product management",
+          "developer platform",
+          "B2B software",
+          "软件产品",
+          "AI 产品",
+          "产品发布",
+          "开发者平台"
+        ],
+        "density": "medium-high",
+        "scheme": "cool-light",
+        "formality": "medium-high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F5F7FC",
+        "surface": "#FFFFFF",
+        "surface_strong": "#E9EDFA",
+        "primary": "#3448D8",
+        "primary_soft": "#E6EAFE",
+        "text": "#101828",
+        "muted": "#475467",
+        "border": "#B8C1D6",
+        "inverse": "#FFFFFF",
+        "chart": [
+          "#3448D8",
+          "#6D5CE7",
+          "#0E9384",
+          "#D05D42"
+        ]
+      },
+      "typography": {
+        "display": "Space Grotesk, Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 8,
+        "radius_medium": 14,
+        "radius_large": 22,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "solid",
+        "surface": "soft",
+        "shadow": "soft",
+        "heading": "standard",
+        "label": "pill",
+        "accent": "line",
+        "alternation": "none"
+      },
+      "composition": {
+        "family": "product-showcase",
+        "direction": "interface-modules",
+        "variants": [
+          "device-stage",
+          "browser-story",
+          "annotated-flow"
+        ],
+        "default_family": "product-showcase",
+        "default_direction": "interface-modules",
+        "allowed_families": [
+          "product-showcase",
+          "institutional-grid",
+          "technical-schematic",
+          "analytical-exhibit",
+          "cinematic-canvas"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "visual-impact",
+          "interface-modules"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "visual-impact",
+            "label": "视觉冲击",
+            "families": [
+              "cinematic-canvas"
+            ]
+          },
+          {
+            "id": "interface-modules",
+            "label": "产品与界面",
+            "families": [
+              "product-showcase"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "product-showcase",
+            "selection_signals": [
+              "UI 截图",
+              "功能演示",
+              "产品流程"
+            ],
+            "variants": [
+              "device-stage",
+              "browser-story",
+              "annotated-flow"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "cinematic-canvas",
+            "selection_signals": [
+              "图片主导",
+              "人物故事",
+              "章节转场"
+            ],
+            "variants": [
+              "full-bleed",
+              "split-film",
+              "chapter-cut"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "raw-grid",
       "name": "Raw Grid",
       "description": "White paper, system-black structure, and flat pink and sage blocks with offset shadows.",
@@ -6129,6 +6698,176 @@
               "split-spread",
               "feature-spread",
               "banded-spread"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "technical-blueprint",
+      "name": "Technical Blueprint",
+      "description": "A professional technical blueprint system with coordinate grids, specification rails, compact annotations, and precise architecture framing.",
+      "source_reference": "beautiful-html-templates/cobalt-grid",
+      "selection": {
+        "visual_dna_ids": [
+          "technical-blueprint"
+        ],
+        "mood_keywords": [
+          "technical",
+          "precise",
+          "systematic",
+          "structured",
+          "engineering",
+          "blueprint",
+          "技术",
+          "精密",
+          "系统化",
+          "严谨",
+          "蓝图"
+        ],
+        "industry_fit": [
+          "system architecture",
+          "cloud infrastructure",
+          "platform engineering",
+          "system integration",
+          "enterprise technology",
+          "developer tools",
+          "系统架构",
+          "云基础设施",
+          "平台工程",
+          "系统集成"
+        ],
+        "density": "high",
+        "scheme": "cool-light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F3F6FA",
+        "surface": "#FFFFFF",
+        "surface_strong": "#E5EDF6",
+        "primary": "#145CC5",
+        "primary_soft": "#DCE9FA",
+        "text": "#10253F",
+        "muted": "#4F6278",
+        "border": "#9CB0C6",
+        "inverse": "#FFFFFF",
+        "chart": [
+          "#145CC5",
+          "#0B8793",
+          "#4F6278",
+          "#8B5CF6"
+        ]
+      },
+      "typography": {
+        "display": "IBM Plex Sans, Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 2,
+        "radius_medium": 4,
+        "radius_large": 6,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "grid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "condensed",
+        "label": "mono",
+        "accent": "bracket",
+        "alternation": "none"
+      },
+      "composition": {
+        "family": "technical-schematic",
+        "direction": "structured-systems",
+        "variants": [
+          "blueprint-canvas",
+          "annotated-system",
+          "spec-sheet"
+        ],
+        "default_family": "technical-schematic",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "technical-schematic",
+          "institutional-grid",
+          "analytical-exhibit",
+          "product-showcase"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "interface-modules"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "interface-modules",
+            "label": "产品与界面",
+            "families": [
+              "product-showcase"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "product-showcase",
+            "selection_signals": [
+              "UI 截图",
+              "功能演示",
+              "产品流程"
+            ],
+            "variants": [
+              "device-stage",
+              "browser-story",
+              "annotated-flow"
             ]
           }
         ]
@@ -9263,6 +10002,223 @@
         "animation": "on",
         "stacked": "off",
         "value_suffix": "",
+        "insight": "",
+        "source": ""
+      }
+    },
+    {
+      "id": "heatmap-matrix-v1",
+      "label": "Editable semantic heatmap matrix",
+      "editor": {
+        "label": "风险热力图",
+        "description": "三到六列、二到八行的可编辑热力矩阵",
+        "controls": {
+          "collections": {
+            "columns": {
+              "label": "列",
+              "itemDefault": "新列"
+            },
+            "rows": {
+              "label": "行",
+              "itemDefault": [
+                "新风险",
+                "待补充",
+                "待补充",
+                "待补充"
+              ]
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "风险与优先级",
+          "title": "输入热力图要回答的决策问题",
+          "subtitle": "用颜色强度显示需要优先关注的区域",
+          "columns": [
+            "风险域",
+            "发生概率",
+            "影响程度",
+            "应对优先级"
+          ],
+          "rows": [
+            [
+              "风险一",
+              "待补充",
+              "待补充",
+              "待补充"
+            ],
+            [
+              "风险二",
+              "待补充",
+              "待补充",
+              "待补充"
+            ],
+            [
+              "风险三",
+              "待补充",
+              "待补充",
+              "待补充"
+            ]
+          ],
+          "low_label": "低",
+          "high_label": "高",
+          "insight": "",
+          "source": ""
+        }
+      },
+      "roles": [
+        "heatmap",
+        "risk-heatmap",
+        "matrix",
+        "risk-matrix",
+        "priority-map"
+      ],
+      "density": "high",
+      "contentShape": [
+        "heatmap",
+        "matrix",
+        "categorical-data",
+        "risk-priority"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable heatmap is the primary visual; keep the background quiet and skip generated media."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "data",
+        "matrix",
+        "heatmap"
+      ],
+      "variants": [
+        "semantic"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 72,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "columns": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 6,
+          "itemShape": {
+            "type": "text",
+            "maxChars": 36,
+            "required": true,
+            "editor": true,
+            "role": "label"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 2,
+          "maxItems": 8,
+          "itemShape": {
+            "type": "array",
+            "required": true,
+            "editor": true,
+            "minItems": 3,
+            "maxItems": 6,
+            "itemShape": {
+              "type": "text",
+              "maxChars": 48,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "low_label": {
+          "type": "text",
+          "maxChars": 16,
+          "required": false,
+          "editor": true,
+          "role": "label"
+        },
+        "high_label": {
+          "type": "text",
+          "maxChars": 16,
+          "required": false,
+          "editor": true,
+          "role": "label"
+        },
+        "insight": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        },
+        "source": {
+          "type": "text",
+          "maxChars": 100,
+          "required": false,
+          "editor": true,
+          "role": "source"
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "low_label": "低",
+        "high_label": "高",
         "insight": "",
         "source": ""
       }

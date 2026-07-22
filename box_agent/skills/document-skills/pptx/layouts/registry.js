@@ -1181,6 +1181,90 @@ function renderDataTable(slide, index) {
   );
 }
 
+function heatmapLevel(value, numericRange) {
+  const label = String(value == null ? "" : value).trim().toLowerCase();
+  if (/(?:极高|严重|关键|critical|urgent|very\s+high)/i.test(label)) return 5;
+  if (/(?:较高|高|high)/i.test(label)) return 4;
+  if (/(?:中等|中|medium|moderate)/i.test(label)) return 3;
+  if (/(?:较低|低|low)/i.test(label)) return 2;
+  if (/(?:无|未发生|none|n\/a|—|-)/i.test(label)) return 1;
+  const numeric = Number(label.replace(/[%％,，]/g, ""));
+  if (!Number.isFinite(numeric) || !numericRange) return 1;
+  if (numericRange.max === numericRange.min) return 3;
+  return Math.max(1, Math.min(5, Math.ceil(
+    ((numeric - numericRange.min) / (numericRange.max - numericRange.min)) * 4 + 0.01
+  )));
+}
+
+function renderHeatmapMatrix(slide, index) {
+  const p = slide.props;
+  const columns = p.columns.slice(0, 6);
+  const rows = p.rows.slice(0, 8);
+  const numericValues = rows
+    .flatMap(row => row.slice(1, columns.length))
+    .map(value => Number(String(value == null ? "" : value).replace(/[%％,，]/g, "")))
+    .filter(Number.isFinite);
+  const numericRange = numericValues.length
+    ? { min: Math.min(...numericValues), max: Math.max(...numericValues) }
+    : null;
+  const header = columns.map((column, columnIndex) =>
+    editableText(
+      "div",
+      `columns.${columnIndex}`,
+      column,
+      columnIndex === 0 ? "heatmap-corner-label" : "heatmap-column-label"
+    )
+  ).join("\n");
+  const body = rows.map((row, rowIndex) => {
+    const cells = columns.map((_, columnIndex) => {
+      const value = row[columnIndex] || "待补充";
+      if (columnIndex === 0) {
+        return [
+          '<div class="heatmap-row-label">',
+          editableText(
+            "span",
+            `rows.${rowIndex}.${columnIndex}`,
+            value,
+            "heatmap-row-label-text"
+          ),
+          "</div>",
+        ].join("");
+      }
+      const level = heatmapLevel(value, numericRange);
+      return [
+        `<div class="heatmap-cell heat-level-${level}" data-heat-level="${level}">`,
+        editableText("span", `rows.${rowIndex}.${columnIndex}`, value, "heatmap-cell-value"),
+        "</div>",
+      ].join("");
+    }).join("\n");
+    return `<div class="heatmap-row" data-item-index="${rowIndex}">${cells}</div>`;
+  }).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-heatmap-matrix heatmap-columns-${columns.length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      '<div class="heatmap-body" data-layout-region="content">',
+      `<div class="heatmap-grid"><div class="heatmap-header">${header}</div>${body}</div>`,
+      '<div class="heatmap-legend" aria-label="热力强度">',
+      editableText("span", "low_label", p.low_label || "低", "heatmap-legend-label"),
+      '<span class="heatmap-legend-scale" aria-hidden="true"><i class="heat-level-1"></i><i class="heat-level-2"></i><i class="heat-level-3"></i><i class="heat-level-4"></i><i class="heat-level-5"></i></span>',
+      editableText("span", "high_label", p.high_label || "高", "heatmap-legend-label"),
+      "</div>",
+      '<div class="heatmap-footer">',
+      editableText("p", "insight", p.insight || "", "heatmap-insight"),
+      editableText("p", "source", p.source || "", "heatmap-source"),
+      "</div>",
+      "</div>",
+    ].join("\n")
+  );
+}
+
 function renderClosing(slide, index) {
   const p = slide.props;
   const actions = (p.actions || []).map((action, actionIndex) => [
@@ -2157,6 +2241,64 @@ const layouts = [
     render: renderDataChart,
   },
   {
+    id: "heatmap-matrix-v1",
+    label: "Editable semantic heatmap matrix",
+    editor: {
+      label: "风险热力图",
+      description: "三到六列、二到八行的可编辑热力矩阵",
+      controls: {
+        collections: {
+          columns: { label: "列", itemDefault: "新列" },
+          rows: { label: "行", itemDefault: ["新风险", "待补充", "待补充", "待补充"] },
+        },
+      },
+      defaultProps: {
+        eyebrow: "风险与优先级",
+        title: "输入热力图要回答的决策问题",
+        subtitle: "用颜色强度显示需要优先关注的区域",
+        columns: ["风险域", "发生概率", "影响程度", "应对优先级"],
+        rows: [
+          ["风险一", "待补充", "待补充", "待补充"],
+          ["风险二", "待补充", "待补充", "待补充"],
+          ["风险三", "待补充", "待补充", "待补充"],
+        ],
+        low_label: "低",
+        high_label: "高",
+        insight: "",
+        source: "",
+      },
+    },
+    roles: ["heatmap", "risk-heatmap", "matrix", "risk-matrix", "priority-map"],
+    density: "high",
+    contentShape: ["heatmap", "matrix", "categorical-data", "risk-priority"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable heatmap is the primary visual; keep the background quiet and skip generated media.",
+    }),
+    capabilities: ["editable", "pptx-safe", "data", "matrix", "heatmap"],
+    variants: ["semantic"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(72, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      columns: arrayField(3, 6, textField(36, { role: "label" })),
+      rows: arrayField(2, 8, arrayField(3, 6, textField(48, { role: "body" }))),
+      low_label: textField(16, { required: false, role: "label" }),
+      high_label: textField(16, { required: false, role: "label" }),
+      insight: textField(140, { required: false, role: "lead" }),
+      source: textField(100, { required: false, role: "source" }),
+    },
+    defaultProps: {
+      subtitle: "",
+      low_label: "低",
+      high_label: "高",
+      insight: "",
+      source: "",
+    },
+    render: renderHeatmapMatrix,
+  },
+  {
     id: "table-data-v1",
     label: "Editable two to six-column data table or Gantt matrix",
     editor: {
@@ -2710,6 +2852,18 @@ function createEditorProps(layoutId, sourceSlide = null) {
         return fitText(candidate && /\d/.test(candidate) ? candidate : String(30 + index * 12), 18);
       }),
     }];
+  } else if (layoutId === "heatmap-matrix-v1") {
+    if (Array.isArray(snapshot.props.columns) && Array.isArray(snapshot.props.rows)) {
+      props.columns = snapshot.props.columns.slice(0, 6).map(value => fitText(value, 36, "新列"));
+      props.rows = snapshot.props.rows.slice(0, 8).map(row =>
+        (Array.isArray(row) ? row : []).slice(0, 6).map(value => fitText(value, 48, "待补充"))
+      );
+      props.rows = fillFromDefaults(
+        props.rows,
+        props.rows.length ? props.rows : [["新风险", "待补充", "待补充"]],
+        2
+      );
+    }
   } else if (layoutId === "table-data-v1") {
     if (Array.isArray(snapshot.props.columns) && Array.isArray(snapshot.props.rows)) {
       props.columns = snapshot.props.columns.slice(0, 6).map(value => fitText(value, 36, "新列"));

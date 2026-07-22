@@ -474,6 +474,23 @@ _PRESENTATION_RESEARCH_CREATIVE_RE: Final[re.Pattern[str]] = re.compile(
     r"image[- ]rich|illustration|poster|purely\s+visual|atmospheric)",
     re.IGNORECASE,
 )
+_PRESENTATION_SOLUTION_DESIGN_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:系统架构|技术架构|架构图|系统方案|技术方案|解决方案|系统设计|"
+    r"架构设计|系统集成|集成方案|数据管道|数据处理流程|业务流程|事件流|"
+    r"solution\s+(?:architecture|design)|system\s+(?:architecture|design)|"
+    r"technical\s+architecture|integration\s+(?:architecture|design)|"
+    r"data\s+(?:pipeline|flow)|event\s+flow)",
+    re.IGNORECASE,
+)
+_PRESENTATION_EXTERNAL_EVIDENCE_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:市场(?:规模|分析|研究|趋势|格局)?|行业(?:分析|研究|趋势|现状|格局)|"
+    r"竞品|竞争格局|商业价值|投资价值|市占率|增长率|政策|法规|监管|"
+    r"最新(?:数据|趋势|进展|动态)|调研数据|统计数据|引用|出处|来源|证据|"
+    r"market\s+(?:size|analysis|research|trend)|industry\s+(?:analysis|research|trend)|"
+    r"competitive\s+(?:analysis|landscape)|business\s+value|investment\s+case|"
+    r"market\s+share|growth\s+rate|policy|regulation|citation|sources?|evidence)",
+    re.IGNORECASE,
+)
 _PRESENTATION_PAGE_PLAN_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:第\s*\d+\s*页|slide\s*\d+\s*[:：.-])",
     re.IGNORECASE,
@@ -507,6 +524,14 @@ def _presentation_research_mode(user_text: str) -> str:
         if re.match(r"^(?:[-*•]|\d+[.、)])\s*", line)
     ]
     if len(bullet_lines) >= 3:
+        return "content_ready"
+    if (
+        _PRESENTATION_SOLUTION_DESIGN_RE.search(text)
+        and not _PRESENTATION_EXTERNAL_EVIDENCE_RE.search(text)
+    ):
+        # Architecture and integration briefs ask the agent to propose a design,
+        # not to establish current external facts. Treat the supplied components
+        # and emphasis as enough to start the controlled outline workflow.
         return "content_ready"
     topic = re.sub(
         r"(?:做|制作|生成|创建|输出|导出|帮我|请|一份|一个|可编辑|"

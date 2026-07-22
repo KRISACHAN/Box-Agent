@@ -198,8 +198,11 @@ Use `table-data-v1` when exact labels and values matter more than trend. Its
 `gantt` variant supports one task column plus up to five phase columns and up
 to twelve work packages; represent inactive schedule cells with `—`, not an
 empty string.
-perception; it supports two to five columns and two to six rows with editable
-cells. Scatter, bubble, combo, heatmap, sankey, map, and tables beyond these
+Use `heatmap-matrix-v1` for a semantic risk or intensity matrix. It supports
+three to six columns and two to eight editable rows; cell values such as low,
+medium, high, critical, or numeric ranges map to five presentation-safe color
+levels while the source text remains editable in HTML and PPTX.
+Scatter, bubble, combo, sankey, map, and tables beyond these
 capacities still use the data-backed legacy HTML route until a controlled
 native-PPTX mapping is registered. Never flatten recoverable data into a
 bitmap.
@@ -212,6 +215,10 @@ The controlled compiler owns a versioned theme catalog under `themes/`.
 shape tokens, compatible composition families, and finite visual-style axes.
 Normal authoring uses `--theme auto`; the contract writes an explainable
 `theme_selection` record and may replace a strongly mismatched fallback default.
+Auto-selection applies three ordered signal classes: explicit keyword rules,
+industry matching against `selection.industry_fit`, and mood matching against
+`selection.mood_keywords`. Negative style clauses are removed before positive
+industry/mood scoring, so “不要复古手绘” is not treated as a retro request.
 Use `--theme <THEME_ID> --lock-theme` only for an exact user-selected id.
 The catalog includes at least one
 executable theme for every bundled Visual DNA id, plus explicitly curated
@@ -225,6 +232,37 @@ sufficient for generation on machines that do not have the separate
 registered variant of that DNA instead. When absent, select directly from the
 built-in `selection` metadata. Never copy the whole Visual DNA library into a
 deck and never use an unregistered Visual DNA id as `theme_id`.
+
+`comic-panel` is the executable comic/storyboard theme. It derives its stable
+panel geometry from the bundled block-frame reference but owns a distinct
+Visual DNA id and selection contract. Use it for 漫画、分镜、对话气泡、拟声词、
+halftone, manga, comic-book, or graphic-novel briefs. DiagramSpec pages retain
+their professional node and edge rendering inside the comic outer frame.
+
+`8-bit-orbit` is the executable pixel-arcade theme. Use it for 像素风、8-bit、
+16-bit、街机、CRT、retro-game, or pixel-art briefs. It owns a dedicated CRT
+grid, neon stepped frames, status labels, pixel shadows, and retro-interface
+composition instead of inheriting only generic theme-axis styling. DiagramSpec
+pages retain clean professional SVG nodes and edges inside the pixel monitor
+frame.
+
+The technical/product/data shortlist owns three purpose-built themes:
+
+- `technical-blueprint` defaults to `technical-schematic` for architecture,
+  infrastructure, integration, runtime, and data-pipeline briefs. Its CSS adds
+  coordinate grids, specification rails, and an outer blueprint stage without
+  styling DiagramSpec descendants.
+- `product-console` defaults to `product-showcase` for SaaS, software-product,
+  product-launch, feature-demo, and UI briefs. Its CSS adds browser chrome,
+  app-shell panels, status chips, and product screenshot stages.
+- `data-intelligence` defaults to `analytical-exhibit` for KPI, operating
+  analysis, BI, finance, analytics, and decision-dashboard briefs. Its CSS adds
+  high-density KPI, evidence, table, chart, and data-flow treatments.
+
+`signal` and `soft-editorial` also own dedicated CSS beyond token substitution.
+`signal` uses an institutional editorial ledger with navy/bone/gold rules;
+`soft-editorial` uses warm paper, magazine rules, asymmetric rhythm, and softly
+colored editorial blocks.
 
 When the user explicitly asks to browse or choose themes before authoring, run
 `scripts/render_theme_gallery.js --out theme-previews/index.html`. The default

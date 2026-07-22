@@ -2026,6 +2026,175 @@ body[data-deck-composition] .layout-timeline.timeline-bodyless .timeline-step {
 }
 
 /* Editable data table */
+.heatmap-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px 0 30px;
+}
+
+.heatmap-grid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 420px;
+}
+
+.heatmap-header,
+.heatmap-row {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+}
+
+.heatmap-row {
+  flex: 1;
+}
+
+.heatmap-columns-3 .heatmap-header,
+.heatmap-columns-3 .heatmap-row {
+  grid-template-columns: minmax(180px, 0.85fr) repeat(2, minmax(0, 1fr));
+}
+
+.heatmap-columns-4 .heatmap-header,
+.heatmap-columns-4 .heatmap-row {
+  grid-template-columns: minmax(180px, 0.85fr) repeat(3, minmax(0, 1fr));
+}
+
+.heatmap-columns-5 .heatmap-header,
+.heatmap-columns-5 .heatmap-row {
+  grid-template-columns: minmax(170px, 0.82fr) repeat(4, minmax(0, 1fr));
+}
+
+.heatmap-columns-6 .heatmap-header,
+.heatmap-columns-6 .heatmap-row {
+  grid-template-columns: minmax(160px, 0.78fr) repeat(5, minmax(0, 1fr));
+}
+
+.heatmap-corner-label,
+.heatmap-column-label,
+.heatmap-row-label,
+.heatmap-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border: var(--deck-border-width) solid var(--deck-border);
+  border-radius: 10px;
+}
+
+.heatmap-corner-label,
+.heatmap-column-label {
+  min-height: 46px;
+  padding: 8px 14px;
+  color: var(--deck-primary-text);
+  font-family: var(--deck-display);
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+}
+
+.heatmap-corner-label {
+  border-color: transparent;
+}
+
+.heatmap-column-label {
+  justify-content: center;
+  background: var(--deck-surface-strong);
+  text-align: center;
+}
+
+.heatmap-row-label {
+  padding: 0 16px;
+  background: var(--deck-surface);
+  color: var(--deck-text);
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.heatmap-row-label-text {
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+}
+
+.heatmap-cell {
+  justify-content: center;
+  padding: 8px 12px;
+  text-align: center;
+}
+
+.heatmap-cell-value {
+  color: inherit;
+  font-family: var(--deck-display);
+  font-size: 18px;
+  line-height: 1.15;
+  font-weight: 800;
+}
+
+.heat-level-1 { background: var(--deck-surface-strong); color: var(--deck-muted); }
+.heat-level-2 { background: var(--deck-primary-soft); color: var(--deck-primary-text); }
+.heat-level-3 { background: color-mix(in srgb, var(--deck-primary) 36%, var(--deck-surface)); color: var(--deck-text); }
+.heat-level-4 { background: color-mix(in srgb, var(--deck-primary) 64%, var(--deck-surface)); color: var(--deck-inverse); }
+.heat-level-5 { background: var(--deck-primary); color: var(--deck-inverse); }
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 30px;
+  margin-top: 14px;
+}
+
+.heatmap-legend-label {
+  color: var(--deck-muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.heatmap-legend-scale {
+  display: grid;
+  grid-template-columns: repeat(5, 26px);
+  gap: 4px;
+}
+
+.heatmap-legend-scale i {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--deck-border) 70%, transparent);
+}
+
+.heatmap-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 48px;
+  min-height: 44px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: var(--deck-border-width) solid var(--deck-border);
+}
+
+.heatmap-insight {
+  max-width: 1000px;
+  color: var(--deck-text);
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.heatmap-source {
+  max-width: 420px;
+  color: var(--deck-muted);
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .data-table-wrap {
   flex: 1;
   display: flex;
@@ -2676,6 +2845,834 @@ body[data-deck-alternation="section"] .statement-poster .statement-rule {
   background: var(--deck-primary);
 }
 
+/* Technical Blueprint: coordinate paper, specification rails, and compact
+   engineering annotations. DiagramSpec owns the SVG itself; this theme only
+   frames the stage around it. */
+body[data-deck-theme="technical-blueprint"] .slide {
+  background-color: var(--deck-bg);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--deck-primary) 10%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--deck-primary) 10%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--deck-primary) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--deck-primary) 5%, transparent) 1px, transparent 1px);
+  background-size: 64px 64px, 64px 64px, 16px 16px, 16px 16px;
+  box-shadow:
+    inset 0 0 0 2px var(--deck-border),
+    0 24px 70px rgba(16, 37, 63, 0.16);
+}
+
+body[data-deck-theme="technical-blueprint"] .slide :is(h1, h2, h3) {
+  letter-spacing: -0.025em;
+}
+
+body[data-deck-theme="technical-blueprint"] :is(
+  .eyebrow,
+  .card-kicker,
+  .comparison-label,
+  .kpi-label,
+  .timeline-phase,
+  .architecture-label,
+  .integration-hub-label,
+  .text-section-label,
+  .project-case-label,
+  .chart-source,
+  .table-source,
+  .technical-diagram-note
+) {
+  font-family: var(--deck-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+body[data-deck-theme="technical-blueprint"] .slide-header {
+  border-top: 2px solid var(--deck-primary);
+  border-bottom-width: 1px;
+  padding-top: 18px;
+}
+
+body[data-deck-theme="technical-blueprint"] .deck-page {
+  width: auto;
+  padding-left: 54px;
+  border-bottom: 1px solid var(--deck-border);
+  font-family: var(--deck-label);
+}
+
+body[data-deck-theme="technical-blueprint"] .deck-page::before {
+  content: "SHEET";
+  position: absolute;
+  left: 0;
+  color: var(--deck-primary-text);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+body[data-deck-theme="technical-blueprint"] :is(
+  .cover-visual,
+  .project-case-media,
+  .image-hero-media,
+  .content-card,
+  .comparison-column,
+  .kpi-card,
+  .timeline-step,
+  .dashboard-domain,
+  .proof-stack,
+  .chart-body,
+  .data-table-wrap
+) {
+  border: 1px solid var(--deck-border);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--deck-surface) 92%, transparent);
+  box-shadow: none;
+}
+
+body[data-deck-theme="technical-blueprint"] .cover-visual {
+  padding: 40px;
+  border-top: 12px solid var(--deck-primary);
+}
+
+body[data-deck-theme="technical-blueprint"] .cover-geometry {
+  gap: 12px;
+  padding: 62px 44px 44px;
+  background:
+    linear-gradient(90deg, transparent 49.6%, color-mix(in srgb, var(--deck-primary) 22%, transparent) 50%, transparent 50.4%),
+    var(--deck-surface);
+}
+
+body[data-deck-theme="technical-blueprint"] .cover-geometry div {
+  min-height: 220px;
+  border: 2px solid var(--deck-primary);
+  border-radius: 2px;
+  background: var(--deck-primary-soft);
+  opacity: 1;
+}
+
+body[data-deck-theme="technical-blueprint"] .content-card {
+  padding-top: 48px;
+  border-top: 4px solid var(--deck-primary);
+}
+
+body[data-deck-theme="technical-blueprint"] .content-card::after {
+  right: 26px;
+  bottom: 22px;
+  width: 44px;
+  height: 22px;
+  border: 0;
+  border-right: 2px solid var(--deck-primary);
+  border-bottom: 2px solid var(--deck-primary);
+  border-radius: 0;
+}
+
+body[data-deck-theme="technical-blueprint"] :is(.card-index, .architecture-index, .dashboard-domain-index) {
+  color: var(--deck-primary-text);
+  font-family: var(--deck-label);
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-deck-theme="technical-blueprint"] :is(.architecture-layer, .integration-hub, .integration-node) {
+  border: 1px solid var(--deck-border);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--deck-surface) 94%, transparent);
+  box-shadow: none;
+}
+
+body[data-deck-theme="technical-blueprint"] .architecture-module {
+  border: 1px solid color-mix(in srgb, var(--deck-primary) 48%, var(--deck-border));
+  border-left: 5px solid var(--deck-primary);
+  background: var(--deck-primary-soft);
+}
+
+body[data-deck-theme="technical-blueprint"] .technical-diagram-stage {
+  position: relative;
+  margin-top: 10px;
+  padding: 44px 16px 14px;
+  border: 1px solid var(--deck-border);
+  border-top: 5px solid var(--deck-primary);
+  background: color-mix(in srgb, var(--deck-surface) 94%, transparent);
+}
+
+body[data-deck-theme="technical-blueprint"] .technical-diagram-stage::before {
+  content: "SYSTEM BLUEPRINT / VECTOR DIAGRAM";
+  position: absolute;
+  top: 13px;
+  left: 18px;
+  color: var(--deck-primary-text);
+  font-family: var(--deck-label);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+body[data-deck-theme="technical-blueprint"] .technical-diagram-note {
+  padding-top: 12px;
+  border-top: 1px solid var(--deck-border);
+  font-size: 14px;
+}
+
+body[data-deck-theme="technical-blueprint"] .data-table th {
+  border-top-width: 2px;
+  background: var(--deck-primary-soft);
+  font-family: var(--deck-label);
+}
+
+/* Product Console: app-shell chrome, product surfaces, and status-led UI
+   storytelling. */
+body[data-deck-theme="product-console"] .slide {
+  background:
+    radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--deck-primary-soft) 78%, transparent), transparent 25%),
+    var(--deck-bg);
+}
+
+body[data-deck-theme="product-console"] .slide-header {
+  min-height: 172px;
+  border-bottom: 1px solid var(--deck-border);
+}
+
+body[data-deck-theme="product-console"] .eyebrow {
+  position: relative;
+  width: fit-content;
+  padding: 7px 14px 7px 34px;
+  border: 1px solid var(--deck-border);
+  border-radius: 999px;
+  background: var(--deck-surface);
+  font-family: var(--deck-label);
+  letter-spacing: 0.08em;
+}
+
+body[data-deck-theme="product-console"] .eyebrow::before {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: 8px 0 0 -20px;
+  border-radius: 50%;
+  background: var(--deck-primary);
+}
+
+body[data-deck-theme="product-console"] :is(
+  .cover-visual,
+  .project-case-media,
+  .image-hero-media,
+  .content-card,
+  .comparison-column,
+  .kpi-card,
+  .timeline-step,
+  .dashboard-domain,
+  .proof-stack,
+  .chart-body,
+  .data-table-wrap
+) {
+  border: 1px solid color-mix(in srgb, var(--deck-border) 82%, transparent);
+  border-radius: var(--deck-radius-medium);
+  background: var(--deck-surface);
+  box-shadow: 0 16px 36px rgba(16, 24, 40, 0.09);
+}
+
+body[data-deck-theme="product-console"] :is(.cover-visual, .project-case-media, .image-hero-media) {
+  position: relative;
+  padding-top: 52px;
+  overflow: hidden;
+}
+
+body[data-deck-theme="product-console"] :is(.cover-visual, .project-case-media, .image-hero-media)::before {
+  content: "●  ●  ●     PRODUCT CONSOLE";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  height: 52px;
+  padding: 17px 22px;
+  border-bottom: 1px solid var(--deck-border);
+  background: color-mix(in srgb, var(--deck-surface-strong) 76%, var(--deck-surface));
+  color: var(--deck-muted);
+  font-family: var(--deck-label);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+body[data-deck-theme="product-console"] .cover-geometry {
+  padding: 82px 58px 58px;
+  border-radius: 0 0 var(--deck-radius-medium) var(--deck-radius-medium);
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="product-console"] .cover-geometry div {
+  min-height: 210px;
+  border: 1px solid var(--deck-border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--deck-primary-soft), var(--deck-surface));
+  opacity: 1;
+}
+
+body[data-deck-theme="product-console"] .content-card {
+  min-height: 280px;
+  padding: 38px 38px 34px;
+}
+
+body[data-deck-theme="product-console"] .content-card::after {
+  right: 30px;
+  bottom: 28px;
+  width: 56px;
+  height: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--deck-primary);
+}
+
+body[data-deck-theme="product-console"] .card-index {
+  top: 30px;
+  display: grid;
+  width: 44px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--deck-primary) 24%, var(--deck-border));
+  border-radius: 999px;
+  background: var(--deck-primary-soft);
+  font-family: var(--deck-label);
+}
+
+body[data-deck-theme="product-console"] .kpi-card {
+  border-top: 5px solid var(--deck-primary);
+}
+
+body[data-deck-theme="product-console"] .project-case-metric {
+  padding: 18px;
+  border: 1px solid var(--deck-border);
+  border-radius: 10px;
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="product-console"] .project-case-media:has(.editor-placeholder-image) {
+  background-color: var(--deck-surface);
+  background-image:
+    linear-gradient(var(--deck-primary-soft), var(--deck-primary-soft)),
+    linear-gradient(var(--deck-primary), var(--deck-primary)),
+    linear-gradient(var(--deck-surface-strong), var(--deck-surface-strong)),
+    repeating-linear-gradient(90deg, var(--deck-surface-strong) 0 112px, transparent 112px 130px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--deck-primary) 18%, var(--deck-surface)) 0 86px, transparent 86px 104px);
+  background-position:
+    28px 84px,
+    52px 110px,
+    226px 84px,
+    250px 176px,
+    250px 422px;
+  background-size:
+    170px calc(100% - 112px),
+    104px 18px,
+    calc(100% - 254px) 62px,
+    calc(100% - 282px) 192px,
+    calc(100% - 282px) 150px;
+  background-repeat: no-repeat;
+}
+
+body[data-deck-theme="product-console"] .project-case-media:has(.editor-placeholder-image) .editor-placeholder-image {
+  opacity: 0;
+}
+
+body[data-deck-theme="product-console"] .project-case-media:has(.editor-placeholder-image)::after {
+  content: "LIVE PRODUCT SURFACE / CONCEPT UI";
+  inset: auto 30px 24px auto;
+  display: block;
+  color: var(--deck-muted);
+  font-family: var(--deck-label);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+body[data-deck-theme="product-console"] .technical-diagram-stage {
+  position: relative;
+  margin-top: 18px;
+  padding: 66px 24px 20px;
+  border: 1px solid var(--deck-border);
+  border-radius: var(--deck-radius-medium);
+  background: var(--deck-surface);
+  box-shadow: 0 16px 36px rgba(16, 24, 40, 0.08);
+}
+
+body[data-deck-theme="product-console"] .technical-diagram-stage::before {
+  content: "●  ●  ●     PRODUCT FLOW";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  padding: 15px 20px;
+  border-bottom: 1px solid var(--deck-border);
+  color: var(--deck-muted);
+  font-family: var(--deck-label);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+body[data-deck-theme="product-console"] .technical-diagram-note {
+  padding-top: 12px;
+  font-family: var(--deck-label);
+  font-size: 14px;
+}
+
+body[data-deck-theme="product-console"] .data-table-wrap {
+  padding: 24px 26px 30px;
+}
+
+body[data-deck-theme="product-console"] .data-table th {
+  border-top: 0;
+  background: var(--deck-primary-soft);
+}
+
+/* Data Intelligence: a dark, evidence-first operating console. */
+body[data-deck-theme="data-intelligence"] .slide {
+  background-color: var(--deck-bg);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--deck-border) 28%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--deck-border) 28%, transparent) 1px, transparent 1px);
+  background-size: 80px 80px;
+}
+
+body[data-deck-theme="data-intelligence"] .slide-header {
+  min-height: 168px;
+  border-top: 1px solid var(--deck-border);
+  border-bottom: 1px solid var(--deck-border);
+  padding-top: 14px;
+}
+
+body[data-deck-theme="data-intelligence"] :is(
+  .eyebrow,
+  .card-kicker,
+  .comparison-label,
+  .kpi-label,
+  .timeline-phase,
+  .text-section-label,
+  .project-case-label,
+  .chart-source,
+  .table-source,
+  .technical-diagram-note
+) {
+  font-family: var(--deck-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+body[data-deck-theme="data-intelligence"] .deck-page {
+  color: var(--deck-primary-text);
+  font-family: var(--deck-label);
+}
+
+body[data-deck-theme="data-intelligence"] :is(
+  .cover-visual,
+  .project-case-media,
+  .image-hero-media,
+  .content-card,
+  .comparison-column,
+  .kpi-card,
+  .timeline-step,
+  .dashboard-domain,
+  .proof-stack,
+  .chart-body,
+  .data-table-wrap
+) {
+  border: 1px solid var(--deck-border);
+  border-radius: var(--deck-radius-small);
+  background: color-mix(in srgb, var(--deck-surface) 94%, transparent);
+  box-shadow: none;
+}
+
+body[data-deck-theme="data-intelligence"] .cover-visual {
+  border-top: 6px solid var(--deck-primary);
+}
+
+body[data-deck-theme="data-intelligence"] .cover-geometry {
+  gap: 18px;
+  padding: 74px 56px 56px;
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="data-intelligence"] .cover-geometry div {
+  min-height: 180px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--deck-primary), color-mix(in srgb, var(--deck-primary) 24%, var(--deck-surface)));
+  opacity: 1;
+}
+
+body[data-deck-theme="data-intelligence"] .content-card {
+  border-top: 4px solid var(--deck-chart-2);
+}
+
+body[data-deck-theme="data-intelligence"] .content-card:nth-child(3n + 2) {
+  border-top-color: var(--deck-primary);
+}
+
+body[data-deck-theme="data-intelligence"] .content-card:nth-child(3n + 3) {
+  border-top-color: var(--deck-chart-3);
+}
+
+body[data-deck-theme="data-intelligence"] .content-card::after {
+  right: 26px;
+  bottom: 24px;
+  width: 48px;
+  height: 6px;
+  border: 0;
+  border-radius: 0;
+  background: var(--deck-primary);
+}
+
+body[data-deck-theme="data-intelligence"] .kpi-grid {
+  gap: 14px;
+}
+
+body[data-deck-theme="data-intelligence"] .kpi-card {
+  min-height: 240px;
+  border-top: 3px solid var(--deck-primary);
+}
+
+body[data-deck-theme="data-intelligence"] .kpi-value {
+  font-size: 78px;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-deck-theme="data-intelligence"] :is(.chart-body, .data-table-wrap) {
+  padding: 26px 30px 30px;
+}
+
+body[data-deck-theme="data-intelligence"] .chart-footer {
+  border-top-width: 1px;
+}
+
+body[data-deck-theme="data-intelligence"] .data-table th {
+  border-top: 2px solid var(--deck-primary);
+  background: color-mix(in srgb, var(--deck-primary-soft) 78%, transparent);
+  font-family: var(--deck-label);
+}
+
+body[data-deck-theme="data-intelligence"] .technical-diagram-stage {
+  position: relative;
+  margin-top: 18px;
+  padding: 58px 24px 20px;
+  border: 1px solid var(--deck-border);
+  border-top: 4px solid var(--deck-primary);
+  border-radius: var(--deck-radius-small);
+  background: color-mix(in srgb, var(--deck-surface) 96%, transparent);
+}
+
+body[data-deck-theme="data-intelligence"] .technical-diagram-stage::before {
+  content: "DATA FLOW / LIVE SYSTEM MAP";
+  position: absolute;
+  top: 16px;
+  left: 24px;
+  color: var(--deck-primary-text);
+  font-family: var(--deck-label);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+body[data-deck-theme="data-intelligence"] .technical-diagram-note {
+  padding-top: 12px;
+  border-top: 1px solid var(--deck-border);
+  font-size: 14px;
+}
+
+/* Signal: institutional editorial authority, not a generic navy recolor. */
+body[data-deck-theme="signal"] .slide {
+  background-color: var(--deck-bg);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--deck-border) 34%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--deck-border) 34%, transparent) 1px, transparent 1px);
+  background-size: 80px 80px;
+}
+
+body[data-deck-theme="signal"] .slide :is(h1, h2, h3) {
+  font-weight: 600;
+  letter-spacing: -0.018em;
+}
+
+body[data-deck-theme="signal"] :is(
+  .eyebrow,
+  .card-kicker,
+  .comparison-label,
+  .kpi-label,
+  .timeline-phase,
+  .text-section-label,
+  .chart-source,
+  .table-source,
+  .deck-page,
+  .technical-diagram-note
+) {
+  font-family: var(--deck-label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+body[data-deck-theme="signal"] .slide-header {
+  border-top: 1px solid var(--deck-border);
+  border-bottom: 1px solid var(--deck-border);
+  padding-top: 16px;
+}
+
+body[data-deck-theme="signal"] .editorial-cover-top,
+body[data-deck-theme="signal"] .editorial-cover-footer {
+  border-color: var(--deck-border);
+  font-family: var(--deck-label);
+}
+
+body[data-deck-theme="signal"] .editorial-cover-copy h1 {
+  max-width: 1450px;
+  font-size: 124px;
+  font-weight: 600;
+}
+
+body[data-deck-theme="signal"] .editorial-cover-rule {
+  height: 2px;
+  background: var(--deck-primary);
+}
+
+body[data-deck-theme="signal"] :is(.content-card, .kpi-card, .timeline-step, .dashboard-domain) {
+  border: 0;
+  border-top: 1px solid var(--deck-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body[data-deck-theme="signal"] .content-card::after {
+  display: none;
+}
+
+body[data-deck-theme="signal"] .card-index,
+body[data-deck-theme="signal"] .kpi-value,
+body[data-deck-theme="signal"] .project-case-value,
+body[data-deck-theme="signal"] .section-number {
+  color: var(--deck-primary-text);
+  font-family: var(--deck-display);
+  font-style: italic;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-deck-theme="signal"] .statement-narrative {
+  padding-left: 38px;
+  border-left: 2px solid var(--deck-primary);
+}
+
+body[data-deck-theme="signal"] :is(.chart-body, .data-table-wrap, .proof-stack) {
+  border: 1px solid var(--deck-border);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--deck-surface) 72%, transparent);
+  box-shadow: none;
+}
+
+body[data-deck-theme="signal"] :is(.chart-body, .data-table-wrap) {
+  padding: 24px 28px 28px;
+}
+
+body[data-deck-theme="signal"] .data-table th {
+  border-top: 1px solid var(--deck-primary);
+  font-family: var(--deck-label);
+}
+
+body[data-deck-theme="signal"] .technical-diagram-stage {
+  margin-top: 18px;
+  padding: 26px 24px 20px;
+  border: 1px solid var(--deck-border);
+  border-left: 5px solid var(--deck-primary);
+  background: color-mix(in srgb, var(--deck-surface) 80%, transparent);
+}
+
+body[data-deck-theme="signal"] .technical-diagram-note {
+  padding-top: 12px;
+  border-top: 1px solid var(--deck-border);
+  font-size: 14px;
+}
+
+/* Soft Editorial: warm paper, magazine rules, asymmetric reading rhythm, and
+   softly colored editorial blocks. */
+body[data-deck-theme="soft-editorial"] .slide {
+  background-color: var(--deck-bg);
+  background-image:
+    radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--deck-primary-soft) 22%, transparent), transparent 24%),
+    linear-gradient(90deg, transparent 0 7.5%, color-mix(in srgb, var(--deck-border) 36%, transparent) 7.5% 7.58%, transparent 7.58%);
+}
+
+body[data-deck-theme="soft-editorial"] .slide :is(h1, h2, h3) {
+  font-weight: 500;
+  letter-spacing: -0.018em;
+}
+
+body[data-deck-theme="soft-editorial"] .eyebrow {
+  color: var(--deck-text);
+  font-family: var(--deck-body);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+body[data-deck-theme="soft-editorial"] .deck-page {
+  font-family: var(--deck-display);
+  font-size: 22px;
+  font-style: italic;
+  font-weight: 500;
+}
+
+body[data-deck-theme="soft-editorial"] .slide-header {
+  min-height: 176px;
+  border-top: 0;
+  border-bottom: 1px solid var(--deck-border);
+}
+
+body[data-deck-theme="soft-editorial"] .editorial-cover-top {
+  border-bottom: 1px solid var(--deck-border);
+}
+
+body[data-deck-theme="soft-editorial"] .editorial-cover-copy {
+  max-width: 1500px;
+  padding-left: 80px;
+}
+
+body[data-deck-theme="soft-editorial"] .editorial-cover-copy h1 {
+  font-size: 132px;
+  line-height: 0.94;
+  font-weight: 500;
+}
+
+body[data-deck-theme="soft-editorial"] .editorial-cover-tag {
+  border-left: 0;
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: var(--deck-primary-soft);
+  font-family: var(--deck-body);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+body[data-deck-theme="soft-editorial"] .editorial-cover-rule {
+  height: 2px;
+}
+
+body[data-deck-theme="soft-editorial"] .cover-visual,
+body[data-deck-theme="soft-editorial"] .project-case-media,
+body[data-deck-theme="soft-editorial"] .image-hero-media {
+  border-radius: var(--deck-radius-large);
+  background: var(--deck-primary-soft);
+  box-shadow: none;
+}
+
+body[data-deck-theme="soft-editorial"] .cover-geometry {
+  gap: 18px;
+  padding: 62px;
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="soft-editorial"] .cover-geometry div {
+  min-height: 220px;
+  border-radius: 999px 999px 24px 24px;
+  opacity: 1;
+}
+
+body[data-deck-theme="soft-editorial"] .cover-geometry div:nth-child(1) {
+  background: var(--deck-primary-soft);
+}
+
+body[data-deck-theme="soft-editorial"] .cover-geometry div:nth-child(2) {
+  background: var(--deck-surface-strong);
+}
+
+body[data-deck-theme="soft-editorial"] .cover-geometry div:nth-child(3) {
+  background: var(--deck-surface);
+  box-shadow: inset 0 0 0 1px var(--deck-border);
+}
+
+body[data-deck-theme="soft-editorial"] :is(.content-card, .kpi-card, .timeline-step, .dashboard-domain) {
+  border: 0;
+  border-radius: var(--deck-radius-large);
+  background: color-mix(in srgb, var(--deck-surface) 74%, var(--deck-bg));
+  box-shadow: none;
+}
+
+body[data-deck-theme="soft-editorial"] .content-card:nth-child(3n + 1),
+body[data-deck-theme="soft-editorial"] .kpi-card:nth-child(3n + 1),
+body[data-deck-theme="soft-editorial"] .timeline-step:nth-child(3n + 1) {
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="soft-editorial"] .content-card:nth-child(3n + 2),
+body[data-deck-theme="soft-editorial"] .kpi-card:nth-child(3n + 2),
+body[data-deck-theme="soft-editorial"] .timeline-step:nth-child(3n + 2) {
+  background: var(--deck-primary-soft);
+}
+
+body[data-deck-theme="soft-editorial"] .content-card:nth-child(3n + 3),
+body[data-deck-theme="soft-editorial"] .kpi-card:nth-child(3n + 3),
+body[data-deck-theme="soft-editorial"] .timeline-step:nth-child(3n + 3) {
+  background: var(--deck-surface-strong);
+}
+
+body[data-deck-theme="soft-editorial"] .content-card::after {
+  display: none;
+}
+
+body[data-deck-theme="soft-editorial"] .card-index,
+body[data-deck-theme="soft-editorial"] .kpi-value,
+body[data-deck-theme="soft-editorial"] .section-number {
+  font-family: var(--deck-display);
+  font-style: italic;
+  font-weight: 500;
+}
+
+body[data-deck-theme="soft-editorial"] .text-section {
+  padding-top: 24px;
+  border-top: 1px solid var(--deck-border);
+}
+
+body[data-deck-theme="soft-editorial"] .text-section-body::first-letter {
+  float: left;
+  margin: 0.06em 0.12em 0 0;
+  color: var(--deck-primary-text);
+  font-family: var(--deck-display);
+  font-size: 3.2em;
+  line-height: 0.72;
+}
+
+body[data-deck-theme="soft-editorial"] .statement-narrative {
+  padding: 54px 58px;
+  border-radius: var(--deck-radius-large);
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="soft-editorial"] :is(.chart-body, .data-table-wrap) {
+  padding: 26px 30px 30px;
+  border: 0;
+  border-radius: var(--deck-radius-large);
+  background: color-mix(in srgb, var(--deck-surface) 58%, var(--deck-bg));
+  box-shadow: none;
+}
+
+body[data-deck-theme="soft-editorial"] .data-table th {
+  border-top: 1px solid var(--deck-text);
+  font-family: var(--deck-display);
+  font-size: 20px;
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+body[data-deck-theme="soft-editorial"] .technical-diagram-stage {
+  margin-top: 18px;
+  padding: 28px 24px 20px;
+  border: 1px solid var(--deck-border);
+  border-radius: var(--deck-radius-large);
+  background: color-mix(in srgb, var(--deck-surface) 70%, var(--deck-bg));
+}
+
+body[data-deck-theme="soft-editorial"] .technical-diagram-note {
+  padding-top: 12px;
+  border-top: 1px solid var(--deck-border);
+  font-family: var(--deck-display);
+  font-size: 17px;
+  font-style: italic;
+}
+
 /* Built-in Block Frame theme. Layout geometry remains registry-controlled;
    this layer supplies the Visual DNA without an external style skill. */
 body[data-deck-theme="block-frame"] .slide {
@@ -2807,6 +3804,807 @@ body[data-deck-theme="block-frame"] .comparison-header,
 body[data-deck-theme="block-frame"] .kpi-header,
 body[data-deck-theme="block-frame"] .timeline-header {
   border-color: var(--deck-text);
+}
+
+/* Built-in Comic Panel theme. It extends the stable block-frame geometry with
+   a real comic vocabulary: halftone paper, framed panels, caption boxes,
+   speech tails, action badges, and ink-offset shadows. DiagramSpec surfaces
+   intentionally remain clean schematics inside the surrounding comic panel. */
+body[data-deck-theme="comic-panel"] .slide {
+  background-color: var(--deck-bg);
+  background-image:
+    radial-gradient(circle at 2px 2px, rgba(17, 17, 17, 0.17) 1.35px, transparent 1.5px),
+    linear-gradient(135deg, rgba(255, 216, 77, 0.12), transparent 42%);
+  background-size: 18px 18px, 100% 100%;
+}
+
+body[data-deck-theme="comic-panel"] .slide h1,
+body[data-deck-theme="comic-panel"] .slide h2,
+body[data-deck-theme="comic-panel"] .slide h3 {
+  color: var(--deck-text);
+  font-weight: 900;
+  letter-spacing: -0.045em;
+  text-shadow: 4px 4px 0 var(--deck-primary-soft);
+}
+
+body[data-deck-theme="comic-panel"] :is(
+  .eyebrow,
+  .card-kicker,
+  .comparison-label,
+  .kpi-label,
+  .timeline-phase,
+  .text-section-label,
+  .dashboard-domain-label,
+  .project-case-kicker
+) {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border: 4px solid var(--deck-text);
+  background: var(--deck-primary-soft);
+  color: var(--deck-text);
+  font-family: var(--deck-label);
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  line-height: 1.05;
+  text-transform: uppercase;
+  box-shadow: 5px 5px 0 var(--deck-text);
+  transform: rotate(-1deg);
+}
+
+body[data-deck-theme="comic-panel"] .deck-page {
+  display: flex;
+  width: 72px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 4px solid var(--deck-text);
+  background: var(--deck-text);
+  color: var(--deck-primary-soft);
+  font-family: var(--deck-label);
+  font-weight: 900;
+  box-shadow: 5px 5px 0 var(--deck-primary);
+}
+
+body[data-deck-theme="comic-panel"] .accent-rule {
+  height: 12px;
+  border: 4px solid var(--deck-text);
+  border-radius: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--deck-primary) 0 12px,
+    var(--deck-primary-soft) 12px 24px
+  );
+}
+
+body[data-deck-theme="comic-panel"] .layout-cover {
+  gap: 64px;
+}
+
+body[data-deck-theme="comic-panel"] .cover-copy {
+  position: relative;
+  align-self: center;
+  padding: 54px 54px 64px;
+  border: 5px solid var(--deck-text);
+  background: var(--deck-surface);
+  box-shadow: 14px 14px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .cover-copy::before {
+  content: "OPENING!";
+  position: absolute;
+  top: -23px;
+  left: 42px;
+  padding: 7px 16px;
+  border: 4px solid var(--deck-text);
+  background: var(--deck-primary-soft);
+  color: var(--deck-text);
+  font-family: var(--deck-label);
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  box-shadow: 5px 5px 0 var(--deck-text);
+  transform: rotate(-3deg);
+}
+
+body[data-deck-theme="comic-panel"] .cover-copy::after {
+  content: "";
+  position: absolute;
+  right: 28px;
+  bottom: 18px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: var(--deck-text);
+  clip-path: polygon(0 0, 100% 0, 24% 100%);
+  transform: none;
+}
+
+body[data-deck-theme="comic-panel"] .cover-visual,
+body[data-deck-theme="comic-panel"] .image-hero-media,
+body[data-deck-theme="comic-panel"] .project-case-media {
+  overflow: hidden;
+  border: 5px solid var(--deck-text);
+  border-radius: 0;
+  background: var(--deck-primary-soft);
+  box-shadow: 14px 14px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .cover-visual::after,
+body[data-deck-theme="comic-panel"] .image-hero-media::after {
+  content: "WOW!";
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  display: grid;
+  width: 112px;
+  height: 82px;
+  place-items: center;
+  background: var(--deck-primary-soft);
+  color: var(--deck-text);
+  clip-path: polygon(50% 0, 61% 27%, 86% 9%, 82% 39%, 100% 50%, 78% 61%, 88% 92%, 59% 73%, 50% 100%, 40% 73%, 10% 92%, 22% 61%, 0 50%, 19% 39%, 13% 10%, 39% 27%);
+  font-family: var(--deck-label);
+  font-size: 27px;
+  font-weight: 900;
+  transform: rotate(-8deg);
+  filter: drop-shadow(5px 5px 0 var(--deck-text));
+}
+
+body[data-deck-theme="comic-panel"] .layout-section {
+  background-color: var(--deck-primary-soft);
+  background-image: repeating-conic-gradient(
+    from -8deg at 82% 52%,
+    transparent 0deg 5deg,
+    rgba(17, 17, 17, 0.13) 5deg 7deg
+  );
+}
+
+body[data-deck-theme="comic-panel"] .layout-section .section-copy {
+  padding: 54px;
+  border: 5px solid var(--deck-text);
+  background: var(--deck-surface);
+  box-shadow: 14px 14px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .section-number {
+  color: var(--deck-primary);
+  -webkit-text-stroke: 5px var(--deck-text);
+  paint-order: stroke fill;
+}
+
+body[data-deck-theme="comic-panel"] .statement-narrative,
+body[data-deck-theme="comic-panel"] .proof-stack {
+  border: 5px solid var(--deck-text);
+  border-radius: 0;
+  background: var(--deck-surface);
+  color: var(--deck-text);
+  box-shadow: 12px 12px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .statement-narrative {
+  position: relative;
+  padding: 48px;
+}
+
+body[data-deck-theme="comic-panel"] .statement-narrative::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  bottom: 18px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: var(--deck-text);
+  clip-path: polygon(0 0, 100% 0, 30% 100%);
+  transform: none;
+}
+
+body[data-deck-theme="comic-panel"] .content-card,
+body[data-deck-theme="comic-panel"] .comparison-column,
+body[data-deck-theme="comic-panel"] .kpi-card,
+body[data-deck-theme="comic-panel"] .timeline-step,
+body[data-deck-theme="comic-panel"] .dashboard-domain,
+body[data-deck-theme="comic-panel"] .text-section,
+body[data-deck-theme="comic-panel"] .closing-action,
+body[data-deck-theme="comic-panel"] .chart-body,
+body[data-deck-theme="comic-panel"] .data-table-wrap {
+  border: 5px solid var(--deck-text);
+  border-radius: 0;
+  background: var(--deck-surface);
+  box-shadow: 10px 10px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .content-card,
+body[data-deck-theme="comic-panel"] .text-section {
+  overflow: hidden;
+}
+
+body[data-deck-theme="comic-panel"] .content-card:nth-child(4n + 1),
+body[data-deck-theme="comic-panel"] .kpi-card:nth-child(4n + 1),
+body[data-deck-theme="comic-panel"] .timeline-step:nth-child(4n + 1),
+body[data-deck-theme="comic-panel"] .text-section:nth-child(4n + 1) {
+  background: var(--deck-primary-soft);
+}
+
+body[data-deck-theme="comic-panel"] .content-card:nth-child(4n + 2),
+body[data-deck-theme="comic-panel"] .kpi-card:nth-child(4n + 2),
+body[data-deck-theme="comic-panel"] .timeline-step:nth-child(4n + 2),
+body[data-deck-theme="comic-panel"] .text-section:nth-child(4n + 2) {
+  background: var(--deck-surface-strong);
+}
+
+body[data-deck-theme="comic-panel"] .content-card:nth-child(4n + 3),
+body[data-deck-theme="comic-panel"] .kpi-card:nth-child(4n + 3),
+body[data-deck-theme="comic-panel"] .timeline-step:nth-child(4n + 3),
+body[data-deck-theme="comic-panel"] .text-section:nth-child(4n + 3) {
+  background: #A8E68F;
+}
+
+body[data-deck-theme="comic-panel"] .content-card:nth-child(odd) {
+  transform: rotate(-0.7deg);
+}
+
+body[data-deck-theme="comic-panel"] .content-card:nth-child(even) {
+  transform: rotate(0.7deg);
+}
+
+body[data-deck-theme="comic-panel"] .content-card::before {
+  content: "";
+  position: absolute;
+  left: 42px;
+  bottom: 12px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: var(--deck-text);
+  clip-path: polygon(0 0, 100% 0, 30% 100%);
+  transform: none;
+}
+
+body[data-deck-theme="comic-panel"] .content-card::after {
+  content: "!";
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border: 4px solid var(--deck-text);
+  border-radius: 50%;
+  background: var(--deck-surface);
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  font-size: 34px;
+  font-weight: 900;
+  box-shadow: 5px 5px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .card-index {
+  top: 16px;
+  right: 24px;
+  z-index: 2;
+  display: flex;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 11px;
+  border: 4px solid var(--deck-text);
+  background: var(--deck-text);
+  color: var(--deck-primary-soft);
+  font-size: 16px;
+  box-shadow: 4px 4px 0 var(--deck-primary);
+}
+
+body[data-deck-theme="comic-panel"] .card-index::before {
+  content: "PANEL ";
+}
+
+body[data-deck-theme="comic-panel"] .text-section {
+  position: relative;
+  padding: 32px;
+}
+
+body[data-deck-theme="comic-panel"] .text-section::after {
+  content: "";
+  position: absolute;
+  right: 42px;
+  bottom: 12px;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: var(--deck-text);
+  clip-path: polygon(0 0, 100% 0, 30% 100%);
+  transform: none;
+}
+
+body[data-deck-theme="comic-panel"] .comparison-column,
+body[data-deck-theme="comic-panel"] .kpi-card,
+body[data-deck-theme="comic-panel"] .timeline-step,
+body[data-deck-theme="comic-panel"] .dashboard-domain {
+  padding: 30px;
+}
+
+body[data-deck-theme="comic-panel"] .slide-header,
+body[data-deck-theme="comic-panel"] .comparison-header,
+body[data-deck-theme="comic-panel"] .kpi-header,
+body[data-deck-theme="comic-panel"] .timeline-header {
+  border-bottom: 5px solid var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .technical-diagram-stage {
+  margin: 20px 12px 26px 0;
+  padding: 18px;
+  border: 5px solid var(--deck-text);
+  background: var(--deck-surface);
+  box-shadow: 12px 12px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .technical-diagram-canvas {
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="comic-panel"] .technical-diagram-note {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 0;
+  padding: 8px 28px 18px 14px;
+  border: 3px solid var(--deck-text);
+  background: var(--deck-primary-soft);
+  color: var(--deck-text);
+  font-family: var(--deck-label);
+  font-weight: 800;
+  box-shadow: 4px 4px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .closing-copy {
+  position: relative;
+  padding: 48px 52px 58px;
+  border: 5px solid var(--deck-text);
+  background: var(--deck-surface);
+  box-shadow: 14px 14px 0 var(--deck-text);
+}
+
+body[data-deck-theme="comic-panel"] .closing-copy::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  bottom: 18px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: var(--deck-text);
+  clip-path: polygon(0 0, 100% 0, 30% 100%);
+  transform: none;
+}
+
+body[data-deck-theme="comic-panel"] .closing-action {
+  margin-bottom: 18px;
+  padding: 22px 26px;
+}
+
+body[data-deck-theme="comic-panel"] .closing-action-detail {
+  padding-right: 36px;
+  padding-bottom: 20px;
+}
+
+body[data-deck-theme="comic-panel"] .closing-end-mark {
+  color: transparent;
+  font-size: 0;
+}
+
+body[data-deck-theme="comic-panel"] .closing-end-mark::after {
+  content: "FIN!";
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  font-size: 144px;
+  font-weight: 900;
+  letter-spacing: -0.08em;
+  display: inline-block;
+  -webkit-text-stroke: 5px var(--deck-text);
+  paint-order: stroke fill;
+  text-shadow: 9px 9px 0 var(--deck-primary-soft);
+  transform: rotate(-7deg);
+}
+
+/* Built-in 8-Bit Orbit theme. The catalog entry predates this dedicated
+   execution layer; these rules turn its generic retro-interface metadata into
+   a real pixel-arcade system. DiagramSpec remains a clean SVG inside the
+   surrounding monitor frame and is never decorated node by node. */
+body[data-deck-theme="8-bit-orbit"] .slide {
+  background-color: var(--deck-bg);
+  background-image:
+    linear-gradient(rgba(94, 220, 244, 0.075) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(94, 220, 244, 0.075) 2px, transparent 2px),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 5px,
+      rgba(10, 14, 39, 0.18) 5px 7px
+    ),
+    radial-gradient(circle at 76% 22%, rgba(240, 166, 202, 0.1), transparent 30%);
+  background-size: 40px 40px, 40px 40px, 100% 7px, 100% 100%;
+}
+
+body[data-deck-theme="8-bit-orbit"] .slide h1,
+body[data-deck-theme="8-bit-orbit"] .slide h2,
+body[data-deck-theme="8-bit-orbit"] .slide h3 {
+  color: var(--deck-text);
+  font-weight: 900;
+  letter-spacing: 0.015em;
+  text-shadow:
+    4px 4px 0 var(--deck-bg),
+    8px 8px 0 #F4D03F;
+}
+
+body[data-deck-theme="8-bit-orbit"] :is(
+  .eyebrow,
+  .card-kicker,
+  .comparison-label,
+  .kpi-label,
+  .timeline-phase,
+  .text-section-label,
+  .dashboard-domain-label,
+  .project-case-kicker
+) {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border: 3px solid var(--deck-primary);
+  background: var(--deck-bg);
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.05;
+  text-transform: uppercase;
+  box-shadow:
+    5px 0 0 var(--deck-bg),
+    0 5px 0 var(--deck-bg),
+    8px 8px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .deck-page {
+  display: flex;
+  width: 84px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 3px solid var(--deck-primary);
+  background: var(--deck-bg);
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  box-shadow: 5px 5px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .deck-page::before {
+  content: "LV.";
+  margin-right: 4px;
+  color: #F4D03F;
+}
+
+body[data-deck-theme="8-bit-orbit"] .accent-rule {
+  width: 128px;
+  height: 14px;
+  border: 0;
+  border-radius: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--deck-primary) 0 18px,
+    transparent 18px 24px
+  );
+  box-shadow: 6px 6px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .layout-cover {
+  gap: 70px;
+}
+
+body[data-deck-theme="8-bit-orbit"] .cover-copy {
+  position: relative;
+  align-self: center;
+  padding: 58px 56px 64px;
+  border: 4px solid var(--deck-primary);
+  background: var(--deck-surface);
+  box-shadow:
+    8px 0 0 var(--deck-bg),
+    0 8px 0 var(--deck-bg),
+    14px 14px 0 #F0A6CA;
+  clip-path: polygon(
+    0 12px, 12px 12px, 12px 0,
+    calc(100% - 12px) 0, calc(100% - 12px) 12px, 100% 12px,
+    100% calc(100% - 12px), calc(100% - 12px) calc(100% - 12px), calc(100% - 12px) 100%,
+    12px 100%, 12px calc(100% - 12px), 0 calc(100% - 12px)
+  );
+}
+
+body[data-deck-theme="8-bit-orbit"] .cover-copy::before {
+  content: "PLAYER 01 // READY";
+  position: absolute;
+  top: 18px;
+  left: 56px;
+  color: #F4D03F;
+  font-family: var(--deck-label);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+body[data-deck-theme="8-bit-orbit"] .cover-copy::after {
+  content: "■■■ □□";
+  position: absolute;
+  right: 42px;
+  bottom: 26px;
+  color: #F0A6CA;
+  font-family: var(--deck-label);
+  font-size: 18px;
+  letter-spacing: 0.08em;
+}
+
+body[data-deck-theme="8-bit-orbit"] .cover-visual,
+body[data-deck-theme="8-bit-orbit"] .image-hero-media,
+body[data-deck-theme="8-bit-orbit"] .project-case-media {
+  overflow: hidden;
+  border: 4px solid var(--deck-primary);
+  border-radius: 0;
+  background: var(--deck-surface);
+  box-shadow:
+    8px 0 0 var(--deck-bg),
+    0 8px 0 var(--deck-bg),
+    14px 14px 0 #F4D03F;
+  clip-path: polygon(
+    0 12px, 12px 12px, 12px 0,
+    calc(100% - 12px) 0, calc(100% - 12px) 12px, 100% 12px,
+    100% calc(100% - 12px), calc(100% - 12px) calc(100% - 12px), calc(100% - 12px) 100%,
+    12px 100%, 12px calc(100% - 12px), 0 calc(100% - 12px)
+  );
+}
+
+body[data-deck-theme="8-bit-orbit"] .cover-visual::after,
+body[data-deck-theme="8-bit-orbit"] .image-hero-media::after {
+  content: "INSERT COIN";
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  padding: 9px 13px;
+  border: 3px solid #F4D03F;
+  background: var(--deck-bg);
+  color: #F4D03F;
+  font-family: var(--deck-label);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  box-shadow: 5px 5px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .layout-section {
+  background-color: var(--deck-bg);
+  background-image:
+    linear-gradient(135deg, transparent 0 50%, rgba(94, 220, 244, 0.07) 50% 52%, transparent 52%),
+    linear-gradient(rgba(94, 220, 244, 0.08) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(94, 220, 244, 0.08) 2px, transparent 2px);
+  background-size: 120px 120px, 40px 40px, 40px 40px;
+}
+
+body[data-deck-theme="8-bit-orbit"] .layout-section .section-copy,
+body[data-deck-theme="8-bit-orbit"] .statement-narrative,
+body[data-deck-theme="8-bit-orbit"] .proof-stack,
+body[data-deck-theme="8-bit-orbit"] .closing-copy {
+  border: 4px solid var(--deck-primary);
+  border-radius: 0;
+  background: var(--deck-surface);
+  color: var(--deck-text);
+  box-shadow: 10px 10px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .layout-section .section-copy,
+body[data-deck-theme="8-bit-orbit"] .statement-narrative,
+body[data-deck-theme="8-bit-orbit"] .closing-copy {
+  padding: 50px;
+}
+
+body[data-deck-theme="8-bit-orbit"] .section-number {
+  color: var(--deck-primary);
+  text-shadow: 8px 8px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .content-card,
+body[data-deck-theme="8-bit-orbit"] .comparison-column,
+body[data-deck-theme="8-bit-orbit"] .kpi-card,
+body[data-deck-theme="8-bit-orbit"] .timeline-step,
+body[data-deck-theme="8-bit-orbit"] .dashboard-domain,
+body[data-deck-theme="8-bit-orbit"] .text-section,
+body[data-deck-theme="8-bit-orbit"] .closing-action,
+body[data-deck-theme="8-bit-orbit"] .chart-body,
+body[data-deck-theme="8-bit-orbit"] .data-table-wrap {
+  border: 3px solid var(--deck-border);
+  border-radius: 0;
+  background: var(--deck-surface);
+  box-shadow: 8px 8px 0 var(--deck-primary-soft);
+}
+
+body[data-deck-theme="8-bit-orbit"] .content-card,
+body[data-deck-theme="8-bit-orbit"] .text-section {
+  position: relative;
+  overflow: hidden;
+}
+
+body[data-deck-theme="8-bit-orbit"] .content-card::before,
+body[data-deck-theme="8-bit-orbit"] .text-section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 34px;
+  height: 34px;
+  border-top: 7px solid var(--deck-primary);
+  border-left: 7px solid var(--deck-primary);
+}
+
+body[data-deck-theme="8-bit-orbit"] .content-card::after,
+body[data-deck-theme="8-bit-orbit"] .text-section::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 34px;
+  height: 34px;
+  border-right: 7px solid #F0A6CA;
+  border-bottom: 7px solid #F0A6CA;
+  background: transparent;
+  transform: none;
+}
+
+body[data-deck-theme="8-bit-orbit"] .content-card:nth-child(3n + 2),
+body[data-deck-theme="8-bit-orbit"] .kpi-card:nth-child(3n + 2),
+body[data-deck-theme="8-bit-orbit"] .timeline-step:nth-child(3n + 2) {
+  border-color: #F0A6CA;
+  box-shadow: 8px 8px 0 #351C4B;
+}
+
+body[data-deck-theme="8-bit-orbit"] .content-card:nth-child(3n + 3),
+body[data-deck-theme="8-bit-orbit"] .kpi-card:nth-child(3n + 3),
+body[data-deck-theme="8-bit-orbit"] .timeline-step:nth-child(3n + 3) {
+  border-color: #F4D03F;
+  box-shadow: 8px 8px 0 #3E361D;
+}
+
+body[data-deck-theme="8-bit-orbit"] .card-index {
+  top: 18px;
+  right: 22px;
+  display: flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 2px solid var(--deck-primary);
+  background: var(--deck-bg);
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  font-size: 15px;
+  box-shadow: 4px 4px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .card-index::before {
+  content: "SLOT ";
+}
+
+body[data-deck-theme="8-bit-orbit"] .comparison-column,
+body[data-deck-theme="8-bit-orbit"] .kpi-card,
+body[data-deck-theme="8-bit-orbit"] .timeline-step,
+body[data-deck-theme="8-bit-orbit"] .dashboard-domain {
+  padding: 30px;
+}
+
+body[data-deck-theme="8-bit-orbit"] .slide-header,
+body[data-deck-theme="8-bit-orbit"] .comparison-header,
+body[data-deck-theme="8-bit-orbit"] .kpi-header,
+body[data-deck-theme="8-bit-orbit"] .timeline-header {
+  border-bottom: 4px dashed var(--deck-border);
+}
+
+body[data-deck-theme="8-bit-orbit"] .timeline-track {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--deck-primary) 0 20px,
+    transparent 20px 30px
+  );
+}
+
+body[data-deck-theme="8-bit-orbit"] .timeline-node,
+body[data-deck-theme="8-bit-orbit"] .timeline-dot {
+  border-radius: 0;
+  box-shadow: 4px 4px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .chart-column-fill,
+body[data-deck-theme="8-bit-orbit"] .chart-bar-fill {
+  border-radius: 0;
+  box-shadow: 5px 5px 0 var(--deck-primary-soft);
+}
+
+body[data-deck-theme="8-bit-orbit"] .data-table th {
+  border-bottom: 3px solid var(--deck-primary);
+  background: var(--deck-bg);
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  letter-spacing: 0.05em;
+}
+
+body[data-deck-theme="8-bit-orbit"] .technical-diagram-stage {
+  position: relative;
+  margin: 24px 12px 26px 0;
+  padding: 52px 18px 18px;
+  border: 4px solid var(--deck-primary);
+  background: var(--deck-surface);
+  box-shadow:
+    8px 0 0 var(--deck-bg),
+    0 8px 0 var(--deck-bg),
+    14px 14px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .technical-diagram-stage::before {
+  content: "SYSTEM MAP // SVG VECTOR";
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  color: #F4D03F;
+  font-family: var(--deck-label);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+body[data-deck-theme="8-bit-orbit"] .technical-diagram-canvas {
+  border: 2px solid var(--deck-border);
+  background: var(--deck-surface);
+}
+
+body[data-deck-theme="8-bit-orbit"] .technical-diagram-note {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 0;
+  padding: 8px 14px 16px;
+  border: 2px solid var(--deck-primary);
+  background: var(--deck-bg);
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  font-weight: 700;
+  box-shadow: 4px 4px 0 #F0A6CA;
+}
+
+body[data-deck-theme="8-bit-orbit"] .closing-action {
+  margin-bottom: 16px;
+  padding: 22px 26px;
+}
+
+body[data-deck-theme="8-bit-orbit"] .closing-action-detail {
+  padding-right: 30px;
+  padding-bottom: 18px;
+}
+
+body[data-deck-theme="8-bit-orbit"] .closing-end-mark {
+  color: transparent;
+  font-size: 0;
+}
+
+body[data-deck-theme="8-bit-orbit"] .closing-end-mark::after {
+  content: "CONTINUE?";
+  display: inline-block;
+  color: var(--deck-primary);
+  font-family: var(--deck-label);
+  font-size: 104px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: 7px 7px 0 #F0A6CA;
 }
 
 /* Controlled editor chrome: outside slide nodes, never exported to PPTX. */

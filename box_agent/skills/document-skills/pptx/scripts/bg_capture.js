@@ -45,6 +45,12 @@ const EXPORT_CSS = `
   border: 0 !important;
   pointer-events: none !important;
   opacity: 1 !important;
+  /* Controlled decks give every direct non-background child z-index: 1.
+   * The injected capture image is also a direct child, so without this
+   * explicit override it sorts above authored background/hero <img> nodes in
+   * dom-to-pptx and can cover them in PowerPoint. Keep the capture below every
+   * authored layer regardless of the source theme's stacking rules. */
+  z-index: -100000 !important;
 }
 `;
 

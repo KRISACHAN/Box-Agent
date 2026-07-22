@@ -39,7 +39,16 @@ research**. Pick the branch that fits:
    Treat it as the source of truth and build the outline. Do not invent a
    competing storyline over usable input.
 
-2. **Only the structure/framing is unclear** (facts are available, but audience,
+2. **The request is a solution/design brief.** A prompt that names the goal,
+   requested system or product components, integrations/processes to cover, and
+   approximate page count is sufficient for a proposed architecture or
+   implementation plan. Use `source_mode=user_provided`, frame unsupplied
+   details as recommendations, and do not load `research-synthesis` or browse by
+   default. If a named external product/API claim genuinely needs confirmation,
+   use at most two targeted official-source lookups; switch to the research
+   branch only if the requested deck becomes evidence-driven.
+
+3. **Only the structure/framing is unclear** (facts are available, but audience,
    page count, ordering, emphasis, or plan-vs-build is ambiguous). **Ask back** —
    one focused question with only the minimum fields, and where reasonable offer a sensible default
    the user can simply confirm. Examples:
@@ -48,7 +57,7 @@ research**. Pick the branch that fits:
    Do not stall with an open-ended "tell me more", and do not silently guess an
    entire narrative the user never asked for.
 
-3. **The topic needs facts you don't have** (claims, market/industry/company/
+4. **The topic needs facts you don't have** (claims, market/industry/company/
    policy data, anything that must be sourced) and the material is thin or
    absent. **Do not fabricate, and do not write a flat rejection.** Load the
    research workflow first, then build the outline from the sourced findings:
@@ -59,8 +68,9 @@ research**. Pick the branch that fits:
 
    Follow the selected `research-synthesis` route's coarse-to-fine evidence
    budget and persist its research artifacts. Do not replace that workflow with
-   a PPT-specific four-query scan: a one-line factual prompt still needs enough
-   landscape, authority, and conflict coverage to support the slide plan. After
+   a PPT-specific four-query scan: a one-line request for a sourced factual
+   report still needs enough landscape, authority, and conflict coverage to
+   support the slide plan, while a concise proposal brief stays in branch 2. After
    the route is complete, run its bundled artifact validator with
    `--report research/qa/{topic}_research_check.json`; even a reduced sequential
    run must preserve at least three distinct dimensions. Continue only after a
@@ -99,7 +109,9 @@ this".
 When the decision gate says an outline is needed, create an `outline.json`
 beside the future `deck.json`:
 
-For `source_mode=user_provided`, exact numeric facts in a page's `message` or
+For `source_mode=user_provided`, user-stated solution requirements and proposed
+architecture scope are valid planning inputs; make unsupplied implementation
+details visibly advisory rather than claiming they already exist. Exact numeric facts in a page's `message` or
 `bullets` are valid quantitative evidence for chart/KPI layout selection; keep
 `evidence: []` when no external URL is needed. The URL-bearing evidence ledger
 is mandatory only for public-research claims, not for facts supplied directly

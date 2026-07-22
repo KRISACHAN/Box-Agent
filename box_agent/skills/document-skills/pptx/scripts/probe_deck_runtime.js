@@ -194,19 +194,63 @@ async function readEditorState(page, viewport) {
     const statement = document.querySelector(".statement-poster");
     const diagram = document.querySelector("#deck-root > .slide [data-pptx-diagram]");
     const diagrams = Array.from(document.querySelectorAll("#deck-root > .slide [data-pptx-diagram]")).map(root => {
+      let spec = {};
+      try {
+        spec = JSON.parse(root.getAttribute("data-diagram-spec") || "{}");
+      } catch (_) {
+        spec = {};
+      }
       const slide = root.closest(".slide");
       const header = slide?.querySelector(".slide-header");
       const slideRect = slide?.getBoundingClientRect();
       const rootRect = root.getBoundingClientRect();
       const headerRect = header?.getBoundingClientRect();
       const scale = slideRect ? slideRect.width / 1920 : 1;
+      const nodeRects = Array.from(root.querySelectorAll("[data-diagram-node-id]"))
+        .map(node => node.getBoundingClientRect());
+      const renderedNodeIds = Array.from(root.querySelectorAll("[data-diagram-node-id]"))
+        .map(node => node.getAttribute("data-diagram-node-id"));
+      const labelRects = Array.from(root.querySelectorAll("[data-diagram-edge-label-id]"))
+        .map(label => label.getBoundingClientRect());
+      const overlaps = (left, right) => (
+        Math.min(left.right, right.right) - Math.max(left.left, right.left) > 1
+        && Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top) > 1
+      );
+      let labelNodeOverlapCount = 0;
+      labelRects.forEach(labelRect => {
+        nodeRects.forEach(nodeRect => {
+          if (overlaps(labelRect, nodeRect)) labelNodeOverlapCount += 1;
+        });
+      });
+      let labelLabelOverlapCount = 0;
+      labelRects.forEach((labelRect, labelIndex) => {
+        labelRects.slice(labelIndex + 1).forEach(otherRect => {
+          if (overlaps(labelRect, otherRect)) labelLabelOverlapCount += 1;
+        });
+      });
+      const nodeSpread = nodeRects.length && slideRect ? {
+        width: (
+          Math.max(...nodeRects.map(rect => rect.right))
+          - Math.min(...nodeRects.map(rect => rect.left))
+        ) / scale,
+        height: (
+          Math.max(...nodeRects.map(rect => rect.bottom))
+          - Math.min(...nodeRects.map(rect => rect.top))
+        ) / scale,
+      } : null;
       return {
         kind: root.getAttribute("data-diagram-kind"),
         state: root.getAttribute("data-diagram-render-state"),
         strategy: root.getAttribute("data-diagram-layout-strategy"),
         svgRoots: root.querySelectorAll(":scope > svg").length,
         nodes: root.querySelectorAll("[data-diagram-node-id]").length,
+        specNodes: Array.isArray(spec.nodes) ? spec.nodes.length : 0,
+        uniqueNodeIds: new Set(renderedNodeIds).size,
         edges: root.querySelectorAll("[data-diagram-edge-id]").length,
+        edgeLabels: labelRects.length,
+        labelNodeOverlapCount,
+        labelLabelOverlapCount,
+        nodeSpread,
         box: slideRect ? {
           top: (rootRect.top - slideRect.top) / scale,
           bottom: (rootRect.bottom - slideRect.top) / scale,
@@ -393,6 +437,13 @@ async function main() {
     )) {
       issues.push("Technical diagram runtime did not produce one ready inline SVG graph");
     }
+    (editor.diagrams || []).forEach((diagram, index) => {
+      if (diagram.nodes !== diagram.specNodes || diagram.uniqueNodeIds !== diagram.nodes) {
+        issues.push(
+          `Technical diagram ${index + 1} rendered ${diagram.nodes} nodes (${diagram.uniqueNodeIds} unique) for ${diagram.specNodes} DiagramSpec nodes`
+        );
+      }
+    });
     if (opts.exerciseDiagramEditor && (!editor.diagramExercise ||
         editor.diagramExercise.state !== "ready" ||
         editor.diagramExercise.svgRoots !== 1 ||

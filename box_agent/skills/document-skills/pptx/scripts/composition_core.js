@@ -155,11 +155,11 @@ const COMPOSITION_SELECTION_RULES = Object.freeze({
   "analytical-exhibit": Object.freeze({
     content: Object.freeze([
       [/(?:KPI|指标|数据看板|决策看板|数据分析|量化|benchmark|metrics?|dashboard|evidence\s+board)/i, 3],
-      [/(?:图表|同比|环比|增长率|收入|成本|chart|revenue|growth|comparison)/i, 2],
+      [/(?:图表|热力图|风险矩阵|同比|环比|增长率|收入|成本|chart|heat\s*map|risk\s+matrix|revenue|growth|comparison)/i, 2],
       [/(?:表格|\btable\b)/i, 1],
     ]),
     layouts: Object.freeze([
-      [/^(?:chart-bar|chart-data|kpi-grid)-v\d+$/i, 3],
+      [/^(?:chart-bar|chart-data|kpi-grid|heatmap-matrix)-v\d+$/i, 3],
       [/^table-data-v\d+$/i, 1],
       [/^comparison-two-column-v\d+$/i, 1],
     ]),
@@ -238,6 +238,7 @@ const COMPOSITION_SELECTION_RULES = Object.freeze({
   }),
   "brutalist-frame": Object.freeze({
     content: Object.freeze([
+      [/(?:漫画|分镜|对话气泡|对白气泡|拟声词|网点纸|波普漫画|comic(?:[- ]?book)?|comic\s+panel|graphic\s+novel|storyboard|speech\s+bubble|halftone|manga|pop[- ]?art)/i, 7],
       [/(?:粗野|硬边|强态度|密集模块|brutalist|hard[- ]edge|raw\s+grid)/i, 5],
     ]),
     layouts: Object.freeze([
@@ -355,7 +356,9 @@ const THEME_COMPOSITION_FAMILY = Object.freeze({
   cartesian: "literary-minimal",
   "cobalt-grid": "institutional-grid",
   coral: "editorial-spread",
+  "comic-panel": "brutalist-frame",
   "creative-mode": "poster-asymmetric",
+  "data-intelligence": "analytical-exhibit",
   "daisy-days": "playful-collage",
   "editorial-tri-tone": "editorial-spread",
   grove: "literary-minimal",
@@ -367,6 +370,7 @@ const THEME_COMPOSITION_FAMILY = Object.freeze({
   "pin-and-paper": "literary-minimal",
   "pink-script": "literary-minimal",
   playful: "playful-collage",
+  "product-console": "product-showcase",
   "raw-grid": "brutalist-frame",
   "retro-windows": "retro-interface",
   "retro-zine": "retro-interface",
@@ -376,6 +380,7 @@ const THEME_COMPOSITION_FAMILY = Object.freeze({
   "soft-editorial": "literary-minimal",
   "stencil-tablet": "brutalist-frame",
   studio: "poster-asymmetric",
+  "technical-blueprint": "technical-schematic",
   vellum: "literary-minimal",
 });
 

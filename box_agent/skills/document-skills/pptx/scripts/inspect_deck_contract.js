@@ -48,6 +48,13 @@ const AUTO_COVER_IMAGE_OPTOUT_RE = /(?:不要|无需|不需要|禁止)(?:生成|
 const STRUCTURED_NEXT_STEPS_MATRIX_RE = /(?:表格|矩阵|table|matrix)|(?:(?:执行)?角色|负责人|责任人|owners?|assignees?|responsibilit(?:y|ies))[^\n。；;]{0,48}(?:姓名|成员|人员|names?|members?)/i;
 const THEME_ID_ALIASES = Object.freeze({
   carnival: "bold-poster",
+  comic: "comic-panel",
+  manga: "comic-panel",
+  storyboard: "comic-panel",
+  pixel: "8-bit-orbit",
+  arcade: "8-bit-orbit",
+  "pixel-art": "8-bit-orbit",
+  "8bit": "8-bit-orbit",
 });
 const REQUIRED_FIELD_ALIASES = Object.freeze({
   "cards-grid-v1": Object.freeze({ cards: "items" }),
@@ -1193,7 +1200,7 @@ function main() {
   console.log(JSON.stringify({
     contract_version: 2,
     authoring_rules: {
-      theme_source: "available_theme_ids is built into the pptx skill; html-templates is optional",
+      theme_source: "available_theme_ids is built into pptx; html-templates is optional",
       layout_contract_path: "layouts[].fields",
       layout_defaults_path: "layouts[].editor.defaultProps",
       media_value_example: {

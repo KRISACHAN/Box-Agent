@@ -153,6 +153,32 @@ def _slide_picture_targets(
     return background_targets, vector_targets
 
 
+def _ordered_raster_picture_targets(archive: zipfile.ZipFile) -> list[str]:
+    presentation_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    drawing_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    office_rel_ns = (
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    )
+    package_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    slide = ET.fromstring(archive.read("ppt/slides/slide1.xml"))
+    rels = ET.fromstring(archive.read("ppt/slides/_rels/slide1.xml.rels"))
+    rel_targets = {
+        rel.attrib["Id"]: posixpath.normpath(
+            posixpath.join("ppt/slides", rel.attrib["Target"])
+        )
+        for rel in rels.findall(f"{{{package_rel_ns}}}Relationship")
+    }
+    targets = []
+    for picture in slide.findall(f".//{{{presentation_ns}}}pic"):
+        blip = picture.find(f".//{{{drawing_ns}}}blip")
+        if blip is None:
+            continue
+        relationship_id = blip.attrib.get(f"{{{office_rel_ns}}}embed")
+        if relationship_id:
+            targets.append(rel_targets[relationship_id])
+    return targets
+
+
 def test_source_previews_are_captured_before_export_dom_is_flattened() -> None:
     source = EXPORT_SCRIPT_PATH.read_text(encoding="utf-8")
 
@@ -162,6 +188,47 @@ def test_source_previews_are_captured_before_export_dom_is_flattened() -> None:
     background_flatten = source.index("await applyDecorationFlatten({")
 
     assert preview_capture < background_flatten
+
+
+def test_background_capture_exports_below_authored_full_slide_image(
+    tmp_path: Path,
+) -> None:
+    case_dir = tmp_path / "background-layer-order"
+    case_dir.mkdir()
+    hero_path = case_dir / "hero.png"
+    Image.new("RGB", (64, 64), (220, 30, 40)).save(hero_path)
+    html_path = case_dir / "deck.html"
+    html_path.write_text(
+        """<!doctype html><html><head><meta charset="utf-8"><style>
+        html,body{margin:0;padding:0}
+        .slide{width:1920px;height:1080px;position:relative;overflow:hidden;background:#fff}
+        .slide>.slide-background{position:absolute;inset:0;z-index:0}
+        .slide>:not(.slide-background){z-index:1}
+        .slide-background img{display:block;width:100%;height:100%}
+        </style></head><body><section class="slide">
+        <div class="slide-background"><img src="hero.png" alt="red hero"></div>
+        </section></body></html>""",
+        encoding="utf-8",
+    )
+    pptx_path = case_dir / "deck.pptx"
+    result = _run_node(
+        EXPORT_SCRIPT_PATH,
+        str(html_path),
+        str(pptx_path),
+        "--out",
+        str(case_dir / "slides"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    with zipfile.ZipFile(pptx_path) as archive:
+        targets = _ordered_raster_picture_targets(archive)
+        assert len(targets) == 2
+        bottom = Image.open(io.BytesIO(archive.read(targets[0]))).convert("RGB")
+        top = Image.open(io.BytesIO(archive.read(targets[1]))).convert("RGB")
+        bottom_center = bottom.getpixel((bottom.width // 2, bottom.height // 2))
+        top_center = top.getpixel((top.width // 2, top.height // 2))
+        assert all(channel >= 245 for channel in bottom_center)
+        assert top_center[0] > 180 and top_center[1] < 80 and top_center[2] < 90
 
 
 def test_html_self_check_rejects_invalid_technical_diagram_contract(
@@ -232,6 +299,40 @@ def test_controlled_technical_diagram_supports_three_kinds_and_editor(
         slide["props"]["diagram_kind"] = kind
         slide["props"]["direction"] = "RIGHT"
         slide["props"]["title"] = f"{kind} regression"
+    architecture = deck["slides"][1]["props"]
+    architecture["nodes"] = [
+        {"id": "channel", "label": "渠道接入层", "kind": "client"},
+        {"id": "ai", "label": "AI 能力层", "kind": "hub"},
+        {"id": "gateway", "label": "业务集成层", "kind": "gateway"},
+        {"id": "business", "label": "业务系统", "kind": "external"},
+        {"id": "data", "label": "数据治理层", "kind": "data"},
+        {"id": "ops", "label": "运营管理层", "kind": "service"},
+    ]
+    architecture["edges"] = [
+        {"id": "a1", "source": "channel", "target": "ai", "label": "会话请求"},
+        {"id": "a2", "source": "ai", "target": "gateway", "label": "工具调用"},
+        {"id": "a3", "source": "gateway", "target": "business", "label": "业务读写"},
+        {"id": "a4", "source": "business", "target": "data", "label": "服务记录"},
+        {"id": "a5", "source": "data", "target": "ops", "label": "效果评估"},
+        {"id": "a6", "source": "ops", "target": "ai", "label": "策略迭代"},
+    ]
+    pipeline = deck["slides"][3]["props"]
+    pipeline["nodes"] = [
+        {"id": "ingest", "label": "数据接入", "kind": "client"},
+        {"id": "govern", "label": "数据治理", "kind": "gateway"},
+        {"id": "knowledge", "label": "知识处理", "kind": "data"},
+        {"id": "index", "label": "索引与检索", "kind": "service"},
+        {"id": "model", "label": "模型应用", "kind": "hub"},
+        {"id": "feedback", "label": "效果反馈", "kind": "data"},
+    ]
+    pipeline["edges"] = [
+        {"id": "p1", "source": "ingest", "target": "govern", "label": "采集"},
+        {"id": "p2", "source": "govern", "target": "knowledge", "label": "治理后入库"},
+        {"id": "p3", "source": "knowledge", "target": "index", "label": "知识化"},
+        {"id": "p4", "source": "index", "target": "model", "label": "检索生成"},
+        {"id": "p5", "source": "model", "target": "feedback", "label": "服务结果"},
+        {"id": "p6", "source": "feedback", "target": "knowledge", "label": "持续优化"},
+    ]
     deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
     html_path = tmp_path / "index.html"
     rendered = _run_node(RENDER_SCRIPT_PATH, str(deck_path), "--out", str(html_path))
@@ -277,6 +378,10 @@ def test_controlled_technical_diagram_supports_three_kinds_and_editor(
         "center-hub",
         "wrapped-pipeline",
     ]
+    for diagram in probe["editor"]["diagrams"]:
+        assert diagram["nodes"] == diagram["specNodes"]
+        assert diagram["uniqueNodeIds"] == diagram["nodes"]
+    assert probe["editor"]["diagrams"][0]["nodeSpread"]["height"] > 250
 
 
 def test_marked_diagram_exports_as_vector_and_stays_out_of_background(

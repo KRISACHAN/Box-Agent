@@ -38,8 +38,7 @@ def loader() -> SkillLoader:
             content="",
             source="builtin",
             keywords=["ppt", "pptx", "幻灯片"],
-            required_skills=["html-templates"],
-            related_skills=["research-synthesis", "research-to-deck-outline"],
+            related_skills=["html-templates"],
         ),
         "html-templates": Skill(
             name="html-templates",
@@ -135,7 +134,7 @@ class TestFilterByQuery:
         names = [s.name for s in loader.filter_by_query("帮我做个PPT")]
         assert "pptx" in names
         assert "html-templates" in names
-        assert "research-synthesis" in names
+        assert "research-synthesis" not in names
         assert "research-to-deck-outline" in names
         assert "memory-guide" in names
         assert "lark-mail" not in names
@@ -217,11 +216,10 @@ class TestFilterByQuery:
         # 16 matched + always_on
         assert len(out) == 17
 
-    def test_required_and_related_skills_expand_one_hop(self, loader: SkillLoader):
+    def test_pptx_expands_visual_dependency_without_expensive_research(self, loader: SkillLoader):
         names = [s.name for s in loader.filter_by_query("PPT")]
         assert names.index("pptx") < names.index("html-templates")
-        assert "research-synthesis" in names
-        assert "research-to-deck-outline" in names
+        assert "research-synthesis" not in names
 
     def test_keywords_outweigh_description(self, loader: SkillLoader):
         # "幻灯片" is in pptx keywords (weight 3) but not in any description

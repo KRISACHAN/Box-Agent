@@ -14,6 +14,7 @@ const CHINESE_COUNTS = Object.freeze({
 });
 
 const QUADRANT_RE = /(?:四象限|象限图|quadrant)/i;
+const HEATMAP_RE = /(?:风险热力图|热力图|风险矩阵[^\n]{0,16}热力|heat\s*map|risk\s+heat\s*map)/i;
 const MATRIX_RE = /(?:风险\s*[\/+与、]?依赖)?矩阵|matrix|(?:结构化)?表格|\btable\b/i;
 const BAR_CHART_RE = /(?:柱状图|条形图|排名图|bar\s*chart|column\s*chart)/i;
 const DATA_CHART_RE = /(?:折线图|面积图|饼图|环形图|雷达图|数据图表|line\s*chart|area\s*chart|pie\s*chart|donut\s*chart|radar\s*chart)/i;
@@ -98,6 +99,14 @@ function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
       "table-data-v1",
       ["table-data-v1"],
       "outline asks for an editable Gantt schedule with work packages across delivery phases"
+    );
+  }
+  if (HEATMAP_RE.test(visual) || HEATMAP_RE.test(layout)) {
+    return semanticRule(
+      "heatmap",
+      "heatmap-matrix-v1",
+      ["heatmap-matrix-v1"],
+      "outline asks for an editable heatmap matrix with semantic intensity cells"
     );
   }
   if (MATRIX_RE.test(visual)) {
@@ -263,6 +272,9 @@ function visualCollectionForSlide(slide) {
     return { field: "steps", value: slide.props.steps };
   }
   if (slide.layout_id === "table-data-v1") {
+    return { field: "rows", value: slide.props.rows };
+  }
+  if (slide.layout_id === "heatmap-matrix-v1") {
     return { field: "rows", value: slide.props.rows };
   }
   if (slide.layout_id === "closing-next-steps-v1") {

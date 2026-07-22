@@ -16,11 +16,16 @@ const {
 const { renderDocument } = require("./render_deck_html.js");
 
 const DEFAULT_PREVIEW_THEME_IDS = Object.freeze([
+  "technical-blueprint",
+  "product-console",
+  "data-intelligence",
   "blue-professional",
   "signal",
   "biennale-yellow",
   "studio",
   "daisy-days",
+  "comic-panel",
+  "8-bit-orbit",
   "block-frame-mono-blue",
   "retro-windows",
   "soft-editorial",
@@ -100,6 +105,57 @@ function previewDeck(theme) {
     source: "示意数据",
   });
 
+  let middleSlide = { id: "preview-content", layout_id: "cards-grid-v1", props: cards };
+  let finalSlide = { id: "preview-chart", layout_id: "chart-data-v1", props: chart };
+
+  if (theme.id === "technical-blueprint") {
+    const diagram = createEditorProps("technical-diagram-v1");
+    Object.assign(diagram, {
+      eyebrow: "SYSTEM BLUEPRINT",
+      title: "企业 AI 平台技术架构",
+      subtitle: "架构节点、连接关系与 DiagramSpec 保持可恢复编辑。",
+      note: "HTML 可增删节点和边；PPTX 以单个 SVG 矢量对象导出。",
+    });
+    middleSlide = {
+      id: "preview-architecture",
+      layout_id: "technical-diagram-v1",
+      props: diagram,
+    };
+    finalSlide = { id: "preview-modules", layout_id: "cards-grid-v1", props: cards };
+  } else if (theme.id === "product-console") {
+    const product = createEditorProps("project-case-study-v1");
+    Object.assign(product, {
+      eyebrow: "PRODUCT CONSOLE",
+      title: "一站式 AI 工作台",
+      positioning: "用浏览器壳、状态芯片和功能舞台讲清产品价值与关键交互。",
+      metrics: [
+        { value: "3×", label: "核心工作流" },
+        { value: "1 个", label: "统一控制台" },
+        { value: "Live", label: "运行状态" },
+      ],
+      caption: "产品界面示意 · 可替换真实截图",
+    });
+    middleSlide = {
+      id: "preview-product",
+      layout_id: "project-case-study-v1",
+      props: product,
+    };
+    finalSlide = { id: "preview-features", layout_id: "cards-grid-v1", props: cards };
+  } else if (theme.id === "data-intelligence") {
+    const kpis = createEditorProps("kpi-grid-v1");
+    Object.assign(kpis, {
+      eyebrow: "INTELLIGENCE OVERVIEW",
+      title: "经营信号一屏读懂",
+      subtitle: "高密度指标、趋势与证据轨道形成决策上下文。",
+      items: [
+        { label: "增长动能", value: "+18%", detail: "核心业务保持正向增长。", delta: "同比 +6pt" },
+        { label: "转化效率", value: "32%", detail: "关键漏斗环节继续改善。", delta: "环比 +4pt" },
+        { label: "风险信号", value: "03", detail: "三项指标需要持续跟踪。", delta: "本周新增 1 项" },
+      ],
+    });
+    middleSlide = { id: "preview-kpis", layout_id: "kpi-grid-v1", props: kpis };
+  }
+
   return {
     schema_version: 1,
     title: `${theme.name || theme.id} theme preview`,
@@ -107,8 +163,8 @@ function previewDeck(theme) {
     design: createDeckDesign(theme, `preview-${theme.id}`),
     slides: [
       { id: "preview-cover", layout_id: "cover-editorial-v1", props: cover },
-      { id: "preview-content", layout_id: "cards-grid-v1", props: cards },
-      { id: "preview-chart", layout_id: "chart-data-v1", props: chart },
+      middleSlide,
+      finalSlide,
     ],
   };
 }

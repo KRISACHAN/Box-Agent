@@ -44,12 +44,15 @@ COMPOSITION_TEMPLATES = {
 }
 DEFAULT_COMPOSITION_FAMILIES = {
     "institutional-grid",
+    "analytical-exhibit",
+    "technical-schematic",
     "editorial-spread",
     "poster-asymmetric",
     "playful-collage",
     "brutalist-frame",
     "retro-interface",
     "literary-minimal",
+    "product-showcase",
 }
 COMPOSITION_DIRECTIONS = {
     "structured-systems": [
@@ -185,9 +188,14 @@ def test_layout_manifest_is_generated_from_registry() -> None:
         for dna_id in theme["selection"]["visual_dna_ids"]
     }
     assert len(visual_dna_ids) == 32
-    assert len(theme_ids) == 34
+    assert len(theme_ids) == 38
     assert visual_dna_ids <= theme_ids
-    assert covered_dna_ids == visual_dna_ids
+    assert covered_dna_ids == visual_dna_ids | {
+        "comic-panel",
+        "technical-blueprint",
+        "product-console",
+        "data-intelligence",
+    }
     assert {
         direction["id"]: direction["family_ids"]
         for direction in manifest["composition_directions"]
@@ -261,6 +269,19 @@ def test_layout_manifest_is_generated_from_registry() -> None:
     )
     assert mono_blue["selection"]["visual_dna_ids"] == ["block-frame"]
     assert mono_blue["palette"]["primary"] == "#1E2BFA"
+    comic_panel = next(
+        theme for theme in manifest["themes"] if theme["id"] == "comic-panel"
+    )
+    assert comic_panel["selection"]["visual_dna_ids"] == ["comic-panel"]
+    assert comic_panel["style"]["canvas"] == "dots"
+    assert comic_panel["composition"]["family"] == "brutalist-frame"
+    assert "technical-schematic" in comic_panel["composition"]["allowed_families"]
+    pixel_orbit = next(
+        theme for theme in manifest["themes"] if theme["id"] == "8-bit-orbit"
+    )
+    assert pixel_orbit["selection"]["visual_dna_ids"] == ["8-bit-orbit"]
+    assert pixel_orbit["style"]["canvas"] == "pixel"
+    assert pixel_orbit["composition"]["family"] == "retro-interface"
     consulting_navy = next(
         theme for theme in manifest["themes"] if theme["id"] == "consulting-navy"
     )
@@ -269,7 +290,26 @@ def test_layout_manifest_is_generated_from_registry() -> None:
     assert consulting_navy["palette"]["background"] == "#F4F7FA"
     assert consulting_navy["palette"]["primary"] == "#173B63"
     assert consulting_navy["composition"]["family"] == "institutional-grid"
-    assert len(manifest["layouts"]) == 19
+    technical_blueprint = next(
+        theme for theme in manifest["themes"] if theme["id"] == "technical-blueprint"
+    )
+    assert technical_blueprint["selection"]["visual_dna_ids"] == [
+        "technical-blueprint"
+    ]
+    assert technical_blueprint["composition"]["family"] == "technical-schematic"
+    product_console = next(
+        theme for theme in manifest["themes"] if theme["id"] == "product-console"
+    )
+    assert product_console["selection"]["visual_dna_ids"] == ["product-console"]
+    assert product_console["composition"]["family"] == "product-showcase"
+    data_intelligence = next(
+        theme for theme in manifest["themes"] if theme["id"] == "data-intelligence"
+    )
+    assert data_intelligence["selection"]["visual_dna_ids"] == [
+        "data-intelligence"
+    ]
+    assert data_intelligence["composition"]["family"] == "analytical-exhibit"
+    assert len(manifest["layouts"]) == 20
     assert {layout["id"] for layout in manifest["layouts"]} >= {
         "cover-hero-v1",
         "cover-editorial-v1",
@@ -281,6 +321,7 @@ def test_layout_manifest_is_generated_from_registry() -> None:
         "dashboard-overview-v1",
         "chart-bar-v1",
         "chart-data-v1",
+        "heatmap-matrix-v1",
         "table-data-v1",
         "timeline-horizontal-v1",
         "project-case-study-v1",
@@ -329,6 +370,12 @@ def test_layout_manifest_is_generated_from_registry() -> None:
     assert table["fields"]["rows"]["itemShape"]["maxItems"] == 6
     assert "gantt" in table["variants"]
     assert "gantt" in table["fields"]["variant"]["values"]
+    heatmap = next(
+        layout for layout in manifest["layouts"] if layout["id"] == "heatmap-matrix-v1"
+    )
+    assert heatmap["fields"]["columns"]["maxItems"] == 6
+    assert heatmap["fields"]["rows"]["maxItems"] == 8
+    assert "heatmap" in heatmap["capabilities"]
 
 
 def test_skill_avoids_public_research_permission_and_micro_todo_loops() -> None:
@@ -527,13 +574,18 @@ def test_theme_gallery_renders_real_opt_in_theme_previews(tmp_path: Path) -> Non
 
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
-    assert payload["theme_count"] == 8
+    assert payload["theme_count"] == 13
     assert payload["themes"] == [
+        "technical-blueprint",
+        "product-console",
+        "data-intelligence",
         "blue-professional",
         "signal",
         "biennale-yellow",
         "studio",
         "daisy-days",
+        "comic-panel",
+        "8-bit-orbit",
         "block-frame-mono-blue",
         "retro-windows",
         "soft-editorial",
@@ -541,8 +593,8 @@ def test_theme_gallery_renders_real_opt_in_theme_previews(tmp_path: Path) -> Non
     gallery = gallery_path.read_text(encoding="utf-8")
     assert "先看主题，再开始做 PPT" in gallery
     assert "回复卡片上的 theme_id" in gallery
-    assert gallery.count("?mode=gallery") == 8
-    assert gallery.count("打开 3 页完整预览") == 8
+    assert gallery.count("?mode=gallery") == 13
+    assert gallery.count("打开 3 页完整预览") == 13
     for theme_id in payload["themes"]:
         preview_path = gallery_path.parent / f"{theme_id}.html"
         preview = preview_path.read_text(encoding="utf-8")
@@ -551,6 +603,15 @@ def test_theme_gallery_renders_real_opt_in_theme_previews(tmp_path: Path) -> Non
         assert rendered_preview.count('<section class="slide ') == 3
         assert "data-composition-template=" in rendered_preview
         assert 'id="deck-document"' in preview
+    assert "layout-technical-diagram" in (
+        gallery_path.parent / "technical-blueprint.html"
+    ).read_text(encoding="utf-8")
+    assert "layout-project-case" in (
+        gallery_path.parent / "product-console.html"
+    ).read_text(encoding="utf-8")
+    assert "layout-kpis" in (
+        gallery_path.parent / "data-intelligence.html"
+    ).read_text(encoding="utf-8")
 
 
 def test_composition_gallery_renders_every_family_and_variant(
@@ -883,6 +944,302 @@ def test_theme_inference_does_not_treat_negated_playful_style_as_positive(
     assert "friendly mood" not in signals
     assert "lively supporting mood" not in signals
     assert "friendly lively signature" not in signals
+
+
+def test_comic_brief_auto_selects_comic_panel_theme(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=4,
+        source_mode="user_provided",
+    )
+    outline.update(
+        {
+            "deck_goal": "用漫画分镜讲清 AI 客服从提问到响应的一天。",
+            "audience": "产品与技术团队",
+            "storyline": "漫画封面进入三格分镜，再用专业技术图解释系统，最后用漫画式收束。",
+        }
+    )
+    outline["slides"][0].update(
+        {
+            "title": "AI 智能客服的一天",
+            "layout": "漫画封面",
+            "visual": "粗黑描边、网点纸和动作标签",
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "一次咨询如何被接住",
+            "layout": "三格漫画分镜",
+            "visual": "对话气泡、拟声词和三个连续面板",
+        }
+    )
+    outline["slides"][2].update(
+        {
+            "title": "专业系统架构",
+            "layout": "专业技术图",
+            "visual": "漫画面板外框中的清晰架构图",
+        }
+    )
+    outline["slides"][3].update(
+        {
+            "title": "价值收束",
+            "layout": "漫画总结页",
+            "visual": "FIN 动作字和价值卡片",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "comic" / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "technical-diagram-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--title",
+        "AI 智能客服的一天",
+        "--fact",
+        "使用漫画分镜、对话气泡、拟声词、粗黑描边和波普漫画色彩",
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    report = json.loads(
+        (deck_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+    assert deck["theme_id"] == "comic-panel"
+    assert deck["design"]["family"] == "brutalist-frame"
+    assert report["theme_selection"]["source"] == "content_inference"
+    assert report["theme_selection"]["confidence"] == "high"
+    signals = {
+        item["signal"] for item in report["theme_selection"]["matched_signals"]
+    }
+    assert "comic-panel visual language" in signals
+    assert "comic-panel signature" in signals
+
+
+def test_pixel_brief_auto_selects_8_bit_orbit_theme(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=4,
+        source_mode="user_provided",
+    )
+    outline.update(
+        {
+            "deck_goal": "用像素街机风介绍开发者工具平台。",
+            "audience": "开发者与黑客松评委",
+            "storyline": "从 8-bit 封面进入能力关卡，再展示系统地图和通关总结。",
+        }
+    )
+    outline["slides"][0].update(
+        {
+            "title": "代码冒险：开发者平台",
+            "layout": "像素街机封面",
+            "visual": "深蓝 CRT 网格、8-bit 字体和霓虹状态条",
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "三个能力关卡",
+            "layout": "像素卡片",
+            "visual": "街机 HUD、点阵方框和青粉黄霓虹",
+        }
+    )
+    outline["slides"][2].update(
+        {
+            "title": "专业系统地图",
+            "layout": "专业技术图",
+            "visual": "像素显示器外框中的清晰架构图",
+        }
+    )
+    outline["slides"][3].update(
+        {
+            "title": "继续下一关",
+            "layout": "通关总结",
+            "visual": "CONTINUE 状态字与行动卡片",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "pixel" / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "technical-diagram-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--title",
+        "代码冒险：开发者平台",
+        "--fact",
+        "使用 8-bit 像素艺术、CRT 扫描线、复古街机 HUD 和霓虹色",
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    report = json.loads(
+        (deck_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+    assert deck["theme_id"] == "8-bit-orbit"
+    assert deck["design"]["family"] == "retro-interface"
+    assert report["theme_selection"]["source"] == "content_inference"
+    assert report["theme_selection"]["confidence"] == "high"
+    signals = {
+        item["signal"] for item in report["theme_selection"]["matched_signals"]
+    }
+    assert "pixel-arcade visual language" in signals
+    assert "8-bit-orbit signature" in signals
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_theme", "expected_family", "expected_signals"),
+    [
+        (
+            "介绍多云 AI 平台的技术架构和数据流",
+            "technical-blueprint",
+            "technical-schematic",
+            {
+                "keyword rule: architecture and infrastructure",
+                "industry match: technical systems",
+            },
+        ),
+        (
+            "做一个 SaaS 产品介绍，面向客户，突出三个核心功能",
+            "product-console",
+            "product-showcase",
+            {
+                "keyword rule: SaaS and product interface",
+                "industry match: software product",
+            },
+        ),
+        (
+            "做一份 Q2 经营数据复盘，包含核心 KPI、趋势和下一步动作",
+            "data-intelligence",
+            "analytical-exhibit",
+            {
+                "keyword rule: KPI and business intelligence",
+                "industry match: analytics and operations",
+            },
+        ),
+        (
+            "说明 CRM、订单、客服和数据平台如何完成系统集成与数据流转",
+            "technical-blueprint",
+            "technical-schematic",
+            {
+                "keyword rule: architecture and infrastructure",
+                "industry match: technical systems",
+            },
+        ),
+        (
+            "介绍 AI 文档助手，讲清核心功能、使用流程和产品价值",
+            "product-console",
+            "product-showcase",
+            {"keyword rule: SaaS and product interface"},
+        ),
+        (
+            "给董事会做年度风险分析，包含风险治理、预警信号和战略建议",
+            "signal",
+            "institutional-grid",
+            {"keyword rule: board risk and advisory"},
+        ),
+        (
+            "总结用户访谈结果，说明研究方法、研究发现和产品改进方向",
+            "soft-editorial",
+            "literary-minimal",
+            {"keyword rule: qualitative user research"},
+        ),
+        (
+            "做一份系统化、精密、严谨的说明材料",
+            "technical-blueprint",
+            "institutional-grid",
+            {"mood match: technical precision"},
+        ),
+    ],
+)
+def test_natural_briefs_use_keyword_industry_and_mood_theme_selection(
+    tmp_path: Path,
+    prompt: str,
+    expected_theme: str,
+    expected_family: str,
+    expected_signals: set[str],
+) -> None:
+    deck_path = tmp_path / expected_theme / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "auto",
+        "--title",
+        prompt,
+        "--fact",
+        prompt,
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    report = json.loads(
+        (deck_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+    assert deck["theme_id"] == expected_theme
+    assert deck["design"]["family"] == expected_family
+    assert report["theme_selection"]["confidence"] in {"medium", "high"}
+    signals = {
+        item["signal"] for item in report["theme_selection"]["matched_signals"]
+    }
+    assert expected_signals <= signals
+
+
+def test_software_product_does_not_match_soft_style_by_substring(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "auto",
+        "--title",
+        "software product overview",
+        "--fact",
+        "software product overview",
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    report = json.loads(
+        (tmp_path / "qa" / "deck_contract.json").read_text(encoding="utf-8")
+    )
+    assert report["theme_selection"]["theme_id"] == "product-console"
+    signals = {
+        item["signal"] for item in report["theme_selection"]["matched_signals"]
+    }
+    assert "soft palette mood" not in signals
 
 
 def test_lock_theme_preserves_explicit_user_choice_for_onboarding(
@@ -1325,10 +1682,10 @@ console.log(JSON.stringify({ layouts: slides.length, migrations, enumControls, c
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "layouts": 19,
-        "migrations": 361,
+        "layouts": 20,
+        "migrations": 400,
         "enumControls": 26,
-        "collectionControls": 16,
+        "collectionControls": 18,
     }
 
 
@@ -1361,10 +1718,18 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
     layout_payload = json.loads(layouts.stdout)
     theme_ids = [item["id"] for item in theme_payload["themes"]]
     assert theme_payload["composition_directions"] == list(COMPOSITION_DIRECTIONS)
-    assert len(theme_ids) == 34
+    assert len(theme_ids) == 38
     assert theme_ids == sorted(theme_ids)
-    assert {"signal", "studio", "vellum", "8-bit-orbit"} <= set(theme_ids)
-    assert layout_payload["count"] == 19
+    assert {
+        "signal",
+        "studio",
+        "vellum",
+        "8-bit-orbit",
+        "technical-blueprint",
+        "product-console",
+        "data-intelligence",
+    } <= set(theme_ids)
+    assert layout_payload["count"] == 20
     assert {item["id"] for item in layout_payload["layouts"]} >= {
         "architecture-layered-v1",
         "system-integration-v1",
@@ -1376,7 +1741,7 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
         "chart-data-v1",
         "table-data-v1",
     }
-    assert len(themes.stdout) + len(layouts.stdout) < 27_000
+    assert len(themes.stdout) + len(layouts.stdout) < 27_500
 
 
 def test_scaffold_normalizes_known_semantic_theme_alias(tmp_path: Path) -> None:
@@ -1403,6 +1768,58 @@ def test_scaffold_normalizes_known_semantic_theme_alias(tmp_path: Path) -> None:
     report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
     assert report["theme_id_normalization"] == payload["theme_id_normalization"]
     assert json.loads(deck_path.read_text())["theme_id"] == "bold-poster"
+
+
+def test_scaffold_normalizes_comic_theme_alias(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "--theme",
+        "comic",
+        "--lock-theme",
+        "--title",
+        "漫画分镜测试",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["selected_theme"]["id"] == "comic-panel"
+    assert payload["theme_id_normalization"] == {
+        "from": "comic",
+        "to": "comic-panel",
+    }
+    assert json.loads(deck_path.read_text())["theme_id"] == "comic-panel"
+
+
+def test_scaffold_normalizes_pixel_theme_alias(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "--theme",
+        "pixel",
+        "--lock-theme",
+        "--title",
+        "像素街机测试",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["selected_theme"]["id"] == "8-bit-orbit"
+    assert payload["theme_id_normalization"] == {
+        "from": "pixel",
+        "to": "8-bit-orbit",
+    }
+    assert json.loads(deck_path.read_text())["theme_id"] == "8-bit-orbit"
 
 
 def test_deck_contract_scaffolds_ordered_repeated_layouts_once(tmp_path: Path) -> None:
@@ -1691,12 +2108,300 @@ def test_scaffold_recovers_architecture_integration_and_qualitative_dashboard(
         str(report_path),
     )
     assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    self_check_report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert self_check_report["warnings"] == []
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["diagramCount"] == 2
     assert not any(
         "short background text uses vertical padding" in warning
         for warning in report["warnings"]
     )
+
+
+def test_scaffold_routes_risk_heatmap_to_editable_heatmap_layout(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline.update(
+        {
+            "deck_goal": "给董事会呈现年度风险分析与治理优先级。",
+            "audience": "董事会与风险委员会",
+            "storyline": "先看风险热力分布，再决定治理优先级。",
+        }
+    )
+    outline["slides"][0].update(
+        {
+            "title": "年度风险热力图",
+            "message": "用概率、影响和应对优先级识别重点风险。",
+            "layout": "风险热力图",
+            "visual": "风险热力图，用五级颜色强度呈现风险矩阵。",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "table-data-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["theme_id"] == "signal"
+    assert deck["slides"][0]["layout_id"] == "heatmap-matrix-v1"
+    contract = json.loads(
+        (tmp_path / "qa" / "deck_contract.json").read_text(encoding="utf-8")
+    )
+    assert contract["layout_normalizations"] == [
+        {
+            "slide": 1,
+            "from": "table-data-v1",
+            "to": "heatmap-matrix-v1",
+            "reason": (
+                "outline asks for an editable heatmap matrix with semantic "
+                "intensity cells"
+            ),
+        }
+    ]
+
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "董事会风险审阅",
+            "title": "年度风险热力图",
+            "subtitle": "颜色越深，治理优先级越高",
+            "columns": ["风险域", "发生概率", "影响程度", "应对优先级"],
+            "rows": [
+                ["供应链", "高", "严重", "关键"],
+                ["合规", "中", "高", "高"],
+                ["人才", "低", "中", "中"],
+            ],
+            "low_label": "低",
+            "high_label": "高",
+            "insight": "优先处理深色区域。",
+            "source": "董事会风险清单",
+        }
+    )
+    deck_path.write_text(
+        json.dumps(deck, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert 'data-layout-id="heatmap-matrix-v1"' in html
+    assert "layout-heatmap-matrix" in html
+    assert "heat-level-5" in html
+    assert 'data-prop-path="rows.0.3"' in html
+
+    report_path = tmp_path / "html-self-check.json"
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--report",
+        str(report_path),
+    )
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    assert json.loads(report_path.read_text(encoding="utf-8"))["warnings"] == []
+
+
+def test_truth_validator_ignores_diagram_structural_ids_but_checks_labels(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "technical-diagram-v1",
+        "--fact",
+        "客户请求进入 AI 服务并查询 CRM",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "系统集成",
+            "title": "客户请求进入 AI 服务并查询 CRM",
+            "subtitle": "",
+            "diagram_kind": "integration",
+            "direction": "RIGHT",
+            "nodes": [
+                {"id": "n1", "label": "客户", "detail": "请求", "kind": "client"},
+                {"id": "n2", "label": "AI 服务", "detail": "查询 CRM", "kind": "hub"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "n1", "target": "n2", "label": "请求"},
+            ],
+            "note": "",
+        }
+    )
+    deck_path.write_text(
+        json.dumps(deck, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    sanitizer = subprocess.run(
+        [
+            str(NODE),
+            "-e",
+            (
+                "const fs=require('fs');"
+                "const truth=require(process.argv[1]);"
+                "const deck=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));"
+                "console.log(JSON.stringify(truth.sanitizeStrictSourceDeck(deck).deck));"
+            ),
+            str(SCRIPTS_DIR / "validate_deck_truth.js"),
+            str(deck_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert sanitizer.returncode == 0, sanitizer.stderr
+    sanitized = json.loads(sanitizer.stdout)
+    assert [node["id"] for node in sanitized["slides"][0]["props"]["nodes"]] == [
+        "n1",
+        "n2",
+    ]
+    assert sanitized["slides"][0]["props"]["edges"][0] == {
+        "id": "e1",
+        "source": "n1",
+        "target": "n2",
+        "label": "请求",
+    }
+
+    accepted = _run("validate_deck_truth.js", str(deck_path))
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+    deck["slides"][0]["props"]["edges"][0]["label"] = "99% 可用性"
+    deck_path.write_text(
+        json.dumps(deck, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    rejected = _run("validate_deck_truth.js", str(deck_path))
+    assert rejected.returncode == 1
+    payload = json.loads(rejected.stdout.split("\nDeck truth validation:", 1)[0])
+    assert any("numeric claim \"99%\"" in issue for issue in payload["issues"])
+
+
+def test_dense_integration_diagram_keeps_edge_labels_clear(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "technical-diagram-v1",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "diagram_kind": "integration",
+            "nodes": [
+                {"id": "hub", "label": "客户服务平台", "detail": "统一集成", "kind": "hub"},
+                {"id": "crm", "label": "CRM", "detail": "客户资料", "kind": "external"},
+                {"id": "order", "label": "订单系统", "detail": "订单状态", "kind": "external"},
+                {"id": "support", "label": "客服系统", "detail": "工单", "kind": "external"},
+                {"id": "data", "label": "数据平台", "detail": "分析", "kind": "data"},
+                {"id": "auth", "label": "统一认证", "detail": "身份", "kind": "service"},
+                {"id": "channel", "label": "用户渠道", "detail": "Web 与 App", "kind": "client"},
+                {"id": "event", "label": "事件总线", "detail": "异步事件", "kind": "service"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "crm", "target": "hub", "label": "客户查询"},
+                {"id": "e2", "source": "hub", "target": "crm", "label": "资料回写"},
+                {"id": "e3", "source": "order", "target": "hub", "label": "订单同步"},
+                {"id": "e4", "source": "hub", "target": "support", "label": "创建工单"},
+                {"id": "e5", "source": "hub", "target": "data", "label": "指标事件"},
+                {"id": "e6", "source": "auth", "target": "hub", "label": "身份校验"},
+                {"id": "e7", "source": "channel", "target": "hub", "label": "客户请求"},
+                {"id": "e8", "source": "hub", "target": "event", "label": "发布事件"},
+            ],
+        }
+    )
+    deck_path.write_text(
+        json.dumps(deck, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+
+    probe = _run(
+        "probe_deck_runtime.js",
+        str(html_path),
+        "--viewport",
+        "1600x1000",
+    )
+    if probe.returncode != 0 and (
+        "Cannot find module 'playwright'" in probe.stderr
+        or "Executable doesn't exist" in probe.stderr
+    ):
+        pytest.skip("Managed Playwright browser is unavailable")
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    runtime = json.loads(probe.stdout)
+    diagram = runtime["editor"]["diagrams"][0]
+    assert diagram["edgeLabels"] == 8
+    assert diagram["labelNodeOverlapCount"] == 0
+    assert diagram["labelLabelOverlapCount"] == 0
+
+
+def test_pipeline_diagram_rejects_duplicate_stage_labels(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+    report_path = tmp_path / "qa" / "deck_spec.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "technical-diagram-v1",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "diagram_kind": "pipeline",
+            "nodes": [
+                {"id": "source", "label": "知识数据流", "detail": "接入", "kind": "client"},
+                {"id": "service", "label": "向量检索", "detail": "召回", "kind": "hub"},
+                {"id": "sink", "label": "知识数据流", "detail": "回写", "kind": "data"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "source", "target": "service", "label": "处理"},
+                {"id": "e2", "source": "service", "target": "sink", "label": "回写"},
+            ],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    validation = _run(
+        "validate_deck_spec.js",
+        str(deck_path),
+        "--report",
+        str(report_path),
+    )
+
+    assert validation.returncode == 1
+    issues = json.loads(report_path.read_text(encoding="utf-8"))["issues"]
+    assert any("duplicate pipeline stage label" in issue for issue in issues)
 
 
 def test_quantitative_dashboard_keeps_kpi_layout(tmp_path: Path) -> None:
@@ -3314,6 +4019,8 @@ def test_deck_contract_normalizes_pitch_layout_and_required_field_aliases(
         ("revenue-line-chart-v2", "chart-data-v1"),
         ("market-donut-chart-v2", "chart-data-v1"),
         ("feature-matrix-v2", "table-data-v1"),
+        ("risk-heatmap-v1", "heatmap-matrix-v1"),
+        ("heatmap-v1", "heatmap-matrix-v1"),
         ("research-deep-dive-v2", "text-columns-v1"),
         ("architecture-diagram-v1", "technical-diagram-v1"),
         ("integration-map-v1", "technical-diagram-v1"),
@@ -5600,7 +6307,7 @@ def test_pptx_theme_selection_has_no_hard_html_templates_dependency() -> None:
     frontmatter = yaml.safe_load(text.split("---", 2)[1])
 
     assert "html-templates" not in (frontmatter.get("required_skills") or [])
-    assert "html-templates" in frontmatter["related_skills"]
+    assert frontmatter["related_skills"] == ["html-templates"]
     assert "Source-bound decks never invent named clients" in text
     assert "复购率持续提升" in text
     assert "Never create a fake bitmap with Pillow" in text
@@ -5612,6 +6319,21 @@ def test_pptx_theme_selection_has_no_hard_html_templates_dependency() -> None:
     assert "apply_deck_patch.js" in text
     assert "${BOX_AGENT_NODE:-node} scripts/apply_deck_patch.js" in text
     assert "validate_deck_truth.js" in text
+    assert "`comic-panel`" in text
+    assert "`8-bit-orbit`" in text
+    assert "DiagramSpec SVG clean and professional" in text
+
+
+def test_pptx_solution_briefs_do_not_default_to_deep_research() -> None:
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    outline = (SKILL_DIR / "references" / "outline.md").read_text(encoding="utf-8")
+
+    assert "Solution/design brief?" in text
+    assert "do not load `research-synthesis`" in text
+    assert "use at most two targeted" in text
+    assert "official-source lookups" in text
+    assert "The request is a solution/design brief" in outline
+    assert "a concise proposal brief stays in branch 2" in outline
 
 
 def test_pptx_missing_required_input_resumes_existing_deck() -> None:
@@ -6634,6 +7356,238 @@ def test_block_frame_theme_renders_builtin_visual_dna(tmp_path: Path) -> None:
         "renderedWidth": 1920,
         "renderedHeight": 1080,
     }
+
+
+def test_priority_and_high_frequency_themes_own_dedicated_css() -> None:
+    css = (SKILL_DIR / "runtime" / "deck.css").read_text(encoding="utf-8")
+    minimum_selector_counts = {
+        "technical-blueprint": 16,
+        "product-console": 14,
+        "data-intelligence": 14,
+        "signal": 12,
+        "soft-editorial": 18,
+    }
+    for theme_id, minimum in minimum_selector_counts.items():
+        selector = f'body[data-deck-theme="{theme_id}"]'
+        assert css.count(selector) >= minimum, theme_id
+        assert f'{selector} [data-pptx-diagram]' not in css
+
+    assert 'content: "SYSTEM BLUEPRINT / VECTOR DIAGRAM"' in css
+    assert 'content: "●  ●  ●     PRODUCT CONSOLE"' in css
+    assert 'content: "DATA FLOW / LIVE SYSTEM MAP"' in css
+    assert 'body[data-deck-theme="signal"] .statement-narrative' in css
+    assert (
+        'body[data-deck-theme="soft-editorial"] .text-section-body::first-letter'
+        in css
+    )
+
+
+def test_comic_panel_theme_renders_story_panels_and_clean_diagrams(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "technical-diagram-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "comic-panel",
+        "--lock-theme",
+        "--title",
+        "AI 智能客服的一天",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "漫画工作日",
+            "title": "AI 智能客服的一天",
+            "subtitle": "用连续分镜解释一次咨询如何被接住。",
+        }
+    )
+    deck["slides"][1]["props"].update(
+        {
+            "eyebrow": "三格分镜",
+            "title": "用户提问、AI 理解、系统响应",
+            "items": [
+                {"kicker": "叮！", "title": "用户提问", "body": "问题带着上下文进入服务台。"},
+                {"kicker": "嗡——", "title": "AI 理解", "body": "识别意图并组织可执行任务。"},
+                {"kicker": "啪！", "title": "系统响应", "body": "检索知识并调用业务接口。"},
+            ],
+        }
+    )
+    deck["slides"][2]["props"].update(
+        {
+            "eyebrow": "专业技术图",
+            "title": "系统架构保持清晰",
+            "subtitle": "漫画语法只作用于页面外框，不污染 DiagramSpec 节点。",
+            "note": "HTML 保留 DiagramSpec；PPTX 导出单个 SVG 矢量对象。",
+        }
+    )
+    deck["slides"][3]["props"].update(
+        {
+            "eyebrow": "收工复盘",
+            "title": "服务闭环已经跑通",
+            "subtitle": "以漫画动作字结束，但保留业务信息层级。",
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    report_path = tmp_path / "html_self_check.json"
+
+    validation = _run("validate_deck_spec.js", str(deck_path))
+    render = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--report",
+        str(report_path),
+    )
+
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+    assert render.returncode == 0, render.stdout + render.stderr
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert 'data-deck-theme="comic-panel"' in html
+    assert 'data-deck-theme-id="comic-panel"' in html
+    assert "--deck-primary: #FF4D3D" in html
+    assert 'body[data-deck-theme="comic-panel"] .slide' in html
+    assert 'content: "OPENING!"' in html
+    assert 'content: "PANEL "' in html
+    assert 'content: "FIN!"' in html
+    assert 'body[data-deck-theme="comic-panel"] .technical-diagram-stage' in html
+    assert html.count("data-pptx-diagram") >= 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["issues"] == []
+    assert report["diagramCount"] == 1
+
+    probe = _run(
+        "probe_deck_runtime.js",
+        str(html_path),
+        "--viewport",
+        "1440x900",
+    )
+    if probe.returncode != 0 and (
+        "Cannot find module 'playwright'" in probe.stderr
+        or "Executable doesn't exist" in probe.stderr
+    ):
+        pytest.skip("Managed Playwright browser is unavailable")
+    assert probe.returncode == 0, probe.stderr or probe.stdout
+    runtime = json.loads(probe.stdout)
+    assert runtime["ok"] is True
+    assert runtime["editor"]["primary"] == "#FF4D3D"
+    assert runtime["editor"]["diagram"]["state"] == "ready"
+    assert runtime["editor"]["diagram"]["svgRoots"] == 1
+    assert runtime["editor"]["diagrams"][0]["strategy"] == "layered-architecture"
+
+
+def test_8_bit_orbit_theme_renders_pixel_arcade_ui_and_clean_diagrams(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "technical-diagram-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "8-bit-orbit",
+        "--lock-theme",
+        "--title",
+        "代码冒险：开发者平台",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "PLAYER 01",
+            "title": "代码冒险：开发者平台",
+            "subtitle": "用像素街机语言介绍工具链，但不牺牲技术表达。",
+        }
+    )
+    deck["slides"][1]["props"].update(
+        {
+            "eyebrow": "LEVEL SELECT",
+            "title": "三个能力关卡",
+            "items": [
+                {"kicker": "LV.1", "title": "开发", "body": "从模板快速启动可运行项目。"},
+                {"kicker": "LV.2", "title": "验证", "body": "在真实浏览器中检查交互。"},
+                {"kicker": "LV.3", "title": "交付", "body": "导出可恢复、可验证的产物。"},
+            ],
+        }
+    )
+    deck["slides"][2]["props"].update(
+        {
+            "eyebrow": "SYSTEM MAP",
+            "title": "架构图继续保持专业",
+            "subtitle": "像素语言只作用于显示器外框，不污染 DiagramSpec 节点。",
+            "note": "PPTX 中仍导出为单个 SVG 矢量对象。",
+        }
+    )
+    deck["slides"][3]["props"].update(
+        {
+            "eyebrow": "STAGE CLEAR",
+            "title": "进入下一关",
+            "subtitle": "用街机状态字收束，同时保留行动信息层级。",
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    report_path = tmp_path / "html_self_check.json"
+
+    validation = _run("validate_deck_spec.js", str(deck_path))
+    render = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--report",
+        str(report_path),
+    )
+
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+    assert render.returncode == 0, render.stdout + render.stderr
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert 'data-deck-theme="8-bit-orbit"' in html
+    assert 'data-deck-theme-id="8-bit-orbit"' in html
+    assert "--deck-primary: #5EDCF4" in html
+    assert 'body[data-deck-theme="8-bit-orbit"] .slide' in html
+    assert 'content: "PLAYER 01 // READY"' in html
+    assert 'content: "SLOT "' in html
+    assert 'content: "CONTINUE?"' in html
+    assert 'body[data-deck-theme="8-bit-orbit"] .technical-diagram-stage' in html
+    assert html.count("data-pptx-diagram") >= 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["issues"] == []
+    assert report["diagramCount"] == 1
+
+    probe = _run(
+        "probe_deck_runtime.js",
+        str(html_path),
+        "--viewport",
+        "1440x900",
+    )
+    if probe.returncode != 0 and (
+        "Cannot find module 'playwright'" in probe.stderr
+        or "Executable doesn't exist" in probe.stderr
+    ):
+        pytest.skip("Managed Playwright browser is unavailable")
+    assert probe.returncode == 0, probe.stderr or probe.stdout
+    runtime = json.loads(probe.stdout)
+    assert runtime["ok"] is True
+    assert runtime["editor"]["primary"] == "#5EDCF4"
+    assert runtime["editor"]["diagram"]["state"] == "ready"
+    assert runtime["editor"]["diagram"]["svgRoots"] == 1
+    assert runtime["editor"]["diagrams"][0]["strategy"] == "layered-architecture"
 
 
 def test_mono_blue_block_frame_reuses_visual_dna_with_restrained_palette(

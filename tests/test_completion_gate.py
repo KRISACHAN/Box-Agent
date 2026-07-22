@@ -627,6 +627,25 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     assert "do not reread the research QA report or outline.md" in checkpoint
 
 
+def test_short_solution_design_brief_skips_research_synthesis(tmp_path):
+    gate = build_auto_completion_gate(
+        (
+            "帮我做一份企业 AI 客服系统方案 PPT，重点讲系统架构、CRM、"
+            "订单和客服平台集成，以及数据处理流程，6 页左右。"
+        ),
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.presentation_research_mode == "content_ready"
+    assert gate.max_tool_calls == 64
+
+    checkpoint = completion_gate_progress_text(gate, str(tmp_path))
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" not in checkpoint
+    assert "research-synthesis workflow before outline authoring" not in checkpoint
+
+
 def test_deep_research_checkpoint_accepts_legacy_root_handoff(tmp_path):
     gate = build_auto_completion_gate(
         "制作一份 2026 世界杯商业价值分析 PPT",

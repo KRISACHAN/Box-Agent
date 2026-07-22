@@ -589,6 +589,13 @@ function isStructuralNumber(entry, token, slide, slideCount = 0) {
   return /项目|project|阶段|phase|步骤|step/i.test(entry.text);
 }
 
+function isDiagramStructuralEntry(entry, slide) {
+  if (!slide || slide.layout_id !== "technical-diagram-v1") return false;
+  return /\.props\.(?:diagram_kind|direction)$/.test(entry.path)
+    || /\.props\.nodes\.\d+\.(?:id|kind)$/.test(entry.path)
+    || /\.props\.edges\.\d+\.(?:id|source|target)$/.test(entry.path);
+}
+
 function isGenericProjectTitle(text) {
   const compact = String(text || "").trim();
   return /^(?:精选\s*)?项目\s*[一二三四五六七八九十\dA-Da-d]*\s*(?:[·:：—-]\s*)?(?:品牌|产品|空间|文化|案例)?$/i.test(compact)
@@ -690,7 +697,8 @@ function sanitizeUnsupportedClaims(
 ) {
   if (typeof value === "string") {
     if (isHonestPlaceholder(value)) return value;
-    const structural = /\.(?:kicker|phase)$/.test(fieldPath);
+    const structural = /\.(?:kicker|phase)$/.test(fieldPath)
+      || isDiagramStructuralEntry({ path: fieldPath }, slide);
     const hasUnsupportedNumber = !structural && numberTokens(value)
       .some(token => !isNumberBackedForSlide(token, sourceFacts, slide, fieldPath));
     const shortConceptBacked = /\.(?:label|title|eyebrow)$/.test(fieldPath)
@@ -1162,7 +1170,12 @@ function validateSourceBoundDeck(deck) {
     const disclosesAssumptions = slideDisclosesAssumptions(slide);
 
     entries.forEach(entry => {
-      if (!entry.text.trim() || entry.placeholderContext || PLACEHOLDER_RE.test(entry.text)) return;
+      if (
+        !entry.text.trim()
+        || entry.placeholderContext
+        || PLACEHOLDER_RE.test(entry.text)
+        || isDiagramStructuralEntry(entry, slide)
+      ) return;
       numberTokens(entry.text).forEach(token => {
         const sourceBackedNumber = isNumberBackedForSlide(
           token,

@@ -38,6 +38,8 @@ const LAYOUT_ID_ALIASES = Object.freeze({
   "radar-chart-v1": "chart-data-v1",
   "data-table-v1": "table-data-v1",
   "comparison-table-v1": "table-data-v1",
+  "heatmap-v1": "heatmap-matrix-v1",
+  "risk-heatmap-v1": "heatmap-matrix-v1",
   "long-text-v1": "text-columns-v1",
   "client-logo-grid-v1": "cards-grid-v1",
   "clients-logo-grid-v1": "cards-grid-v1",
@@ -55,6 +57,7 @@ const LAYOUT_ID_ALIASES = Object.freeze({
   "qualitative-dashboard-v1": "dashboard-overview-v1",
 });
 const LAYOUT_ID_HINTS = Object.freeze([
+  { keywords: ["heatmap", "heat-map", "risk-heatmap", "risk-heat-map"], id: "heatmap-matrix-v1" },
   { keywords: ["architecture", "system-layer", "tech-stack", "integration", "data-flow", "system-map", "data-pipeline", "pipeline"], id: "technical-diagram-v1" },
   { keywords: ["dashboard-overview", "management-dashboard", "operations-dashboard"], id: "dashboard-overview-v1" },
   { keywords: ["image-hero", "hero-split", "visual-split"], id: "image-hero-split-v1" },
@@ -629,6 +632,7 @@ function validateTechnicalDiagramProps(props, fieldPath, issues) {
   const edges = Array.isArray(props && props.edges) ? props.edges : [];
   const nodeIds = new Set();
   const edgeIds = new Set();
+  const pipelineLabels = new Map();
   nodes.forEach((node, nodeIndex) => {
     const nodeId = String(node && node.id || "");
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(nodeId)) {
@@ -639,6 +643,18 @@ function validateTechnicalDiagramProps(props, fieldPath, issues) {
       issues.push(`${fieldPath}.nodes.${nodeIndex}.id: duplicate node id ${JSON.stringify(nodeId)}`);
     } else {
       nodeIds.add(nodeId);
+    }
+    if (props && props.diagram_kind === "pipeline") {
+      const label = String(node && node.label || "").trim();
+      const normalizedLabel = label.toLocaleLowerCase().replace(/\s+/g, "");
+      if (normalizedLabel && pipelineLabels.has(normalizedLabel)) {
+        issues.push(
+          `${fieldPath}.nodes.${nodeIndex}.label: duplicate pipeline stage label ` +
+          `${JSON.stringify(label)}; use unique stage names and represent feedback with an edge`
+        );
+      } else if (normalizedLabel) {
+        pipelineLabels.set(normalizedLabel, nodeIndex);
+      }
     }
   });
   edges.forEach((edge, edgeIndex) => {

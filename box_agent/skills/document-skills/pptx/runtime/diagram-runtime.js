@@ -99,33 +99,33 @@
     if (kind === "pipeline") {
       return {
         strategy: "wrapped-pipeline",
-        padding: 30,
-        maxScale: 1.04,
-        labelFontSize: 18,
-        labelLineHeight: 22,
+        padding: 26,
+        maxScale: 1.14,
+        labelFontSize: 22,
+        labelLineHeight: 25,
         labelMaxChars: 10,
-        detailFontSize: 11,
-        detailMaxChars: 18,
+        detailFontSize: 12,
+        detailMaxChars: 20,
         kindFontSize: 10,
-        edgeFontSize: 10,
+        edgeFontSize: 11,
         edgeLabelHeight: 24,
-        edgeLabelCharWidth: 10,
+        edgeLabelCharWidth: 11,
         edgeLabelMaxChars: 13,
         cornerRadius: 14,
       };
     }
     return {
       strategy: "layered-architecture",
-      padding: 38,
-      maxScale: 1.28,
-      labelFontSize: 21,
-      labelLineHeight: 26,
+      padding: 30,
+      maxScale: 1.42,
+      labelFontSize: 24,
+      labelLineHeight: 29,
       labelMaxChars: 12,
-      detailFontSize: 13,
+      detailFontSize: 14,
       detailMaxChars: 28,
-      kindFontSize: 11,
-      edgeFontSize: 12,
-      edgeLabelHeight: 26,
+      kindFontSize: 12,
+      edgeFontSize: 13,
+      edgeLabelHeight: 28,
       edgeLabelCharWidth: 12,
       edgeLabelMaxChars: 16,
       cornerRadius: 16,
@@ -144,13 +144,24 @@
     }
     if (kind === "pipeline") {
       return {
-        width: hub ? 198 : Math.max(174, Math.min(194, 166 + labelLength * 3)),
-        height: hub ? 86 : 78,
+        width: hub ? 226 : Math.max(198, Math.min(222, 188 + labelLength * 4)),
+        height: hub ? 94 : 86,
       };
     }
     return {
-      width: hub ? 286 : Math.max(214, Math.min(254, 196 + labelLength * 4)),
-      height: hub ? 116 : 94,
+      width: hub ? 304 : Math.max(228, Math.min(272, 208 + labelLength * 5)),
+      height: hub ? 124 : 104,
+    };
+  }
+
+  function edgeLabelSize(edge, spec) {
+    const profile = renderProfileFor(spec);
+    const label = Array.from(String(edge && edge.label || ""))
+      .slice(0, profile.edgeLabelMaxChars)
+      .join("");
+    return {
+      width: Math.max(48, Math.min(172, 22 + Array.from(label).length * profile.edgeLabelCharWidth)),
+      height: profile.edgeLabelHeight,
     };
   }
 
@@ -163,9 +174,12 @@
         "elk.direction": direction,
         "elk.edgeRouting": "ORTHOGONAL",
         "elk.padding": "[top=20,left=20,bottom=20,right=20]",
-        "elk.spacing.nodeNode": "20",
-        "elk.spacing.edgeNode": "18",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "68",
+        "elk.spacing.nodeNode": "28",
+        "elk.spacing.edgeNode": "24",
+        "elk.spacing.edgeEdge": "16",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "72",
+        "elk.layered.spacing.edgeNodeBetweenLayers": "28",
+        "elk.layered.spacing.edgeEdgeBetweenLayers": "18",
         "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
         "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
         "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
@@ -178,6 +192,12 @@
         id: edge.id || `edge-${index + 1}`,
         sources: [edge.source],
         targets: [edge.target],
+        labels: edge.label ? [{
+          id: `${edge.id || `edge-${index + 1}`}-label`,
+          text: String(edge.label),
+          ...edgeLabelSize(edge, spec),
+          layoutOptions: { "elk.edgeLabels.placement": "CENTER" },
+        }] : [],
       })),
     };
   }
@@ -253,22 +273,33 @@
     });
     const hubSource = spec.nodes.find(node => node.kind === "hub" || node.kind === "platform") ||
       spec.nodes.slice().sort((left, right) => (degrees.get(right.id) || 0) - (degrees.get(left.id) || 0))[0];
-    const hubSize = nodeSize(hubSource, spec);
-    const hub = {
-      id: hubSource.id,
-      ...hubSize,
-      x: (width - hubSize.width) / 2,
-      y: (height - hubSize.height) / 2,
-    };
+    const hubId = hubSource.id;
     const left = [];
     const right = [];
-    spec.nodes.filter(node => node.id !== hub.id).forEach(node => {
-      const inbound = spec.edges.some(edge => edge.source === node.id && edge.target === hub.id);
-      const outbound = spec.edges.some(edge => edge.source === hub.id && edge.target === node.id);
+    spec.nodes.filter(node => node.id !== hubId).forEach(node => {
+      const inbound = spec.edges.some(edge => edge.source === node.id && edge.target === hubId);
+      const outbound = spec.edges.some(edge => edge.source === hubId && edge.target === node.id);
       if (inbound && !outbound) left.push(node);
       else if (outbound && !inbound) right.push(node);
       else (left.length <= right.length ? left : right).push(node);
     });
+    const leftIds = new Set(left.map(node => node.id));
+    const rightIds = new Set(right.map(node => node.id));
+    const incidentCount = ids => spec.edges.filter(edge =>
+      (edge.source === hubId && ids.has(edge.target))
+      || (edge.target === hubId && ids.has(edge.source))
+    ).length;
+    const hubSize = nodeSize(hubSource, spec);
+    hubSize.height = Math.min(
+      300,
+      Math.max(hubSize.height, 58 + Math.max(incidentCount(leftIds), incidentCount(rightIds)) * 34)
+    );
+    const hub = {
+      id: hubId,
+      ...hubSize,
+      x: (width - hubSize.width) / 2,
+      y: (height - hubSize.height) / 2,
+    };
     const placeColumn = (nodes, side) => {
       if (!nodes.length) return [];
       const sizes = nodes.map(node => nodeSize(node, spec));
@@ -301,11 +332,18 @@
         portY[edgeId(item.edge, item.index)] = hub.y + 20 + (items.length === 1 ? span / 2 : span * index / (items.length - 1));
       });
     });
+    const pairCounts = new Map();
+    spec.edges.forEach(edge => {
+      const key = [edge.source, edge.target].sort().join("::");
+      pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+    });
+    const pairSeen = new Map();
     const edges = spec.edges.map((edge, index) => {
       const id = edgeId(edge, index);
       const source = byId.get(edge.source);
       const target = byId.get(edge.target);
       let section = orthogonalBetween(source, target);
+      let labelPoint;
       if (source && target && (source.id === hub.id || target.id === hub.id)) {
         const other = source.id === hub.id ? target : source;
         const otherOnLeft = nodeCenter(other).x < nodeCenter(hub).x;
@@ -322,8 +360,16 @@
           ],
           endPoint,
         };
+        const pairKey = [edge.source, edge.target].sort().join("::");
+        const seen = pairSeen.get(pairKey) || 0;
+        pairSeen.set(pairKey, seen + 1);
+        const lane = seen - ((pairCounts.get(pairKey) || 1) - 1) / 2;
+        labelPoint = {
+          x: (otherPoint.x + middleX) / 2,
+          y: otherPoint.y + lane * 34,
+        };
       }
-      return { id, sources: [edge.source], targets: [edge.target], sections: [section] };
+      return { id, sources: [edge.source], targets: [edge.target], sections: [section], labelPoint };
     });
     return { id: "diagram-root", width, height, children, edges, strategy: "center-hub" };
   }
@@ -331,18 +377,15 @@
   function longestDirectedPath(spec) {
     const adjacency = new Map(spec.nodes.map(node => [node.id, []]));
     spec.edges.forEach(edge => adjacency.get(edge.source)?.push(edge.target));
-    const memo = new Map();
     const visit = (nodeId, active = new Set()) => {
-      if (memo.has(nodeId)) return memo.get(nodeId);
-      if (active.has(nodeId)) return [nodeId];
       const nextActive = new Set(active);
       nextActive.add(nodeId);
       let best = [nodeId];
       (adjacency.get(nodeId) || []).forEach(targetId => {
+        if (nextActive.has(targetId)) return;
         const candidate = [nodeId].concat(visit(targetId, nextActive));
         if (candidate.length > best.length) best = candidate;
       });
-      memo.set(nodeId, best);
       return best;
     };
     return spec.nodes.reduce((best, node) => {
@@ -351,8 +394,122 @@
     }, []);
   }
 
+  function bottomRailBetween(source, target, railY) {
+    const startPoint = {
+      x: nodeCenter(source).x,
+      y: source.y + source.height,
+    };
+    const endPoint = {
+      x: nodeCenter(target).x,
+      y: target.y + target.height,
+    };
+    return {
+      startPoint,
+      bendPoints: [
+        { x: startPoint.x, y: railY },
+        { x: endPoint.x, y: railY },
+      ],
+      endPoint,
+    };
+  }
+
+  function architectureChainLayout(spec) {
+    const mainIds = longestDirectedPath(spec);
+    if (mainIds.length < 5 || mainIds.length !== spec.nodes.length) return null;
+    const width = 1450;
+    const height = 500;
+    const mainNodes = mainIds.map(id => spec.nodes.find(node => node.id === id)).filter(Boolean);
+    const columns = Math.min(4, Math.ceil(mainNodes.length / 2));
+    const rows = Math.ceil(mainNodes.length / columns);
+    const marginX = 70;
+    const sampleWidth = Math.max(...mainNodes.map(node => nodeSize(node, spec).width));
+    const maxHeight = Math.max(...mainNodes.map(node => nodeSize(node, spec).height));
+    const columnStep = columns > 1
+      ? (width - marginX * 2 - sampleWidth) / (columns - 1)
+      : 0;
+    const topY = rows > 1 ? 76 : (height - maxHeight) / 2;
+    const bottomY = height - 66 - maxHeight;
+    const rowStep = rows > 1 ? (bottomY - topY) / (rows - 1) : 0;
+    const children = [];
+    const mainMeta = new Map();
+    mainNodes.forEach((node, index) => {
+      const row = Math.floor(index / columns);
+      const offset = index % columns;
+      const snakeOffset = row % 2 === 0 ? offset : columns - 1 - offset;
+      const size = nodeSize(node, spec);
+      children.push({
+        id: node.id,
+        ...size,
+        x: marginX + snakeOffset * columnStep + (sampleWidth - size.width) / 2,
+        y: topY + row * rowStep + (maxHeight - size.height) / 2,
+      });
+      mainMeta.set(node.id, { row, order: index + 1 });
+    });
+    const byId = new Map(children.map(node => [node.id, node]));
+    const consecutive = new Set();
+    mainIds.slice(0, -1).forEach((source, index) => {
+      consecutive.add(`${source}->${mainIds[index + 1]}`);
+    });
+    const edges = spec.edges.map((edge, index) => {
+      const id = edgeId(edge, index);
+      const source = byId.get(edge.source);
+      const target = byId.get(edge.target);
+      const sourceOrder = mainMeta.get(edge.source)?.order || 0;
+      const targetOrder = mainMeta.get(edge.target)?.order || 0;
+      const feedback = sourceOrder > targetOrder;
+      let section;
+      let labelPoint;
+      if (consecutive.has(`${edge.source}->${edge.target}`)) {
+        section = orthogonalBetween(source, target);
+      } else if (feedback) {
+        const useLeftRail = nodeCenter(source).x < width / 2;
+        const railX = useLeftRail ? 20 : width - 20;
+        const railY = 24;
+        const sourcePoint = {
+          x: useLeftRail ? source.x : source.x + source.width,
+          y: nodeCenter(source).y,
+        };
+        const targetPoint = {
+          x: nodeCenter(target).x,
+          y: target.y,
+        };
+        section = {
+          startPoint: sourcePoint,
+          bendPoints: [
+            { x: railX, y: sourcePoint.y },
+            { x: railX, y: railY },
+            { x: targetPoint.x, y: railY },
+          ],
+          endPoint: targetPoint,
+        };
+        labelPoint = {
+          x: (railX + targetPoint.x) / 2,
+          y: railY,
+        };
+      } else {
+        section = orthogonalBetween(source, target);
+      }
+      return {
+        id,
+        sources: [edge.source],
+        targets: [edge.target],
+        sections: [section],
+        governance: feedback,
+        labelPoint,
+      };
+    });
+    return {
+      id: "diagram-root",
+      width,
+      height,
+      children,
+      edges,
+      strategy: "layered-architecture",
+    };
+  }
+
   function pipelineLayout(spec) {
-    const width = 1500;
+    const width = 1450;
     const height = 520;
     const mainIds = longestDirectedPath(spec);
     const mainSet = new Set(mainIds);
@@ -364,7 +521,7 @@
     const marginX = 28;
     const sampleWidth = Math.max(...spec.nodes.map(node => nodeSize(node, spec).width));
     const columnStep = columns > 1 ? (width - marginX * 2 - sampleWidth) / (columns - 1) : 0;
-    const mainTop = rowCount === 1 ? (sideNodes.length ? 150 : 220) : rowCount === 2 ? 42 : 24;
+    const mainTop = rowCount === 1 ? (sideNodes.length ? 132 : 212) : rowCount === 2 ? 42 : 24;
     const mainBottom = rowCount === 1
       ? mainTop
       : rowCount === 2
@@ -383,7 +540,7 @@
       children.push({ id: node.id, ...size, x, y });
       mainMeta.set(node.id, { row, order: index + 1 });
     });
-    const sideY = 420;
+    const sideY = 414;
     sideNodes.forEach((node, index) => {
       const size = nodeSize(node, spec);
       const x = sideNodes.length === 1
@@ -399,6 +556,9 @@
       const source = byId.get(edge.source);
       const target = byId.get(edge.target);
       const sideEdge = !mainSet.has(edge.source) || !mainSet.has(edge.target);
+      const sourceOrder = mainMeta.get(edge.source)?.order || 0;
+      const targetOrder = mainMeta.get(edge.target)?.order || 0;
+      const feedbackEdge = !sideEdge && sourceOrder > targetOrder;
       let section;
       let labelPoint;
       if (consecutive.has(`${edge.source}->${edge.target}`)) {
@@ -435,6 +595,16 @@
           endPoint: points[points.length - 1],
         };
         labelPoint = { x: mainPoint.x, y: gapY };
+      } else if (feedbackEdge) {
+        const railY = Math.min(
+          height - 24,
+          Math.max(source.y + source.height, target.y + target.height) + 150
+        );
+        section = bottomRailBetween(source, target, railY);
+        labelPoint = {
+          x: (nodeCenter(source).x + nodeCenter(target).x) / 2,
+          y: railY,
+        };
       } else {
         section = orthogonalBetween(source, target);
       }
@@ -443,7 +613,7 @@
         sources: [edge.source],
         targets: [edge.target],
         sections: [section],
-        governance: sideEdge,
+        governance: sideEdge || feedbackEdge,
         labelPoint,
       };
     });
@@ -462,6 +632,8 @@
     const kind = diagramKind(spec);
     if (kind === "integration") return integrationLayout(spec);
     if (kind === "pipeline") return pipelineLayout(spec);
+    const wrappedArchitecture = architectureChainLayout(spec);
+    if (wrappedArchitecture) return wrappedArchitecture;
     if (typeof window.ELK !== "function") {
       throw new Error("ELK diagram layout runtime is unavailable.");
     }
@@ -529,6 +701,47 @@
       remaining -= lengths[index];
     }
     return points[points.length - 1];
+  }
+
+  function labelCenterForEdge(edge, nodesById) {
+    if (edge.labelPoint) return edge.labelPoint;
+    const label = Array.isArray(edge.labels) ? edge.labels[0] : null;
+    if (label && Number.isFinite(label.x) && Number.isFinite(label.y)) {
+      return {
+        x: label.x + (Number(label.width) || 0) / 2,
+        y: label.y + (Number(label.height) || 0) / 2,
+      };
+    }
+    return midpoint(pointsFor(edge, nodesById));
+  }
+
+  function rectanglesOverlap(left, right, padding = 4) {
+    return left.x < right.x + right.width + padding
+      && left.x + left.width + padding > right.x
+      && left.y < right.y + right.height + padding
+      && left.y + left.height + padding > right.y;
+  }
+
+  function resolveEdgeLabelPoint(point, width, height, nodes, occupied, graphWidth, graphHeight) {
+    const stepY = height + 8;
+    const offsets = [
+      [0, 0], [0, -stepY], [0, stepY], [0, -stepY * 2], [0, stepY * 2],
+      [-width * 0.6, 0], [width * 0.6, 0],
+    ];
+    for (const [offsetX, offsetY] of offsets) {
+      const center = {
+        x: Math.max(width / 2 + 6, Math.min(graphWidth - width / 2 - 6, point.x + offsetX)),
+        y: Math.max(height / 2 + 6, Math.min(graphHeight - height / 2 - 6, point.y + offsetY)),
+      };
+      const rect = { x: center.x - width / 2, y: center.y - height / 2, width, height };
+      if (nodes.some(node => rectanglesOverlap(rect, node, 6))) continue;
+      if (occupied.some(other => rectanglesOverlap(rect, other, 6))) continue;
+      occupied.push(rect);
+      return center;
+    }
+    const fallback = { x: point.x - width / 2, y: point.y - height / 2, width, height };
+    occupied.push(fallback);
+    return point;
   }
 
   function wrapLabel(value, maxPerLine = 12, maxLines = 2) {
@@ -628,19 +841,37 @@
     const sourceEdges = new Map(spec.edges.map((edge, index) => [edge.id || `edge-${index + 1}`, edge]));
     const markerId = `diagram-arrow-${++instanceSequence}`;
     const gridId = `diagram-grid-${instanceSequence}`;
+    const occupiedLabels = [];
+    const nodeRects = Array.from(nodesById.values()).map(node => ({
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+    }));
     const edges = (layout.edges || []).map(layoutEdge => {
       const sourceEdge = sourceEdges.get(layoutEdge.id) || {};
       const path = svgPathFor(layoutEdge, nodesById);
       const label = String(sourceEdge.label || "").trim();
-      const labelPoint = layoutEdge.labelPoint || midpoint(pointsFor(layoutEdge, nodesById));
       const labelText = Array.from(label).slice(0, profile.edgeLabelMaxChars).join("");
       const labelWidth = Math.max(48, Math.min(172, 22 + Array.from(labelText).length * profile.edgeLabelCharWidth));
+      const rawLabelPoint = labelCenterForEdge(layoutEdge, nodesById);
+      const labelPoint = label
+        ? resolveEdgeLabelPoint(
+          rawLabelPoint,
+          labelWidth,
+          profile.edgeLabelHeight,
+          nodeRects,
+          occupiedLabels,
+          graphWidth,
+          graphHeight
+        )
+        : rawLabelPoint;
       const governance = Boolean(layoutEdge.governance);
       const bidirectional = Boolean(sourceEdge.bidirectional) || /双向|bidirectional/i.test(label);
       return [
         `<path data-diagram-edge-id="${escapeXml(layoutEdge.id)}" d="${path}" fill="none" stroke="${governance ? colors.muted : colors.primary}" stroke-width="${governance ? "1.8" : "2.4"}"${governance ? ' stroke-dasharray="7 6"' : ""} stroke-linecap="round" stroke-linejoin="round"${bidirectional ? ` marker-start="url(#${markerId})"` : ""} marker-end="url(#${markerId})"/>`,
         label
-          ? `<g transform="translate(${(labelPoint.x - labelWidth / 2).toFixed(1)} ${(labelPoint.y - profile.edgeLabelHeight / 2).toFixed(1)})"><rect width="${labelWidth}" height="${profile.edgeLabelHeight}" rx="${profile.edgeLabelHeight / 2}" fill="${colors.background}" stroke="${colors.border}"/><text x="${(labelWidth / 2).toFixed(1)}" y="${(profile.edgeLabelHeight / 2 + profile.edgeFontSize * 0.38).toFixed(1)}" text-anchor="middle" fill="${colors.muted}" font-family="${SVG_PPTX_FONT}" font-size="${profile.edgeFontSize}" font-weight="600">${escapeXml(labelText)}</text></g>`
+          ? `<g data-diagram-edge-label-id="${escapeXml(layoutEdge.id)}" transform="translate(${(labelPoint.x - labelWidth / 2).toFixed(1)} ${(labelPoint.y - profile.edgeLabelHeight / 2).toFixed(1)})"><rect width="${labelWidth}" height="${profile.edgeLabelHeight}" rx="${profile.edgeLabelHeight / 2}" fill="${colors.background}" stroke="${colors.border}"/><text x="${(labelWidth / 2).toFixed(1)}" y="${(profile.edgeLabelHeight / 2 + profile.edgeFontSize * 0.38).toFixed(1)}" text-anchor="middle" fill="${colors.muted}" font-family="${SVG_PPTX_FONT}" font-size="${profile.edgeFontSize}" font-weight="600">${escapeXml(labelText)}</text></g>`
           : "",
       ].join("");
     }).join("");
