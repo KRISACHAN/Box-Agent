@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import threading
+import time
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterator
 
+from ..events import ProgressEvent
 from ..model_history import (
     is_model_history_placeholder,
     is_model_instruction_source_path,
 )
-from .base import Tool, ToolResult
+from .base import EventEmittingTool, Tool, ToolResult
 from .pptx_safety import detect_pptx_self_check_bypass
 from .safety import backup_file, validate_path_in_workspace
 
@@ -31,6 +35,8 @@ MAX_READ_LINES = 2_000
 MAX_READ_CHARS = 100_000
 DEFAULT_SEARCH_LIMIT = 50
 MAX_SEARCH_RESULTS = 200
+DEFAULT_SEARCH_TIMEOUT_SECONDS = 60.0
+SEARCH_HEARTBEAT_SECONDS = 10.0
 _BINARY_EXTENSIONS = {
     ".7z", ".avi", ".bin", ".bmp", ".class", ".dll", ".dmg", ".doc",
     ".docx", ".exe", ".gif", ".gz", ".ico", ".jar", ".jpeg", ".jpg",
@@ -479,10 +485,11 @@ class ReadTool(Tool):
             return ToolResult(success=False, content="", error=str(e))
 
 
-class SearchFilesTool(Tool):
+class SearchFilesTool(EventEmittingTool):
     """Search file names or text content without routing through a shell."""
 
     parallel_safe = True
+    cancel_on_agent_cancel = True
 
     def __init__(
         self,
@@ -490,13 +497,18 @@ class SearchFilesTool(Tool):
         allow_full_access: bool = True,
         permission_engine: PermissionEngine | None = None,
         relative_root_dir: str | None = None,
+        search_timeout_seconds: float = DEFAULT_SEARCH_TIMEOUT_SECONDS,
+        heartbeat_seconds: float = SEARCH_HEARTBEAT_SECONDS,
     ):
+        super().__init__()
         self.workspace_dir = Path(workspace_dir).absolute()
         self.relative_root_dir = (
             Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
         )
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
+        self.search_timeout_seconds = max(0.01, float(search_timeout_seconds))
+        self.heartbeat_seconds = max(0.01, float(heartbeat_seconds))
 
     @property
     def name(self) -> str:
@@ -588,19 +600,44 @@ class SearchFilesTool(Tool):
                 return ToolResult(success=False, error=error)
         return None
 
-    def _iter_files(self, search_path: Path) -> list[Path]:
+    async def execute_with_event_context(
+        self,
+        *,
+        event_queue: asyncio.Queue,
+        parent_tool_call_id: str,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """Use per-call event state so parallel searches cannot race."""
+        return await self.execute(
+            **kwargs,
+            _event_queue=event_queue,
+            _parent_tool_call_id=parent_tool_call_id,
+        )
+
+    def _iter_files(
+        self,
+        search_path: Path,
+        *,
+        stop_event: threading.Event,
+        deadline: float,
+    ) -> Iterator[Path]:
         if search_path.is_file():
-            return [search_path]
-        files: list[Path] = []
+            if not stop_event.is_set() and time.monotonic() < deadline:
+                yield search_path
+            return
         for current_root, directories, filenames in os.walk(search_path, followlinks=False):
+            if stop_event.is_set() or time.monotonic() >= deadline:
+                return
             directories[:] = sorted(
                 directory
                 for directory in directories
                 if directory not in {".git", ".hg", ".svn", "node_modules", "__pycache__"}
             )
             root_path = Path(current_root)
-            files.extend(root_path / filename for filename in sorted(filenames))
-        return files
+            for filename in sorted(filenames):
+                if stop_event.is_set() or time.monotonic() >= deadline:
+                    return
+                yield root_path / filename
 
     def _file_allowed(self, file_path: Path) -> bool:
         if not self._perm:
@@ -610,6 +647,149 @@ class SearchFilesTool(Tool):
             resource={"path": str(file_path)},
             tool_name=self.name,
         ).allowed
+
+    @staticmethod
+    def _line_text(line: str) -> str:
+        return line if len(line) <= 2_000 else line[:2_000] + "... [line truncated]"
+
+    def _search_sync(
+        self,
+        *,
+        pattern: str,
+        target: str,
+        search_path: Path,
+        file_glob: str | None,
+        limit: int,
+        offset: int,
+        output_mode: str,
+        context: int,
+        stop_event: threading.Event,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Run a cooperative, streaming search outside the asyncio loop."""
+        expression = re.compile(pattern) if target == "content" else None
+        base = search_path if search_path.is_dir() else search_path.parent
+        required_results = offset + limit
+        matches: list[str] = []
+        counts: dict[str, int] = {}
+        seen_files: set[str] = set()
+        scanned_files = 0
+        matched_results = 0
+        has_more = False
+
+        def stopped() -> bool:
+            return stop_event.is_set() or time.monotonic() >= deadline
+
+        def add_result(value: str) -> bool:
+            """Keep only the requested prefix and stop after one extra match."""
+            nonlocal matched_results, has_more
+            matched_results += 1
+            if len(matches) < required_results:
+                matches.append(value)
+                return False
+            has_more = True
+            return True
+
+        for file_path in self._iter_files(
+            search_path,
+            stop_event=stop_event,
+            deadline=deadline,
+        ):
+            if stopped():
+                break
+            if not self._file_allowed(file_path):
+                continue
+            scanned_files += 1
+            relative = file_path.relative_to(base).as_posix()
+
+            if target == "files":
+                if fnmatch(file_path.name, pattern) or fnmatch(relative, pattern):
+                    if add_result(relative):
+                        break
+                continue
+
+            if file_glob and not (
+                fnmatch(file_path.name, file_glob) or fnmatch(relative, file_glob)
+            ):
+                continue
+            if _binary_file_error(file_path):
+                continue
+
+            try:
+                if context > 0:
+                    # Context rendering needs neighbouring lines, but remains
+                    # bounded to one file rather than retaining the whole tree.
+                    lines = file_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
+                    line_source = enumerate(lines)
+                else:
+                    lines = None
+                    stream = file_path.open(encoding="utf-8", errors="replace")
+                    line_source = enumerate(stream)
+
+                try:
+                    for line_index, raw_line in line_source:
+                        if stopped():
+                            break
+                        line = raw_line.rstrip("\r\n")
+                        if expression is None or not expression.search(line):
+                            continue
+                        counts[relative] = counts.get(relative, 0) + 1
+                        if output_mode == "count":
+                            continue
+                        if output_mode == "files_only":
+                            if relative in seen_files:
+                                continue
+                            seen_files.add(relative)
+                            if add_result(relative):
+                                break
+                            continue
+
+                        if lines is None:
+                            rendered = f"{relative}:{line_index + 1}:>{self._line_text(line)}"
+                        else:
+                            first = max(0, line_index - context)
+                            last = min(len(lines), line_index + context + 1)
+                            rendered_lines = []
+                            for context_index in range(first, last):
+                                marker = ">" if context_index == line_index else " "
+                                rendered_lines.append(
+                                    f"{relative}:{context_index + 1}:{marker}"
+                                    f"{self._line_text(lines[context_index])}"
+                                )
+                            rendered = "\n".join(rendered_lines)
+                        if add_result(rendered):
+                            break
+                finally:
+                    if lines is None:
+                        stream.close()
+            except OSError:
+                continue
+
+            if has_more and output_mode != "count":
+                break
+
+        timed_out = not stop_event.is_set() and time.monotonic() >= deadline
+        if output_mode == "count" and target == "content":
+            matches = [f"{relative}:{count}" for relative, count in sorted(counts.items())]
+            matched_results = len(matches)
+            selected = matches[offset : offset + limit]
+            has_more = len(matches) > offset + limit
+            exact_total = not timed_out
+        else:
+            selected = matches[offset : offset + limit]
+            exact_total = not has_more and not timed_out
+
+        return {
+            "selected": selected,
+            "matched_results": matched_results,
+            "scanned_files": scanned_files,
+            "has_more": has_more,
+            "timed_out": timed_out,
+            "cancelled": stop_event.is_set(),
+            "exact_total": exact_total,
+        }
 
     async def execute(
         self,
@@ -621,6 +801,9 @@ class SearchFilesTool(Tool):
         offset: int | None = None,
         output_mode: str = "content",
         context: int = 0,
+        *,
+        _event_queue: asyncio.Queue | None = None,
+        _parent_tool_call_id: str | None = None,
     ) -> ToolResult:
         """Execute a bounded file-name or content search."""
         try:
@@ -639,69 +822,88 @@ class SearchFilesTool(Tool):
             if not search_path.exists():
                 return ToolResult(success=False, error=f"Search path not found: {path}")
 
-            files = [file_path for file_path in self._iter_files(search_path) if self._file_allowed(file_path)]
-            matches: list[str] = []
-
-            if target == "files":
-                base = search_path if search_path.is_dir() else search_path.parent
-                for file_path in files:
-                    relative = file_path.relative_to(base).as_posix()
-                    if fnmatch(file_path.name, pattern) or fnmatch(relative, pattern):
-                        matches.append(relative)
-            else:
+            if target == "content":
                 try:
-                    expression = re.compile(pattern)
+                    re.compile(pattern)
                 except re.error as exc:
                     return ToolResult(success=False, error=f"Invalid search regex: {exc}")
-                base = search_path if search_path.is_dir() else search_path.parent
-                counts: dict[str, int] = {}
-                seen_files: set[str] = set()
-                for file_path in files:
-                    relative = file_path.relative_to(base).as_posix()
-                    if file_glob and not (
-                        fnmatch(file_path.name, file_glob) or fnmatch(relative, file_glob)
-                    ):
-                        continue
-                    if _binary_file_error(file_path):
-                        continue
-                    try:
-                        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                    except OSError:
-                        continue
-                    for line_index, line in enumerate(lines):
-                        if not expression.search(line):
-                            continue
-                        counts[relative] = counts.get(relative, 0) + 1
-                        if output_mode == "files_only":
-                            if relative not in seen_files:
-                                matches.append(relative)
-                                seen_files.add(relative)
-                            continue
-                        if output_mode == "count":
-                            continue
-                        first = max(0, line_index - context)
-                        last = min(len(lines), line_index + context + 1)
-                        rendered = []
-                        for context_index in range(first, last):
-                            text = lines[context_index]
-                            if len(text) > 2_000:
-                                text = text[:2_000] + "... [line truncated]"
-                            marker = ">" if context_index == line_index else " "
-                            rendered.append(f"{relative}:{context_index + 1}:{marker}{text}")
-                        matches.append("\n".join(rendered))
-                if output_mode == "count":
-                    matches = [f"{relative}:{count}" for relative, count in sorted(counts.items())]
 
-            total_matches = len(matches)
-            selected = matches[offset : offset + limit]
-            truncated = offset + limit < total_matches
+            stop_event = threading.Event()
+            deadline = time.monotonic() + self.search_timeout_seconds
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    self._search_sync,
+                    pattern=pattern,
+                    target=target,
+                    search_path=search_path,
+                    file_glob=file_glob,
+                    limit=limit,
+                    offset=offset,
+                    output_mode=output_mode,
+                    context=context,
+                    stop_event=stop_event,
+                    deadline=deadline,
+                )
+            )
+            queue = _event_queue if _event_queue is not None else self._event_queue
+            try:
+                scan: dict[str, Any] | None = None
+                while not worker.done():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        stop_event.set()
+                        worker.cancel()
+                        scan = {
+                            "selected": [],
+                            "matched_results": 0,
+                            "scanned_files": 0,
+                            "has_more": False,
+                            "timed_out": True,
+                            "cancelled": False,
+                            "exact_total": False,
+                        }
+                        break
+                    done, _pending = await asyncio.wait(
+                        {worker}, timeout=min(self.heartbeat_seconds, remaining)
+                    )
+                    if done:
+                        break
+                    if queue is not None:
+                        queue.put_nowait(
+                            ProgressEvent(
+                                step=0,
+                                content=(
+                                    f"search_files is still scanning {search_path}; "
+                                    "the search remains cancellable."
+                                ),
+                            )
+                        )
+                if scan is None:
+                    scan = await worker
+            except asyncio.CancelledError:
+                stop_event.set()
+                worker.cancel()
+                raise
+
+            selected = scan["selected"]
+            truncated = scan["has_more"] or scan["timed_out"]
             content = "\n".join(selected)
             if not content:
-                content = "No matches found."
-            if truncated:
+                content = (
+                    f"Search timed out after {self.search_timeout_seconds:g} seconds before "
+                    "finding a match. Narrow the path, pattern, or file_glob."
+                    if scan["timed_out"]
+                    else "No matches found."
+                )
+            if scan["has_more"]:
                 content += (
                     f"\n\n[Hint: showing results {offset + 1}-{offset + len(selected)} "
-                    f"of {total_matches}. Use offset={offset + limit}, limit={limit} to continue.]"
+                    f"with more available. Use offset={offset + limit}, limit={limit} to continue.]"
+                )
+            if scan["timed_out"] and selected:
+                content += (
+                    f"\n\n[Warning: search timed out after {self.search_timeout_seconds:g} seconds. "
+                    "Partial results are shown; narrow the search before retrying.]"
                 )
             return ToolResult(
                 success=True,
@@ -709,10 +911,17 @@ class SearchFilesTool(Tool):
                 raw_output={
                     "target": target,
                     "path": str(search_path),
-                    "total_matches": total_matches,
+                    "total_matches": (
+                        scan["matched_results"] if scan["exact_total"] else None
+                    ),
+                    "matched_through": scan["matched_results"],
+                    "total_is_exact": scan["exact_total"],
                     "returned_matches": len(selected),
                     "truncated": truncated,
                     "next_offset": offset + limit if truncated else None,
+                    "scanned_files": scan["scanned_files"],
+                    "timed_out": scan["timed_out"],
+                    "limit_reason": "search_timeout" if scan["timed_out"] else None,
                 },
             )
         except Exception as exc:

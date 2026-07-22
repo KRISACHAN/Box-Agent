@@ -32,7 +32,7 @@ from box_agent.events import (
     ToolCallStart,
 )
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
-from box_agent.tools.base import Tool, ToolResult
+from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
 
 
@@ -1667,6 +1667,72 @@ async def test_cancellation_after_tool():
     done = [e for e in events if isinstance(e, DoneEvent)]
     assert len(done) == 1
     assert done[0].stop_reason == StopReason.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancellation_interrupts_opted_in_event_tool():
+    """A cancellable long-running tool must not wait for execute() to return."""
+
+    class BlockingSearchTool(EventEmittingTool):
+        cancel_on_agent_cancel = True
+
+        def __init__(self):
+            super().__init__()
+            self.started = False
+            self.cancelled = False
+
+        @property
+        def name(self):
+            return "search_files"
+
+        @property
+        def description(self):
+            return "Blocks until cancelled"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self):
+            self.started = True
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    tool = BlockingSearchTool()
+    llm = MockLLM([
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="search-1",
+                    type="function",
+                    function=FunctionCall(name="search_files", arguments={}),
+                )
+            ],
+            finish_reason="tool",
+        )
+    ])
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"search_files": tool},
+            max_steps=5,
+            is_cancelled=lambda: tool.started,
+        )
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    done = [event for event in events if isinstance(event, DoneEvent)]
+    assert tool.cancelled is True
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "cancelled" in (results[0].error or "")
+    assert done[-1].stop_reason == StopReason.CANCELLED
 
 
 @pytest.mark.asyncio

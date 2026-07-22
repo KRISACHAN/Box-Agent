@@ -4969,7 +4969,16 @@ async def run_agent_loop(
                             exec_done.set()
 
                     exec_task = asyncio.create_task(_seq_exec())
+                    tool_cancelled = False
                     while not exec_done.is_set() or not event_queue.empty():
+                        if (
+                            getattr(tool, "cancel_on_agent_cancel", False)
+                            and cancelled()
+                            and not exec_task.done()
+                        ):
+                            tool_cancelled = True
+                            exec_task.cancel()
+                            break
                         try:
                             evt = await asyncio.wait_for(event_queue.get(), timeout=0.1)
                             yield evt
@@ -4977,8 +4986,22 @@ async def run_agent_loop(
                             continue
                     while not event_queue.empty():
                         yield event_queue.get_nowait()
-                    await exec_task
-                    result = exec_result  # type: ignore[assignment]
+                    if tool_cancelled:
+                        try:
+                            await asyncio.wait_for(
+                                exec_task,
+                                timeout=PARALLEL_TOOL_CANCEL_GRACE_SECONDS,
+                            )
+                        except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
+                            pass
+                        result = ToolResult(
+                            success=False,
+                            content="",
+                            error="Tool execution cancelled before completion.",
+                        )
+                    else:
+                        await exec_task
+                        result = exec_result  # type: ignore[assignment]
                 else:
                     try:
                         result = await tools[fn_name].execute(**fn_args)

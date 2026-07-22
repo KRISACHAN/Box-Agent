@@ -152,10 +152,138 @@ async def test_search_files_paginates_results(tmp_path):
     )
 
     assert result.success is True
-    assert result.raw_output["total_matches"] == 5
+    assert result.raw_output["total_matches"] is None
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["total_is_exact"] is False
     assert result.raw_output["returned_matches"] == 2
     assert result.raw_output["next_offset"] == 2
+    assert "more available" in result.content
     assert "Use offset=2, limit=2 to continue" in result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_stops_after_page_plus_one_match(tmp_path, monkeypatch):
+    for index in range(100):
+        (tmp_path / f"file-{index:03d}.txt").write_text("value", encoding="utf-8")
+    tool = SearchFilesTool(workspace_dir=str(tmp_path))
+    checked = 0
+
+    def count_allowed(_path):
+        nonlocal checked
+        checked += 1
+        return True
+
+    monkeypatch.setattr(tool, "_file_allowed", count_allowed)
+    result = await tool.execute(pattern="*.txt", target="files", limit=2)
+
+    assert result.success is True
+    assert checked == 3
+    assert result.raw_output["scanned_files"] == 3
+    assert result.raw_output["matched_through"] == 3
+    assert result.raw_output["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_files_timeout_returns_bounded_partial_result(tmp_path, monkeypatch):
+    for index in range(10):
+        (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")
+    tool = SearchFilesTool(
+        workspace_dir=str(tmp_path),
+        search_timeout_seconds=0.02,
+        heartbeat_seconds=0.01,
+    )
+
+    def slow_allowed(_path):
+        import time
+
+        time.sleep(0.03)
+        return True
+
+    monkeypatch.setattr(tool, "_file_allowed", slow_allowed)
+    result = await tool.execute(pattern="*.txt", target="files", limit=5)
+
+    assert result.success is True
+    assert result.raw_output["timed_out"] is True
+    assert result.raw_output["limit_reason"] == "search_timeout"
+    assert result.raw_output["truncated"] is True
+    assert "timed out" in result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_hard_timeout_returns_even_if_worker_is_stuck(tmp_path, monkeypatch):
+    import time
+
+    tool = SearchFilesTool(
+        workspace_dir=str(tmp_path),
+        search_timeout_seconds=0.02,
+        heartbeat_seconds=0.01,
+    )
+
+    def stuck_worker(**_kwargs):
+        time.sleep(0.2)
+        return {
+            "selected": [],
+            "matched_results": 0,
+            "scanned_files": 0,
+            "has_more": False,
+            "timed_out": False,
+            "cancelled": False,
+            "exact_total": True,
+        }
+
+    monkeypatch.setattr(tool, "_search_sync", stuck_worker)
+    started = time.monotonic()
+    result = await tool.execute(pattern="*.txt", target="files")
+
+    assert time.monotonic() - started < 0.15
+    assert result.success is True
+    assert result.raw_output["timed_out"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_files_emits_heartbeat_and_stops_worker_on_cancel(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    tool = SearchFilesTool(
+        workspace_dir=str(tmp_path),
+        search_timeout_seconds=5,
+        heartbeat_seconds=0.01,
+    )
+    worker_stopped = threading.Event()
+
+    def wait_for_cancel(**kwargs):
+        stop_event = kwargs["stop_event"]
+        while not stop_event.wait(0.005):
+            pass
+        worker_stopped.set()
+        return {
+            "selected": [],
+            "matched_results": 0,
+            "scanned_files": 0,
+            "has_more": False,
+            "timed_out": False,
+            "cancelled": True,
+            "exact_total": False,
+        }
+
+    monkeypatch.setattr(tool, "_search_sync", wait_for_cancel)
+    queue = asyncio.Queue()
+    task = asyncio.create_task(
+        tool.execute_with_event_context(
+            event_queue=queue,
+            parent_tool_call_id="search-1",
+            pattern="*.txt",
+            target="files",
+        )
+    )
+
+    await asyncio.sleep(0.03)
+    assert not queue.empty()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await asyncio.to_thread(worker_stopped.wait, 1.0)
 
 
 @pytest.mark.asyncio
