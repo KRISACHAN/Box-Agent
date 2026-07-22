@@ -13,7 +13,7 @@ const {
 const { resolveArtifactPath } = require("./deck_spec_core.js");
 
 function usage() {
-  console.error("Usage: probe_deck_runtime.js index.html [--viewport WxH] [--report qa/runtime_probe.json]");
+  console.error("Usage: probe_deck_runtime.js index.html [--viewport WxH] [--report qa/runtime_probe.json] [--exercise-diagram-editor]");
   process.exit(2);
 }
 
@@ -29,6 +29,7 @@ function parseArgs(argv) {
     html: resolveArtifactPath(argv[0]),
     viewport: { width: 1440, height: 900 },
     report: null,
+    exerciseDiagramEditor: false,
   };
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -41,11 +42,105 @@ function parseArgs(argv) {
     } else if (arg === "--report" && value) {
       opts.report = resolveArtifactPath(value);
       index += 1;
+    } else if (arg === "--exercise-diagram-editor") {
+      opts.exerciseDiagramEditor = true;
     } else {
       usage();
     }
   }
   return opts;
+}
+
+async function exerciseTechnicalDiagramEditor(page) {
+  const initial = await page.evaluate(() => {
+    const root = document.querySelector("[data-pptx-diagram]");
+    if (!root) return null;
+    const spec = JSON.parse(root.getAttribute("data-diagram-spec") || "{}");
+    const slide = root.closest(".slide");
+    const slideIndex = Array.from(document.querySelectorAll("#deck-root > .slide")).indexOf(slide);
+    return { nodes: spec.nodes.length, edges: spec.edges.length, slideIndex, kind: spec.kind };
+  });
+  if (!initial) return null;
+
+  await page.evaluate(index => {
+    document.querySelector(`[data-thumbnail-index="${index}"]`)?.click();
+  }, initial.slideIndex);
+  await page.waitForFunction(index =>
+    document.querySelectorAll("#deck-root > .slide")[index]?.classList.contains("is-current-slide"),
+  initial.slideIndex);
+
+  await page.evaluate(() => document.querySelector('[data-action="adjust"]')?.click());
+  await page.waitForFunction(() => {
+    const panel = document.querySelector("#deck-layout-controls");
+    return panel && !panel.hidden && panel.querySelector('[data-control-action="add-diagram-node"]');
+  });
+  await page.locator('[data-control-action="add-diagram-node"]').click();
+  await page.waitForFunction(expected => {
+    const root = document.querySelector("[data-pptx-diagram]");
+    return root && root.getAttribute("data-diagram-render-state") === "ready" &&
+      root.querySelectorAll("[data-diagram-node-id]").length === expected;
+  }, initial.nodes + 1);
+
+  const labelPath = `nodes.${initial.nodes}.label`;
+  await page.locator(`[data-control-action="set-data-value"][data-control-path="${labelPath}"]`).evaluate(input => {
+    input.value = "已编辑节点";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.waitForFunction(() => {
+    const root = document.querySelector("[data-pptx-diagram]");
+    return root && root.getAttribute("data-diagram-render-state") === "ready" &&
+      (root.textContent || "").includes("已编辑节点");
+  });
+  const editedNodeObserved = await page.evaluate(() =>
+    (document.querySelector("[data-pptx-diagram]")?.textContent || "").includes("已编辑节点")
+  );
+
+  await page.locator('[data-control-action="add-diagram-edge"]').click();
+  await page.waitForFunction(expected => {
+    const root = document.querySelector("[data-pptx-diagram]");
+    return root && root.getAttribute("data-diagram-render-state") === "ready" &&
+      root.querySelectorAll("[data-diagram-edge-id]").length === expected;
+  }, initial.edges + 1);
+  await page.locator(
+    `[data-control-action="delete-diagram-edge"][data-control-index="${initial.edges}"]`
+  ).click();
+  await page.waitForFunction(expected => {
+    const root = document.querySelector("[data-pptx-diagram]");
+    return root && root.getAttribute("data-diagram-render-state") === "ready" &&
+      root.querySelectorAll("[data-diagram-edge-id]").length === expected;
+  }, initial.edges);
+  await page.locator(
+    `[data-control-action="delete-diagram-node"][data-control-index="${initial.nodes}"]`
+  ).click();
+  await page.waitForFunction(expected => {
+    const root = document.querySelector("[data-pptx-diagram]");
+    return root && root.getAttribute("data-diagram-render-state") === "ready" &&
+      root.querySelectorAll("[data-diagram-node-id]").length === expected;
+  }, initial.nodes);
+  await page.locator('[data-control-action="relayout-diagram"]').click();
+  await page.evaluate(async () => {
+    if (window.__deckDiagramReady && typeof window.__deckDiagramReady.then === "function") {
+      await window.__deckDiagramReady;
+    }
+  });
+
+  const final = await page.evaluate(expected => {
+    const root = document.querySelector("[data-pptx-diagram]");
+    const spec = JSON.parse(root.getAttribute("data-diagram-spec") || "{}");
+    return {
+      initial: expected,
+      final: {
+        nodes: spec.nodes.length,
+        edges: spec.edges.length,
+        slideIndex: expected.slideIndex,
+        kind: expected.kind,
+      },
+      state: root.getAttribute("data-diagram-render-state"),
+      svgRoots: root.querySelectorAll(":scope > svg").length,
+      layoutStrategy: root.getAttribute("data-diagram-layout-strategy"),
+    };
+  }, initial);
+  return { ...final, editedNodeObserved };
 }
 
 function officeRaccoonPrefix() {
@@ -97,6 +192,29 @@ async function readEditorState(page, viewport) {
     const firstSlide = document.querySelector("#deck-root > .slide");
     const toolbar = document.querySelector(".deck-toolbar");
     const statement = document.querySelector(".statement-poster");
+    const diagram = document.querySelector("#deck-root > .slide [data-pptx-diagram]");
+    const diagrams = Array.from(document.querySelectorAll("#deck-root > .slide [data-pptx-diagram]")).map(root => {
+      const slide = root.closest(".slide");
+      const header = slide?.querySelector(".slide-header");
+      const slideRect = slide?.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      const headerRect = header?.getBoundingClientRect();
+      const scale = slideRect ? slideRect.width / 1920 : 1;
+      return {
+        kind: root.getAttribute("data-diagram-kind"),
+        state: root.getAttribute("data-diagram-render-state"),
+        strategy: root.getAttribute("data-diagram-layout-strategy"),
+        svgRoots: root.querySelectorAll(":scope > svg").length,
+        nodes: root.querySelectorAll("[data-diagram-node-id]").length,
+        edges: root.querySelectorAll("[data-diagram-edge-id]").length,
+        box: slideRect ? {
+          top: (rootRect.top - slideRect.top) / scale,
+          bottom: (rootRect.bottom - slideRect.top) / scale,
+          height: rootRect.height / scale,
+          headerBottom: headerRect ? (headerRect.bottom - slideRect.top) / scale : null,
+        } : null,
+      };
+    });
     const firstRect = firstSlide && firstSlide.getBoundingClientRect();
     const toolbarRect = toolbar && toolbar.getBoundingClientRect();
     const statementStyle = statement && getComputedStyle(statement);
@@ -131,6 +249,13 @@ async function readEditorState(page, viewport) {
         color: statementStyle.color,
         contrast: contrast(statementStyle.color, statementStyle.backgroundColor),
       } : null,
+      diagram: diagram ? {
+        state: diagram.getAttribute("data-diagram-render-state"),
+        svgRoots: diagram.querySelectorAll(":scope > svg").length,
+        nodes: diagram.querySelectorAll("[data-diagram-node-id]").length,
+        edges: diagram.querySelectorAll("[data-diagram-edge-id]").length,
+      } : null,
+      diagrams,
     };
   }, viewport);
 }
@@ -195,18 +320,31 @@ async function main() {
     const editorUrl = pathToFileURL(opts.html).href;
     await page.goto(editorUrl, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => Boolean(window.__deckRuntime));
+    await page.evaluate(async () => {
+      if (window.__deckDiagramReady && typeof window.__deckDiagramReady.then === "function") {
+        await window.__deckDiagramReady;
+      }
+    });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const editor = await readEditorState(page, opts.viewport);
     editor.toolbarMenus = {
       design: await probeToolbarMenuTrajectory(page, "design"),
       page: await probeToolbarMenuTrajectory(page, "page"),
     };
+    if (opts.exerciseDiagramEditor) {
+      editor.diagramExercise = await exerciseTechnicalDiagramEditor(page);
+    }
     await context.close();
 
     const exportPage = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const exportUrl = new URL(pathToFileURL(opts.html).href);
     exportUrl.searchParams.set("mode", "export");
     await exportPage.goto(exportUrl.href, { waitUntil: "domcontentloaded" });
+    await exportPage.evaluate(async () => {
+      if (window.__deckDiagramReady && typeof window.__deckDiagramReady.then === "function") {
+        await window.__deckDiagramReady;
+      }
+    });
     const exported = await exportPage.evaluate(() => {
       const slide = document.querySelector("#deck-root > .slide");
       const style = slide && getComputedStyle(slide);
@@ -247,6 +385,21 @@ async function main() {
     });
     if (editor.statement && editor.statement.contrast < 4.5) {
       issues.push(`Statement contrast is too low: ${editor.statement.contrast.toFixed(2)}`);
+    }
+    if (editor.diagram && (
+      editor.diagram.state !== "ready" ||
+      editor.diagram.svgRoots !== 1 ||
+      editor.diagram.nodes < 2
+    )) {
+      issues.push("Technical diagram runtime did not produce one ready inline SVG graph");
+    }
+    if (opts.exerciseDiagramEditor && (!editor.diagramExercise ||
+        editor.diagramExercise.state !== "ready" ||
+        editor.diagramExercise.svgRoots !== 1 ||
+        !editor.diagramExercise.editedNodeObserved ||
+        editor.diagramExercise.final.nodes !== editor.diagramExercise.initial.nodes ||
+        editor.diagramExercise.final.edges !== editor.diagramExercise.initial.edges)) {
+      issues.push("Technical diagram editor add/edit/delete/re-layout exercise failed");
     }
     if (!exported || exported.cssWidth !== 1920 || exported.cssHeight !== 1080) {
       issues.push("Export mode does not preserve the 1920x1080 CSS canvas");

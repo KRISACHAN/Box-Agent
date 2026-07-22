@@ -130,6 +130,19 @@ function printBrowserInstallHint() {
   console.error("Without a browser host, ask the user to choose HTML delivery or native PptxGenJS PPTX.");
 }
 
+async function waitForDiagramLayout(page) {
+  await page.evaluate(async () => {
+    const pending = window.__deckDiagramReady;
+    if (!pending || typeof pending.then !== "function") return;
+    try {
+      await pending;
+    } catch {
+      // The DOM self-check below reports the diagram root's render error with
+      // slide context instead of losing it as an unstructured page exception.
+    }
+  });
+}
+
 async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx = false, allowLocalImages = false) {
   return page.evaluate(
     ({ expectedWidth, expectedHeight, domToPptx, allowLocalImages }) => {
@@ -219,6 +232,8 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
         ".echarts",
         ".echarts-for-pptx",
       ].join(",");
+      const diagramSelector = "[data-pptx-diagram]";
+      const diagramSpecs = [];
       const hasTextContent = el => {
         if (el.querySelector && el.querySelector("img")) return true;
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -232,9 +247,16 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
         Boolean(el && el.nodeType === 1 && (el.matches(chartSelector) || el.closest(chartSelector)));
       const chartRootFor = el =>
         el.closest("[data-pptx-chart]") || el.closest(chartSelector);
+      const isDiagramElement = el =>
+        Boolean(
+          el &&
+          el.nodeType === 1 &&
+          (el.matches(diagramSelector) || el.closest(diagramSelector))
+        );
       const isDecorationNode = el => {
         if (!el || el.nodeType !== 1) return false;
         if (el.tagName === "IMG") return false;
+        if (isDiagramElement(el)) return false;
         if (isChartElement(el)) return false;
         if (decorationTags.has(el.tagName)) return true;
         if (el.closest && el.closest("svg")) return true;
@@ -293,6 +315,70 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
         }
 
         const descendants = Array.from(slide.querySelectorAll("*"));
+        const diagramRoots = Array.from(
+          slide.querySelectorAll(diagramSelector)
+        );
+        diagramRoots.forEach((diagramRoot, diagramIndex) => {
+          const diagramName = `${slideName} diagram-${String(diagramIndex + 1).padStart(2, "0")}`;
+          const inlineSpec = (diagramRoot.getAttribute("data-diagram-spec") || "").trim();
+          const specSource = (diagramRoot.getAttribute("data-diagram-spec-src") || "").trim();
+          const directSvgRoots = Array.from(diagramRoot.children).filter(
+            child => child.tagName.toUpperCase() === "SVG"
+          );
+          const svgImages = Array.from(diagramRoot.querySelectorAll("img")).filter(img => {
+            const src = (img.getAttribute("src") || "").trim();
+            return /(?:\.svg(?:[?#].*)?$|^data:image\/svg\+xml)/i.test(src);
+          });
+
+          diagramSpecs.push({
+            slide: slideIndex + 1,
+            diagram: diagramIndex + 1,
+            source: specSource || null,
+          });
+          if (!inlineSpec && !specSource) {
+            issues.push(
+              `${diagramName}: data-pptx-diagram requires a recoverable DiagramSpec via data-diagram-spec or data-diagram-spec-src.`
+            );
+          }
+          if (inlineSpec) {
+            try {
+              JSON.parse(inlineSpec);
+            } catch {
+              issues.push(`${diagramName}: data-diagram-spec must contain valid JSON.`);
+            }
+          }
+          if (directSvgRoots.length !== 1) {
+            issues.push(
+              `${diagramName}: technical diagrams require exactly one direct inline <svg> root; found ${directSvgRoots.length}.`
+            );
+          }
+          if (svgImages.length) {
+            issues.push(
+              `${diagramName}: technical diagrams must export from inline <svg>, not <img src="*.svg">.`
+            );
+          }
+          if (
+            diagramRoot.hasAttribute("data-pptx-decoration") ||
+            diagramRoot.querySelector("[data-pptx-decoration]")
+          ) {
+            issues.push(
+              `${diagramName}: technical diagram roots and descendants must not be marked data-pptx-decoration.`
+            );
+          }
+          if (
+            isDecorationNode(diagramRoot) ||
+            directSvgRoots.some(svgRoot => isDecorationNode(svgRoot))
+          ) {
+            issues.push(
+              `${diagramName}: technical diagram was classified as decoration and would enter the background screenshot.`
+            );
+          }
+          if (diagramRoot.getAttribute("data-diagram-render-state") === "error") {
+            issues.push(
+              `${diagramName}: DiagramSpec layout failed: ${diagramRoot.getAttribute("data-diagram-render-error") || "unknown runtime error"}.`
+            );
+          }
+        });
         const chartRootsSeen = new Set();
         descendants.forEach(el => {
           const style = getComputedStyle(el);
@@ -552,6 +638,8 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
       return {
         ok: issues.length === 0,
         slideCount: slideEls.length,
+        diagramCount: diagramSpecs.length,
+        diagramSpecs,
         issues,
         warnings,
       };
@@ -611,6 +699,51 @@ function dataSourceIssues(htmlPath, htmlText) {
   return issues;
 }
 
+function diagramSpecSourceIssues(htmlPath, diagramSpecs) {
+  const htmlDir = path.dirname(htmlPath);
+  const issues = [];
+  const checked = new Set();
+
+  for (const diagram of diagramSpecs || []) {
+    const source = String(diagram.source || "").trim();
+    if (!source || checked.has(source)) continue;
+    checked.add(source);
+    const name = `slide-${String(diagram.slide).padStart(2, "0")} diagram-${String(diagram.diagram).padStart(2, "0")}`;
+    if (
+      path.isAbsolute(source) ||
+      /^\/\//.test(source) ||
+      /^[a-z][a-z0-9+.-]*:/i.test(source)
+    ) {
+      issues.push(
+        `${name}: data-diagram-spec-src must be a local relative JSON path so DiagramSpec remains recoverable with the deck.`
+      );
+      continue;
+    }
+    const specPath = path.resolve(htmlDir, source);
+    const relative = path.relative(htmlDir, specPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      issues.push(
+        `${name}: data-diagram-spec-src must stay inside the deck directory: ${source}.`
+      );
+      continue;
+    }
+    if (path.extname(specPath).toLowerCase() !== ".json") {
+      issues.push(`${name}: data-diagram-spec-src must reference a .json file: ${source}.`);
+      continue;
+    }
+    if (!fs.existsSync(specPath) || !fs.statSync(specPath).isFile()) {
+      issues.push(`${name}: DiagramSpec file not found: ${source}.`);
+      continue;
+    }
+    try {
+      JSON.parse(fs.readFileSync(specPath, "utf8"));
+    } catch {
+      issues.push(`${name}: DiagramSpec file is not valid JSON: ${source}.`);
+    }
+  }
+  return issues;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const htmlPath = resolveArtifactPath(opts.html);
@@ -647,6 +780,7 @@ async function main() {
   await page.goto(`file://${htmlPath}`, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
   await page.evaluate(() => document.fonts && document.fonts.ready);
+  await waitForDiagramLayout(page);
 
   const report = await runHtmlSelfCheck(
     page,
@@ -659,7 +793,10 @@ async function main() {
 
   if (opts.domToPptx) {
     const htmlText = fs.readFileSync(htmlPath, "utf8");
-    const extraIssues = dataSourceIssues(htmlPath, htmlText);
+    const extraIssues = [
+      ...dataSourceIssues(htmlPath, htmlText),
+      ...diagramSpecSourceIssues(htmlPath, report.diagramSpecs),
+    ];
     if (extraIssues.length) {
       report.issues.push(...extraIssues);
       report.ok = false;

@@ -63,6 +63,7 @@ async function markDecorationNodes(page) {
       ".echarts",
       ".echarts-for-pptx",
     ].join(",");
+    const DIAGRAM_SELECTOR = "[data-pptx-diagram]";
 
     function hasContent(el) {
       if (el.querySelector("img")) return true;
@@ -78,11 +79,23 @@ async function markDecorationNodes(page) {
       return Boolean(el.matches(CHART_SELECTOR) || el.closest(CHART_SELECTOR));
     }
 
+    function isDiagramElement(el) {
+      return Boolean(el.matches(DIAGRAM_SELECTOR) || el.closest(DIAGRAM_SELECTOR));
+    }
+
     Array.from(document.querySelectorAll(".slide")).forEach(slide => {
       const all = slide.querySelectorAll("*");
       all.forEach(el => {
         if (el === slide) return;
         if (el.classList.contains("pptx-bg")) return;
+        // Technical diagrams are authored as recoverable DiagramSpec + inline
+        // SVG. Keep the root and every descendant out of the background PNG
+        // so dom-to-pptx can export the SVG as a separate vector picture.
+        if (isDiagramElement(el)) {
+          el.removeAttribute("data-pptx-decoration");
+          el.setAttribute("data-pptx-non-decoration", "");
+          return;
+        }
         // ECharts/data-chart previews must not be baked into the background
         // screenshot. They need a separate native-chart/data-preserving path.
         if (isChartElement(el)) {

@@ -8190,6 +8190,319 @@
       }
     },
     {
+      "id": "technical-diagram-v1",
+      "label": "DiagramSpec technical architecture, integration, or pipeline",
+      "editor": {
+        "label": "专业技术图",
+        "description": "DiagramSpec 节点/边可编辑，ELK 自动布局，PPTX 矢量导出",
+        "controls": {
+          "enums": {
+            "diagram_kind": {
+              "label": "技术图类型",
+              "options": {
+                "architecture": "架构图",
+                "integration": "系统集成图",
+                "pipeline": "数据管道"
+              }
+            },
+            "direction": {
+              "label": "布局方向",
+              "options": {
+                "RIGHT": "从左到右",
+                "DOWN": "从上到下"
+              }
+            }
+          },
+          "diagramData": {
+            "label": "DiagramSpec",
+            "nodesPath": "nodes",
+            "edgesPath": "edges",
+            "minNodes": 2,
+            "maxNodes": 16,
+            "minEdges": 0,
+            "maxEdges": 24
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "技术架构",
+          "title": "企业 AI 服务平台架构",
+          "subtitle": "节点与连接关系可编辑；修改结构后重新执行自动布局",
+          "diagram_kind": "architecture",
+          "direction": "RIGHT",
+          "nodes": [
+            {
+              "id": "channel",
+              "label": "用户渠道",
+              "detail": "Web · App · IM",
+              "kind": "client"
+            },
+            {
+              "id": "gateway",
+              "label": "API Gateway",
+              "detail": "鉴权 · 限流 · 路由",
+              "kind": "gateway"
+            },
+            {
+              "id": "orchestrator",
+              "label": "AI Orchestrator",
+              "detail": "会话 · 工具 · 策略",
+              "kind": "hub"
+            },
+            {
+              "id": "knowledge",
+              "label": "知识检索",
+              "detail": "RAG · 向量索引",
+              "kind": "service"
+            },
+            {
+              "id": "business",
+              "label": "业务服务",
+              "detail": "订单 · CRM · 工单",
+              "kind": "external"
+            },
+            {
+              "id": "governance",
+              "label": "治理与观测",
+              "detail": "审计 · 指标 · 告警",
+              "kind": "data"
+            }
+          ],
+          "edges": [
+            {
+              "id": "edge-channel-gateway",
+              "source": "channel",
+              "target": "gateway",
+              "label": "HTTPS"
+            },
+            {
+              "id": "edge-gateway-ai",
+              "source": "gateway",
+              "target": "orchestrator",
+              "label": "请求"
+            },
+            {
+              "id": "edge-ai-knowledge",
+              "source": "orchestrator",
+              "target": "knowledge",
+              "label": "检索"
+            },
+            {
+              "id": "edge-ai-business",
+              "source": "orchestrator",
+              "target": "business",
+              "label": "工具调用"
+            },
+            {
+              "id": "edge-ai-governance",
+              "source": "orchestrator",
+              "target": "governance",
+              "label": "日志 / 指标"
+            }
+          ],
+          "note": "PPTX 中导出为单个 SVG 矢量对象；节点级编辑保留在 HTML / DiagramSpec。"
+        }
+      },
+      "roles": [
+        "architecture",
+        "system-design",
+        "integration",
+        "data-flow",
+        "data-pipeline",
+        "technology"
+      ],
+      "density": "high",
+      "contentShape": [
+        "diagram-spec",
+        "nodes",
+        "edges",
+        "architecture",
+        "pipeline"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The DiagramSpec SVG is the primary visual; keep the slide background quiet and structural."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "diagram",
+        "svg-vector",
+        "auto-layout"
+      ],
+      "variants": [
+        "architecture",
+        "integration",
+        "pipeline"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 72,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "diagram_kind": {
+          "type": "enum",
+          "values": [
+            "architecture",
+            "integration",
+            "pipeline"
+          ],
+          "default": "architecture",
+          "required": false,
+          "editor": true
+        },
+        "direction": {
+          "type": "enum",
+          "values": [
+            "RIGHT",
+            "DOWN"
+          ],
+          "default": "RIGHT",
+          "required": false,
+          "editor": true
+        },
+        "nodes": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 2,
+          "maxItems": 16,
+          "itemShape": {
+            "id": {
+              "type": "text",
+              "maxChars": 32,
+              "required": true,
+              "editor": false,
+              "role": "label"
+            },
+            "label": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "detail": {
+              "type": "text",
+              "maxChars": 64,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            },
+            "kind": {
+              "type": "text",
+              "maxChars": 16,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 0,
+          "maxItems": 24,
+          "itemShape": {
+            "id": {
+              "type": "text",
+              "maxChars": 48,
+              "required": true,
+              "editor": false,
+              "role": "label"
+            },
+            "source": {
+              "type": "text",
+              "maxChars": 32,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "target": {
+              "type": "text",
+              "maxChars": 32,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "label": {
+              "type": "text",
+              "maxChars": 32,
+              "required": false,
+              "editor": true,
+              "role": "caption"
+            }
+          }
+        },
+        "note": {
+          "type": "text",
+          "maxChars": 160,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "diagram_kind": "architecture",
+        "direction": "RIGHT",
+        "note": ""
+      }
+    },
+    {
       "id": "dashboard-overview-v1",
       "label": "Qualitative management dashboard overview",
       "editor": {

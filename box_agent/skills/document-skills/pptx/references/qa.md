@@ -37,6 +37,10 @@ previews alone are not enough.
    - Always use the stricter `--dom-to-pptx` compatibility profile for new HTML-first decks.
    - Confirm every `.slide` reports exactly `1920x1080` unless the user explicitly requested a nonstandard output size.
    - Confirm `qa/html_self_check.json` exists, is non-empty, and has `"ok": true`. If it is missing, report HTML self-check as `BLOCKED`.
+   - For every `[data-pptx-diagram]`, confirm the report found a non-empty
+     `data-diagram-spec` or `data-diagram-spec-src`, exactly one direct inline
+     SVG root, and no decoration classification. Confirm export reports
+     `diagramCount` and `diagramVectorExport: true` when diagrams exist.
    - Fix failures before export. This catches DOM/CSS layout bugs such as progress `.fill` elements left as `display:inline`, zero-size bars/charts, text overflow, missing images, and content outside the slide.
    - If the command exits non-zero, inspect the report file before concluding the error has no detail. Summarize concrete failures and fix the HTML; route-change and bypass rules live in `SKILL.md`.
    - This is a preflight gate, not visual QA. Passing it does not mean the slide looks good.
@@ -44,6 +48,10 @@ previews alone are not enough.
 1. Package validation:
    - Run `${BOX_AGENT_PYTHON:-python3} scripts/validate_pptx_package.py output.pptx`.
    - Fix zip, relationship, missing part, or invalid XML errors before delivery.
+   - For a technical-diagram export, inspect the slide relationship/drawing:
+     the primary picture must use an SVG image relationship (PowerPoint may
+     also package a compatibility fallback PNG), and the diagram must not be
+     present in the `pptx-bg` background bitmap.
 
 2. Text extraction:
    - Run `${BOX_AGENT_PYTHON:-python3} scripts/extract_text.py output.pptx`.

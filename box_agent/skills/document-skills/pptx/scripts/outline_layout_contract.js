@@ -19,6 +19,7 @@ const BAR_CHART_RE = /(?:柱状图|条形图|排名图|bar\s*chart|column\s*char
 const DATA_CHART_RE = /(?:折线图|面积图|饼图|环形图|雷达图|数据图表|line\s*chart|area\s*chart|pie\s*chart|donut\s*chart|radar\s*chart)/i;
 const ARCHITECTURE_RE = /(?:分层架构|技术架构|系统架构|解决方案架构|架构图|architecture(?:\s*(?:diagram|layered))?)/i;
 const INTEGRATION_RE = /(?:系统集成|集成架构|数据流(?:设计|图)?|接口关系|integration(?:\s*(?:diagram|map))?|data\s*flow)/i;
+const DATA_PIPELINE_RE = /(?:数据管道|数据流水线|处理管道|ETL|ELT|data\s*pipeline|processing\s*pipeline)/i;
 const DASHBOARD_RE = /(?:数据看板|管理看板|管理驾驶舱|运营驾驶舱|dashboard(?:\s*overview)?)/i;
 const KPI_RE = /(?:KPI|指标卡|metrics?\s*(?:grid|board))/i;
 const GANTT_RE = /(?:甘特(?:图|计划)?|gantt(?:\s*(?:chart|plan|schedule))?)/i;
@@ -125,18 +126,26 @@ function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
   }
   if (ARCHITECTURE_RE.test(visual)) {
     return semanticRule(
-      "layered-architecture",
-      "architecture-layered-v1",
-      ["architecture-layered-v1"],
-      "outline asks for a layered technical architecture with named modules"
+      "technical-architecture",
+      "technical-diagram-v1",
+      ["technical-diagram-v1"],
+      "outline asks for a DiagramSpec technical architecture with editable nodes and edges"
+    );
+  }
+  if (DATA_PIPELINE_RE.test(visual)) {
+    return semanticRule(
+      "data-pipeline",
+      "technical-diagram-v1",
+      ["technical-diagram-v1"],
+      "outline asks for a DiagramSpec data pipeline with editable stages and flows"
     );
   }
   if (INTEGRATION_RE.test(visual)) {
     return semanticRule(
       "system-integration",
-      "system-integration-v1",
-      ["system-integration-v1"],
-      "outline asks for a hub-and-spoke system integration or data-flow map"
+      "technical-diagram-v1",
+      ["technical-diagram-v1"],
+      "outline asks for a DiagramSpec system integration or data-flow map"
     );
   }
   if (DASHBOARD_RE.test(visual)) {

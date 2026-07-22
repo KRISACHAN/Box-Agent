@@ -51,7 +51,7 @@ const CANONICAL_HEIGHT = 1080;
 
 function usage() {
   console.log(
-    "Usage: html_to_editable_pptx.js deck.html output.pptx [--out slides] [--canvas WxH] [--svg-vector true|false] [--bg-capture always|never] [--allow-self-check-issues] (default: --svg-vector false for pixel fidelity, --bg-capture always for visual fidelity)"
+    "Usage: html_to_editable_pptx.js deck.html output.pptx [--out slides] [--canvas WxH] [--svg-vector true|false] [--bg-capture always|never] [--allow-self-check-issues] (default: --svg-vector false for pixel fidelity, automatically true when data-pptx-diagram is present; --bg-capture always for visual fidelity)"
   );
   console.log(`  The canvas contract is ${CANONICAL_WIDTH}x${CANONICAL_HEIGHT} (16:9). Every .slide must match it exactly.`);
   console.log("  --canvas WxH overrides the contract for a deliberately non-standard deck (e.g. --canvas 1280x720).");
@@ -228,6 +228,18 @@ function printBrowserInstallHint() {
   console.error("Without a browser host, ask the user to choose HTML delivery or native PptxGenJS PPTX.");
 }
 
+async function waitForDiagramLayout(page) {
+  await page.evaluate(async () => {
+    const pending = window.__deckDiagramReady;
+    if (!pending || typeof pending.then !== "function") return;
+    try {
+      await pending;
+    } catch {
+      // html_self_check reports the structured DiagramSpec render failure.
+    }
+  });
+}
+
 function resolveBrowserBundle() {
   const bundlePath = path.join(__dirname, "dom-to-pptx.bundle.js");
   if (!fs.existsSync(bundlePath)) {
@@ -378,14 +390,32 @@ async function main() {
     });
   }
 
+  await waitForDiagramLayout(page);
+
   runSelfCheck(htmlPath, detectedWidth, detectedHeight, selfCheckReport, opts.allowSelfCheckIssues);
+
+  const controlledSlideCount = await page.locator("#deck-root > .slide").count();
+  const slideSelector = controlledSlideCount ? "#deck-root > .slide" : ".slide";
+  const diagramSelector = controlledSlideCount
+    ? "#deck-root > .slide [data-pptx-diagram]"
+    : "[data-pptx-diagram]";
+  const nativeChartSelector = controlledSlideCount
+    ? '#deck-root > .slide [data-pptx-chart][data-native-chart="true"]'
+    : '[data-pptx-chart][data-native-chart="true"]';
+  const diagramCount = await page.locator(diagramSelector).count();
+  const effectiveSvgVector = opts.svgVector || diagramCount > 0;
+  if (diagramCount > 0 && !opts.svgVector) {
+    console.log(
+      `Detected ${diagramCount} data-pptx-diagram element(s); forcing svgAsVector: true.`
+    );
+  }
 
   const inlinedImages = await inlineLocalImagesForExport(page, htmlPath);
   if (inlinedImages.length) {
     console.log(`Inlined ${inlinedImages.length} local image(s) for PPTX export.`);
   }
 
-  const slideHandles = await page.locator(".slide").elementHandles();
+  const slideHandles = await page.locator(slideSelector).elementHandles();
   if (!slideHandles.length) {
     await browser.close();
     console.error("No .slide elements found in HTML.");
@@ -421,12 +451,19 @@ async function main() {
   await page.addScriptTag({ path: bundlePath });
 
   const exportResult = await page.evaluate(
-    async ({ fileName, svgVector }) => {
+    async ({
+      fileName,
+      svgVector,
+      slideSelector,
+      diagramSelector,
+      nativeChartSelector,
+    }) => {
       const api = window.domToPptx;
       if (!api || typeof api.exportToPptx !== "function") {
         throw new Error("dom-to-pptx browser API was not loaded.");
       }
-      const slideElements = Array.from(document.querySelectorAll(".slide"));
+      const slideElements = Array.from(document.querySelectorAll(slideSelector));
+      const diagramElements = document.querySelectorAll(diagramSelector);
       const blob = await api.exportToPptx(slideElements, {
         fileName,
         skipDownload: true,
@@ -446,12 +483,18 @@ async function main() {
       return {
         slideCount: slideElements.length,
         bytes: blob.size,
-        nativeChartCount: document.querySelectorAll(
-          '[data-pptx-chart][data-native-chart="true"]'
-        ).length,
+        diagramCount: diagramElements.length,
+        diagramVectorExport: diagramElements.length > 0 && svgVector,
+        nativeChartCount: document.querySelectorAll(nativeChartSelector).length,
       };
     },
-    { fileName: path.basename(pptxPath), svgVector: opts.svgVector }
+    {
+      fileName: path.basename(pptxPath),
+      svgVector: effectiveSvgVector,
+      slideSelector,
+      diagramSelector,
+      nativeChartSelector,
+    }
   );
 
   await browser.close();
@@ -462,6 +505,8 @@ async function main() {
         pptx: pptxPath,
         slideCount: exportResult.slideCount,
         bytes: exportResult.bytes,
+        diagramCount: exportResult.diagramCount,
+        diagramVectorExport: exportResult.diagramVectorExport,
         nativeChartCount: exportResult.nativeChartCount,
         previews,
         htmlSelfCheck: selfCheckReport,

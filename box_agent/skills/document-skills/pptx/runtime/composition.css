@@ -466,19 +466,21 @@
 
 .composition-schematic-bus {
   left: 86px;
-  right: 98px;
-  top: 50%;
+  right: 156px;
+  top: auto;
+  bottom: 50px;
   height: 1px;
   background: var(--deck-primary-soft);
 }
 
 .composition-schematic-bus i {
   position: absolute;
-  top: -6px;
-  width: 13px;
-  height: 13px;
-  border: 2px solid var(--deck-primary);
-  background: var(--deck-bg);
+  top: -3px;
+  width: 7px;
+  height: 7px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--deck-primary);
 }
 
 .composition-schematic-bus i:nth-child(1) { left: 12%; }
@@ -487,40 +489,40 @@
 
 .composition-schematic-nodes {
   right: 56px;
-  top: 92px;
-  width: 24px;
-  height: 112px;
+  top: 58px;
+  width: 20px;
+  height: 88px;
 }
 
 .composition-schematic-nodes::before {
   content: "";
   position: absolute;
-  left: 11px;
-  top: 4px;
-  bottom: 4px;
+  left: 9px;
+  top: 2px;
+  bottom: 2px;
   width: 1px;
   background: var(--deck-border);
 }
 
 .composition-schematic-nodes i {
   position: absolute;
-  left: 6px;
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--deck-primary);
-  border-radius: 50%;
-  background: var(--deck-bg);
+  left: 5px;
+  width: 9px;
+  height: 3px;
+  border: 0;
+  border-radius: 0;
+  background: var(--deck-primary);
 }
 
 .composition-schematic-nodes i:nth-child(1) { top: 0; }
-.composition-schematic-nodes i:nth-child(2) { top: 50px; }
+.composition-schematic-nodes i:nth-child(2) { top: 42px; }
 .composition-schematic-nodes i:nth-child(3) { bottom: 0; }
 
 .composition-schematic-nodes span {
   position: absolute;
-  left: -20px;
-  top: 55px;
-  width: 64px;
+  left: -12px;
+  top: 43px;
+  width: 42px;
   height: 1px;
   background: var(--deck-primary-soft);
 }
@@ -3299,6 +3301,26 @@ body[data-deck-composition="technical-schematic"] .cover-copy h1 {
   line-height: 0.98;
 }
 
+body[data-deck-composition="technical-schematic"] .editorial-cover-copy {
+  max-width: 1680px;
+}
+
+body[data-deck-composition="technical-schematic"] .editorial-cover-copy h1 {
+  max-width: 1680px;
+  line-height: 1;
+}
+
+body[data-deck-composition="technical-schematic"] .editorial-cover-copy h1.editorial-title-medium {
+  font-size: 96px;
+  text-wrap: pretty;
+}
+
+body[data-deck-composition="technical-schematic"] .editorial-cover-copy h1.editorial-title-long {
+  font-size: 78px;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+
 body[data-deck-composition="technical-schematic"] .cover-visual {
   height: 72%;
   align-self: center;
@@ -3533,6 +3555,23 @@ body[data-deck-composition="technical-schematic"][data-deck-composition-variant=
   grid-template-columns: minmax(0, 1.32fr) repeat(2, minmax(0, 0.84fr));
 }
 
+body[data-deck-composition="technical-schematic"][data-deck-composition-variant="annotated-system"] .cards-count-4 .cards-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+}
+
+body[data-deck-composition="technical-schematic"][data-deck-composition-variant="annotated-system"] .cards-count-4 .content-card {
+  min-height: 0;
+}
+
+body[data-deck-composition="technical-schematic"][data-deck-composition-variant="annotated-system"] :is(
+  .slide.layout-cover-editorial,
+  .slide.layout-technical-diagram
+) .composition-schematic-bus {
+  display: none;
+}
+
 body[data-deck-composition="technical-schematic"][data-deck-composition-variant="annotated-system"] .timeline-count-3 .timeline-track {
   align-items: center;
   padding-top: 92px;
@@ -3553,7 +3592,11 @@ body[data-deck-composition="technical-schematic"][data-deck-composition-variant=
 }
 
 body[data-deck-composition="technical-schematic"][data-deck-composition-variant="annotated-system"] .composition-schematic-bus {
-  height: 3px;
+  display: none;
+}
+
+body[data-deck-composition="technical-schematic"][data-deck-composition-variant="annotated-system"] .composition-schematic-nodes {
+  display: none;
 }
 
 body[data-deck-composition="technical-schematic"][data-deck-composition-variant="annotated-system"] .content-card::after {

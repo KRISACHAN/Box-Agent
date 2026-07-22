@@ -259,7 +259,7 @@ def test_layout_manifest_is_generated_from_registry() -> None:
     assert consulting_navy["palette"]["background"] == "#F4F7FA"
     assert consulting_navy["palette"]["primary"] == "#173B63"
     assert consulting_navy["composition"]["family"] == "institutional-grid"
-    assert len(manifest["layouts"]) == 18
+    assert len(manifest["layouts"]) == 19
     assert {layout["id"] for layout in manifest["layouts"]} >= {
         "cover-hero-v1",
         "cover-editorial-v1",
@@ -267,6 +267,7 @@ def test_layout_manifest_is_generated_from_registry() -> None:
         "text-columns-v1",
         "architecture-layered-v1",
         "system-integration-v1",
+        "technical-diagram-v1",
         "dashboard-overview-v1",
         "chart-bar-v1",
         "chart-data-v1",
@@ -387,7 +388,7 @@ def test_every_registered_theme_renders_all_controlled_layouts(tmp_path: Path) -
     )
     assert scaffold.returncode == 0, scaffold.stderr
     deck = json.loads(deck_path.read_text(encoding="utf-8"))
-    assert len(deck["slides"]) == 18
+    assert len(deck["slides"]) == len(layout_ids)
 
     for theme in manifest["themes"]:
         theme_id = theme["id"]
@@ -402,7 +403,7 @@ def test_every_registered_theme_renders_all_controlled_layouts(tmp_path: Path) -
         assert rendered.returncode == 0, f"{theme_id}: {rendered.stderr}"
         html = html_path.read_text(encoding="utf-8")
         rendered_deck = html.split('<section class="deck-layout-picker"', 1)[0]
-        assert rendered_deck.count('<section class="slide ') == 18, theme_id
+        assert rendered_deck.count('<section class="slide ') == len(layout_ids), theme_id
         assert f'data-deck-theme-id="{theme_id}"' in html
         assert (
             f'data-deck-composition="{theme["composition"]["family"]}"' in html
@@ -492,7 +493,7 @@ def test_new_composition_families_render_every_layout(
     rendered_deck = html.split('<section class="deck-layout-picker"', 1)[0]
     rendered_dom = rendered_deck.split('<main id="deck-root">', 1)[1]
     template = COMPOSITION_TEMPLATES[family]
-    assert rendered_deck.count('<section class="slide ') == 18
+    assert rendered_deck.count('<section class="slide ') == len(layout_ids)
     assert f'data-deck-composition="{family}"' in html
     assert f'data-composition-template="{template}"' in rendered_deck
     assert f'class="composition-root composition-{template}"' in rendered_deck
@@ -1314,9 +1315,9 @@ console.log(JSON.stringify({ layouts: slides.length, migrations, enumControls, c
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "layouts": 18,
-        "migrations": 324,
-        "enumControls": 24,
+        "layouts": 19,
+        "migrations": 361,
+        "enumControls": 26,
         "collectionControls": 16,
     }
 
@@ -1353,10 +1354,11 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
     assert len(theme_ids) == 34
     assert theme_ids == sorted(theme_ids)
     assert {"signal", "studio", "vellum", "8-bit-orbit"} <= set(theme_ids)
-    assert layout_payload["count"] == 18
+    assert layout_payload["count"] == 19
     assert {item["id"] for item in layout_payload["layouts"]} >= {
         "architecture-layered-v1",
         "system-integration-v1",
+        "technical-diagram-v1",
         "dashboard-overview-v1",
         "project-case-study-v1",
         "image-hero-split-v1",
@@ -1364,7 +1366,7 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
         "chart-data-v1",
         "table-data-v1",
     }
-    assert len(themes.stdout) + len(layouts.stdout) < 23_700
+    assert len(themes.stdout) + len(layouts.stdout) < 27_000
 
 
 def test_scaffold_normalizes_known_semantic_theme_alias(tmp_path: Path) -> None:
@@ -1644,27 +1646,29 @@ def test_scaffold_recovers_architecture_integration_and_qualitative_dashboard(
     assert result.returncode == 0, result.stdout + result.stderr
     contract = json.loads(result.stdout)
     assert [item["to"] for item in contract["layout_normalizations"]] == [
-        "architecture-layered-v1",
-        "system-integration-v1",
+        "technical-diagram-v1",
+        "technical-diagram-v1",
         "dashboard-overview-v1",
     ]
     deck = json.loads(deck_path.read_text(encoding="utf-8"))
     assert [slide["layout_id"] for slide in deck["slides"]] == [
-        "architecture-layered-v1",
-        "system-integration-v1",
+        "technical-diagram-v1",
+        "technical-diagram-v1",
         "dashboard-overview-v1",
     ]
+    assert deck["slides"][0]["props"]["diagram_kind"] == "architecture"
+    assert deck["slides"][1]["props"]["diagram_kind"] == "integration"
 
     html_path = tmp_path / "index.html"
     rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
     assert rendered.returncode == 0, rendered.stdout + rendered.stderr
     html = html_path.read_text(encoding="utf-8")
-    assert "layout-architecture" in html
-    assert 'class="architecture-layers" data-layout-region="content"' in html
-    assert 'class="architecture-stack" data-layout-region="content"' not in html
-    assert 'class="architecture-module"' in html
-    assert 'class="architecture-module-text"' in html
-    assert "layout-system-integration" in html
+    rendered_markup = html.split('<script type="application/json" id="deck-document">', 1)[0]
+    assert rendered_markup.count(" data-pptx-diagram") == 2
+    assert 'data-diagram-kind="architecture"' in html
+    assert 'data-diagram-kind="integration"' in html
+    assert 'data-deck-runtime="elkjs"' in html
+    assert 'data-deck-runtime="diagram-runtime"' in html
     assert "layout-dashboard-overview" in html
 
     report_path = tmp_path / "html-self-check.json"
@@ -1678,6 +1682,7 @@ def test_scaffold_recovers_architecture_integration_and_qualitative_dashboard(
     )
     assert self_check.returncode == 0, self_check.stdout + self_check.stderr
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["diagramCount"] == 2
     assert not any(
         "short background text uses vertical padding" in warning
         for warning in report["warnings"]
@@ -3300,8 +3305,9 @@ def test_deck_contract_normalizes_pitch_layout_and_required_field_aliases(
         ("market-donut-chart-v2", "chart-data-v1"),
         ("feature-matrix-v2", "table-data-v1"),
         ("research-deep-dive-v2", "text-columns-v1"),
-        ("architecture-diagram-v1", "architecture-layered-v1"),
-        ("integration-map-v1", "system-integration-v1"),
+        ("architecture-diagram-v1", "technical-diagram-v1"),
+        ("integration-map-v1", "technical-diagram-v1"),
+        ("data-pipeline-v1", "technical-diagram-v1"),
         ("qualitative-dashboard-v1", "dashboard-overview-v1"),
         ("thank-you-v2", "closing-next-steps-v1"),
     ],

@@ -659,6 +659,127 @@ function renderSystemIntegration(slide, index) {
   );
 }
 
+function technicalDiagramSpec(props) {
+  return {
+    version: 1,
+    kind: props.diagram_kind || "architecture",
+    direction: props.direction || "RIGHT",
+    title: props.title || "Technical diagram",
+    nodes: deepClone(props.nodes || []),
+    edges: deepClone(props.edges || []),
+  };
+}
+
+function createTechnicalDiagramPreset(kind = "architecture") {
+  if (kind === "integration") {
+    return deepClone({
+      eyebrow: "系统集成",
+      subtitle: "中心平台通过标准接口连接渠道、业务系统与数据服务",
+      diagram_kind: "integration",
+      direction: "RIGHT",
+      nodes: [
+        { id: "channels", label: "渠道与应用", detail: "Web · App · IM", kind: "client" },
+        { id: "identity", label: "统一认证", detail: "SSO · 权限 · 租户", kind: "gateway" },
+        { id: "platform", label: "AI 服务平台", detail: "会话 · 知识 · 工具", kind: "hub" },
+        { id: "orders", label: "订单 / 工单", detail: "状态 · 流转 · 售后", kind: "external" },
+        { id: "crm", label: "CRM / 会员", detail: "画像 · 等级 · 权益", kind: "external" },
+        { id: "analytics", label: "数据与分析", detail: "指标 · 审计 · 看板", kind: "data" },
+      ],
+      edges: [
+        { id: "edge-channels-identity", source: "channels", target: "identity", label: "登录 / 请求" },
+        { id: "edge-identity-platform", source: "identity", target: "platform", label: "鉴权上下文" },
+        { id: "edge-platform-orders", source: "platform", target: "orders", label: "API / 事件" },
+        { id: "edge-platform-crm", source: "platform", target: "crm", label: "客户数据" },
+        { id: "edge-platform-analytics", source: "platform", target: "analytics", label: "日志 / 指标" },
+      ],
+      note: "连接关系来自 DiagramSpec；接口方向、协议和数据边界可在 HTML 中继续调整。",
+    });
+  }
+  if (kind === "pipeline") {
+    return deepClone({
+      eyebrow: "数据管道",
+      subtitle: "从数据接入、缓冲、处理到存储和服务的端到端链路",
+      diagram_kind: "pipeline",
+      direction: "RIGHT",
+      nodes: [
+        { id: "sources", label: "业务数据源", detail: "DB · SaaS · 日志", kind: "client" },
+        { id: "ingestion", label: "数据接入", detail: "CDC · API · Batch", kind: "gateway" },
+        { id: "queue", label: "消息缓冲", detail: "Kafka · Retry · DLQ", kind: "queue" },
+        { id: "processing", label: "流批处理", detail: "清洗 · 关联 · 特征", kind: "service" },
+        { id: "lakehouse", label: "Lakehouse", detail: "Raw · Curated · Serving", kind: "data" },
+        { id: "consumers", label: "数据服务", detail: "BI · API · ML", kind: "hub" },
+      ],
+      edges: [
+        { id: "edge-sources-ingestion", source: "sources", target: "ingestion", label: "采集" },
+        { id: "edge-ingestion-queue", source: "ingestion", target: "queue", label: "事件" },
+        { id: "edge-queue-processing", source: "queue", target: "processing", label: "消费" },
+        { id: "edge-processing-lakehouse", source: "processing", target: "lakehouse", label: "入湖" },
+        { id: "edge-lakehouse-consumers", source: "lakehouse", target: "consumers", label: "查询 / 特征" },
+      ],
+      note: "节点和边可增删；重新布局后自动计算层级、间距和正交连线。",
+    });
+  }
+  return deepClone({
+    eyebrow: "技术架构",
+    subtitle: "按入口、平台能力、业务集成与治理边界组织系统",
+    diagram_kind: "architecture",
+    direction: "RIGHT",
+    nodes: [
+      { id: "channel", label: "用户渠道", detail: "Web · App · IM", kind: "client" },
+      { id: "gateway", label: "API Gateway", detail: "鉴权 · 限流 · 路由", kind: "gateway" },
+      { id: "orchestrator", label: "AI Orchestrator", detail: "会话 · 工具 · 策略", kind: "hub" },
+      { id: "knowledge", label: "知识检索", detail: "RAG · 向量索引", kind: "service" },
+      { id: "business", label: "业务服务", detail: "订单 · CRM · 工单", kind: "external" },
+      { id: "governance", label: "治理与观测", detail: "审计 · 指标 · 告警", kind: "data" },
+    ],
+    edges: [
+      { id: "edge-channel-gateway", source: "channel", target: "gateway", label: "HTTPS" },
+      { id: "edge-gateway-ai", source: "gateway", target: "orchestrator", label: "请求" },
+      { id: "edge-ai-knowledge", source: "orchestrator", target: "knowledge", label: "检索" },
+      { id: "edge-ai-business", source: "orchestrator", target: "business", label: "工具调用" },
+      { id: "edge-ai-governance", source: "orchestrator", target: "governance", label: "日志 / 指标" },
+    ],
+    note: "PPTX 中导出为单个 SVG 矢量对象；节点级编辑保留在 HTML / DiagramSpec。",
+  });
+}
+
+function renderTechnicalDiagramRoot(props) {
+  const spec = technicalDiagramSpec(props);
+  const encodedSpec = escapeHtml(JSON.stringify(spec));
+  const label = {
+    architecture: "ARCHITECTURE",
+    integration: "SYSTEM INTEGRATION",
+    pipeline: "DATA PIPELINE",
+  }[spec.kind] || "TECHNICAL DIAGRAM";
+  return [
+    `<div class="technical-diagram-canvas" data-pptx-diagram data-diagram-spec="${encodedSpec}" data-diagram-kind="${escapeHtml(spec.kind)}" data-diagram-render-state="pending">`,
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 620" role="img" aria-label="Technical diagram loading">',
+    '<rect width="1600" height="620" rx="24" fill="var(--deck-bg)" stroke="var(--deck-border)" stroke-width="2"/>',
+    `<text x="800" y="294" text-anchor="middle" fill="var(--deck-primary)" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="3">${label}</text>`,
+    '<text x="800" y="338" text-anchor="middle" fill="var(--deck-muted)" font-family="Arial, sans-serif" font-size="16">DiagramSpec · automatic layout</text>',
+    '</svg>',
+    '</div>',
+  ].join("");
+}
+
+function renderTechnicalDiagram(slide, index) {
+  const p = slide.props;
+  return slideFrame(
+    slide,
+    index,
+    `layout-technical-diagram technical-diagram-${p.diagram_kind || "architecture"}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      '</header>',
+      `<div class="technical-diagram-stage" data-layout-region="content">${renderTechnicalDiagramRoot(p)}</div>`,
+      editableText("p", "note", p.note || "", "technical-diagram-note"),
+    ].join("\n")
+  );
+}
+
 function renderDashboardOverview(slide, index) {
   const p = slide.props;
   const items = (p.items || []).map((item, itemIndex) => [
@@ -760,6 +881,12 @@ function renderImageHero(slide, index) {
 
 function renderEditorialCover(slide, index) {
   const p = slide.props;
+  const titleLength = Array.from(String(p.title || "").trim()).length;
+  const titleFit = titleLength > 30
+    ? "editorial-title-long"
+    : titleLength > 16
+      ? "editorial-title-medium"
+      : "editorial-title-short";
   const tags = (p.tags || [])
     .map((tag, tagIndex) => editableText(
       "span",
@@ -778,7 +905,7 @@ function renderEditorialCover(slide, index) {
       editableText("p", "marker", p.marker || "", "editorial-cover-marker"),
       "</div>",
       '<div class="editorial-cover-copy" data-layout-region="editorial-cover-copy">',
-      editableText("h1", "title", p.title),
+      editableText("h1", "title", p.title, titleFit),
       editableText("p", "subtitle", p.subtitle, "lead"),
       tags ? `<div class="editorial-cover-tags">${tags}</div>` : "",
       "</div>",
@@ -1668,6 +1795,106 @@ const layouts = [
     render: renderSystemIntegration,
   },
   {
+    id: "technical-diagram-v1",
+    label: "DiagramSpec technical architecture, integration, or pipeline",
+    editor: {
+      label: "专业技术图",
+      description: "DiagramSpec 节点/边可编辑，ELK 自动布局，PPTX 矢量导出",
+      controls: {
+        enums: {
+          diagram_kind: {
+            label: "技术图类型",
+            options: {
+              architecture: "架构图",
+              integration: "系统集成图",
+              pipeline: "数据管道",
+            },
+          },
+          direction: {
+            label: "布局方向",
+            options: { RIGHT: "从左到右", DOWN: "从上到下" },
+          },
+        },
+        diagramData: {
+          label: "DiagramSpec",
+          nodesPath: "nodes",
+          edgesPath: "edges",
+          minNodes: 2,
+          maxNodes: 16,
+          minEdges: 0,
+          maxEdges: 24,
+        },
+      },
+      defaultProps: {
+        eyebrow: "技术架构",
+        title: "企业 AI 服务平台架构",
+        subtitle: "节点与连接关系可编辑；修改结构后重新执行自动布局",
+        diagram_kind: "architecture",
+        direction: "RIGHT",
+        nodes: [
+          { id: "channel", label: "用户渠道", detail: "Web · App · IM", kind: "client" },
+          { id: "gateway", label: "API Gateway", detail: "鉴权 · 限流 · 路由", kind: "gateway" },
+          { id: "orchestrator", label: "AI Orchestrator", detail: "会话 · 工具 · 策略", kind: "hub" },
+          { id: "knowledge", label: "知识检索", detail: "RAG · 向量索引", kind: "service" },
+          { id: "business", label: "业务服务", detail: "订单 · CRM · 工单", kind: "external" },
+          { id: "governance", label: "治理与观测", detail: "审计 · 指标 · 告警", kind: "data" },
+        ],
+        edges: [
+          { id: "edge-channel-gateway", source: "channel", target: "gateway", label: "HTTPS" },
+          { id: "edge-gateway-ai", source: "gateway", target: "orchestrator", label: "请求" },
+          { id: "edge-ai-knowledge", source: "orchestrator", target: "knowledge", label: "检索" },
+          { id: "edge-ai-business", source: "orchestrator", target: "business", label: "工具调用" },
+          { id: "edge-ai-governance", source: "orchestrator", target: "governance", label: "日志 / 指标" },
+        ],
+        note: "PPTX 中导出为单个 SVG 矢量对象；节点级编辑保留在 HTML / DiagramSpec。",
+      },
+    },
+    roles: [
+      "architecture",
+      "system-design",
+      "integration",
+      "data-flow",
+      "data-pipeline",
+      "technology",
+    ],
+    density: "high",
+    contentShape: ["diagram-spec", "nodes", "edges", "architecture", "pipeline"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The DiagramSpec SVG is the primary visual; keep the slide background quiet and structural.",
+    }),
+    capabilities: ["editable", "pptx-safe", "diagram", "svg-vector", "auto-layout"],
+    variants: ["architecture", "integration", "pipeline"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(72, { role: "heading" }),
+      subtitle: textField(140, { required: false, role: "caption" }),
+      diagram_kind: enumField(["architecture", "integration", "pipeline"], "architecture"),
+      direction: enumField(["RIGHT", "DOWN"], "RIGHT"),
+      nodes: arrayField(2, 16, {
+        id: textField(32, { editor: false, role: "label" }),
+        label: textField(36, { role: "heading" }),
+        detail: textField(64, { required: false, role: "body" }),
+        kind: textField(16, { required: false, role: "label" }),
+      }),
+      edges: arrayField(0, 24, {
+        id: textField(48, { editor: false, role: "label" }),
+        source: textField(32, { role: "label" }),
+        target: textField(32, { role: "label" }),
+        label: textField(32, { required: false, role: "caption" }),
+      }),
+      note: textField(160, { required: false, role: "caption" }),
+    },
+    defaultProps: {
+      subtitle: "",
+      diagram_kind: "architecture",
+      direction: "RIGHT",
+      note: "",
+    },
+    render: renderTechnicalDiagram,
+  },
+  {
     id: "dashboard-overview-v1",
     label: "Qualitative management dashboard overview",
     editor: {
@@ -2291,6 +2518,7 @@ function contentSnapshot(sourceSlide) {
   addUnits(props.actions);
   addUnits(props.layers);
   addUnits(props.systems);
+  addUnits(props.nodes);
   addUnits(props.rows);
   if (Array.isArray(props.categories) && Array.isArray(props.series)) {
     const firstSeries = props.series.find(item => item && Array.isArray(item.values));
@@ -2429,6 +2657,27 @@ function createEditorProps(layoutId, sourceSlide = null) {
       flow: fitText(firstText(unit.body, unit.label), 64, "输入交换的数据或动作"),
     }));
     props.systems = fillFromDefaults(mapped, props.systems, 4);
+  } else if (layoutId === "technical-diagram-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 12).map((unit, index) => ({
+      id: `node-${index + 1}`,
+      label: fitText(firstText(unit.title, unit.value), 36, `节点 ${index + 1}`),
+      detail: fitText(firstText(unit.body, unit.label), 64, ""),
+      kind: index === 0 ? "client" : index === snapshot.units.length - 1 ? "data" : "service",
+    }));
+    props.nodes = fillFromDefaults(mapped, props.nodes, 2);
+    props.edges = props.nodes.slice(1).map((node, index) => ({
+      id: `edge-${index + 1}`,
+      source: props.nodes[index].id,
+      target: node.id,
+      label: "",
+    }));
+    if (sourceSlide.layout_id === "system-integration-v1") {
+      props.diagram_kind = "integration";
+      props.direction = "RIGHT";
+    } else if (sourceSlide.layout_id === "architecture-layered-v1") {
+      props.diagram_kind = "architecture";
+      props.direction = "DOWN";
+    }
   } else if (layoutId === "dashboard-overview-v1" && snapshot.units.length) {
     const mapped = snapshot.units.slice(0, 6).map((unit, index) => ({
       label: fitText(unit.label, 24, `DOMAIN ${index + 1}`),
@@ -2526,6 +2775,7 @@ function manifestRecord(layout) {
 return {
   EDITOR_PLACEHOLDER_IMAGE,
   createEditorProps,
+  createTechnicalDiagramPreset,
   escapeHtml,
   getLayout,
   layouts,

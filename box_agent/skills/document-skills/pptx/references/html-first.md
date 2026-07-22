@@ -607,7 +607,8 @@ background-decoration bitmap (see below), loads
 `html_to_editable_pptx.js` defaults to `--bg-capture always`. For each slide it
 takes a 1920x1080 PNG that contains **only** the slide-level background and
 pure-decoration nodes; every text container, text node, pill / chip / card
-background, `<img>`, and `data-pptx-chart` chart node is hidden during capture. The captures are written to
+background, `<img>`, `data-pptx-chart` chart node, and `data-pptx-diagram`
+diagram root (including all of its descendants) is hidden during capture. The captures are written to
 `assets/bg-capture/slide-XX.png` next to `deck.html` and inserted into the
 in-memory DOM as `<img class="pptx-bg">` at the back of each slide before
 `dom-to-pptx` runs. After capture the exporter removes every node it marked
@@ -622,18 +623,23 @@ when **all** of these are true:
 
 Plus, regardless of content, these elements are always treated as decoration:
 `<svg>` (including any text/tspan inside it), `<hr>`, `<canvas>`, and CSS
-`::before` / `::after` pseudo-elements. Exception: ECharts/data-chart nodes
+`::before` / `::after` pseudo-elements. Exceptions: ECharts/data-chart nodes
 marked with `data-pptx-chart`, `data-chart-spec`, or ECharts instance metadata
-are treated as non-decoration so they do not enter the background screenshot.
+and technical diagrams marked with `data-pptx-diagram` are treated as
+non-decoration so they do not enter the background screenshot. A marked
+technical diagram must contain exactly one direct inline `<svg>` root and a
+recoverable `data-diagram-spec` or `data-diagram-spec-src`; never route it
+through `<img src="*.svg">`, which the image pipeline rasterizes.
 
 Resulting layer order in PPT:
 
 1. background bitmap (one per slide, faithful pixel render of all decoration)
 2. existing `<img>` elements, including `assets/generated/*` (kept as native
    PPT pictures and remain individually replaceable)
-3. text containers, pills, chips, cards, badges (kept as native PPT shapes
+3. marked technical diagrams (kept as one SVG vector picture per diagram)
+4. text containers, pills, chips, cards, badges (kept as native PPT shapes
    with native fills, borders, radii)
-4. text (kept as native editable text frames)
+5. text (kept as native editable text frames)
 
 Implications for authors:
 

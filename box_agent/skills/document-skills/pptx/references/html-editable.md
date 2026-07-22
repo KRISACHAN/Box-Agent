@@ -115,6 +115,11 @@ browser DOM for export, writes `qa/html_self_check.json`, and writes
 and defaults `svgAsVector: false` so SVGs are rasterized for pixel fidelity,
 closer to the in-browser button export path. Pass `--svg-vector true` only when
 PowerPoint vector editability is more important than visual fidelity. If
+the source contains any `[data-pptx-diagram]`, the exporter overrides that
+default and forces `svgAsVector: true` for the whole export. Every marked
+diagram must provide recoverable DiagramSpec data and exactly one direct inline
+`<svg>` root; `<img src="*.svg">` is not a supported technical-diagram path.
+The export summary records `diagramCount` and `diagramVectorExport: true`. If
 `qa/html_self_check.json` is missing, do not say HTML
 self-check passed.
 

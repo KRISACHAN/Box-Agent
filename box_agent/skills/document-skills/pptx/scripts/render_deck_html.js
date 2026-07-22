@@ -260,6 +260,23 @@ function renderDocument(deck, theme) {
         "  </script>",
       ]
     : [];
+  const hasDiagrams = slideHtml.includes("data-pptx-diagram");
+  const diagramScripts = hasDiagrams
+    ? [
+        '  <script data-deck-runtime="elkjs" data-elk-version="0.12.0">',
+        safeInlineScript(fs.readFileSync(
+          path.join(SKILL_ROOT, "runtime", "vendor", "elkjs", "elk.bundled.js"),
+          "utf8"
+        )),
+        "  </script>",
+        '  <script data-deck-runtime="diagram-runtime">',
+        safeInlineScript(fs.readFileSync(
+          path.join(SKILL_ROOT, "runtime", "diagram-runtime.js"),
+          "utf8"
+        )),
+        "  </script>",
+      ]
+    : [];
   const visualDnaIds = theme.selection && Array.isArray(theme.selection.visual_dna_ids)
     ? theme.selection.visual_dna_ids.filter(value => typeof value === "string" && value.trim())
     : [];
@@ -294,6 +311,7 @@ function renderDocument(deck, theme) {
     safeInlineScript(layoutRegistryJs),
     "  </script>",
     ...chartScripts,
+    ...diagramScripts,
     "  <script>",
     editorJs,
     "  </script>",

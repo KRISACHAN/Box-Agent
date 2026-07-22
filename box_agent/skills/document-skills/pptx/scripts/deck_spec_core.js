@@ -49,13 +49,13 @@ const LAYOUT_ID_ALIASES = Object.freeze({
   "business-model-v1": "cards-grid-v1",
   "comparison-matrix-v1": "table-data-v1",
   "funding-use-v1": "chart-data-v1",
-  "architecture-diagram-v1": "architecture-layered-v1",
-  "integration-map-v1": "system-integration-v1",
+  "architecture-diagram-v1": "technical-diagram-v1",
+  "integration-map-v1": "technical-diagram-v1",
+  "data-pipeline-v1": "technical-diagram-v1",
   "qualitative-dashboard-v1": "dashboard-overview-v1",
 });
 const LAYOUT_ID_HINTS = Object.freeze([
-  { keywords: ["architecture", "system-layer", "tech-stack"], id: "architecture-layered-v1" },
-  { keywords: ["integration", "data-flow", "system-map"], id: "system-integration-v1" },
+  { keywords: ["architecture", "system-layer", "tech-stack", "integration", "data-flow", "system-map", "data-pipeline", "pipeline"], id: "technical-diagram-v1" },
   { keywords: ["dashboard-overview", "management-dashboard", "operations-dashboard"], id: "dashboard-overview-v1" },
   { keywords: ["image-hero", "hero-split", "visual-split"], id: "image-hero-split-v1" },
   { keywords: ["closing", "thank-you", "thankyou", "next-step", "cta", "contact"], id: "closing-next-steps-v1" },
@@ -624,6 +624,45 @@ function validateChartDataProps(props, fieldPath, issues) {
   });
 }
 
+function validateTechnicalDiagramProps(props, fieldPath, issues) {
+  const nodes = Array.isArray(props && props.nodes) ? props.nodes : [];
+  const edges = Array.isArray(props && props.edges) ? props.edges : [];
+  const nodeIds = new Set();
+  const edgeIds = new Set();
+  nodes.forEach((node, nodeIndex) => {
+    const nodeId = String(node && node.id || "");
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(nodeId)) {
+      issues.push(
+        `${fieldPath}.nodes.${nodeIndex}.id: use 1-32 letters, numbers, '_' or '-', starting with alphanumeric`
+      );
+    } else if (nodeIds.has(nodeId)) {
+      issues.push(`${fieldPath}.nodes.${nodeIndex}.id: duplicate node id ${JSON.stringify(nodeId)}`);
+    } else {
+      nodeIds.add(nodeId);
+    }
+  });
+  edges.forEach((edge, edgeIndex) => {
+    const edgeId = String(edge && edge.id || "");
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$/.test(edgeId)) {
+      issues.push(
+        `${fieldPath}.edges.${edgeIndex}.id: use 1-48 letters, numbers, '_' or '-', starting with alphanumeric`
+      );
+    } else if (edgeIds.has(edgeId)) {
+      issues.push(`${fieldPath}.edges.${edgeIndex}.id: duplicate edge id ${JSON.stringify(edgeId)}`);
+    } else {
+      edgeIds.add(edgeId);
+    }
+    ["source", "target"].forEach(endpoint => {
+      const nodeId = String(edge && edge[endpoint] || "");
+      if (!nodeIds.has(nodeId)) {
+        issues.push(
+          `${fieldPath}.edges.${edgeIndex}.${endpoint}: unknown node id ${JSON.stringify(nodeId)}`
+        );
+      }
+    });
+  });
+}
+
 function validateAndNormalizeDeck(spec) {
   const issues = [];
   const warnings = [];
@@ -724,6 +763,8 @@ function validateAndNormalizeDeck(spec) {
     );
     if (slide.layout_id === "chart-data-v1") {
       validateChartDataProps(normalizedProps, `${slidePath}.props`, issues);
+    } else if (slide.layout_id === "technical-diagram-v1") {
+      validateTechnicalDiagramProps(normalizedProps, `${slidePath}.props`, issues);
     }
     const normalizedDrafts = validateAndNormalizeLayoutDrafts(
       slide.layout_drafts,

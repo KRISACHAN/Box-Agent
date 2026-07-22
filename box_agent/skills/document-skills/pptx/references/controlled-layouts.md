@@ -186,6 +186,14 @@ and scores), the renderer automatically uses independently scaled small
 multiples. Each panel remains an animated ECharts view backed by the same
 editable data grid and exports as its own native editable PowerPoint chart.
 
+Use `technical-diagram-v1` for architecture, system-integration, and data-
+pipeline pages. Select `diagram_kind` as `architecture`, `integration`, or
+`pipeline`; author stable node ids plus explicit edges in its DiagramSpec, then
+let the bundled ELK runtime compute the SVG layout. The HTML editor changes the
+recoverable nodes/edges and can add, delete, or relayout them. The PPTX route
+exports each marked diagram as one SVG vector picture, not as node-level native
+PowerPoint shapes.
+
 Use `table-data-v1` when exact labels and values matter more than trend. Its
 `gantt` variant supports one task column plus up to five phase columns and up
 to twelve work packages; represent inactive schedule cells with `—`, not an

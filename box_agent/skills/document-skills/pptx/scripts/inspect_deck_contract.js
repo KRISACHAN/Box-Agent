@@ -7,6 +7,7 @@ const { createHash } = require("crypto");
 
 const {
   createEditorProps,
+  createTechnicalDiagramPreset,
   getLayout,
   manifestRecord,
 } = require("../layouts/registry.js");
@@ -354,6 +355,14 @@ function buildSlide(layoutId, index, outlineSlide = null) {
   const semantic = outlineSlide ? analyzeOutlineLayoutIntent(outlineSlide) : null;
   if (layoutId === "table-data-v1" && semantic && semantic.kind === "gantt") {
     props.variant = "gantt";
+  }
+  if (layoutId === "technical-diagram-v1" && semantic) {
+    const diagramKind = {
+      "technical-architecture": "architecture",
+      "system-integration": "integration",
+      "data-pipeline": "pipeline",
+    }[semantic.kind];
+    if (diagramKind) Object.assign(props, createTechnicalDiagramPreset(diagramKind));
   }
   alignScaffoldVisualCardinality(layoutId, props, outlineSlide);
   return {

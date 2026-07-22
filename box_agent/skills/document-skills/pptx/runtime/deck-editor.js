@@ -871,6 +871,185 @@
     return group;
   }
 
+  function createDiagramSelect(pathValue, value, label, options) {
+    const select = document.createElement("select");
+    select.dataset.controlAction = "set-data-value";
+    select.dataset.controlPath = pathValue;
+    select.setAttribute("aria-label", label);
+    options.forEach(option => {
+      const element = document.createElement("option");
+      element.value = option.value;
+      element.textContent = option.label;
+      element.selected = option.value === value;
+      select.appendChild(element);
+    });
+    return select;
+  }
+
+  function createDiagramDataControl(config, modelSlide) {
+    if (!config) return null;
+    const nodes = getAtPath(modelSlide.props, config.nodesPath);
+    const edges = getAtPath(modelSlide.props, config.edgesPath);
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) return null;
+    const group = document.createElement("section");
+    group.className = "layout-control-group layout-diagram-data-control";
+
+    const heading = document.createElement("div");
+    heading.className = "layout-control-heading";
+    const title = document.createElement("h3");
+    title.textContent = config.label || "DiagramSpec";
+    const count = document.createElement("span");
+    count.className = "layout-control-count";
+    count.textContent = `${nodes.length} 节点 · ${edges.length} 条边`;
+    heading.append(title, count);
+
+    const nodeTitle = document.createElement("h4");
+    nodeTitle.className = "diagram-data-subheading";
+    nodeTitle.textContent = "节点";
+    const nodeScroller = document.createElement("div");
+    nodeScroller.className = "chart-data-editor-scroll";
+    const nodeTable = document.createElement("table");
+    nodeTable.className = "chart-data-editor-table diagram-data-editor-table";
+    const nodeHead = document.createElement("thead");
+    const nodeHeadRow = document.createElement("tr");
+    ["ID", "名称", "说明", "类型", ""].forEach(label => {
+      const cell = document.createElement("th");
+      cell.textContent = label;
+      nodeHeadRow.appendChild(cell);
+    });
+    nodeHead.appendChild(nodeHeadRow);
+    const nodeBody = document.createElement("tbody");
+    const kindOptions = [
+      { value: "service", label: "服务" },
+      { value: "hub", label: "核心平台" },
+      { value: "client", label: "入口 / 外部" },
+      { value: "data", label: "数据" },
+      { value: "gateway", label: "网关" },
+      { value: "queue", label: "消息 / 队列" },
+      { value: "external", label: "外部系统" },
+    ];
+    nodes.forEach((node, nodeIndex) => {
+      const row = document.createElement("tr");
+      const idCell = document.createElement("th");
+      idCell.scope = "row";
+      idCell.textContent = node.id;
+      row.appendChild(idCell);
+      [
+        { key: "label", label: `节点 ${nodeIndex + 1} 名称` },
+        { key: "detail", label: `节点 ${nodeIndex + 1} 说明` },
+      ].forEach(column => {
+        const cell = document.createElement("td");
+        cell.appendChild(createChartDataInput(
+          `${config.nodesPath}.${nodeIndex}.${column.key}`,
+          node[column.key],
+          column.label
+        ));
+        row.appendChild(cell);
+      });
+      const kindCell = document.createElement("td");
+      kindCell.appendChild(createDiagramSelect(
+        `${config.nodesPath}.${nodeIndex}.kind`,
+        node.kind || "service",
+        `节点 ${nodeIndex + 1} 类型`,
+        kindOptions
+      ));
+      row.appendChild(kindCell);
+      const actionCell = document.createElement("td");
+      actionCell.className = "chart-data-row-action";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.controlAction = "delete-diagram-node";
+      remove.dataset.controlIndex = String(nodeIndex);
+      remove.textContent = "×";
+      remove.title = `删除节点 ${node.label || node.id}`;
+      remove.setAttribute("aria-label", remove.title);
+      remove.disabled = nodes.length <= Number(config.minNodes || 2);
+      actionCell.appendChild(remove);
+      row.appendChild(actionCell);
+      nodeBody.appendChild(row);
+    });
+    nodeTable.append(nodeHead, nodeBody);
+    nodeScroller.appendChild(nodeTable);
+
+    const edgeTitle = document.createElement("h4");
+    edgeTitle.className = "diagram-data-subheading";
+    edgeTitle.textContent = "边";
+    const edgeScroller = document.createElement("div");
+    edgeScroller.className = "chart-data-editor-scroll";
+    const edgeTable = document.createElement("table");
+    edgeTable.className = "chart-data-editor-table diagram-data-editor-table";
+    const edgeHead = document.createElement("thead");
+    const edgeHeadRow = document.createElement("tr");
+    ["来源", "目标", "标签", ""].forEach(label => {
+      const cell = document.createElement("th");
+      cell.textContent = label;
+      edgeHeadRow.appendChild(cell);
+    });
+    edgeHead.appendChild(edgeHeadRow);
+    const edgeBody = document.createElement("tbody");
+    const endpointOptions = nodes.map(node => ({ value: node.id, label: node.label || node.id }));
+    edges.forEach((edge, edgeIndex) => {
+      const row = document.createElement("tr");
+      ["source", "target"].forEach(endpoint => {
+        const cell = document.createElement("td");
+        cell.appendChild(createDiagramSelect(
+          `${config.edgesPath}.${edgeIndex}.${endpoint}`,
+          edge[endpoint],
+          `边 ${edgeIndex + 1} ${endpoint === "source" ? "来源" : "目标"}`,
+          endpointOptions
+        ));
+        row.appendChild(cell);
+      });
+      const labelCell = document.createElement("td");
+      labelCell.appendChild(createChartDataInput(
+        `${config.edgesPath}.${edgeIndex}.label`,
+        edge.label || "",
+        `边 ${edgeIndex + 1} 标签`
+      ));
+      row.appendChild(labelCell);
+      const actionCell = document.createElement("td");
+      actionCell.className = "chart-data-row-action";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.controlAction = "delete-diagram-edge";
+      remove.dataset.controlIndex = String(edgeIndex);
+      remove.textContent = "×";
+      remove.title = `删除边 ${edgeIndex + 1}`;
+      remove.setAttribute("aria-label", remove.title);
+      remove.disabled = edges.length <= Number(config.minEdges || 0);
+      actionCell.appendChild(remove);
+      row.appendChild(actionCell);
+      edgeBody.appendChild(row);
+    });
+    edgeTable.append(edgeHead, edgeBody);
+    edgeScroller.appendChild(edgeTable);
+
+    const actions = document.createElement("div");
+    actions.className = "chart-data-editor-actions diagram-data-editor-actions";
+    [
+      { action: "add-diagram-node", label: "＋ 节点", disabled: nodes.length >= Number(config.maxNodes || 16) },
+      { action: "add-diagram-edge", label: "＋ 边", disabled: nodes.length < 2 || edges.length >= Number(config.maxEdges || 24) },
+      { action: "relayout-diagram", label: "重新布局", disabled: false },
+    ].forEach(item => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.controlAction = item.action;
+      button.textContent = item.label;
+      button.disabled = item.disabled;
+      actions.appendChild(button);
+    });
+
+    group.append(
+      heading,
+      nodeTitle,
+      nodeScroller,
+      edgeTitle,
+      edgeScroller,
+      actions
+    );
+    return group;
+  }
+
   function createChartDataControl(layout, config, modelSlide) {
     if (!config) return null;
     const categories = getAtPath(modelSlide.props, config.categoriesPath);
@@ -1008,6 +1187,8 @@
     });
     const itemDataControl = createItemDataControl(controls.itemData, modelSlide);
     if (itemDataControl) layoutControlGroups.appendChild(itemDataControl);
+    const diagramDataControl = createDiagramDataControl(controls.diagramData, modelSlide);
+    if (diagramDataControl) layoutControlGroups.appendChild(diagramDataControl);
     const chartDataControl = createChartDataControl(layout, controls.chartData, modelSlide);
     if (chartDataControl) layoutControlGroups.appendChild(chartDataControl);
   }
@@ -1034,6 +1215,21 @@
     });
   }
 
+  function requestDiagramLayout(scope, message = "") {
+    const runtime = window.__deckDiagramRuntime;
+    if (!runtime || typeof runtime.requestLayout !== "function" ||
+        !scope || !scope.querySelector("[data-pptx-diagram]")) {
+      return null;
+    }
+    const pending = runtime.requestLayout(scope);
+    if (pending && typeof pending.then === "function") {
+      pending.then(() => {
+        if (message) showToast(message);
+      }).catch(() => showToast("技术图布局失败，请检查节点和边"));
+    }
+    return pending;
+  }
+
   function rerenderCurrentSlide(reason, message) {
     const sourceElement = selectedSlide();
     const modelSlide = documentModel.slides[currentIndex];
@@ -1046,6 +1242,7 @@
     sourceElement.replaceWith(nextElement);
     observer.unobserve(sourceElement);
     observer.observe(nextElement);
+    requestDiagramLayout(nextElement);
     refreshEditingAttributes();
     renumberSlides();
     emitChange(reason);
@@ -1080,7 +1277,8 @@
     const layout = modelSlide ? getLayout(modelSlide.layout_id) : null;
     const controls = layout && layout.editor && layout.editor.controls;
     const contract = getFieldContract(layout, pathValue);
-    if (!modelSlide || !controls || (!controls.chartData && !controls.itemData) ||
+    if (!modelSlide || !controls ||
+        (!controls.chartData && !controls.itemData && !controls.diagramData) ||
         !contract || contract.type !== "text") {
       return false;
     }
@@ -1144,6 +1342,85 @@
       "delete-series": "已删除系列",
     };
     const changed = rerenderCurrentSlide("chart-data-structure", messages[action]);
+    if (!changed) modelSlide.props = previousProps;
+    return changed;
+  }
+
+  function nextDiagramId(items, prefix) {
+    const ids = new Set(items.map(item => String(item && item.id || "")));
+    let sequence = items.length + 1;
+    while (ids.has(`${prefix}-${sequence}`)) sequence += 1;
+    return `${prefix}-${sequence}`;
+  }
+
+  function mutateDiagramData(action, index = -1) {
+    flushActiveTextEdit();
+    const modelSlide = documentModel.slides[currentIndex];
+    const layout = modelSlide ? getLayout(modelSlide.layout_id) : null;
+    const config = layout && layout.editor && layout.editor.controls &&
+      layout.editor.controls.diagramData;
+    if (!modelSlide || !config) return false;
+    const nodes = getAtPath(modelSlide.props, config.nodesPath);
+    const edges = getAtPath(modelSlide.props, config.edgesPath);
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) return false;
+    const previousProps = deepClone(modelSlide.props);
+
+    if (action === "add-node") {
+      if (nodes.length >= Number(config.maxNodes || 16)) return false;
+      const id = nextDiagramId(nodes, "node");
+      nodes.push({ id, label: `新节点 ${nodes.length + 1}`, detail: "", kind: "service" });
+    } else if (action === "delete-node") {
+      if (nodes.length <= Number(config.minNodes || 2) || index < 0 || index >= nodes.length) {
+        return false;
+      }
+      const nodeId = nodes[index].id;
+      nodes.splice(index, 1);
+      for (let edgeIndex = edges.length - 1; edgeIndex >= 0; edgeIndex -= 1) {
+        if (edges[edgeIndex].source === nodeId || edges[edgeIndex].target === nodeId) {
+          edges.splice(edgeIndex, 1);
+        }
+      }
+    } else if (action === "add-edge") {
+      if (nodes.length < 2 || edges.length >= Number(config.maxEdges || 24)) return false;
+      const existing = new Set(edges.map(edge => `${edge.source}->${edge.target}`));
+      let source = nodes[0].id;
+      let target = nodes[1].id;
+      let found = false;
+      for (let sourceIndex = 0; sourceIndex < nodes.length && !found; sourceIndex += 1) {
+        for (let targetIndex = 0; targetIndex < nodes.length; targetIndex += 1) {
+          if (sourceIndex === targetIndex) continue;
+          const candidate = `${nodes[sourceIndex].id}->${nodes[targetIndex].id}`;
+          if (!existing.has(candidate)) {
+            source = nodes[sourceIndex].id;
+            target = nodes[targetIndex].id;
+            found = true;
+            break;
+          }
+        }
+      }
+      if (!found) return false;
+      edges.push({
+        id: nextDiagramId(edges, "edge"),
+        source,
+        target,
+        label: "新连接",
+      });
+    } else if (action === "delete-edge") {
+      if (edges.length <= Number(config.minEdges || 0) || index < 0 || index >= edges.length) {
+        return false;
+      }
+      edges.splice(index, 1);
+    } else {
+      return false;
+    }
+
+    const messages = {
+      "add-node": `已添加节点 · ${nodes.length}/${config.maxNodes || 16}`,
+      "delete-node": `已删除节点及关联边 · ${nodes.length}/${config.maxNodes || 16}`,
+      "add-edge": `已添加边 · ${edges.length}/${config.maxEdges || 24}`,
+      "delete-edge": `已删除边 · ${edges.length}/${config.maxEdges || 24}`,
+    };
+    const changed = rerenderCurrentSlide(`diagram-${action}`, messages[action]);
     if (!changed) modelSlide.props = previousProps;
     return changed;
   }
@@ -1262,6 +1539,7 @@
     documentModel.slides.splice(insertIndex, 0, modelSlide);
     currentIndex = insertIndex;
     observer.observe(element);
+    requestDiagramLayout(element);
     refreshEditingAttributes();
     renumberSlides();
     emitChange("add-slide");
@@ -1309,6 +1587,7 @@
     documentModel.slides[currentIndex] = nextModel;
     observer.unobserve(sourceElement);
     observer.observe(nextElement);
+    requestDiagramLayout(nextElement);
     refreshEditingAttributes();
     renumberSlides();
     emitChange("change-layout");
@@ -1635,12 +1914,22 @@
         mutateChartData("add-series");
       } else if (action === "delete-chart-series") {
         mutateChartData("delete-series", Number(button.dataset.controlIndex));
+      } else if (action === "add-diagram-node") {
+        mutateDiagramData("add-node");
+      } else if (action === "delete-diagram-node") {
+        mutateDiagramData("delete-node", Number(button.dataset.controlIndex));
+      } else if (action === "add-diagram-edge") {
+        mutateDiagramData("add-edge");
+      } else if (action === "delete-diagram-edge") {
+        mutateDiagramData("delete-edge", Number(button.dataset.controlIndex));
+      } else if (action === "relayout-diagram") {
+        requestDiagramLayout(selectedSlide(), "已重新执行技术图布局");
       }
     });
 
     layoutControls.addEventListener("change", event => {
       event.stopPropagation();
-      const input = event.target.closest('input[data-control-action="set-data-value"]');
+      const input = event.target.closest('[data-control-action="set-data-value"]');
       if (!input) return;
       setChartDataValue(input.dataset.controlPath, input.value);
     });
