@@ -34,21 +34,11 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-# Reuse existing helpers from build_runtime.py so we don't drift.
-from scripts.build_runtime import (  # type: ignore
-    BUILD_TOOLS_CACHE,
-    PYTHON_STANDALONE_VERSION,
-    _install_portable_git_win,
-    _install_portable_python_win,
-    _install_sandbox_packages_win,
-    _relativize_node_manifest,
-)
-from box_agent.tools.runtime import DEFAULT_NODE_VERSION, NodeRuntimeManager
 
 
 def _read_version_from_package() -> str:
@@ -67,29 +57,94 @@ def _ensure_win() -> None:
         sys.exit(2)
 
 
-def _run_pyinstaller(bin_dir: Path) -> None:
-    """Run PyInstaller and copy the output into ``bin_dir``."""
-    print("\n[win] Installing runtime extras...")
-    extras_cmd_pip = [sys.executable, "-m", "pip", "install", "--quiet",
-                      f"{PROJECT_ROOT}[runtime]"]
+def _install_runtime_extras() -> None:
+    """Install build extras into the interpreter running this script."""
+    requirement = f"{PROJECT_ROOT}[runtime]"
+    pip_cmd = [
+        sys.executable, "-m", "pip", "install", "--quiet", requirement,
+    ]
     uv_bin = shutil.which("uv")
     if uv_bin:
-        extras = subprocess.run(
-            [uv_bin, "pip", "install", "--quiet", f"{PROJECT_ROOT}[runtime]"],
-            cwd=str(PROJECT_ROOT),
+        uv_cmd = [
+            uv_bin,
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--quiet",
+            requirement,
+        ]
+        result = subprocess.run(uv_cmd, cwd=str(PROJECT_ROOT))
+        if result.returncode == 0:
+            return
+        print(
+            "uv failed to install runtime extras; retrying with pip...",
+            file=sys.stderr,
         )
-        if extras.returncode != 0:
-            subprocess.run(extras_cmd_pip, cwd=str(PROJECT_ROOT))
-    else:
-        subprocess.run(extras_cmd_pip, cwd=str(PROJECT_ROOT))
 
+    result = subprocess.run(pip_cmd, cwd=str(PROJECT_ROOT))
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Failed to install runtime extras into "
+            f"{sys.executable} (exit code {result.returncode})"
+        )
+
+
+def _load_build_dependencies() -> None:
+    """Load project helpers only after their dependencies are installed."""
+    global BUILD_TOOLS_CACHE
+    global PYTHON_STANDALONE_VERSION
+    global DEFAULT_NODE_VERSION
+    global NodeRuntimeManager
+    global _install_portable_git_win
+    global _install_portable_python_win
+    global _install_sandbox_packages_win
+    global _relativize_node_manifest
+
+    from scripts import build_runtime
+    from box_agent.tools.runtime import (
+        DEFAULT_NODE_VERSION as node_version,
+        NodeRuntimeManager as node_runtime_manager,
+    )
+
+    BUILD_TOOLS_CACHE = build_runtime.BUILD_TOOLS_CACHE
+    PYTHON_STANDALONE_VERSION = build_runtime.PYTHON_STANDALONE_VERSION
+    DEFAULT_NODE_VERSION = node_version
+    NodeRuntimeManager = node_runtime_manager
+    _install_portable_git_win = build_runtime._install_portable_git_win
+    _install_portable_python_win = build_runtime._install_portable_python_win
+    _install_sandbox_packages_win = build_runtime._install_sandbox_packages_win
+    _relativize_node_manifest = build_runtime._relativize_node_manifest
+
+
+def _rmtree_with_retry(
+    path: Path,
+    *,
+    attempts: int = 5,
+    delay_seconds: float = 0.2,
+) -> None:
+    """Remove a tree, retrying transient Windows directory errors."""
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay_seconds * (attempt + 1))
+
+
+def _run_pyinstaller(bin_dir: Path) -> None:
+    """Run PyInstaller and copy the output into ``bin_dir``."""
     work_dir = bin_dir.parent.parent / "pyinstaller_work"
     dist_dir = bin_dir.parent.parent / "pyinstaller_out"
     spec_dir = bin_dir.parent.parent
     if work_dir.exists():
-        shutil.rmtree(work_dir)
+        _rmtree_with_retry(work_dir)
     if dist_dir.exists():
-        shutil.rmtree(dist_dir)
+        _rmtree_with_retry(dist_dir)
 
     entry_point = PROJECT_ROOT / "box_agent" / "acp" / "runtime_entry.py"
 
@@ -165,7 +220,7 @@ def _run_pyinstaller(bin_dir: Path) -> None:
         sys.exit(1)
 
     if bin_dir.exists():
-        shutil.rmtree(bin_dir)
+        _rmtree_with_retry(bin_dir)
     bin_dir.mkdir(parents=True, exist_ok=True)
     for item in pyinstaller_output.iterdir():
         dest = bin_dir / item.name
@@ -232,7 +287,7 @@ def _install_to(runtime_dir: Path, target: Path, exe_only: bool) -> None:
         src_bin = runtime_dir / "bin"
         dst_bin = target / "bin"
         if dst_bin.exists():
-            shutil.rmtree(dst_bin)
+            _rmtree_with_retry(dst_bin)
         shutil.copytree(src_bin, dst_bin)
         # Refresh manifest + VERSION too so consumers see new version
         for fname in ("manifest.json", "VERSION"):
@@ -242,7 +297,7 @@ def _install_to(runtime_dir: Path, target: Path, exe_only: bool) -> None:
         print(f"[win] Installed bin/ -> {target}")
     else:
         if target.exists():
-            shutil.rmtree(target)
+            _rmtree_with_retry(target)
         shutil.copytree(runtime_dir, target)
         print(f"[win] Installed full runtime tree -> {target}")
 
@@ -268,6 +323,10 @@ def main() -> None:
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     runtime_dir = output_dir / "box-agent-runtime"
+
+    print("\n[win] Installing runtime extras...")
+    _install_runtime_extras()
+    _load_build_dependencies()
     BUILD_TOOLS_CACHE.mkdir(parents=True, exist_ok=True)
 
     print(f"Building box-agent-runtime v{version} for win32-x64")
@@ -286,14 +345,14 @@ def main() -> None:
         # Wipe only bin/
         bin_dir = runtime_dir / "bin"
         if bin_dir.exists():
-            shutil.rmtree(bin_dir)
+            _rmtree_with_retry(bin_dir)
         _run_pyinstaller(bin_dir)
         # Manifest version bump so consumers see the new exe
         _write_manifest(runtime_dir, version)
     else:
         # Full clean build
         if runtime_dir.exists():
-            shutil.rmtree(runtime_dir)
+            _rmtree_with_retry(runtime_dir)
         runtime_dir.mkdir(parents=True)
         bin_dir = runtime_dir / "bin"
         bin_dir.mkdir()
