@@ -175,7 +175,7 @@ def test_layout_manifest_is_generated_from_registry() -> None:
         for dna_id in theme["selection"]["visual_dna_ids"]
     }
     assert len(visual_dna_ids) == 32
-    assert len(theme_ids) == 33
+    assert len(theme_ids) == 34
     assert visual_dna_ids <= theme_ids
     assert covered_dna_ids == visual_dna_ids
     assert {
@@ -251,12 +251,23 @@ def test_layout_manifest_is_generated_from_registry() -> None:
     )
     assert mono_blue["selection"]["visual_dna_ids"] == ["block-frame"]
     assert mono_blue["palette"]["primary"] == "#1E2BFA"
-    assert len(manifest["layouts"]) == 15
+    consulting_navy = next(
+        theme for theme in manifest["themes"] if theme["id"] == "consulting-navy"
+    )
+    assert consulting_navy["selection"]["scheme"] == "cool-light"
+    assert consulting_navy["selection"]["formality"] == "high"
+    assert consulting_navy["palette"]["background"] == "#F4F7FA"
+    assert consulting_navy["palette"]["primary"] == "#173B63"
+    assert consulting_navy["composition"]["family"] == "institutional-grid"
+    assert len(manifest["layouts"]) == 18
     assert {layout["id"] for layout in manifest["layouts"]} >= {
         "cover-hero-v1",
         "cover-editorial-v1",
         "comparison-two-column-v1",
         "text-columns-v1",
+        "architecture-layered-v1",
+        "system-integration-v1",
+        "dashboard-overview-v1",
         "chart-bar-v1",
         "chart-data-v1",
         "table-data-v1",
@@ -295,6 +306,18 @@ def test_layout_manifest_is_generated_from_registry() -> None:
         "use_existing",
         "skip",
     ]
+    architecture = next(
+        layout for layout in manifest["layouts"] if layout["id"] == "architecture-layered-v1"
+    )
+    assert architecture["fields"]["layers"]["maxItems"] == 6
+    table = next(
+        layout for layout in manifest["layouts"] if layout["id"] == "table-data-v1"
+    )
+    assert table["fields"]["columns"]["maxItems"] == 6
+    assert table["fields"]["rows"]["maxItems"] == 12
+    assert table["fields"]["rows"]["itemShape"]["maxItems"] == 6
+    assert "gantt" in table["variants"]
+    assert "gantt" in table["fields"]["variant"]["values"]
 
 
 def test_skill_avoids_public_research_permission_and_micro_todo_loops() -> None:
@@ -364,7 +387,7 @@ def test_every_registered_theme_renders_all_controlled_layouts(tmp_path: Path) -
     )
     assert scaffold.returncode == 0, scaffold.stderr
     deck = json.loads(deck_path.read_text(encoding="utf-8"))
-    assert len(deck["slides"]) == 15
+    assert len(deck["slides"]) == 18
 
     for theme in manifest["themes"]:
         theme_id = theme["id"]
@@ -379,7 +402,7 @@ def test_every_registered_theme_renders_all_controlled_layouts(tmp_path: Path) -
         assert rendered.returncode == 0, f"{theme_id}: {rendered.stderr}"
         html = html_path.read_text(encoding="utf-8")
         rendered_deck = html.split('<section class="deck-layout-picker"', 1)[0]
-        assert rendered_deck.count('<section class="slide ') == 15, theme_id
+        assert rendered_deck.count('<section class="slide ') == 18, theme_id
         assert f'data-deck-theme-id="{theme_id}"' in html
         assert (
             f'data-deck-composition="{theme["composition"]["family"]}"' in html
@@ -469,7 +492,7 @@ def test_new_composition_families_render_every_layout(
     rendered_deck = html.split('<section class="deck-layout-picker"', 1)[0]
     rendered_dom = rendered_deck.split('<main id="deck-root">', 1)[1]
     template = COMPOSITION_TEMPLATES[family]
-    assert rendered_deck.count('<section class="slide ') == 15
+    assert rendered_deck.count('<section class="slide ') == 18
     assert f'data-deck-composition="{family}"' in html
     assert f'data-composition-template="{template}"' in rendered_deck
     assert f'class="composition-root composition-{template}"' in rendered_deck
@@ -769,6 +792,86 @@ def test_friendly_onboarding_auto_corrects_fallback_theme_and_avoids_schematic(
     assert report["theme_selection"]["confidence"] == "high"
     assert report["design_selection"]["family"] == "editorial-spread"
     assert report["design_selection"]["scores"].get("technical-schematic", 0) == 0
+
+
+def test_theme_inference_does_not_treat_negated_playful_style_as_positive(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=3,
+        source_mode="user_provided",
+    )
+    outline.update(
+        {
+            "deck_goal": "为连锁零售集团生成稳健可落地的智能客服评标方案。",
+            "audience": "客户采购负责人、IT 负责人和业务负责人",
+            "storyline": "从客户需求、解决方案到业务价值与实施计划。",
+        }
+    )
+    outline["slides"][0].update(
+        {
+            "title": "某连锁零售集团智能客服升级",
+            "layout": "浅底咨询风封面",
+            "visual": "深蓝、钢灰和浅灰的规整封面",
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "需求与方案",
+            "layout": "规整的咨询公司式卡片",
+            "visual": "极简装饰与高信息密度",
+        }
+    )
+    outline["slides"][2].update(
+        {
+            "title": "实施计划",
+            "layout": "规整时间线",
+            "visual": "可落地的阶段式计划",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "selection" / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "timeline-horizontal-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--title",
+        "智能客服评标方案",
+        "--fact",
+        "整体风格要稳健、专业、可信、可落地",
+        "--fact",
+        "浅底，深蓝 / 钢灰 / 浅灰冷色调，版式规整，装饰极简",
+        "--fact",
+        "不要做成投资人路演风、文艺杂志风、活泼亲和风或花哨拼贴风",
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    report = json.loads(
+        (deck_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+    assert deck["theme_id"] == "consulting-navy"
+    assert report["theme_selection"]["theme_id"] == "consulting-navy"
+    signals = {
+        item["signal"] for item in report["theme_selection"]["matched_signals"]
+    }
+    assert "cool consulting review signature" in signals
+    assert "friendly mood" not in signals
+    assert "lively supporting mood" not in signals
+    assert "friendly lively signature" not in signals
 
 
 def test_lock_theme_preserves_explicit_user_choice_for_onboarding(
@@ -1211,10 +1314,10 @@ console.log(JSON.stringify({ layouts: slides.length, migrations, enumControls, c
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "layouts": 15,
-        "migrations": 225,
-        "enumControls": 21,
-        "collectionControls": 13,
+        "layouts": 18,
+        "migrations": 324,
+        "enumControls": 24,
+        "collectionControls": 16,
     }
 
 
@@ -1247,18 +1350,21 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
     layout_payload = json.loads(layouts.stdout)
     theme_ids = [item["id"] for item in theme_payload["themes"]]
     assert theme_payload["composition_directions"] == list(COMPOSITION_DIRECTIONS)
-    assert len(theme_ids) == 33
+    assert len(theme_ids) == 34
     assert theme_ids == sorted(theme_ids)
     assert {"signal", "studio", "vellum", "8-bit-orbit"} <= set(theme_ids)
-    assert layout_payload["count"] == 15
+    assert layout_payload["count"] == 18
     assert {item["id"] for item in layout_payload["layouts"]} >= {
+        "architecture-layered-v1",
+        "system-integration-v1",
+        "dashboard-overview-v1",
         "project-case-study-v1",
         "image-hero-split-v1",
         "chart-bar-v1",
         "chart-data-v1",
         "table-data-v1",
     }
-    assert len(themes.stdout) + len(layouts.stdout) < 22_500
+    assert len(themes.stdout) + len(layouts.stdout) < 23_700
 
 
 def test_scaffold_normalizes_known_semantic_theme_alias(tmp_path: Path) -> None:
@@ -1425,7 +1531,7 @@ def test_scaffold_binds_outline_pages_and_imports_public_research_evidence(
     )
 
 
-def test_scaffold_rejects_outline_count_and_qualitative_quantitative_layout(
+def test_scaffold_rejects_outline_count_and_normalizes_qualitative_quantitative_layout(
     tmp_path: Path,
 ) -> None:
     outline_path = tmp_path / "outline.json"
@@ -1454,9 +1560,169 @@ def test_scaffold_rejects_outline_count_and_qualitative_quantitative_layout(
         "--out",
         str(tmp_path / "qualitative-chart.json"),
     )
-    assert qualitative_chart.returncode == 1
-    assert "kpi-grid-v1 requires quantitative evidence" in qualitative_chart.stderr
-    assert "inventing chart or KPI values" in qualitative_chart.stderr
+    assert qualitative_chart.returncode == 0, qualitative_chart.stderr
+    contract = json.loads(qualitative_chart.stdout)
+    assert contract["layout_normalizations"] == [
+        {
+            "slide": 2,
+            "from": "kpi-grid-v1",
+            "to": "cards-grid-v1",
+            "reason": (
+                "qualitative outline pages use a safe editable cards layout "
+                "instead of invented chart or KPI values"
+            ),
+        }
+    ]
+    deck = json.loads((tmp_path / "qualitative-chart.json").read_text())
+    assert [slide["layout_id"] for slide in deck["slides"]] == [
+        "cards-grid-v1",
+        "cards-grid-v1",
+        "cards-grid-v1",
+    ]
+
+
+def test_scaffold_recovers_architecture_integration_and_qualitative_dashboard(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(
+        json.dumps(
+            {
+                "deck_goal": "说明智能客服解决方案如何落地",
+                "audience": "采购、业务与 IT 评审人",
+                "source_mode": "user_provided",
+                "storyline": "从技术架构进入系统集成，再以管理闭环收束。",
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "真实技术分层架构",
+                        "message": "按职责边界组织各层能力。",
+                        "bullets": ["触点、AI 服务、业务集成与运营治理分层"],
+                        "layout": "architecture-layered-v1",
+                        "visual": "分层架构图，包含触点、AI 服务、业务系统与安全运维模块",
+                        "evidence": [],
+                    },
+                    {
+                        "page": 2,
+                        "title": "系统集成与数据流设计",
+                        "message": "中心平台与现有系统双向连接。",
+                        "bullets": ["连接订单、会员、CRM、工单和统一认证"],
+                        "layout": "system-integration-v1",
+                        "visual": "系统集成图，平台居中并标注与外围系统的数据流",
+                        "evidence": [],
+                    },
+                    {
+                        "page": 3,
+                        "title": "数据看板与管理闭环",
+                        "message": "先定义管理指标域，接入后再呈现真实值。",
+                        "bullets": ["关注效率、体验、分流、知识与稳定性"],
+                        "layout": "dashboard-overview-v1",
+                        "visual": "管理驾驶舱示意，不展示未经提供的数值",
+                        "evidence": [],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "kpi-grid-v1",
+        "kpi-grid-v1",
+        "kpi-grid-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    contract = json.loads(result.stdout)
+    assert [item["to"] for item in contract["layout_normalizations"]] == [
+        "architecture-layered-v1",
+        "system-integration-v1",
+        "dashboard-overview-v1",
+    ]
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert [slide["layout_id"] for slide in deck["slides"]] == [
+        "architecture-layered-v1",
+        "system-integration-v1",
+        "dashboard-overview-v1",
+    ]
+
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert "layout-architecture" in html
+    assert 'class="architecture-layers" data-layout-region="content"' in html
+    assert 'class="architecture-stack" data-layout-region="content"' not in html
+    assert 'class="architecture-module"' in html
+    assert 'class="architecture-module-text"' in html
+    assert "layout-system-integration" in html
+    assert "layout-dashboard-overview" in html
+
+    report_path = tmp_path / "html-self-check.json"
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--allow-local-images",
+        "--report",
+        str(report_path),
+    )
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert not any(
+        "short background text uses vertical padding" in warning
+        for warning in report["warnings"]
+    )
+
+
+def test_quantitative_dashboard_keeps_kpi_layout(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(
+        json.dumps(
+            {
+                "deck_goal": "复盘客服运营指标",
+                "audience": "管理层",
+                "source_mode": "user_provided",
+                "storyline": "用真实指标说明运营表现。",
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "客服数据看板",
+                        "message": "机器人解决率为 68%。",
+                        "bullets": ["转人工率为 21%"],
+                        "layout": "dashboard-overview-v1",
+                        "visual": "数据看板，展示机器人解决率与转人工率",
+                        "evidence": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "dashboard-overview-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "kpi-grid-v1"
 
 
 def test_scaffold_accepts_user_provided_quantitative_outline_without_links(
@@ -1572,11 +1838,124 @@ def test_scaffold_persists_visual_intent_and_normalizes_strong_layout_mismatches
         "cards-grid-v1",
     ]
     assert [item["slide"] for item in payload["layout_normalizations"]] == [1, 3, 4]
+    assert len(deck["slides"][3]["props"]["items"]) == 4
+    assert payload["authoring_rules"]["outline_policy"]["pages"][3][
+        "expected_visual_item_count"
+    ] == 4
     assert deck["slides"][0]["outline_intent"] == {
         key: outline["slides"][0][key]
         for key in ("title", "message", "layout", "visual")
     }
     assert deck["design"]["family"] == "institutional-grid"
+
+
+def test_scaffold_and_patch_support_six_column_nine_row_gantt(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "实施计划与里程碑甘特图",
+            "message": "项目按启动、建设、集成、上线和优化阶段推进。",
+            "bullets": [
+                "包含启动、调研、知识库建设、AI配置训练、系统集成、联调测试、试点上线、全量推广、运营优化。"
+            ],
+            "layout": "gantt-plan",
+            "visual": "规整甘特图，横轴为项目阶段，纵轴为九项工作包。",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    contract = json.loads(scaffold.stdout)
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    slide = deck["slides"][0]
+    assert slide["layout_id"] == "table-data-v1"
+    assert slide["props"]["variant"] == "gantt"
+    assert len(slide["props"]["rows"]) == 9
+    assert contract["authoring_rules"]["outline_policy"]["pages"][0][
+        "expected_visual_item_count"
+    ] == 9
+
+    patch_path = tmp_path / "deck.patch.json"
+    rows = [
+        ["启动", "■", "", "", "", ""],
+        ["调研", "■", "", "", "", ""],
+        ["知识库建设", "", "■", "", "", ""],
+        ["AI配置训练", "", "■", "", "", ""],
+        ["系统集成", "", "", "■", "", ""],
+        ["联调测试", "", "", "■", "", ""],
+        ["试点上线", "", "", "", "■", ""],
+        ["全量推广", "", "", "", "■", ""],
+        ["运营优化", "", "", "", "", "■"],
+    ]
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "title": "实施计划与里程碑甘特图",
+                            "columns": [
+                                "工作包",
+                                "启动调研",
+                                "建设配置",
+                                "集成测试",
+                                "上线推广",
+                                "运营优化",
+                            ],
+                            "rows": rows,
+                            "variant": "ledger",
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    applied = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    applied_payload = json.loads(applied.stdout)
+    assert any(
+        "replaced empty schedule/table cell with an em dash" in item
+        for item in applied_payload["normalization_changes"]
+    )
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    props = deck["slides"][0]["props"]
+    assert props["variant"] == "gantt"
+    assert len(props["columns"]) == 6
+    assert len(props["rows"]) == 9
+    assert props["rows"][0] == ["启动", "■", "—", "—", "—", "—"]
+
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert "table-gantt" in html
+    assert "table-columns-6" in html
+    assert "gantt-active" in html
+    assert "gantt-idle" in html
 
 
 def test_bound_deck_rejects_visual_cardinality_and_missing_persisted_intent(
@@ -2304,6 +2683,69 @@ def test_scaffold_normalizes_structured_next_steps_closing_to_table(
     ]
 
 
+def test_scaffold_normalizes_five_item_closing_summary_to_cards(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "合作价值与评标结论",
+            "message": "用评标价值收束整套方案。",
+            "bullets": [
+                "理解业务",
+                "技术可信",
+                "集成清晰",
+                "实施可控",
+                "投入产出清晰",
+            ],
+            "layout": "closing-next-steps-v1",
+            "visual": (
+                "结论页，用五项评标价值条目收束：理解业务、技术可信、"
+                "集成清晰、实施可控、投入产出清晰。"
+            ),
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "closing-next-steps-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "cards-grid-v1"
+    report = json.loads(
+        (tmp_path / "qa" / "deck_contract.json").read_text(encoding="utf-8")
+    )
+    assert report["layout_plan_requested"] == ["closing-next-steps-v1"]
+    assert report["layout_plan"] == ["cards-grid-v1"]
+    assert report["layout_normalizations"] == [
+        {
+            "slide": 1,
+            "from": "closing-next-steps-v1",
+            "to": "cards-grid-v1",
+            "reason": (
+                "outline requests 5 closing value items, "
+                "which exceeds the four-action closing layout"
+            ),
+        }
+    ]
+
+
 def test_strict_source_closing_sanitizer_removes_unsupported_action_expansion(
     tmp_path: Path,
 ) -> None:
@@ -2818,7 +3260,7 @@ def test_deck_contract_normalizes_pitch_layout_and_required_field_aliases(
     )
 
     assert scaffold.returncode == 0, scaffold.stderr
-    assert len(scaffold.stdout) < 22_500
+    assert len(scaffold.stdout) < 22_750
     deck = json.loads(deck_path.read_text())
     assert [slide["layout_id"] for slide in deck["slides"]] == [
         "comparison-two-column-v1",
@@ -2858,6 +3300,9 @@ def test_deck_contract_normalizes_pitch_layout_and_required_field_aliases(
         ("market-donut-chart-v2", "chart-data-v1"),
         ("feature-matrix-v2", "table-data-v1"),
         ("research-deep-dive-v2", "text-columns-v1"),
+        ("architecture-diagram-v1", "architecture-layered-v1"),
+        ("integration-map-v1", "system-integration-v1"),
+        ("qualitative-dashboard-v1", "dashboard-overview-v1"),
         ("thank-you-v2", "closing-next-steps-v1"),
     ],
 )
@@ -3956,6 +4401,152 @@ def test_controlled_batch_patch_preserves_layout_contract_and_scaffolded_facts(
     )
 
 
+def test_batch_patch_normalizes_nested_architecture_module_capacity(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "architecture-layered-v1",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stderr
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "layers": [
+                                {
+                                    "label": "TOUCHPOINT",
+                                    "title": "用户触点层",
+                                    "modules": ["官网", "APP"],
+                                },
+                                {
+                                    "label": "AI SERVICE",
+                                    "title": "智能服务层",
+                                    "modules": [
+                                        "意图识别",
+                                        "多轮对话",
+                                        "知识检索",
+                                        "会话路由",
+                                        "人工转接",
+                                        "额外模块",
+                                    ],
+                                },
+                                {
+                                    "label": "INTEGRATION",
+                                    "title": "业务集成层",
+                                    "modules": ["订单系统", "会员系统"],
+                                },
+                            ]
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    modules = deck["slides"][0]["props"]["layers"][1]["modules"]
+    assert modules == ["意图识别", "多轮对话", "知识检索", "会话路由", "人工转接"]
+    payload = json.loads(result.stdout)
+    assert (
+        "slides.slide-01.props.layers.1.modules: truncated to 5 items"
+        in payload["normalization_changes"]
+    )
+
+
+def test_batch_patch_moves_need_solution_value_source_to_table_insight(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "table-data-v1",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stderr
+    source = (
+        "需求：客户需要清楚评估实施阶段、责任分工、关键里程碑、验收边界和上线风险。"
+        "方案：按启动、调研、建设、集成、测试、试点、推广和优化分阶段推进。"
+        "价值：通过试点验证和分阶段推广控制风险，让业务与技术团队逐步进入稳定运营。"
+    )
+    assert len(source) > 100
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {"slides": {"slide-01": {"props": {"source": source}}}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["props"]["source"] == ""
+    assert deck["slides"][0]["props"]["insight"] == (
+        "客户收益：通过试点验证和分阶段推广控制风险，让业务与技术团队逐步进入稳定运营。"
+    )
+    payload = json.loads(result.stdout)
+    assert (
+        "slides.slide-01.props.source: moved overlong need-solution-value copy to insight"
+        in payload["normalization_changes"]
+    )
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert rendered.returncode == 0, rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert 'class="table-insight" data-prop-path="insight"' in html
+    assert "客户收益：通过试点验证和分阶段推广控制风险" in html
+
+
+def test_batch_patch_compacts_overlong_optional_source_caption(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "table-data-v1",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stderr
+    source = "来源：客户提供的项目资料与内部访谈纪要；" + "补充来源说明" * 20
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {"slides": {"slide-01": {"props": {"source": source}}}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    compacted = deck["slides"][0]["props"]["source"]
+    assert 0 < len(compacted) <= 100
+    assert compacted.startswith("来源：客户提供的项目资料与内部访谈纪要")
+    payload = json.loads(result.stdout)
+    assert (
+        "slides.slide-01.props.source: compacted optional source caption to 100 characters"
+        in payload["normalization_changes"]
+    )
+
+
 def test_batch_patch_wraps_unambiguous_top_level_slide_ids(tmp_path: Path) -> None:
     deck_path = tmp_path / "deck.json"
     scaffold = _run(
@@ -4400,6 +4991,162 @@ def test_truth_validator_rejects_observed_unsourced_claims(tmp_path: Path) -> No
     assert 'numeric claim "2024"' in issues
     assert "performance/award/publication claim is not source-backed" in issues
     assert "team-size claim is not source-backed" in issues
+
+
+def test_truth_validator_allows_qualitative_problem_and_expected_value_copy(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "--fact",
+        "AA 科技能力包括 AI 客服机器人、知识库管理、人工转接和数据看板",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "需求 — 方案 — 价值",
+            "title": "客户价值",
+            "subtitle": (
+                "需求：客户希望降低人工客服压力并提升响应速度。"
+                "方案：以 AI 客服机器人连接知识库、人工转接和数据看板。"
+                "价值：让采购、IT、业务同时看到成本可控、技术可信、运营可持续。"
+            ),
+            "items": [
+                {
+                    "kicker": "01",
+                    "title": "客户痛点",
+                    "body": (
+                        "复杂咨询转人工时若上下文丢失，客户需要重复描述问题，"
+                        "人工处理效率也会下降。"
+                    ),
+                },
+                {
+                    "kicker": "02",
+                    "title": "预期收益",
+                    "body": (
+                        "客户在控制人工资源投入的同时，"
+                        "提升复杂问题处理效率和服务连续性。"
+                    ),
+                },
+                {
+                    "kicker": "03",
+                    "title": "风险控制",
+                    "body": (
+                        "客户可在稳妥前提下推进智能客服升级，"
+                        "降低技术、业务和运营风险。"
+                    ),
+                },
+            ],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    result = _run("validate_deck_truth.js", str(deck_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_truth_validator_accepts_user_backed_case_coverage_paraphrase(
+    tmp_path: Path,
+) -> None:
+    source_fact = "已有案例覆盖：电商、零售、教育。"
+    source_text = (
+        "请生成客户评标 PPT。"
+        f"{source_fact}"
+        "案例页的真实客户名称和关键数字未提供时使用待补充占位。"
+    )
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        source_text.encode("utf-8")
+    ).decode("ascii")
+    deck_path = tmp_path / "deck.json"
+    patch_path = tmp_path / "deck.patch.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "table-data-v1",
+        "--fact",
+        source_fact,
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "eyebrow": "行业案例",
+                            "title": "电商、零售、教育行业案例",
+                            "subtitle": (
+                                "AA 科技已有电商、零售和教育行业覆盖场景材料，"
+                                "可为本项目沉淀可复用的实施方法；"
+                                "具体客户名称与量化成果待授权补充。"
+                            ),
+                            "columns": ["行业案例", "成果说明", "关键数字"],
+                            "rows": [
+                                ["电商", "场景说明待补充", "待补充"],
+                                ["零售", "场景说明待补充", "待补充"],
+                                ["教育", "场景说明待补充", "待补充"],
+                            ],
+                            "source": source_fact,
+                            "variant": "ledger",
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    applied = _run(
+        "apply_deck_patch.js",
+        str(deck_path),
+        str(patch_path),
+        env=env,
+    )
+
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert "覆盖场景材料" in deck["slides"][0]["props"]["subtitle"]
+    truth = _run("validate_deck_truth.js", str(deck_path), env=env)
+    assert truth.returncode == 0, truth.stdout + truth.stderr
+
+
+def test_truth_validator_rejects_extra_observed_result_in_coverage_paraphrase(
+    tmp_path: Path,
+) -> None:
+    source_fact = "已有案例覆盖：电商、零售、教育。"
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "table-data-v1",
+        "--fact",
+        source_fact,
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"]["subtitle"] = (
+        "AA 科技已有电商、零售和教育行业覆盖，并已实现客户成本降低。"
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    result = _run("validate_deck_truth.js", str(deck_path))
+
+    assert result.returncode == 1
+    issues = json.loads(
+        result.stdout.split("\nDeck truth validation:", 1)[0]
+    )["issues"]
+    assert any("performance/award/publication claim" in issue for issue in issues)
 
 
 def test_truth_validator_accepts_dotted_date_and_transition_wording(
@@ -4905,6 +5652,52 @@ def test_outline_validator_writes_report_and_flags_reused_evidence(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["ok"] is True
     assert any("evidence is reused across 3 slides" in item for item in report["warnings"])
+
+
+def test_outline_array_audience_and_storyline_pass_validation_and_scaffold(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=3,
+        source_mode="user_provided",
+    )
+    outline["audience"] = ["采购负责人", "IT 负责人", "业务负责人"]
+    outline["storyline"] = [
+        "先说明客户需求与评审重点。",
+        "再展开解决方案、系统集成与实施计划。",
+        "最后以客户价值和下一步收束。",
+    ]
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    validation = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--report",
+        str(tmp_path / "qa" / "outline_check.json"),
+    )
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+    assert json.loads(validation.stdout)["ok"] is True
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "cards-grid-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(tmp_path / "deck.json"),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    assert (tmp_path / "deck.json").is_file()
+    assert (tmp_path / "assets" / "generated" / "manifest.json").is_file()
 
 
 def test_public_research_outline_requires_numeric_claims_in_page_evidence(
@@ -5913,6 +6706,20 @@ def test_slide_background_is_validated_normalized_and_rendered(tmp_path: Path) -
     assert 'data-model-root="slide" data-prop-path="background.src"' in html
     assert '"fit": "cover"' in html
     assert '"position": "center"' in html
+    assert (
+        ".slide-background::after {\n"
+        "  content: \"\";\n"
+        "  position: absolute;\n"
+        "  inset: 0;\n"
+        "  background: var(--deck-bg);\n"
+        "  opacity: 0.7;"
+    ) in html
+    assert "background: rgba(253, 250, 231, 0.7);" not in html
+    assert (
+        ".slide.background-wash-dark .slide-background::after {\n"
+        "  background: #0D0E12;\n"
+        "  opacity: 0.64;"
+    ) in html
 
 
 def test_statement_auto_uses_wrapping_points_for_sentence_values(tmp_path: Path) -> None:

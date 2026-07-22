@@ -31,6 +31,8 @@ const {
 } = require("./composition_core.js");
 const {
   analyzeOutlineLayoutIntent,
+  expectedVisualItemCount,
+  outlineHasQuantitativeEvidence,
   outlineIntentRecord,
 } = require("./outline_layout_contract.js");
 const { inferTheme } = require("./theme_selection_core.js");
@@ -348,10 +350,16 @@ function parseArgs(argv) {
 }
 
 function buildSlide(layoutId, index, outlineSlide = null) {
+  const props = createEditorProps(layoutId);
+  const semantic = outlineSlide ? analyzeOutlineLayoutIntent(outlineSlide) : null;
+  if (layoutId === "table-data-v1" && semantic && semantic.kind === "gantt") {
+    props.variant = "gantt";
+  }
+  alignScaffoldVisualCardinality(layoutId, props, outlineSlide);
   return {
     id: `slide-${String(index + 1).padStart(2, "0")}`,
     layout_id: layoutId,
-    props: createEditorProps(layoutId),
+    props,
     ...(outlineSlide
       ? {
         source_outline_page: outlineSlide.page,
@@ -361,8 +369,61 @@ function buildSlide(layoutId, index, outlineSlide = null) {
   };
 }
 
+const VISUAL_COLLECTION_FIELDS = Object.freeze({
+  "cover-editorial-v1": "tags",
+  "cards-grid-v1": "items",
+  "timeline-horizontal-v1": "steps",
+  "table-data-v1": "rows",
+  "closing-next-steps-v1": "actions",
+});
+
+function alignScaffoldVisualCardinality(layoutId, props, outlineSlide) {
+  const expected = expectedVisualItemCount(outlineSlide);
+  const field = VISUAL_COLLECTION_FIELDS[layoutId];
+  const layout = getLayout(layoutId);
+  const contract = layout && layout.fields ? layout.fields[field] : null;
+  const collection = field && Array.isArray(props[field]) ? props[field] : null;
+  if (
+    !expected
+    || !field
+    || !contract
+    || !collection
+    || expected <= collection.length
+    || (Number.isInteger(contract.maxItems) && expected > contract.maxItems)
+  ) return;
+  const seed = collection.length ? collection[collection.length - 1] : null;
+  while (collection.length < expected) {
+    const item = seed === null ? "待填充" : JSON.parse(JSON.stringify(seed));
+    const ordinal = collection.length + 1;
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      if (Object.prototype.hasOwnProperty.call(item, "kicker")) {
+        item.kicker = String(ordinal).padStart(2, "0");
+      }
+      if (Object.prototype.hasOwnProperty.call(item, "phase")) {
+        item.phase = `阶段 ${ordinal}`;
+      }
+      if (Object.prototype.hasOwnProperty.call(item, "title")) {
+        item.title = `第 ${ordinal} 个视觉项`;
+      }
+    } else if (Array.isArray(item) && item.length) {
+      item[0] = `视觉项 ${ordinal}`;
+    }
+    collection.push(item);
+  }
+}
+
 function nonEmptyText(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function narrativeText(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(item => String(item || "").trim())
+      .filter(Boolean)
+      .join("\n");
+  }
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function readOutlineBinding(outlineInput, expectedSlideCount) {
@@ -378,9 +439,12 @@ function readOutlineBinding(outlineInput, expectedSlideCount) {
     throw new Error(`Invalid JSON in ${outlineFile}: ${error.message}`);
   }
   const issues = [];
-  ["deck_goal", "audience", "storyline"].forEach(field => {
-    if (!nonEmptyText(outline && outline[field])) {
-      issues.push(`outline.${field}: required non-empty text`);
+  if (!nonEmptyText(outline && outline.deck_goal)) {
+    issues.push("outline.deck_goal: required non-empty text");
+  }
+  ["audience", "storyline"].forEach(field => {
+    if (!narrativeText(outline && outline[field])) {
+      issues.push(`outline.${field}: required non-empty text or text array`);
     }
   });
   if (!nonEmptyText(outline && outline.source_mode)) {
@@ -431,29 +495,14 @@ function readOutlineBinding(outlineInput, expectedSlideCount) {
     sourceMode,
     content: {
       deck_goal: outline.deck_goal,
-      audience: outline.audience,
-      storyline: outline.storyline,
+      audience: narrativeText(outline.audience),
+      storyline: narrativeText(outline.storyline),
       tone: outline.tone || "",
       slides,
     },
     slides,
     importedResearchFacts,
   };
-}
-
-function outlineHasQuantitativeEvidence(slide, sourceMode = "") {
-  const evidence = Array.isArray(slide && slide.evidence) ? slide.evidence : [];
-  const userProvidedContent = sourceMode === "user_provided"
-    ? [
-      slide && slide.title,
-      slide && slide.message,
-      ...(Array.isArray(slide && slide.bullets) ? slide.bullets : []),
-    ]
-    : [];
-  const content = [...evidence, ...userProvidedContent]
-    .map(value => String(value || ""))
-    .join(" ");
-  return /\d|%|％|[$¥￥€£]|[一二三四五六七八九十百千万]+(?:次|年|届|名|个|项|座|枚|金牌|冠军)/.test(content);
 }
 
 function normalizeOutlineDrivenLayoutIds(layoutIds, outlineBinding) {
@@ -480,15 +529,46 @@ function normalizeOutlineDrivenLayoutIds(layoutIds, outlineBinding) {
       });
       return "table-data-v1";
     }
-    const semantic = analyzeOutlineLayoutIntent(slide);
-    if (!semantic || semantic.allowed_layout_ids.includes(layoutId)) return layoutId;
-    normalizations.push({
-      slide: index + 1,
-      from: layoutId,
-      to: semantic.preferred_layout_id,
-      reason: semantic.reason,
-    });
-    return semantic.preferred_layout_id;
+    const explicitVisualItemCount = expectedVisualItemCount(slide);
+    if (
+      layoutId === "closing-next-steps-v1"
+      && explicitVisualItemCount > 4
+      && explicitVisualItemCount <= 6
+    ) {
+      normalizations.push({
+        slide: index + 1,
+        from: layoutId,
+        to: "cards-grid-v1",
+        reason: (
+          `outline requests ${explicitVisualItemCount} closing value items, ` +
+          "which exceeds the four-action closing layout"
+        ),
+      });
+      return "cards-grid-v1";
+    }
+    const semantic = analyzeOutlineLayoutIntent(slide, outlineBinding.sourceMode);
+    if (semantic && !semantic.allowed_layout_ids.includes(layoutId)) {
+      normalizations.push({
+        slide: index + 1,
+        from: layoutId,
+        to: semantic.preferred_layout_id,
+        reason: semantic.reason,
+      });
+      return semantic.preferred_layout_id;
+    }
+    if (
+      ["chart-bar-v1", "chart-data-v1", "kpi-grid-v1"].includes(layoutId)
+      && !outlineHasQuantitativeEvidence(slide, outlineBinding.sourceMode)
+    ) {
+      normalizations.push({
+        slide: index + 1,
+        from: layoutId,
+        to: "cards-grid-v1",
+        reason: "qualitative outline pages use a safe editable cards layout instead of invented chart or KPI values",
+      });
+      return "cards-grid-v1";
+    }
+    return layoutId;
   });
   return { layoutIds: effective, normalizations };
 }
@@ -498,7 +578,10 @@ function validateOutlineLayoutFit(orderedLayouts, outlineBinding) {
   const quantitativeLayouts = new Set(["chart-bar-v1", "chart-data-v1", "kpi-grid-v1"]);
   const issues = [];
   orderedLayouts.forEach((layout, index) => {
-    const semantic = analyzeOutlineLayoutIntent(outlineBinding.slides[index]);
+    const semantic = analyzeOutlineLayoutIntent(
+      outlineBinding.slides[index],
+      outlineBinding.sourceMode
+    );
     if (semantic && !semantic.allowed_layout_ids.includes(layout.id)) {
       issues.push(
         `slide ${index + 1}: ${layout.id} does not express outline visual intent ` +
@@ -1164,7 +1247,7 @@ function main() {
       },
       outline_policy: outlineBinding
         ? {
-          rule: "Slide N must preserve outline page N. Keep its exact title plus content anchors. Quantitative values may be split across KPI/chart fields when every page value and matching label is preserved; qualitative pages need an exact atomic message/bullet fragment. Do not duplicate full source sentences in every cell, swap page topics, or invent quantitative values for qualitative pages.",
+          rule: "Slide N must preserve outline page N. Keep its exact title plus content anchors. Quantitative values may be split across KPI/chart fields when every page value and matching label is preserved; qualitative pages need an exact atomic message/bullet fragment. When expected_visual_item_count is present, fill exactly that many items/steps/rows/tags/actions; the page-level need-solution-value framing does not replace the requested visual collection. Do not duplicate full source sentences in every cell, swap page topics, or invent quantitative values for qualitative pages.",
           source_mode: outlineBinding.sourceMode,
           evidence_import_count: outlineBinding.importedResearchFacts.length,
           pages: outlineBinding.slides.map(slide => ({
@@ -1174,6 +1257,7 @@ function main() {
             bullets: slide.bullets,
             layout: slide.layout,
             visual: slide.visual,
+            expected_visual_item_count: expectedVisualItemCount(slide),
             evidence: slide.evidence,
           })),
         }

@@ -31,6 +31,34 @@ function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
+function characterLength(value) {
+  return Array.from(String(value == null ? "" : value).trim()).length;
+}
+
+function fitCaption(value, maxChars) {
+  const text = String(value == null ? "" : value).trim();
+  const characters = Array.from(text);
+  if (!Number.isInteger(maxChars) || characters.length <= maxChars) return text;
+  if (maxChars <= 1) return characters.slice(0, maxChars).join("");
+  const clipped = characters.slice(0, maxChars - 1).join("");
+  const sentenceBreak = Math.max(
+    clipped.lastIndexOf("。"),
+    clipped.lastIndexOf("；"),
+    clipped.lastIndexOf(";"),
+    clipped.lastIndexOf(".")
+  );
+  if (sentenceBreak >= Math.floor(maxChars * 0.6)) {
+    return clipped.slice(0, sentenceBreak + 1).trim();
+  }
+  return `${clipped.trimEnd()}…`;
+}
+
+function extractClientBenefit(value) {
+  const text = String(value == null ? "" : value).trim();
+  const match = text.match(/(?:客户收益|收益|价值)\s*[：:]\s*([\s\S]+)$/u);
+  return match ? match[1].trim() : "";
+}
+
 function recordChange(changes, message) {
   if (!changes.includes(message)) changes.push(message);
 }
@@ -128,6 +156,17 @@ function applyAlias(target, destination, aliases, changes, fieldPath) {
 }
 
 function normalizeArrayItem(layoutId, fieldName, item, changes, fieldPath) {
+  if (layoutId === "table-data-v1" && fieldName === "rows" && Array.isArray(item)) {
+    return item.map((cell, columnIndex) => {
+      const value = cell == null ? "" : String(cell).trim();
+      if (value) return value;
+      recordChange(
+        changes,
+        `${fieldPath}.${columnIndex}: replaced empty schedule/table cell with an em dash`
+      );
+      return "—";
+    });
+  }
   if (
     layoutId === "statement-focus-v1" &&
     fieldName === "proofs" &&
@@ -147,6 +186,15 @@ function normalizeArrayItem(layoutId, fieldName, item, changes, fieldPath) {
       normalized.value = `${normalized.value}${normalized.unit}`;
       recordChange(changes, `${fieldPath}.unit: folded into value`);
     }
+  } else if (layoutId === "architecture-layered-v1" && fieldName === "layers") {
+    applyAlias(normalized, "title", ["name"], changes, fieldPath);
+    applyAlias(normalized, "modules", ["items", "components"], changes, fieldPath);
+  } else if (layoutId === "system-integration-v1" && fieldName === "systems") {
+    applyAlias(normalized, "title", ["name", "system"], changes, fieldPath);
+    applyAlias(normalized, "flow", ["description", "body", "data"], changes, fieldPath);
+  } else if (layoutId === "dashboard-overview-v1" && fieldName === "items") {
+    applyAlias(normalized, "title", ["name"], changes, fieldPath);
+    applyAlias(normalized, "detail", ["description", "body", "focus"], changes, fieldPath);
   } else if (layoutId === "timeline-horizontal-v1" && fieldName === "steps") {
     applyAlias(normalized, "title", ["step", "name"], changes, fieldPath);
     applyAlias(normalized, "body", ["description", "text", "content"], changes, fieldPath);
@@ -161,6 +209,20 @@ function normalizeArrayItem(layoutId, fieldName, item, changes, fieldPath) {
 }
 
 function normalizeValueToContract(value, contract, layoutId, fieldName, changes, fieldPath) {
+  if (
+    contract.type === "text"
+    && fieldName === "source"
+    && typeof value === "string"
+    && Number.isInteger(contract.maxChars)
+    && characterLength(value) > contract.maxChars
+  ) {
+    const compacted = fitCaption(value, contract.maxChars);
+    recordChange(
+      changes,
+      `${fieldPath}: compacted optional source caption to ${contract.maxChars} characters`
+    );
+    return compacted;
+  }
   if (contract.type === "media") {
     const alt = layoutId === "project-case-study-v1"
       ? "AI 概念视觉，实际项目图待补充"
@@ -173,7 +235,7 @@ function normalizeValueToContract(value, contract, layoutId, fieldName, changes,
     return undefined;
   }
   if (contract.type === "array" && Array.isArray(value)) {
-    return value.map((item, index) => {
+    const normalizedItems = value.map((item, index) => {
       const itemPath = `${fieldPath}.${index}`;
       const normalizedItem = normalizeArrayItem(
         layoutId,
@@ -188,8 +250,19 @@ function normalizeValueToContract(value, contract, layoutId, fieldName, changes,
       const allowed = Object.keys(contract.itemShape);
       const filtered = {};
       Object.entries(normalizedItem).forEach(([key, nested]) => {
-        if (allowed.includes(key)) filtered[key] = nested;
-        else recordChange(changes, `${itemPath}.${key}: dropped unknown item field`);
+        if (!allowed.includes(key)) {
+          recordChange(changes, `${itemPath}.${key}: dropped unknown item field`);
+          return;
+        }
+        const normalizedNested = normalizeValueToContract(
+          nested,
+          contract.itemShape[key],
+          layoutId,
+          key,
+          changes,
+          `${itemPath}.${key}`
+        );
+        if (normalizedNested !== undefined) filtered[key] = normalizedNested;
       });
       Object.entries(contract.itemShape).forEach(([key, nestedContract]) => {
         if (!nestedContract.required || filtered[key] !== undefined) return;
@@ -203,6 +276,11 @@ function normalizeValueToContract(value, contract, layoutId, fieldName, changes,
       });
       return filtered;
     });
+    const bounded = normalizedItems.slice(0, contract.maxItems);
+    if (bounded.length !== normalizedItems.length) {
+      recordChange(changes, `${fieldPath}: truncated to ${contract.maxItems} items`);
+    }
+    return bounded;
   }
   return clone(value);
 }
@@ -222,6 +300,41 @@ function normalizePatchProps(slide, supplied, changes) {
     applyAlias(normalized, "support", ["context", "subtitle"], changes, basePath);
   } else if (slide.layout_id === "project-case-study-v1") {
     applyAlias(normalized, "positioning", ["summary", "description", "subtitle"], changes, basePath);
+  }
+  if (
+    slide.layout_id === "table-data-v1"
+    && /(?:甘特|gantt)/i.test([
+      slide.props && slide.props.title,
+      slide.outline_intent && slide.outline_intent.title,
+      slide.outline_intent && slide.outline_intent.layout,
+      slide.outline_intent && slide.outline_intent.visual,
+    ].filter(Boolean).join("\n"))
+    && normalized.variant !== "gantt"
+  ) {
+    normalized.variant = "gantt";
+    recordChange(changes, `${basePath}.variant: normalized to gantt from bound outline intent`);
+  }
+  const sourceContract = layout.fields.source;
+  if (
+    sourceContract
+    && layout.fields.insight
+    && typeof normalized.source === "string"
+    && Number.isInteger(sourceContract.maxChars)
+    && characterLength(normalized.source) > sourceContract.maxChars
+    && (!normalized.insight || !String(normalized.insight).trim())
+  ) {
+    const clientBenefit = extractClientBenefit(normalized.source);
+    if (clientBenefit) {
+      normalized.insight = fitCaption(
+        `客户收益：${clientBenefit}`,
+        layout.fields.insight.maxChars
+      );
+      normalized.source = "";
+      recordChange(
+        changes,
+        `${basePath}.source: moved overlong need-solution-value copy to insight`
+      );
+    }
   }
 
   const result = {};

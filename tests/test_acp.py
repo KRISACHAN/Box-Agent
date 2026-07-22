@@ -1010,6 +1010,42 @@ async def test_acp_binds_cumulative_real_user_text_to_bash_env(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_restored_session_binds_user_history_without_assistant_text(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[
+                {
+                    "text": (
+                        "以下是当前会话最近的上下文，请在此基础上继续回答：\n"
+                        "用户:\ntext: 项目为：某连锁零售集团智能客服升级。\n\n"
+                        "助手:\ntext: 内部推断，不应成为事实来源。\n\n"
+                        "用户问题：继续完成 PPT"
+                    )
+                }
+            ],
+        )
+    )
+
+    bash_env = agent._sessions[session.sessionId].agent.tools["bash"]._subprocess_env
+    source_text = base64.b64decode(bash_env["BOX_AGENT_SOURCE_TEXT_B64"]).decode("utf-8")
+    assert source_text == (
+        "项目为：某连锁零售集团智能客服升级。\n\n继续完成 PPT"
+    )
+    assert "内部推断" not in source_text
+
+
+@pytest.mark.asyncio
 async def test_acp_turn_executes_tool(acp_agent):
     agent, conn = acp_agent
     # Explicit session_mode is consumed at session creation; DummyLLM's first

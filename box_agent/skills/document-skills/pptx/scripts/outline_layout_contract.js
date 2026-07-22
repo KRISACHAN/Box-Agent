@@ -17,7 +17,11 @@ const QUADRANT_RE = /(?:四象限|象限图|quadrant)/i;
 const MATRIX_RE = /(?:风险\s*[\/+与、]?依赖)?矩阵|matrix|(?:结构化)?表格|\btable\b/i;
 const BAR_CHART_RE = /(?:柱状图|条形图|排名图|bar\s*chart|column\s*chart)/i;
 const DATA_CHART_RE = /(?:折线图|面积图|饼图|环形图|雷达图|数据图表|line\s*chart|area\s*chart|pie\s*chart|donut\s*chart|radar\s*chart)/i;
-const KPI_RE = /(?:KPI|指标卡|数据看板|metrics?\s*(?:grid|board)|dashboard)/i;
+const ARCHITECTURE_RE = /(?:分层架构|技术架构|系统架构|解决方案架构|架构图|architecture(?:\s*(?:diagram|layered))?)/i;
+const INTEGRATION_RE = /(?:系统集成|集成架构|数据流(?:设计|图)?|接口关系|integration(?:\s*(?:diagram|map))?|data\s*flow)/i;
+const DASHBOARD_RE = /(?:数据看板|管理看板|管理驾驶舱|运营驾驶舱|dashboard(?:\s*overview)?)/i;
+const KPI_RE = /(?:KPI|指标卡|metrics?\s*(?:grid|board))/i;
+const GANTT_RE = /(?:甘特(?:图|计划)?|gantt(?:\s*(?:chart|plan|schedule))?)/i;
 const TIMELINE_RE = /(?:时间轴|路线图|里程碑|节点串联|timeline|roadmap)/i;
 const PROCESS_RE = /(?:三段式|四段式|能力路径|演进路径|流程路径|process\s*flow|journey)/i;
 const COMPARISON_RE = /(?:双栏对比|前后对比|方案对比|two[- ]column\s*comparison|before\s*(?:and|\/)?\s*after)/i;
@@ -59,7 +63,22 @@ function semanticRule(kind, preferred, allowed, reason) {
   };
 }
 
-function analyzeOutlineLayoutIntent(slide) {
+function outlineHasQuantitativeEvidence(slide, sourceMode = "") {
+  const evidence = Array.isArray(slide && slide.evidence) ? slide.evidence : [];
+  const userProvidedContent = sourceMode === "user_provided"
+    ? [
+      slide && slide.title,
+      slide && slide.message,
+      ...(Array.isArray(slide && slide.bullets) ? slide.bullets : []),
+    ]
+    : [];
+  const content = [...evidence, ...userProvidedContent]
+    .map(value => String(value || ""))
+    .join(" ");
+  return /\d|%|％|[$¥￥€£]|[一二三四五六七八九十百千万]+(?:次|年|届|名|个|项|座|枚|金牌|冠军)/.test(content);
+}
+
+function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
   const all = selectionText(slide);
   const visual = visualSelectionText(slide);
   const layout = text(slide && slide.layout);
@@ -70,6 +89,14 @@ function analyzeOutlineLayoutIntent(slide) {
       "cards-grid-v1",
       ["cards-grid-v1"],
       "outline asks for quadrant cards, which require four parallel card regions"
+    );
+  }
+  if (GANTT_RE.test(visual) || GANTT_RE.test(layout)) {
+    return semanticRule(
+      "gantt",
+      "table-data-v1",
+      ["table-data-v1"],
+      "outline asks for an editable Gantt schedule with work packages across delivery phases"
     );
   }
   if (MATRIX_RE.test(visual)) {
@@ -95,6 +122,38 @@ function analyzeOutlineLayoutIntent(slide) {
       ["chart-data-v1"],
       "outline names a specific editable data-chart geometry"
     );
+  }
+  if (ARCHITECTURE_RE.test(visual)) {
+    return semanticRule(
+      "layered-architecture",
+      "architecture-layered-v1",
+      ["architecture-layered-v1"],
+      "outline asks for a layered technical architecture with named modules"
+    );
+  }
+  if (INTEGRATION_RE.test(visual)) {
+    return semanticRule(
+      "system-integration",
+      "system-integration-v1",
+      ["system-integration-v1"],
+      "outline asks for a hub-and-spoke system integration or data-flow map"
+    );
+  }
+  if (DASHBOARD_RE.test(visual)) {
+    const quantitative = outlineHasQuantitativeEvidence(slide, sourceMode);
+    return quantitative
+      ? semanticRule(
+        "quantitative-dashboard",
+        "kpi-grid-v1",
+        ["kpi-grid-v1", "chart-data-v1", "chart-bar-v1"],
+        "outline provides quantitative evidence for an editable KPI dashboard"
+      )
+      : semanticRule(
+        "qualitative-dashboard",
+        "dashboard-overview-v1",
+        ["dashboard-overview-v1"],
+        "outline asks for a dashboard concept without real values, so show editable metric domains without inventing numbers"
+      );
   }
   if (KPI_RE.test(visual)) {
     return semanticRule(
@@ -218,6 +277,7 @@ function validateOutlineVisualCardinality(slide, outlineSlide, basePath) {
 module.exports = {
   analyzeOutlineLayoutIntent,
   expectedVisualItemCount,
+  outlineHasQuantitativeEvidence,
   outlineIntentRecord,
   validateOutlineVisualCardinality,
 };

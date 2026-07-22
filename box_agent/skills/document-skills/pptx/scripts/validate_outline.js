@@ -59,6 +59,13 @@ function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function narrativeText(value) {
+  if (Array.isArray(value)) {
+    return value.map(text).filter(Boolean).join("\n");
+  }
+  return text(value);
+}
+
 function wordLikeLength(value) {
   return Array.from(text(value)).length;
 }
@@ -115,8 +122,13 @@ function validate(outline, opts) {
   const warnings = [];
   const publicResearch = isPublicResearchOutline(outline);
 
-  for (const field of ["deck_goal", "audience", "storyline", "source_mode"]) {
+  for (const field of ["deck_goal", "source_mode"]) {
     if (!text(outline[field])) issues.push(`Missing top-level field: ${field}`);
+  }
+  for (const field of ["audience", "storyline"]) {
+    if (!narrativeText(outline[field])) {
+      issues.push(`Missing top-level field: ${field}`);
+    }
   }
 
   const slides = Array.isArray(outline.slides) ? outline.slides : null;
@@ -369,7 +381,7 @@ function validate(outline, opts) {
     }
   });
 
-  const storyline = text(outline.storyline);
+  const storyline = narrativeText(outline.storyline);
   if (slides.length >= 6 && wordLikeLength(storyline) < 20) {
     warnings.push("storyline is very short for a multi-slide deck; make the narrative arc explicit");
   }

@@ -49,8 +49,14 @@ const LAYOUT_ID_ALIASES = Object.freeze({
   "business-model-v1": "cards-grid-v1",
   "comparison-matrix-v1": "table-data-v1",
   "funding-use-v1": "chart-data-v1",
+  "architecture-diagram-v1": "architecture-layered-v1",
+  "integration-map-v1": "system-integration-v1",
+  "qualitative-dashboard-v1": "dashboard-overview-v1",
 });
 const LAYOUT_ID_HINTS = Object.freeze([
+  { keywords: ["architecture", "system-layer", "tech-stack"], id: "architecture-layered-v1" },
+  { keywords: ["integration", "data-flow", "system-map"], id: "system-integration-v1" },
+  { keywords: ["dashboard-overview", "management-dashboard", "operations-dashboard"], id: "dashboard-overview-v1" },
   { keywords: ["image-hero", "hero-split", "visual-split"], id: "image-hero-split-v1" },
   { keywords: ["closing", "thank-you", "thankyou", "next-step", "cta", "contact"], id: "closing-next-steps-v1" },
   { keywords: ["line-chart", "area-chart", "pie-chart", "donut-chart", "radar-chart", "time-series", "multi-series", "trend-chart"], id: "chart-data-v1" },

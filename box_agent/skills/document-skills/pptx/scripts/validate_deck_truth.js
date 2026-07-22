@@ -17,8 +17,19 @@ const {
 const PLACEHOLDER_RE = /待补充|待确认|tbd|to be confirmed|unknown/i;
 const PERFORMANCE_RE = /复购|转化(?!为)|增长|提升|提高|降低|下降|减少|节省|缩短|扩大|翻倍|达到|超过|覆盖|排名|获奖|赢得|刊载|published|featured|award(?:ed)?|\bwon\b|growth|increase|decrease|conversion|retention|repeat purchase|saved|reduced|improved|grew/i;
 const SOURCE_ONLY_PERFORMANCE_RE = /排名|获奖|赢得|刊载|published|featured|award(?:ed)?|\bwon\b|ranking/i;
-const OBSERVED_CLAIM_CONTEXT_RE = /已|已经|当前|截至|实现|达到|超过|客户|项目|案例|业绩|收入|营收|复购率|转化率|留存率|同比|环比|过去|already|current|achiev|customer|client|project|revenue|retention|conversion/i;
+const OBSERVED_CLAIM_CONTEXT_RE = /已|已经|当前|截至|实际|实现|结果|成果|成功|达到|超过|项目(?:交付|成果|结果)|客户案例|案例|业绩|收入|营收|复购率|转化率|留存率|同比|环比|过去|already|current|actual|achiev|result|outcome|case\s*study|delivered|revenue|retention|conversion/i;
+const EXPECTED_PERFORMANCE_CONTEXT_RE = /目标|预期|预计|计划|旨在|有助于|可以|可将|可在|能够|便于|支持|帮助|期望|力争|争取|target|expected|projected|planned|aim(?:s|ed)?|can|could|may|helps?|supports?|enables?/i;
 const NEGATED_PERFORMANCE_RE = /(?:不|未|无|非|并非|不是|不代表|不等于|not|no|without)[^。；;\n]{0,24}(?:排名|获奖|赢得|刊载|published|featured|award(?:ed)?|\bwon\b|ranking)/i;
+const PERFORMANCE_SIGNAL_GROUPS = Object.freeze([
+  /复购|留存|retention|repeat\s+purchase/i,
+  /转化(?!为)|conversion/i,
+  /增长|扩大|翻倍|growth|grew/i,
+  /提升|提高|increase|improved/i,
+  /降低|下降|减少|节省|缩短|decrease|saved|reduced/i,
+  /达到|超过/i,
+  /覆盖/i,
+  /排名|获奖|赢得|刊载|published|featured|award(?:ed)?|\bwon\b|ranking/i,
+]);
 const CALENDAR_YEAR_TOKEN_RE = /^(?:19|20)\d{2}$/;
 const TEAM_SIZE_RE = /(?:团队|team)[^。；;,\n]{0,28}\d+\s*(?:人|people|members?)|\d+\s*(?:人|people|members?)[^。；;,\n]{0,28}(?:团队|team)/i;
 const CLIENT_SECTION_HEADING_RE = /^(?:合作)?客户(?:名单|列表|案例|概览|墙)?$|^clients?$/i;
@@ -378,7 +389,38 @@ function isNegatedPerformanceClaim(text) {
 function requiresPerformanceBacking(text) {
   if (!PERFORMANCE_RE.test(text) || isNegatedPerformanceClaim(text)) return false;
   if (SOURCE_ONLY_PERFORMANCE_RE.test(text)) return true;
-  return OBSERVED_CLAIM_CONTEXT_RE.test(text) || numberTokens(text).length > 0;
+  if (numberTokens(text).length > 0) return true;
+  if (OBSERVED_CLAIM_CONTEXT_RE.test(text)) return true;
+  if (EXPECTED_PERFORMANCE_CONTEXT_RE.test(text)) return false;
+  // Qualitative solution value is allowed by default. Without an observed-result
+  // marker or a number, wording such as "降低风险" is a proposed benefit,
+  // not evidence that a measured outcome has already occurred.
+  return false;
+}
+
+function performanceSignalIndexes(text) {
+  return PERFORMANCE_SIGNAL_GROUPS
+    .map((pattern, index) => pattern.test(String(text || "")) ? index : -1)
+    .filter(index => index >= 0);
+}
+
+function isSourceSemanticPerformanceParaphrase(text, sourceFacts) {
+  const candidateSignals = performanceSignalIndexes(text);
+  if (!candidateSignals.length) return false;
+  const candidateTokens = researchSemanticTokens(text);
+  if (candidateTokens.size < 3) return false;
+  return sourceFacts.some(fact => {
+    if (!requiresPerformanceBacking(fact)) return false;
+    const factSignals = new Set(performanceSignalIndexes(fact));
+    if (!candidateSignals.every(signal => factSignals.has(signal))) return false;
+    if (numberTokens(text).some(token => !isNumberSourceBacked(token, [fact]))) {
+      return false;
+    }
+    const factTokens = researchSemanticTokens(fact);
+    if (factTokens.size < 3) return false;
+    const shared = [...factTokens].filter(token => candidateTokens.has(token));
+    return shared.length >= 3 && shared.length / factTokens.size >= 0.7;
+  });
 }
 
 function requireStrictSourceBacked(value, fieldPath, normalizedSources, issues) {
@@ -1149,6 +1191,8 @@ function validateSourceBoundDeck(deck) {
       }
       const shortConceptBacked = /\.(?:label|title|eyebrow)$/.test(entry.path)
         && isShortSourceConceptBacked(entry.text, sourceBinding.source_text);
+      const semanticSourceBackedPerformance = !strictSourceOnly
+        && isSourceSemanticPerformanceParaphrase(entry.text, sourceFacts);
       const assumptionBackedPerformance = disclosesAssumptions
         && !SOURCE_ONLY_PERFORMANCE_RE.test(entry.text);
       if (
@@ -1156,6 +1200,7 @@ function validateSourceBoundDeck(deck) {
         && !isSourceBacked(entry.text, normalizedSources)
         && !isResearchBacked(entry.text, researchFacts)
         && !shortConceptBacked
+        && !semanticSourceBackedPerformance
         && !assumptionBackedPerformance
       ) {
         issues.push(

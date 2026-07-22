@@ -2988,6 +2988,10 @@ body[data-deck-composition="analytical-exhibit"] .slide-header h2 {
   font-size: 62px;
 }
 
+body[data-deck-composition="analytical-exhibit"] .layout-kpis .slide-header {
+  min-height: 220px;
+}
+
 body[data-deck-composition="analytical-exhibit"] .layout-cover {
   grid-template-columns: minmax(0, 1.18fr) minmax(420px, 0.82fr);
   gap: 42px;

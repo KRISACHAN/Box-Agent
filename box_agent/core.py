@@ -206,6 +206,32 @@ _CONTROLLED_REPAIR_STALLED_TOOL_ERROR = (
     "a genuinely missing required user/private fact; otherwise end this turn and "
     "report the unresolved internal validation conflict."
 )
+_CONTROLLED_PRESENTATION_PLAN_SCOPE_ERROR = (
+    "CONTROLLED_PRESENTATION_PLAN_SCOPE_INCOMPLETE: the user requested a finished "
+    "presentation, so the execution plan cannot stop at outline/content planning. "
+    "Publish a corrected plan that covers outline.json, deck.json scaffolding, "
+    "content/media authoring, deterministic index.html finalization, and QA. Only "
+    "an explicit user request for outline-only output may omit those delivery stages."
+)
+_CONTROLLED_PLAN_OUTLINE_ONLY_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"(?:本轮|当前|这次)?[^。；;\n]{0,16}(?:仅|只)"
+    r"[^。；;\n]{0,32}(?:outline|大纲|内容方案)"
+    r"|(?:不进入|不生成|不制作|不渲染|不包含)"
+    r"[^。；;\n]{0,32}(?:html|pptx?|页面|幻灯片|主题|版式|布局|脚手架|deck)"
+    r"|\b(?:outline[- ]only|only\s+(?:produce|create|deliver)?\s*outline|"
+    r"do\s+not\s+(?:generate|create|render|deliver)\s+"
+    r"(?:slides?|pages?|html|deck))\b"
+    r")",
+    re.IGNORECASE,
+)
+_CONTROLLED_PLAN_DELIVERY_STEP_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:deck\.json|index\.html|finalize_controlled_deck|"
+    r"(?:生成|制作|编译|渲染|交付|导出)[^。；;\n]{0,32}"
+    r"(?:html|pptx?|页面|幻灯片|deck)|"
+    r"\b(?:scaffold|render|compile|finalize|deliver|export)\b)",
+    re.IGNORECASE,
+)
 _CONTROLLED_RESEARCH_HANDOFF_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_HANDOFF_READY: research QA is complete. "
     "Do not search/browse, create or update todos/plans, reread outline.md or the "
@@ -225,6 +251,45 @@ _CONTROLLED_INSPECT_SCRIPT = _CONTROLLED_FINALIZER_SCRIPT.parent / "inspect_deck
 _CONTROLLED_APPLY_PATCH_SCRIPT = (
     _CONTROLLED_FINALIZER_SCRIPT.parent / "apply_deck_patch.js"
 )
+_CONTROLLED_VALIDATE_OUTLINE_SCRIPT = (
+    _CONTROLLED_FINALIZER_SCRIPT.parent / "validate_outline.js"
+)
+
+
+def _controlled_presentation_plan_scope_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    if (
+        stage in {None, "complete"}
+        or tool_name != "plan_write"
+        or str(arguments.get("action") or "").lower() != "set"
+    ):
+        return None
+    restrictive_text = json.dumps(
+        {
+            "objective": arguments.get("objective"),
+            "scope": arguments.get("scope"),
+            "risks": arguments.get("risks"),
+            "assumptions": arguments.get("assumptions"),
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    if not _CONTROLLED_PLAN_OUTLINE_ONLY_RE.search(restrictive_text):
+        return None
+    delivery_text = json.dumps(
+        {
+            "steps": arguments.get("steps"),
+            "verification": arguments.get("verification"),
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    if _CONTROLLED_PLAN_DELIVERY_STEP_RE.search(delivery_text):
+        return None
+    return _CONTROLLED_PRESENTATION_PLAN_SCOPE_ERROR
 
 
 def _controlled_image_status_error(
@@ -318,6 +383,95 @@ def _controlled_finalizer_failure_signature(
     return re.sub(r"\s+", " ", semantic).strip()[:4000]
 
 
+def _is_controlled_outline_validation_call(
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> bool:
+    if tool_name != "bash":
+        return False
+    command = arguments.get("command")
+    if not isinstance(command, str):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    script_tokens = [
+        token
+        for token in tokens
+        if Path(token).name == "validate_outline.js"
+    ]
+    if len(script_tokens) != 1:
+        return False
+    supplied_script = Path(script_tokens[0])
+    return (
+        supplied_script.is_absolute()
+        and supplied_script.resolve() == _CONTROLLED_VALIDATE_OUTLINE_SCRIPT
+    )
+
+
+def _controlled_outline_validation_failure_signature(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: ToolResult,
+    workspace_dir: str | None,
+) -> str | None:
+    """Return the stable report issues for a failed outline validator call."""
+    if result.success or not _is_controlled_outline_validation_call(
+        tool_name,
+        arguments,
+    ):
+        return None
+
+    report_candidates: list[Path] = []
+    command = arguments.get("command")
+    try:
+        tokens = shlex.split(command) if isinstance(command, str) else []
+    except ValueError:
+        tokens = []
+    if "--report" in tokens:
+        report_index = tokens.index("--report") + 1
+        if report_index < len(tokens):
+            requested_report = Path(tokens[report_index])
+            if requested_report.is_absolute():
+                report_candidates.append(requested_report)
+            elif workspace_dir:
+                root = Path(workspace_dir)
+                report_candidates.extend(
+                    (root / requested_report, root / "output" / requested_report)
+                )
+    if workspace_dir:
+        report_candidates.extend(
+            (Path(workspace_dir) / "output").rglob("outline_check.json")
+        )
+    existing_reports = [path for path in report_candidates if path.is_file()]
+    if existing_reports:
+        report_path = max(
+            existing_reports,
+            key=lambda path: path.stat().st_mtime_ns,
+        )
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            report = None
+        if isinstance(report, dict) and report.get("ok") is False:
+            semantic = {
+                "issues": report.get("issues") or [],
+                "warnings": report.get("warnings") or [],
+            }
+            return json.dumps(
+                semantic,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )[:4000]
+
+    payload = "\n".join(
+        part for part in (result.error, result.content) if isinstance(part, str) and part
+    )
+    return re.sub(r"\s+", " ", payload).strip()[:4000] or "empty-outline-failure"
+
+
 _CONTROLLED_JSON_MISSING = object()
 
 
@@ -364,6 +518,19 @@ def _controlled_json_path_value(document: Any, field_path: str) -> Any:
     for part in parts:
         if isinstance(current, dict) and part in current:
             current = current[part]
+        elif isinstance(current, dict) and part.isdigit():
+            slide_keys = sorted(
+                (
+                    key
+                    for key in current
+                    if isinstance(key, str) and re.fullmatch(r"slide-\d+", key)
+                ),
+                key=lambda key: int(key.rsplit("-", 1)[-1]),
+            )
+            index = int(part)
+            if index >= len(slide_keys):
+                return _CONTROLLED_JSON_MISSING
+            current = current[slide_keys[index]]
         elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
             current = current[int(part)]
         else:
@@ -709,7 +876,13 @@ def _controlled_scaffold_error(
     invalid_theme: str | None = None
     if "--theme" in tokens:
         theme_index = tokens.index("--theme") + 1
-        if theme_index >= len(tokens) or tokens[theme_index] not in registered_themes:
+        if (
+            theme_index >= len(tokens)
+            or (
+                tokens[theme_index].lower() != "auto"
+                and tokens[theme_index] not in registered_themes
+            )
+        ):
             invalid_theme = tokens[theme_index] if theme_index < len(tokens) else "<missing>"
     if invalid_layouts or invalid_theme is not None:
         details = []
@@ -3291,9 +3464,30 @@ async def run_agent_loop(
                 for key in tuple(controlled_step_failure_counts):
                     if key.startswith("apply_patch:"):
                         controlled_step_failure_counts.pop(key, None)
+            # A successful repair edit only fixes one or more named fields. Keep
+            # the repair window open so the rest of the named fields from the same
+            # deterministic report can be edited in the same model turn. The exact
+            # apply command is the transaction boundary that closes repair mode.
+            if applied_patch:
                 controlled_apply_patch_repair_allowed = False
                 controlled_apply_patch_repair_paths = ()
-        if stage == "finalize":
+        if stage == "outline_qa":
+            if result.success and _is_controlled_outline_validation_call(
+                tool_name,
+                arguments,
+            ):
+                for key in tuple(controlled_step_failure_counts):
+                    if key.startswith("outline_qa:"):
+                        controlled_step_failure_counts.pop(key, None)
+                signature = None
+            else:
+                signature = _controlled_outline_validation_failure_signature(
+                    tool_name,
+                    arguments,
+                    result,
+                    workspace_dir,
+                )
+        elif stage == "finalize":
             signature = _controlled_finalizer_failure_signature(
                 tool_name,
                 arguments,
@@ -4573,6 +4767,15 @@ async def run_agent_loop(
             elif browser_snapshot_path_error is not None:
                 allowed_to_execute = False
                 internal_skip_error = browser_snapshot_path_error
+            elif (
+                plan_scope_error := _controlled_presentation_plan_scope_error(
+                    workflow_checkpoint_stage,
+                    fn_name,
+                    fn_args,
+                )
+            ) is not None:
+                allowed_to_execute = False
+                internal_skip_error = plan_scope_error
             elif plan_approval_gate_active and fn_name != "plan_write":
                 allowed_to_execute = False
                 internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
@@ -5017,6 +5220,15 @@ async def run_agent_loop(
                 if browser_snapshot_path_error is not None:
                     allowed_to_execute = False
                     internal_skip_error = browser_snapshot_path_error
+                elif (
+                    plan_scope_error := _controlled_presentation_plan_scope_error(
+                        workflow_checkpoint_stage,
+                        tc.function.name,
+                        par_fn_args,
+                    )
+                ) is not None:
+                    allowed_to_execute = False
+                    internal_skip_error = plan_scope_error
                 elif plan_approval_gate_active and tc.function.name != "plan_write":
                     allowed_to_execute = False
                     internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE

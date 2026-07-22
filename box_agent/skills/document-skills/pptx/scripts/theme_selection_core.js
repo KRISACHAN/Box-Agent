@@ -39,23 +39,35 @@ function themeProfile(theme) {
   };
 }
 
+const NEGATED_PREFERENCE_CLAUSE_SOURCE =
+  "(?:不要|避免|拒绝|不用|不使用|禁用|\\b(?:do\\s+not|don't|avoid|without|never|no)\\b)[^。；;\\n]{0,96}";
+
 function inferPreferences(content) {
   const text = selectionText(content);
-  const avoids = subject => new RegExp(
-    `(?:不要|避免|拒绝|不用|不使用|禁用|no|avoid)[^。；;\\n]{0,20}(?:${subject})`,
-    "i"
-  ).test(text);
+  const negatedClauses = text.match(
+    new RegExp(NEGATED_PREFERENCE_CLAUSE_SOURCE, "gi")
+  ) || [];
+  const negatedText = negatedClauses.join("\n");
+  const positiveText = text.replace(
+    new RegExp(NEGATED_PREFERENCE_CLAUSE_SOURCE, "gi"),
+    " "
+  );
+  const avoids = subject => new RegExp(`(?:${subject})`, "i").test(negatedText);
   return {
     text,
-    wants_light: /(?:浅色|浅底|白底|明亮|亮色|light[- ]?(?:background|canvas|theme)|bright|airy)/i.test(text),
+    wants_light: /(?:浅色|浅底|白底|明亮|亮色|light[- ]?(?:background|canvas|theme)|bright|airy)/i.test(positiveText),
     rejects_dark: avoids("深色|暗色|黑底|高冷|dark|black background"),
-    wants_friendly: /(?:亲和|友好|亲切|欢迎|不端着|有温度|friendly|welcoming|approachable)/i.test(text),
-    wants_soft: /(?:柔和|粉彩|低饱和|温柔|soft|pastel|gentle)/i.test(text),
-    wants_clean: /(?:清爽|干净|简洁|留白|不拥挤|clean|airy|uncluttered|minimal)/i.test(text),
-    wants_lively: /(?:活力|活泼|轻松|有趣|lively|playful|cheerful|energetic)/i.test(text),
-    wants_restrained_palette: /(?:一(?:到|至)?两(?:个|种)?.{0,8}(?:色|颜色)|一两个.{0,8}(?:色|颜色)|少量.{0,8}点缀|颜色干净|克制配色|limited palette|one or two accent)/i.test(text),
-    internal_training: /(?:新员工|员工入职|入职培训|内部培训|员工培训|迎新|onboarding|employee orientation|internal training|training deck)/i.test(text),
-    enterprise_context: /(?:企业|公司|会议室|职场|组织|b2b|enterprise|corporate|business|workplace)/i.test(text),
+    wants_friendly: /(?:亲和|友好|亲切|欢迎|不端着|有温度|friendly|welcoming|approachable)/i.test(positiveText),
+    rejects_friendly: avoids("亲和|友好|亲切|欢迎|friendly|welcoming|approachable"),
+    wants_soft: /(?:柔和|粉彩|低饱和|温柔|soft|pastel|gentle)/i.test(positiveText),
+    wants_clean: /(?:清爽|干净|简洁|留白|不拥挤|clean|airy|uncluttered|minimal)/i.test(positiveText),
+    wants_lively: /(?:活力|活泼|轻松|有趣|lively|playful|cheerful|energetic)/i.test(positiveText),
+    rejects_lively: avoids("活力|活泼|轻松|有趣|lively|playful|cheerful|energetic"),
+    wants_restrained_palette: /(?:一(?:到|至)?两(?:个|种)?.{0,8}(?:色|颜色)|一两个.{0,8}(?:色|颜色)|少量.{0,8}点缀|颜色干净|克制配色|limited palette|one or two accent)/i.test(positiveText),
+    wants_cool_palette: /(?:冷色|深蓝|海军蓝|钢灰|蓝灰|浅灰|cool(?:[- ]tone|[- ]palette)?|deep navy|navy blue|steel gr[ae]y|blue gr[ae]y)/i.test(positiveText),
+    formal_solution_review: /(?:评标|投标|招标|采购负责人|客户交付|解决方案|采购评审|技术评审|bid evaluation|tender|procurement|solution proposal|client deliverable)/i.test(positiveText),
+    internal_training: /(?:新员工|员工入职|入职培训|内部培训|员工培训|迎新|onboarding|employee orientation|internal training|training deck)/i.test(positiveText),
+    enterprise_context: /(?:企业|集团|公司|会议室|职场|组织|b2b|enterprise|corporate|business|workplace)/i.test(positiveText),
     rejects_collage: avoids("拼贴|collage"),
     rejects_retro: avoids("复古|怀旧|像素|retro|vintage|nostalgia|pixel"),
     rejects_handwritten: avoids("手绘|手写|便签|hand[- ]?drawn|handwritten|sticky notes"),
@@ -132,6 +144,19 @@ function inferTheme(themes, content, defaultThemeId = "blue-professional") {
       }
     }
 
+    if (
+      preferences.rejects_friendly
+      && profileHas(profile, /(?:friendly|approachable|welcoming|cheerful|亲和|友好|欢迎)/i)
+    ) {
+      add("explicit friendly-style opt-out", -14);
+    }
+    if (
+      preferences.rejects_lively
+      && profileHas(profile, /(?:playful|cheerful|energetic|upbeat|fun|活泼|活力)/i)
+    ) {
+      add("explicit lively-style opt-out", -14);
+    }
+
     if (preferences.internal_training) {
       if (/training/i.test(profile.industry)) add("training industry fit", 8);
       else if (/education/i.test(profile.industry)) add("education industry fit", 6);
@@ -163,6 +188,24 @@ function inferTheme(themes, content, defaultThemeId = "blue-professional") {
       }
     }
 
+    if (preferences.wants_cool_palette) {
+      if (profile.scheme.includes("cool")) add("cool light palette", 8);
+      if (profileHas(profile, /(?:cool|navy|steel gr[ae]y|blue gr[ae]y|冷色|深蓝|钢灰|蓝灰)/i)) {
+        add("navy and steel palette", 5);
+      }
+      if (profile.scheme.includes("warm") || profileHas(profile, /(?:warm paper|warm parchment|暖色|暖黄)/i)) {
+        add("warm palette conflicts with cool brief", -8);
+      }
+    }
+
+    if (preferences.formal_solution_review) {
+      if (/(?:procurement|bid evaluation|consulting|enterprise|b2b|technology|advisory)/i.test(profile.industry)) {
+        add("formal solution-review industry fit", 6);
+      }
+      if (profile.formality === "high") add("high-formality review fit", 4);
+      else if (profile.formality === "low") add("too informal for formal review", -6);
+    }
+
     if (preferences.rejects_collage) {
       if (profile.family === "playful-collage") add("explicit collage opt-out", -14);
       if (profileHas(profile, /(?:collage|sticky notes|handmade|拼贴|便利贴|手作)/i)) {
@@ -192,9 +235,19 @@ function inferTheme(themes, content, defaultThemeId = "blue-professional") {
       add("soft clean light signature", 8);
     }
     if (
+      theme.id === "consulting-navy"
+      && preferences.wants_light
+      && preferences.wants_cool_palette
+      && preferences.formal_solution_review
+    ) {
+      add("cool consulting review signature", 8);
+    }
+    if (
       theme.id === "playful"
       && preferences.wants_friendly
       && preferences.wants_lively
+      && !preferences.rejects_friendly
+      && !preferences.rejects_lively
       && !preferences.rejects_collage
     ) {
       add("friendly lively signature", 6);

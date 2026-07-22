@@ -175,7 +175,7 @@ function validateOutlineBinding(deckPath, deck) {
         );
       });
     }
-    const semantic = analyzeOutlineLayoutIntent(outlineSlide);
+    const semantic = analyzeOutlineLayoutIntent(outlineSlide, outline.source_mode);
     if (semantic && !semantic.allowed_layout_ids.includes(slide.layout_id)) {
       issues.push(
         `${basePath}.layout_id: ${JSON.stringify(slide.layout_id)} does not express ` +

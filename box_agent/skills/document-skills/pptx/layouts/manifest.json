@@ -2027,6 +2027,203 @@
       }
     },
     {
+      "id": "consulting-navy",
+      "name": "Consulting Navy",
+      "description": "Cool white, deep navy, and steel gray with restrained grids for procurement reviews, enterprise solutions, and consulting delivery decks.",
+      "source_reference": "builtin/consulting-navy",
+      "selection": {
+        "visual_dna_ids": [
+          "blue-professional"
+        ],
+        "mood_keywords": [
+          "professional",
+          "consulting",
+          "restrained",
+          "credible",
+          "structured",
+          "cool",
+          "navy",
+          "steel gray",
+          "稳健",
+          "专业",
+          "可信",
+          "可落地",
+          "冷色",
+          "深蓝",
+          "钢灰",
+          "浅灰",
+          "咨询交付",
+          "评标"
+        ],
+        "industry_fit": [
+          "consulting",
+          "enterprise",
+          "procurement",
+          "technology",
+          "B2B",
+          "IT",
+          "solution proposal",
+          "bid evaluation"
+        ],
+        "density": "high",
+        "scheme": "cool-light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F4F7FA",
+        "surface": "#FFFFFF",
+        "surface_strong": "#E7EDF3",
+        "primary": "#173B63",
+        "primary_soft": "#DCE7F1",
+        "text": "#14212D",
+        "muted": "#5D6B78",
+        "border": "#B8C3CE",
+        "inverse": "#FFFFFF",
+        "chart": [
+          "#173B63",
+          "#4F6F8F",
+          "#7E8D9C",
+          "#AAB5C0"
+        ]
+      },
+      "typography": {
+        "display": "Inter, Arial, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, Arial, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "Inter, Arial, PingFang SC, Microsoft YaHei, sans-serif"
+      },
+      "shape": {
+        "radius_small": 2,
+        "radius_medium": 4,
+        "radius_large": 8,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "solid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "standard",
+        "label": "mono",
+        "accent": "line",
+        "alternation": "none"
+      },
+      "composition": {
+        "family": "institutional-grid",
+        "direction": "structured-systems",
+        "variants": [
+          "balanced-grid",
+          "rail-grid",
+          "ledger-grid"
+        ],
+        "default_family": "institutional-grid",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "institutional-grid",
+          "analytical-exhibit",
+          "technical-schematic",
+          "product-showcase",
+          "literary-minimal"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages",
+          "interface-modules"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "literary-minimal"
+            ]
+          },
+          {
+            "id": "interface-modules",
+            "label": "产品与界面",
+            "families": [
+              "product-showcase"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "product-showcase",
+            "selection_signals": [
+              "UI 截图",
+              "功能演示",
+              "产品流程"
+            ],
+            "variants": [
+              "device-stage",
+              "browser-story",
+              "annotated-flow"
+            ]
+          },
+          {
+            "family": "literary-minimal",
+            "selection_signals": [
+              "长文本",
+              "观点文章",
+              "安静研究报告"
+            ],
+            "variants": [
+              "margin-note",
+              "quiet-center",
+              "asymmetric-column"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "coral",
       "name": "Coral",
       "description": "Near-black and warm-cream editorial surfaces with one saturated coral signature.",
@@ -7550,6 +7747,648 @@
       }
     },
     {
+      "id": "architecture-layered-v1",
+      "label": "Layered technical architecture",
+      "editor": {
+        "label": "分层架构",
+        "description": "三到六层技术架构与模块关系",
+        "controls": {
+          "enums": {
+            "variant": {
+              "label": "架构样式",
+              "options": {
+                "stack": "分层堆叠",
+                "ledger": "架构账本"
+              }
+            }
+          },
+          "collections": {
+            "layers": {
+              "label": "架构层",
+              "itemDefault": {
+                "label": "LAYER",
+                "title": "新架构层",
+                "modules": [
+                  "模块一",
+                  "模块二"
+                ]
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "解决方案架构",
+          "title": "输入技术分层架构结论",
+          "subtitle": "按职责边界组织触点、能力、集成与治理模块",
+          "layers": [
+            {
+              "label": "TOUCHPOINT",
+              "title": "用户触点层",
+              "modules": [
+                "官网 / APP",
+                "小程序",
+                "企业微信"
+              ]
+            },
+            {
+              "label": "AI SERVICE",
+              "title": "智能服务层",
+              "modules": [
+                "意图识别",
+                "知识检索",
+                "会话路由"
+              ]
+            },
+            {
+              "label": "INTEGRATION",
+              "title": "业务集成层",
+              "modules": [
+                "订单系统",
+                "会员系统",
+                "CRM / 工单"
+              ]
+            },
+            {
+              "label": "GOVERNANCE",
+              "title": "运营治理层",
+              "modules": [
+                "数据看板",
+                "安全审计",
+                "运维监控"
+              ]
+            }
+          ],
+          "note": "层间通过标准接口连接，模块边界与责任归属保持清晰。",
+          "variant": "stack"
+        }
+      },
+      "roles": [
+        "architecture",
+        "system-design",
+        "solution",
+        "technology"
+      ],
+      "density": "high",
+      "contentShape": [
+        "architecture",
+        "layers",
+        "modules"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable architecture diagram is the primary visual; keep the background quiet and structural."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "diagram"
+      ],
+      "variants": [
+        "stack",
+        "ledger"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "layers": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 6,
+          "itemShape": {
+            "label": {
+              "type": "text",
+              "maxChars": 24,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "modules": {
+              "type": "array",
+              "required": true,
+              "editor": true,
+              "minItems": 2,
+              "maxItems": 5,
+              "itemShape": {
+                "type": "text",
+                "maxChars": 28,
+                "required": true,
+                "editor": true,
+                "role": "body"
+              }
+            }
+          }
+        },
+        "note": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "stack",
+            "ledger"
+          ],
+          "default": "stack",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "note": "",
+        "variant": "stack"
+      }
+    },
+    {
+      "id": "system-integration-v1",
+      "label": "Hub-and-spoke system integration map",
+      "editor": {
+        "label": "系统集成",
+        "description": "中心平台与四到八个外围系统的数据流",
+        "controls": {
+          "enums": {
+            "variant": {
+              "label": "集成样式",
+              "options": {
+                "hub-spoke": "中心辐射",
+                "bidirectional": "双向交换"
+              }
+            }
+          },
+          "collections": {
+            "systems": {
+              "label": "外围系统",
+              "itemDefault": {
+                "title": "新系统",
+                "flow": "输入交换的数据或动作"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "系统集成",
+          "title": "输入系统连接与数据流结论",
+          "subtitle": "中心平台通过标准接口连接现有业务系统",
+          "hub": {
+            "label": "CORE PLATFORM",
+            "title": "AI 客服平台",
+            "body": "统一承接会话、知识、路由与人工协同"
+          },
+          "systems": [
+            {
+              "title": "订单系统",
+              "flow": "订单状态 · 物流 · 售后"
+            },
+            {
+              "title": "会员系统",
+              "flow": "身份 · 等级 · 权益"
+            },
+            {
+              "title": "CRM",
+              "flow": "客户画像 · 跟进记录"
+            },
+            {
+              "title": "工单系统",
+              "flow": "问题流转 · 处理状态"
+            },
+            {
+              "title": "统一认证",
+              "flow": "账号 · 权限 · 单点登录"
+            },
+            {
+              "title": "数据看板",
+              "flow": "指标汇总 · 运营分析"
+            }
+          ],
+          "note": "箭头表示信息双向流转；具体接口以客户现网能力为准。",
+          "variant": "hub-spoke"
+        }
+      },
+      "roles": [
+        "integration",
+        "data-flow",
+        "system-map",
+        "technology"
+      ],
+      "density": "high",
+      "contentShape": [
+        "hub-spoke",
+        "systems",
+        "data-flow"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable integration map carries the page; avoid generated media and decorative network lines."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "diagram"
+      ],
+      "variants": [
+        "hub-spoke",
+        "bidirectional"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "hub": {
+          "type": "object",
+          "required": true,
+          "editor": true,
+          "shape": {
+            "label": {
+              "type": "text",
+              "maxChars": 24,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "body": {
+              "type": "text",
+              "maxChars": 100,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "systems": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 4,
+          "maxItems": 8,
+          "itemShape": {
+            "title": {
+              "type": "text",
+              "maxChars": 32,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "flow": {
+              "type": "text",
+              "maxChars": 64,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "note": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "hub-spoke",
+            "bidirectional"
+          ],
+          "default": "hub-spoke",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "note": "",
+        "variant": "hub-spoke"
+      }
+    },
+    {
+      "id": "dashboard-overview-v1",
+      "label": "Qualitative management dashboard overview",
+      "editor": {
+        "label": "管理看板",
+        "description": "不虚构数值的指标域与管理闭环",
+        "controls": {
+          "enums": {
+            "variant": {
+              "label": "看板样式",
+              "options": {
+                "management": "管理视图",
+                "operations": "运营视图"
+              }
+            }
+          },
+          "collections": {
+            "items": {
+              "label": "指标域",
+              "itemDefault": {
+                "label": "MONITOR",
+                "title": "新指标域",
+                "detail": "说明需要观察或优化的内容。"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "管理看板",
+          "title": "输入运营管理闭环结论",
+          "subtitle": "先定义可观察的指标域；真实数值接入后再切换为 KPI 或图表",
+          "items": [
+            {
+              "label": "EFFICIENCY",
+              "title": "服务效率",
+              "detail": "会话量、响应时长与解决路径"
+            },
+            {
+              "label": "EXPERIENCE",
+              "title": "客户体验",
+              "detail": "满意度、投诉与异常会话"
+            },
+            {
+              "label": "ROUTING",
+              "title": "人机分流",
+              "detail": "机器人承接与人工转接结构"
+            },
+            {
+              "label": "KNOWLEDGE",
+              "title": "知识运营",
+              "detail": "命中、缺口与更新效果"
+            },
+            {
+              "label": "SYSTEM",
+              "title": "系统稳定",
+              "detail": "接口、服务与告警状态"
+            }
+          ],
+          "insight": "看板用于持续发现问题、分派任务并验证优化结果，不以示意数字冒充真实业绩。",
+          "variant": "management"
+        }
+      },
+      "roles": [
+        "dashboard",
+        "operations",
+        "monitoring",
+        "management"
+      ],
+      "density": "high",
+      "contentShape": [
+        "dashboard",
+        "metric-domains",
+        "management-loop"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "Use the editable dashboard modules as the only visual until real KPI values are available."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "qualitative-dashboard"
+      ],
+      "variants": [
+        "management",
+        "operations"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "items": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 4,
+          "maxItems": 6,
+          "itemShape": {
+            "label": {
+              "type": "text",
+              "maxChars": 24,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "detail": {
+              "type": "text",
+              "maxChars": 84,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "insight": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "management",
+            "operations"
+          ],
+          "default": "management",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "insight": "",
+        "variant": "management"
+      }
+    },
+    {
       "id": "chart-bar-v1",
       "label": "Editable categorical bar chart",
       "editor": {
@@ -8117,17 +8956,18 @@
     },
     {
       "id": "table-data-v1",
-      "label": "Editable two to five-column data table",
+      "label": "Editable two to six-column data table or Gantt matrix",
       "editor": {
         "label": "数据表格",
-        "description": "二到五列、二到六行的结构化信息",
+        "description": "二到六列、二到十二行的结构化信息或甘特计划",
         "controls": {
           "enums": {
             "variant": {
               "label": "表格样式",
               "options": {
                 "ledger": "横线表",
-                "comparison": "对比强调"
+                "comparison": "对比强调",
+                "gantt": "甘特计划"
               }
             }
           },
@@ -8176,6 +9016,7 @@
               "补充差异"
             ]
           ],
+          "insight": "",
           "source": "",
           "variant": "ledger"
         }
@@ -8185,13 +9026,15 @@
         "data-table",
         "comparison-table",
         "matrix",
-        "schedule"
+        "schedule",
+        "gantt"
       ],
       "density": "high",
       "contentShape": [
         "table",
         "exact-values",
-        "matrix"
+        "matrix",
+        "gantt-schedule"
       ],
       "mediaSlots": {
         "min": 0,
@@ -8241,7 +9084,8 @@
       ],
       "variants": [
         "ledger",
-        "comparison"
+        "comparison",
+        "gantt"
       ],
       "fields": {
         "eyebrow": {
@@ -8270,7 +9114,7 @@
           "required": true,
           "editor": true,
           "minItems": 2,
-          "maxItems": 5,
+          "maxItems": 6,
           "itemShape": {
             "type": "text",
             "maxChars": 36,
@@ -8284,13 +9128,13 @@
           "required": true,
           "editor": true,
           "minItems": 2,
-          "maxItems": 6,
+          "maxItems": 12,
           "itemShape": {
             "type": "array",
             "required": true,
             "editor": true,
             "minItems": 2,
-            "maxItems": 5,
+            "maxItems": 6,
             "itemShape": {
               "type": "text",
               "maxChars": 48,
@@ -8300,18 +9144,26 @@
             }
           }
         },
+        "insight": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        },
         "source": {
           "type": "text",
           "maxChars": 100,
           "required": false,
           "editor": true,
-          "role": "caption"
+          "role": "source"
         },
         "variant": {
           "type": "enum",
           "values": [
             "ledger",
-            "comparison"
+            "comparison",
+            "gantt"
           ],
           "default": "ledger",
           "required": false,
@@ -8320,6 +9172,7 @@
       },
       "defaultProps": {
         "subtitle": "",
+        "insight": "",
         "source": "",
         "variant": "ledger"
       }
@@ -9025,7 +9878,7 @@
           "required": true,
           "editor": true,
           "minItems": 0,
-          "maxItems": 3,
+          "maxItems": 4,
           "itemShape": {
             "label": {
               "type": "text",

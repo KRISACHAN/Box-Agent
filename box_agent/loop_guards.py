@@ -478,6 +478,18 @@ _PRESENTATION_PAGE_PLAN_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:第\s*\d+\s*页|slide\s*\d+\s*[:：.-])",
     re.IGNORECASE,
 )
+_PRESENTATION_OUTLINE_ONLY_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"(?<!不要)(?<!别)(?<!不)(?:只|仅)(?:要|需要|需|输出|生成)?"
+    r"(?:一份)?(?:ppt\s*)?(?:大纲|内容方案)(?:即可|就好|就可以)?"
+    r"|(?:不要|无需|不需要)(?:生成|制作|渲染)(?:最终)?"
+    r"(?:页面|幻灯片|html|pptx?)(?:文件)?(?=[，。；;.!?\s]|$)"
+    r"|\b(?:outline\s+only|only\s+(?:need|want|create|provide)\s+"
+    r"(?:an?\s+)?outline|do\s+not\s+(?:generate|create|render)\s+"
+    r"(?:slides?|pages?|html))\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _presentation_research_mode(user_text: str) -> str:
@@ -635,19 +647,34 @@ def build_auto_completion_gate(
         return None
 
     positive_format_text = _strip_negated_format_clauses(text)
+    presentation_outline_only = bool(_PRESENTATION_OUTLINE_ONLY_RE.search(text))
+    presentation_delivery = any(
+        keyword in positive_format_text
+        for keyword in PRESENTATION_DELIVERY_KEYWORDS
+    )
     native_image_generation = _is_native_image_generation_request(
         text,
         positive_format_text,
     )
-    explicit_pptx = any(
-        keyword in positive_format_text
-        for keyword in EXPLICIT_PPTX_DELIVERY_KEYWORDS
+    explicit_pptx = (
+        not presentation_outline_only
+        and any(
+            keyword in positive_format_text
+            for keyword in EXPLICIT_PPTX_DELIVERY_KEYWORDS
+        )
     )
     if native_image_generation:
         patterns: list[str] = list(IMAGE_ARTIFACT_GLOBS)
     else:
         patterns = [f"{OUTPUT_SUBDIR}/**/*.pptx"] if explicit_pptx else []
-    if not native_image_generation and not explicit_pptx:
+    if (
+        not native_image_generation
+        and not explicit_pptx
+        and presentation_delivery
+        and not presentation_outline_only
+    ):
+        patterns.extend(COMPLETION_GATE_PATTERNS[0][1])
+    elif not native_image_generation and not explicit_pptx and not presentation_delivery:
         for keywords, artifact_patterns in COMPLETION_GATE_PATTERNS:
             if any(keyword in positive_format_text for keyword in keywords):
                 patterns.extend(artifact_patterns)
@@ -660,10 +687,8 @@ def build_auto_completion_gate(
     presentation_html = (
         not native_image_generation
         and not explicit_pptx
-        and any(
-            keyword in positive_format_text
-            for keyword in PRESENTATION_DELIVERY_KEYWORDS
-        )
+        and presentation_delivery
+        and not presentation_outline_only
     )
     presentation_research_mode = (
         _presentation_research_mode(user_text) if presentation_html else None
@@ -1724,7 +1749,9 @@ def completion_gate_progress_text(
                 "selection using the canonical keys. Top level: deck_goal, "
                 "audience, source_mode, storyline, slides. Every slide: page, "
                 "title, message, bullets, layout, visual, evidence; bullets and "
-                "evidence are arrays (use [] when evidence is empty). Do not use "
+                "evidence are arrays (use [] when evidence is empty); audience "
+                "and storyline may each be a non-empty string or a non-empty "
+                "array of strings. Do not use "
                 "aliases such as goal, slide_no, layout_intent, or visual_intent. "
                 "Set source_mode=public_authoritative_research after public "
                 "research, give every page one distinct message and 2-5 "

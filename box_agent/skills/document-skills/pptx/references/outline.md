@@ -140,6 +140,11 @@ not supply it; reserve visible `待补充` for genuinely required missing fields
 Keep this as a planning artifact. Do not put CSS, HTML, or PowerPoint object
 details into `outline.json`.
 
+`audience` and `storyline` may each be either one non-empty string or a
+non-empty array of strings. The validator and scaffold normalize the array form
+to newline-separated text so a natural multi-audience or multi-beat outline
+does not get trapped in a repair loop.
+
 ## Generation Steps
 
 1. Restate the user request as a deck goal, audience, and decision/action the

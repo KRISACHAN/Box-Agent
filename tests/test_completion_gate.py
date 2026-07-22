@@ -41,6 +41,7 @@ FINALIZER_SCRIPT = (
 )
 INSPECTOR_SCRIPT = FINALIZER_SCRIPT.parent / "inspect_deck_contract.js"
 APPLY_PATCH_SCRIPT = FINALIZER_SCRIPT.parent / "apply_deck_patch.js"
+VALIDATE_OUTLINE_SCRIPT = FINALIZER_SCRIPT.parent / "validate_outline.js"
 
 
 # ── Helpers ─────────────────────────────────────────────────────
@@ -107,6 +108,17 @@ class NamedEchoTool(EchoTool):
         return await super().execute(text)
 
 
+class PlanWriteCaptureTool(NamedEchoTool):
+    def __init__(self):
+        super().__init__("plan_write")
+        self.arguments: list[dict] = []
+
+    async def execute(self, **kwargs):
+        self.calls += 1
+        self.arguments.append(kwargs)
+        return ToolResult(success=True, content="plan set")
+
+
 class CreatePatchTool(EchoTool):
     def __init__(self, patch_path):
         self.patch_path = patch_path
@@ -143,6 +155,27 @@ class CountingWriteTool(EchoTool):
 
     async def execute(self, path: str, content: str):
         self.calls += 1
+        return ToolResult(success=True, content=f"wrote:{path}")
+
+
+class OutlineRepairWriteTool(EchoTool):
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.calls = 0
+
+    @property
+    def name(self):
+        return "write_file"
+
+    async def execute(self, path: str, content: str):
+        self.calls += 1
+        target = self.output_dir / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        report = self.output_dir / "qa" / "outline_check.json"
+        if target.name == "outline.json" and report.is_file():
+            newer = max(target.stat().st_mtime_ns, report.stat().st_mtime_ns) + 10_000_000
+            os.utime(target, ns=(newer, newer))
         return ToolResult(success=True, content=f"wrote:{path}")
 
 
@@ -243,6 +276,43 @@ class RepeatingFinalizerFailureBashTool(EchoTool):
         return ToolResult(success=True, content=f"ran:{command}")
 
 
+class RepeatingOutlineFailureBashTool(EchoTool):
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.calls = 0
+        self.validation_calls = 0
+
+    @property
+    def name(self):
+        return "bash"
+
+    async def execute(self, command: str, timeout=None, run_in_background=False):
+        self.calls += 1
+        if "validate_outline.js" not in command:
+            return ToolResult(success=True, content=f"ran:{command}")
+        self.validation_calls += 1
+        report = self.output_dir / "qa" / "outline_check.json"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "issues": ["Missing top-level field: audience"],
+                    "warnings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        outline = self.output_dir / "outline.json"
+        newer = max(report.stat().st_mtime_ns, outline.stat().st_mtime_ns) + 10_000_000
+        os.utime(report, ns=(newer, newer))
+        return ToolResult(
+            success=False,
+            content="",
+            error="Command failed with exit code 1",
+        )
+
+
 class RepeatingScaffoldFailureBashTool(EchoTool):
     def __init__(self):
         self.calls = 0
@@ -297,10 +367,12 @@ class RepairableApplyPatchBashTool(EchoTool):
     def __init__(
         self,
         output_dir: Path,
-        failure_path: str = "slides.slide-01.props.title",
+        failure_path: str | tuple[str, ...] = "slides.0.props.title",
     ):
         self.output_dir = output_dir
-        self.failure_path = failure_path
+        self.failure_paths = (
+            (failure_path,) if isinstance(failure_path, str) else failure_path
+        )
         self.calls = 0
         self.apply_patch_calls = 0
 
@@ -314,13 +386,16 @@ class RepairableApplyPatchBashTool(EchoTool):
             return ToolResult(success=True, content=f"ran:{command}")
         self.apply_patch_calls += 1
         if self.apply_patch_calls == 1:
+            issue_lines = "\n".join(
+                f"{path}: unsupported claim" for path in self.failure_paths
+            )
             return ToolResult(
                 success=False,
                 content="",
                 error=(
                     "Command failed with exit code 1\n"
                     "Error: Patched deck is invalid:\n"
-                    f"{self.failure_path}: unsupported claim"
+                    f"{issue_lines}"
                 ),
             )
         deck = self.output_dir / "deck.json"
@@ -408,6 +483,68 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
         "request_user_input",
     }.issubset(gate.budget_exempt_tools)
     assert gate.workflow_checkpoint_kind == "controlled_presentation"
+
+
+def test_ppt_content_plan_wording_still_requires_editable_html_delivery(tmp_path):
+    gate = build_auto_completion_gate(
+        (
+            "请生成一份客户评标用解决方案 PPT。"
+            "请输出完整 PPT 内容方案，包括每页标题、一级结论、"
+            "客户痛点句、页面主要内容和客户收益句。"
+        ),
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert "output/**/*.html" in gate.required_changed_artifact_globs
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert gate.required_success_report_globs
+
+
+def test_ppt_brief_does_not_treat_reference_document_or_slide_table_as_formats(
+    tmp_path,
+):
+    gate = build_auto_completion_gate(
+        (
+            "请生成一份客户评标用解决方案 PPT，参考咨询公司交付文档。"
+            "报价页使用规整表格，案例页保留关键数字占位。"
+        ),
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.required_changed_artifact_globs == (
+        "output/**/*.html",
+        "output/**/*.htm",
+        "output/**/*.pptx",
+        "output/**/*.ppt",
+    )
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "请为这个项目只要一份 PPT 大纲即可。",
+        "请规划 PPT 内容，但不要生成页面。",
+        "Create a presentation outline only.",
+    ],
+)
+def test_explicit_ppt_outline_only_does_not_require_html_delivery(
+    tmp_path,
+    prompt,
+):
+    assert build_auto_completion_gate(prompt, tmp_path) is None
+
+
+def test_rejecting_outline_only_still_requires_html_delivery(tmp_path):
+    gate = build_auto_completion_gate(
+        "请生成完整 PPT，不要只给大纲，要交付可编辑 HTML。",
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert "output/**/*.html" in gate.required_changed_artifact_globs
 
 
 def test_build_auto_completion_gate_detects_explicit_ppt_continuation(tmp_path):
@@ -1903,6 +2040,81 @@ async def test_controlled_scaffold_blocks_unregistered_theme_and_layout_ids(tmp_
 
 
 @pytest.mark.asyncio
+async def test_controlled_scaffold_allows_auto_theme(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "Exact title",
+                        "message": "Exact message",
+                        "bullets": ["Exact bullet"],
+                        "layout": "cover",
+                        "visual": "hero image",
+                        "evidence": ["Exact evidence"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    command = (
+        "cd output && node "
+        f"{INSPECTOR_SCRIPT} cover-hero-v1 --theme auto "
+        "--outline outline.json --out deck.json"
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="use automatic theme selection",
+                tool_calls=[
+                    ToolCall(
+                        id="auto-theme-scaffold",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            _final("done"),
+        ]
+    )
+    bash_tool = CountingBashTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"bash": bash_tool},
+            max_steps=5,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert bash_tool.calls == 1
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "auto-theme-scaffold"
+    )
+    assert result.success is True
+
+
+@pytest.mark.asyncio
 async def test_controlled_scaffold_blocks_compound_shell_mutation(tmp_path):
     output = tmp_path / "output"
     output.mkdir()
@@ -2415,6 +2627,130 @@ async def test_controlled_apply_patch_allows_targeted_edit_after_failure(tmp_pat
         in event.content
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_controlled_apply_patch_keeps_repair_open_for_all_named_edits(
+    tmp_path,
+):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        '{"slides":[{"page":1,"title":"Exact title","message":"Exact message",'
+        '"bullets":["Exact bullet"],"layout":"cover","visual":"hero",'
+        '"evidence":["Exact evidence"]}]}',
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    deck_path = output / "deck.json"
+    deck_path.write_text(
+        '{"slides":[{"id":"slide-01","source_outline_page":1,\n'
+        '"props":{"title":"Exact title","subtitle":"Exact subtitle"}}]}',
+        encoding="utf-8",
+    )
+    patch_path = output / "deck.patch.json"
+    patch_path.write_text(
+        '{"slides":{"slide-01":{"props":{"title":"Unsupported title",'
+        '"subtitle":"Unsupported subtitle"}}}}',
+        encoding="utf-8",
+    )
+    newer = max(deck_path.stat().st_mtime_ns, patch_path.stat().st_mtime_ns) + 10_000_000
+    os.utime(patch_path, ns=(newer, newer))
+    apply_command = f"cd output && node {APPLY_PATCH_SCRIPT} deck.json deck.patch.json"
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="apply patch",
+                tool_calls=[
+                    ToolCall(
+                        id="apply-fails",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash", arguments={"command": apply_command}
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="repair every named field",
+                tool_calls=[
+                    ToolCall(
+                        id="edit-title",
+                        type="function",
+                        function=FunctionCall(
+                            name="edit_file",
+                            arguments={
+                                "path": "deck.patch.json",
+                                "old_str": '"title":"Unsupported title"',
+                                "new_str": '"title":"Exact title"',
+                            },
+                        ),
+                    ),
+                    ToolCall(
+                        id="edit-subtitle",
+                        type="function",
+                        function=FunctionCall(
+                            name="edit_file",
+                            arguments={
+                                "path": "deck.patch.json",
+                                "old_str": '"subtitle":"Unsupported subtitle"',
+                                "new_str": '"subtitle":"Exact subtitle"',
+                            },
+                        ),
+                    ),
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="apply repaired patch",
+                tool_calls=[
+                    ToolCall(
+                        id="apply-succeeds",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash", arguments={"command": apply_command}
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            _final("Patch repair completed."),
+        ]
+    )
+    bash_tool = RepairableApplyPatchBashTool(
+        output,
+        failure_path=(
+            "slides.slide-01.props.title",
+            "slides.slide-01.props.subtitle",
+        ),
+    )
+    edit_tool = CountingEditTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"bash": bash_tool, "edit_file": edit_tool},
+            max_steps=5,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert bash_tool.apply_patch_calls == 2
+    assert edit_tool.calls == 2
+    for call_id in ("edit-title", "edit-subtitle"):
+        assert next(
+            event
+            for event in events
+            if isinstance(event, ToolCallResult) and event.tool_call_id == call_id
+        ).success is True
 
 
 @pytest.mark.asyncio
@@ -3122,6 +3458,229 @@ async def test_controlled_finalize_stops_repeated_identical_repair_failure(tmp_p
         isinstance(event, DoneEvent)
         and event.final_content == "Stopped after repeated internal validation failure."
         for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_controlled_outline_stops_repeated_identical_validation_failure(
+    tmp_path,
+):
+    output = tmp_path / "output"
+    output.mkdir()
+    outline_content = json.dumps(
+        {
+            "deck_goal": "Explain the proposal",
+            "audience": ["Procurement", "IT"],
+            "source_mode": "user_provided",
+            "storyline": ["Need", "Solution", "Value"],
+            "slides": [
+                {
+                    "page": 1,
+                    "title": "Proposal",
+                    "message": "One decision-ready message",
+                    "bullets": ["Need", "Solution", "Value"],
+                    "layout": "cover",
+                    "visual": "consulting cover",
+                    "evidence": [],
+                }
+            ],
+        }
+    )
+    (output / "outline.json").write_text(outline_content, encoding="utf-8")
+    validation_command = (
+        "cd output && node "
+        f"{VALIDATE_OUTLINE_SCRIPT} outline.json --report qa/outline_check.json"
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="validate once",
+                tool_calls=[
+                    ToolCall(
+                        id="outline-validate-first",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": validation_command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="repair once",
+                tool_calls=[
+                    ToolCall(
+                        id="outline-repair-once",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "outline.json",
+                                "content": outline_content,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="validate twice",
+                tool_calls=[
+                    ToolCall(
+                        id="outline-validate-second",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": validation_command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="try a forbidden third validation",
+                tool_calls=[
+                    ToolCall(
+                        id="outline-validate-third",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": validation_command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            _final("Stopped after repeated outline validation failure."),
+        ]
+    )
+    bash_tool = RepeatingOutlineFailureBashTool(output)
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "bash": bash_tool,
+                "write_file": OutlineRepairWriteTool(output),
+            },
+            max_steps=7,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert bash_tool.validation_calls == 2
+    blocked = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "outline-validate-third"
+    )
+    assert blocked.success is False
+    assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in (blocked.error or "")
+    assert any(
+        isinstance(event, InjectedMessageEvent)
+        and f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled"
+        in event.content
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_controlled_presentation_rejects_outline_only_execution_plan(
+    tmp_path,
+):
+    bad_plan = {
+        "action": "set",
+        "title": "客户评标用解决方案 PPT 内容方案",
+        "objective": "产出一份可进入后续制作为 PPT 的叙事大纲。",
+        "scope": (
+            "本轮仅完成并校验 PPT 内容方案/outline，"
+            "不进入主题、版式脚手架或 HTML/PPTX 制作。"
+        ),
+        "steps": [
+            {"title": "生成 outline.json", "details": "梳理页级叙事"},
+            {"title": "运行 outline 校验", "details": "修正报告问题"},
+        ],
+        "verification": ["outline_check.json 返回 ok=true"],
+    }
+    complete_plan = {
+        "action": "set",
+        "title": "客户评标用解决方案 PPT",
+        "objective": "交付完成 QA 的可编辑 HTML 演示文稿。",
+        "scope": "完成内容、版式、媒体、渲染和交付。",
+        "steps": [
+            {"title": "内容规划", "details": "生成并校验 outline.json"},
+            {"title": "受控制作", "details": "生成 deck.json 并填写内容与媒体"},
+            {"title": "最终交付", "details": "渲染 index.html 并完成 QA"},
+        ],
+        "verification": ["index.html 和所有 QA 报告通过"],
+    }
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="outline-only plan",
+                tool_calls=[
+                    ToolCall(
+                        id="bad-outline-plan",
+                        type="function",
+                        function=FunctionCall(
+                            name="plan_write",
+                            arguments=bad_plan,
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="complete delivery plan",
+                tool_calls=[
+                    ToolCall(
+                        id="complete-deck-plan",
+                        type="function",
+                        function=FunctionCall(
+                            name="plan_write",
+                            arguments=complete_plan,
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            _final("Plan corrected."),
+        ]
+    )
+    plan_tool = PlanWriteCaptureTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"plan_write": plan_tool},
+            max_steps=4,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert plan_tool.calls == 1
+    assert plan_tool.arguments == [complete_plan]
+    rejected = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "bad-outline-plan"
+    )
+    assert rejected.success is False
+    assert "CONTROLLED_PRESENTATION_PLAN_SCOPE_INCOMPLETE" in (
+        rejected.error or ""
     )
 
 

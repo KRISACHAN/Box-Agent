@@ -516,6 +516,60 @@ def _latest_user_request_for_plan_detection(prompt_text: str) -> str:
     return text
 
 
+def _user_source_text_for_binding(prompt_text: str) -> str:
+    """Recover only real user-authored text from an officev3 history wrapper.
+
+    A restored ACP session starts with an empty in-memory provenance buffer even
+    though officev3 includes recent user/assistant history in the first prompt.
+    Keep every user block (plus the current ``用户问题`` tail), but never bind
+    assistant history as source material.
+    """
+    text = (prompt_text or "").strip()
+    if not text:
+        return ""
+
+    user_blocks: list[str] = []
+    current_role: str | None = None
+    current_lines: list[str] = []
+
+    def flush_user_block() -> None:
+        if current_role != "user":
+            return
+        block = _strip_history_text_prefix("\n".join(current_lines))
+        if block:
+            user_blocks.append(block)
+
+    for line in text.splitlines():
+        label = line.strip()
+        if label in _USER_ROLE_LABELS:
+            flush_user_block()
+            current_role = "user"
+            current_lines = []
+            continue
+        if label in _ASSISTANT_ROLE_LABELS:
+            flush_user_block()
+            current_role = "assistant"
+            current_lines = []
+            continue
+        if current_role == "user":
+            current_lines.append(line)
+    flush_user_block()
+
+    marker_index = -1
+    marker_text = ""
+    for marker in _USER_QUESTION_MARKERS:
+        index = text.rfind(marker)
+        if index > marker_index:
+            marker_index = index
+            marker_text = marker
+    if marker_index >= 0:
+        latest = text[marker_index + len(marker_text):].strip()
+        if latest and (not user_blocks or latest != user_blocks[-1]):
+            user_blocks.append(latest)
+
+    return "\n\n".join(user_blocks) if user_blocks else text
+
+
 def _update_pending_plan_approval_from_raw(
     state: "SessionState",
     raw_output: Any,
@@ -1543,7 +1597,12 @@ class BoxACPAgent:
         state.cancelled = False
         user_text = "\n".join(block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "") for block in params.prompt)
         plan_detection_text = _latest_user_request_for_plan_detection(user_text)
-        _bind_user_source_text(state, plan_detection_text)
+        source_binding_text = (
+            _user_source_text_for_binding(user_text)
+            if not state.source_text.strip()
+            else plan_detection_text
+        )
+        _bind_user_source_text(state, source_binding_text)
         prompt_meta = getattr(params, "field_meta", None) or {}
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")

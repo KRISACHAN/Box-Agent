@@ -186,7 +186,10 @@ and scores), the renderer automatically uses independently scaled small
 multiples. Each panel remains an animated ECharts view backed by the same
 editable data grid and exports as its own native editable PowerPoint chart.
 
-Use `table-data-v1` when exact labels and values matter more than trend
+Use `table-data-v1` when exact labels and values matter more than trend. Its
+`gantt` variant supports one task column plus up to five phase columns and up
+to twelve work packages; represent inactive schedule cells with `—`, not an
+empty string.
 perception; it supports two to five columns and two to six rows with editable
 cells. Scatter, bubble, combo, heatmap, sankey, map, and tables beyond these
 capacities still use the data-backed legacy HTML route until a controlled
@@ -301,8 +304,8 @@ export.
   registered layout. Do not reimplement layouts inside the family.
 
 The intended cost is additive implementation plus cross-product testing. With
-15 layouts and 11 families, keep 26 primary implementations and 165 automated
-compatibility checks rather than 165 separate renderers.
+18 layouts and 11 families, keep 29 primary implementations and the automated
+compatibility checks rather than 198 separate renderers.
 
 ## Media decision contract
 

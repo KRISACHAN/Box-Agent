@@ -171,8 +171,9 @@ function editableText(tag, path, value, className = "", attributes = {}) {
   return `<${tag}${classAttr} data-prop-path="${escapeHtml(path)}" data-prop-kind="text"${extraAttrs}>${escapeHtml(value)}</${tag}>`;
 }
 
-function editableTableCell(tag, path, value) {
-  return `<${tag}>${editableText("span", path, value, "data-table-cell-text")}</${tag}>`;
+function editableTableCell(tag, path, value, className = "") {
+  const classAttr = className ? ` class="${escapeHtml(className)}"` : "";
+  return `<${tag}${classAttr}>${editableText("span", path, value, "data-table-cell-text")}</${tag}>`;
 }
 
 function image(path, media, className = "", modelRoot = "props") {
@@ -571,6 +572,121 @@ function renderKpis(slide, index) {
   );
 }
 
+function renderArchitecture(slide, index) {
+  const p = slide.props;
+  const layers = (p.layers || []).map((layer, layerIndex) => {
+    const modules = (layer.modules || []).map((module, moduleIndex) => [
+      `<span class="architecture-module" data-module-index="${moduleIndex}">`,
+      editableText(
+        "span",
+        `layers.${layerIndex}.modules.${moduleIndex}`,
+        module,
+        "architecture-module-text"
+      ),
+      "</span>",
+    ].join("\n")).join("\n");
+    return [
+      `<article class="architecture-layer" data-item-index="${layerIndex}">`,
+      `<span class="architecture-index" aria-hidden="true">${String(layerIndex + 1).padStart(2, "0")}</span>`,
+      '<div class="architecture-layer-heading">',
+      editableText("p", `layers.${layerIndex}.label`, layer.label || "", "architecture-label"),
+      editableText("h3", `layers.${layerIndex}.title`, layer.title),
+      "</div>",
+      `<div class="architecture-modules">${modules}</div>`,
+      "</article>",
+    ].join("\n");
+  }).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-architecture architecture-${p.variant || "stack"} architecture-count-${(p.layers || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      `<div class="architecture-layers" data-layout-region="content">${layers}</div>`,
+      editableText("p", "note", p.note || "", "architecture-note"),
+    ].join("\n")
+  );
+}
+
+function renderIntegrationNode(item, itemIndex, side) {
+  return [
+    `<article class="integration-node integration-node-${side}" data-item-index="${itemIndex}">`,
+    editableText("h3", `systems.${itemIndex}.title`, item.title),
+    editableText("p", `systems.${itemIndex}.flow`, item.flow, "integration-flow"),
+    '<span class="integration-connector" aria-hidden="true"></span>',
+    "</article>",
+  ].join("\n");
+}
+
+function renderSystemIntegration(slide, index) {
+  const p = slide.props;
+  const systems = p.systems || [];
+  const splitAt = Math.ceil(systems.length / 2);
+  const left = systems
+    .slice(0, splitAt)
+    .map((item, itemIndex) => renderIntegrationNode(item, itemIndex, "left"))
+    .join("\n");
+  const right = systems
+    .slice(splitAt)
+    .map((item, offset) => renderIntegrationNode(item, splitAt + offset, "right"))
+    .join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-system-integration integration-${p.variant || "hub-spoke"} integration-count-${systems.length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      '<div class="integration-map" data-layout-region="content">',
+      `<div class="integration-side integration-side-left">${left}</div>`,
+      '<article class="integration-hub">',
+      editableText("p", "hub.label", p.hub.label || "", "integration-hub-label"),
+      editableText("h3", "hub.title", p.hub.title),
+      editableText("p", "hub.body", p.hub.body, "integration-hub-body"),
+      '<span class="integration-hub-arrow" aria-hidden="true">↔</span>',
+      "</article>",
+      `<div class="integration-side integration-side-right">${right}</div>`,
+      "</div>",
+      editableText("p", "note", p.note || "", "integration-note"),
+    ].join("\n")
+  );
+}
+
+function renderDashboardOverview(slide, index) {
+  const p = slide.props;
+  const items = (p.items || []).map((item, itemIndex) => [
+    `<article class="dashboard-domain" data-item-index="${itemIndex}">`,
+    '<div class="dashboard-domain-heading">',
+    `<span class="dashboard-domain-index" aria-hidden="true">${String(itemIndex + 1).padStart(2, "0")}</span>`,
+    editableText("p", `items.${itemIndex}.label`, item.label || "", "dashboard-domain-label"),
+    "</div>",
+    editableText("h3", `items.${itemIndex}.title`, item.title),
+    editableText("p", `items.${itemIndex}.detail`, item.detail, "dashboard-domain-detail"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-dashboard-overview dashboard-${p.variant || "management"} dashboard-count-${(p.items || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      `<div class="dashboard-domain-grid" data-layout-region="content">${items}</div>`,
+      editableText("p", "insight", p.insight || "", "dashboard-insight"),
+    ].join("\n")
+  );
+}
+
 function renderTimeline(slide, index) {
   const p = slide.props;
   const bodyless = p.steps.every((step) => !String(step.body || "").trim());
@@ -895,22 +1011,32 @@ function renderDataChart(slide, index) {
 
 function renderDataTable(slide, index) {
   const p = slide.props;
-  const columns = p.columns.slice(0, 5);
+  const isGantt = p.variant === "gantt" || /(?:甘特|gantt)/i.test(p.title || "");
+  const columns = p.columns.slice(0, 6);
   const header = columns
     .map((column, columnIndex) => editableTableCell("th", `columns.${columnIndex}`, column))
     .join("\n");
   const rows = p.rows.map((row, rowIndex) => {
-    const cells = columns.map((_, columnIndex) => editableTableCell(
-      "td",
-      `rows.${rowIndex}.${columnIndex}`,
-      row[columnIndex] || "—"
-    )).join("\n");
+    const cells = columns.map((_, columnIndex) => {
+      const value = row[columnIndex] || "—";
+      const ganttState = isGantt && columnIndex > 0
+        ? /^(?:■|●|◆|▰|█|进行|执行|active)$/i.test(String(value).trim())
+          ? "gantt-cell gantt-active"
+          : "gantt-cell gantt-idle"
+        : "";
+      return editableTableCell(
+        "td",
+        `rows.${rowIndex}.${columnIndex}`,
+        value,
+        ganttState
+      );
+    }).join("\n");
     return `<tr data-item-index="${rowIndex}">${cells}</tr>`;
   }).join("\n");
   return slideFrame(
     slide,
     index,
-    `layout-data-table table-${p.variant || "ledger"} table-columns-${columns.length}`,
+    `layout-data-table table-${isGantt ? "gantt" : (p.variant || "ledger")} table-columns-${columns.length}`,
     [
       '<header class="slide-header" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
@@ -919,7 +1045,10 @@ function renderDataTable(slide, index) {
       "</header>",
       '<div class="data-table-wrap" data-layout-region="content">',
       `<table class="data-table"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`,
+      '<div class="table-footer">',
+      editableText("p", "insight", p.insight || "", "table-insight"),
       editableText("p", "source", p.source || "", "table-source"),
+      "</div>",
       "</div>",
     ].join("\n")
   );
@@ -939,7 +1068,7 @@ function renderClosing(slide, index) {
   return slideFrame(
     slide,
     index,
-    `layout-closing closing-${p.variant || "next-steps"}`,
+    `layout-closing closing-${p.variant || "next-steps"} closing-actions-${(p.actions || []).length}`,
     [
       '<div class="closing-copy" data-layout-region="closing-copy">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
@@ -1406,6 +1535,199 @@ const layouts = [
     render: renderKpis,
   },
   {
+    id: "architecture-layered-v1",
+    label: "Layered technical architecture",
+    editor: {
+      label: "分层架构",
+      description: "三到六层技术架构与模块关系",
+      controls: {
+        enums: {
+          variant: {
+            label: "架构样式",
+            options: { stack: "分层堆叠", ledger: "架构账本" },
+          },
+        },
+        collections: {
+          layers: {
+            label: "架构层",
+            itemDefault: {
+              label: "LAYER",
+              title: "新架构层",
+              modules: ["模块一", "模块二"],
+            },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "解决方案架构",
+        title: "输入技术分层架构结论",
+        subtitle: "按职责边界组织触点、能力、集成与治理模块",
+        layers: [
+          { label: "TOUCHPOINT", title: "用户触点层", modules: ["官网 / APP", "小程序", "企业微信"] },
+          { label: "AI SERVICE", title: "智能服务层", modules: ["意图识别", "知识检索", "会话路由"] },
+          { label: "INTEGRATION", title: "业务集成层", modules: ["订单系统", "会员系统", "CRM / 工单"] },
+          { label: "GOVERNANCE", title: "运营治理层", modules: ["数据看板", "安全审计", "运维监控"] },
+        ],
+        note: "层间通过标准接口连接，模块边界与责任归属保持清晰。",
+        variant: "stack",
+      },
+    },
+    roles: ["architecture", "system-design", "solution", "technology"],
+    density: "high",
+    contentShape: ["architecture", "layers", "modules"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable architecture diagram is the primary visual; keep the background quiet and structural.",
+    }),
+    capabilities: ["editable", "pptx-safe", "diagram"],
+    variants: ["stack", "ledger"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      layers: arrayField(3, 6, {
+        label: textField(24, { required: false, role: "label" }),
+        title: textField(36, { role: "heading" }),
+        modules: arrayField(2, 5, textField(28, { role: "body" })),
+      }),
+      note: textField(140, { required: false, role: "caption" }),
+      variant: enumField(["stack", "ledger"], "stack"),
+    },
+    defaultProps: { subtitle: "", note: "", variant: "stack" },
+    render: renderArchitecture,
+  },
+  {
+    id: "system-integration-v1",
+    label: "Hub-and-spoke system integration map",
+    editor: {
+      label: "系统集成",
+      description: "中心平台与四到八个外围系统的数据流",
+      controls: {
+        enums: {
+          variant: {
+            label: "集成样式",
+            options: { "hub-spoke": "中心辐射", bidirectional: "双向交换" },
+          },
+        },
+        collections: {
+          systems: {
+            label: "外围系统",
+            itemDefault: { title: "新系统", flow: "输入交换的数据或动作" },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "系统集成",
+        title: "输入系统连接与数据流结论",
+        subtitle: "中心平台通过标准接口连接现有业务系统",
+        hub: {
+          label: "CORE PLATFORM",
+          title: "AI 客服平台",
+          body: "统一承接会话、知识、路由与人工协同",
+        },
+        systems: [
+          { title: "订单系统", flow: "订单状态 · 物流 · 售后" },
+          { title: "会员系统", flow: "身份 · 等级 · 权益" },
+          { title: "CRM", flow: "客户画像 · 跟进记录" },
+          { title: "工单系统", flow: "问题流转 · 处理状态" },
+          { title: "统一认证", flow: "账号 · 权限 · 单点登录" },
+          { title: "数据看板", flow: "指标汇总 · 运营分析" },
+        ],
+        note: "箭头表示信息双向流转；具体接口以客户现网能力为准。",
+        variant: "hub-spoke",
+      },
+    },
+    roles: ["integration", "data-flow", "system-map", "technology"],
+    density: "high",
+    contentShape: ["hub-spoke", "systems", "data-flow"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable integration map carries the page; avoid generated media and decorative network lines.",
+    }),
+    capabilities: ["editable", "pptx-safe", "diagram"],
+    variants: ["hub-spoke", "bidirectional"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      hub: objectField({
+        label: textField(24, { required: false, role: "label" }),
+        title: textField(36, { role: "heading" }),
+        body: textField(100, { role: "body" }),
+      }),
+      systems: arrayField(4, 8, {
+        title: textField(32, { role: "heading" }),
+        flow: textField(64, { role: "body" }),
+      }),
+      note: textField(140, { required: false, role: "caption" }),
+      variant: enumField(["hub-spoke", "bidirectional"], "hub-spoke"),
+    },
+    defaultProps: { subtitle: "", note: "", variant: "hub-spoke" },
+    render: renderSystemIntegration,
+  },
+  {
+    id: "dashboard-overview-v1",
+    label: "Qualitative management dashboard overview",
+    editor: {
+      label: "管理看板",
+      description: "不虚构数值的指标域与管理闭环",
+      controls: {
+        enums: {
+          variant: {
+            label: "看板样式",
+            options: { management: "管理视图", operations: "运营视图" },
+          },
+        },
+        collections: {
+          items: {
+            label: "指标域",
+            itemDefault: { label: "MONITOR", title: "新指标域", detail: "说明需要观察或优化的内容。" },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "管理看板",
+        title: "输入运营管理闭环结论",
+        subtitle: "先定义可观察的指标域；真实数值接入后再切换为 KPI 或图表",
+        items: [
+          { label: "EFFICIENCY", title: "服务效率", detail: "会话量、响应时长与解决路径" },
+          { label: "EXPERIENCE", title: "客户体验", detail: "满意度、投诉与异常会话" },
+          { label: "ROUTING", title: "人机分流", detail: "机器人承接与人工转接结构" },
+          { label: "KNOWLEDGE", title: "知识运营", detail: "命中、缺口与更新效果" },
+          { label: "SYSTEM", title: "系统稳定", detail: "接口、服务与告警状态" },
+        ],
+        insight: "看板用于持续发现问题、分派任务并验证优化结果，不以示意数字冒充真实业绩。",
+        variant: "management",
+      },
+    },
+    roles: ["dashboard", "operations", "monitoring", "management"],
+    density: "high",
+    contentShape: ["dashboard", "metric-domains", "management-loop"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "Use the editable dashboard modules as the only visual until real KPI values are available.",
+    }),
+    capabilities: ["editable", "pptx-safe", "qualitative-dashboard"],
+    variants: ["management", "operations"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      items: arrayField(4, 6, {
+        label: textField(24, { required: false, role: "label" }),
+        title: textField(36, { role: "heading" }),
+        detail: textField(84, { role: "body" }),
+      }),
+      insight: textField(140, { required: false, role: "lead" }),
+      variant: enumField(["management", "operations"], "management"),
+    },
+    defaultProps: { subtitle: "", insight: "", variant: "management" },
+    render: renderDashboardOverview,
+  },
+  {
     id: "chart-bar-v1",
     label: "Editable categorical bar chart",
     editor: {
@@ -1609,15 +1931,15 @@ const layouts = [
   },
   {
     id: "table-data-v1",
-    label: "Editable two to five-column data table",
+    label: "Editable two to six-column data table or Gantt matrix",
     editor: {
       label: "数据表格",
-      description: "二到五列、二到六行的结构化信息",
+      description: "二到六列、二到十二行的结构化信息或甘特计划",
       controls: {
         enums: {
           variant: {
             label: "表格样式",
-            options: { ledger: "横线表", comparison: "对比强调" },
+            options: { ledger: "横线表", comparison: "对比强调", gantt: "甘特计划" },
           },
         },
         collections: {
@@ -1635,30 +1957,38 @@ const layouts = [
           ["维度二", "高", "中", "补充差异"],
           ["维度三", "3 天", "7 天", "补充差异"],
         ],
+        insight: "",
         source: "",
         variant: "ledger",
       },
     },
-    roles: ["table", "data-table", "comparison-table", "matrix", "schedule"],
+    roles: ["table", "data-table", "comparison-table", "matrix", "schedule", "gantt"],
     density: "high",
-    contentShape: ["table", "exact-values", "matrix"],
+    contentShape: ["table", "exact-values", "matrix", "gantt-schedule"],
     mediaSlots: mediaSlots(0, 0, [], {
       backgroundMode: "rare",
       textRegionNames: ["header", "content"],
       decisionRule: "The editable table is the primary visual; do not add generated imagery behind exact values.",
     }),
     capabilities: ["editable", "pptx-safe", "data", "table"],
-    variants: ["ledger", "comparison"],
+    variants: ["ledger", "comparison", "gantt"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(64, { role: "heading" }),
       subtitle: textField(120, { required: false, role: "caption" }),
-      columns: arrayField(2, 5, textField(36, { role: "label" })),
-      rows: arrayField(2, 6, arrayField(2, 5, textField(48, { role: "body" }))),
-      source: textField(100, { required: false, role: "caption" }),
-      variant: enumField(["ledger", "comparison"], "ledger"),
+      columns: arrayField(2, 6, textField(36, { role: "label" })),
+      rows: arrayField(2, 12, arrayField(2, 6, textField(48, { role: "body" }))),
+      insight: textField(140, {
+        required: false,
+        role: "lead",
+      }),
+      source: textField(100, {
+        required: false,
+        role: "source",
+      }),
+      variant: enumField(["ledger", "comparison", "gantt"], "ledger"),
     },
-    defaultProps: { subtitle: "", source: "", variant: "ledger" },
+    defaultProps: { subtitle: "", insight: "", source: "", variant: "ledger" },
     render: renderDataTable,
   },
   {
@@ -1888,7 +2218,7 @@ const layouts = [
       eyebrow: textField(32, { role: "label" }),
       title: textField(84, { role: "display" }),
       subtitle: textField(180, { required: false, role: "lead" }),
-      actions: arrayField(0, 3, {
+      actions: arrayField(0, 4, {
         label: textField(36, { role: "heading" }),
         detail: textField(100, { role: "body" }),
       }),
@@ -1927,7 +2257,15 @@ function contentUnit(value) {
   return {
     label: firstText(value.kicker, value.label, value.phase, value.delta),
     title: firstText(value.title, value.value, value.label),
-    body: firstText(value.body, value.detail, value.footer, value.note, value.label),
+    body: firstText(
+      value.body,
+      value.detail,
+      value.flow,
+      Array.isArray(value.modules) ? value.modules.join(" · ") : "",
+      value.footer,
+      value.note,
+      value.label
+    ),
     value: firstText(value.value),
   };
 }
@@ -1951,6 +2289,8 @@ function contentSnapshot(sourceSlide) {
   addUnits(props.metrics);
   addUnits(props.sections);
   addUnits(props.actions);
+  addUnits(props.layers);
+  addUnits(props.systems);
   addUnits(props.rows);
   if (Array.isArray(props.categories) && Array.isArray(props.series)) {
     const firstSeries = props.series.find(item => item && Array.isArray(item.values));
@@ -2076,6 +2416,26 @@ function createEditorProps(layoutId, sourceSlide = null) {
       };
     });
     props.items = fillFromDefaults(mapped, props.items, 3);
+  } else if (layoutId === "architecture-layered-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 5).map((unit, index) => ({
+      label: fitText(unit.label, 24, `LAYER ${index + 1}`),
+      title: fitText(firstText(unit.title, unit.value), 36, `架构层 ${index + 1}`),
+      modules: [fitText(firstText(unit.body, unit.title), 28, "待补充模块"), "待补充模块"],
+    }));
+    props.layers = fillFromDefaults(mapped, props.layers, 3);
+  } else if (layoutId === "system-integration-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 8).map((unit, index) => ({
+      title: fitText(firstText(unit.title, unit.value), 32, `系统 ${index + 1}`),
+      flow: fitText(firstText(unit.body, unit.label), 64, "输入交换的数据或动作"),
+    }));
+    props.systems = fillFromDefaults(mapped, props.systems, 4);
+  } else if (layoutId === "dashboard-overview-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 6).map((unit, index) => ({
+      label: fitText(unit.label, 24, `DOMAIN ${index + 1}`),
+      title: fitText(firstText(unit.title, unit.value), 36, `指标域 ${index + 1}`),
+      detail: fitText(firstText(unit.body, unit.title), 84, "说明需要观察或优化的内容。"),
+    }));
+    props.items = fillFromDefaults(mapped, props.items, 4);
   } else if (layoutId === "chart-bar-v1" && snapshot.units.length) {
     const mapped = snapshot.units.slice(0, 7).map((unit, index) => {
       const candidate = firstText(unit.value, unit.title);
@@ -2103,14 +2463,14 @@ function createEditorProps(layoutId, sourceSlide = null) {
     }];
   } else if (layoutId === "table-data-v1") {
     if (Array.isArray(snapshot.props.columns) && Array.isArray(snapshot.props.rows)) {
-      props.columns = snapshot.props.columns.slice(0, 5).map(value => fitText(value, 36, "新列"));
-      props.rows = snapshot.props.rows.slice(0, 6).map(row =>
-        (Array.isArray(row) ? row : []).slice(0, 5).map(value => fitText(value, 48, "—"))
+      props.columns = snapshot.props.columns.slice(0, 6).map(value => fitText(value, 36, "新列"));
+      props.rows = snapshot.props.rows.slice(0, 12).map(row =>
+        (Array.isArray(row) ? row : []).slice(0, 6).map(value => fitText(value, 48, "—"))
       );
       props.rows = fillFromDefaults(props.rows, props.rows.length ? props.rows : [["项目", "—"]], 2);
     } else if (snapshot.units.length) {
       props.columns = ["项目", "数值 / 内容", "说明"];
-      const mapped = snapshot.units.slice(0, 6).map((unit, index) => [
+      const mapped = snapshot.units.slice(0, 12).map((unit, index) => [
         fitText(firstText(unit.label, unit.title), 48, `项目 ${index + 1}`),
         fitText(firstText(unit.value, unit.title), 48, "—"),
         fitText(firstText(unit.body), 48, "—"),
