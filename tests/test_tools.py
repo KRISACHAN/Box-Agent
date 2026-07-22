@@ -12,10 +12,11 @@ from box_agent.tools import (
     BashTool,
     EditTool,
     ReadTool,
+    SearchFilesTool,
     WriteTool,
     add_workspace_tools,
 )
-from box_agent.tools.file_tools import truncate_text_by_tokens
+from box_agent.tools.permissions import CapabilityPolicy, PermissionEngine
 
 
 @pytest.mark.asyncio
@@ -40,7 +41,10 @@ async def test_read_tool():
             "source_char_count": len("Hello, World!"),
             "selected_char_count": len("Hello, World!"),
             "selected_line_count": 1,
+            "total_lines": 1,
             "truncated": False,
+            "has_more": False,
+            "next_offset": None,
         }
         print("✅ ReadTool test passed")
     finally:
@@ -63,15 +67,138 @@ async def test_read_tool_reports_selected_range_completeness(tmp_path):
         "source_char_count": len("one\ntwo\nthree\n"),
         "selected_char_count": len("two\n"),
         "selected_line_count": 1,
+        "total_lines": 3,
         "truncated": False,
+        "has_more": True,
+        "next_offset": 3,
     }
 
 
-def test_read_truncation_marker_is_stable():
-    truncated = truncate_text_by_tokens("token " * 40_000, 32_000)
+@pytest.mark.asyncio
+async def test_read_tool_defaults_to_bounded_page_with_continuation_hint(tmp_path):
+    path = tmp_path / "large.txt"
+    path.write_text("".join(f"line-{index}\n" for index in range(1, 601)), encoding="utf-8")
 
-    assert "[Content truncated:" in truncated
-    assert "tokens -> ~32000 tokens limit" in truncated
+    result = await ReadTool(workspace_dir=str(tmp_path)).execute(path="large.txt")
+
+    assert result.success is True
+    assert "line-500" in result.content
+    assert "line-501" not in result.content
+    assert "Use offset=501, limit=500 to continue" in result.content
+    assert result.raw_output["selected_line_count"] == 500
+    assert result.raw_output["total_lines"] == 600
+    assert result.raw_output["next_offset"] == 501
+
+
+@pytest.mark.asyncio
+async def test_read_tool_rejects_oversized_page_instead_of_truncating_middle(tmp_path):
+    path = tmp_path / "long-line.txt"
+    path.write_text("x" * 100_001, encoding="utf-8")
+
+    result = await ReadTool(workspace_dir=str(tmp_path)).execute(path="long-line.txt")
+
+    assert result.success is False
+    assert "100,000-character safety limit" in result.error
+    assert "smaller limit" in result.error
+    assert "Content truncated" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_read_tool_rejects_binary_and_directory_paths(tmp_path):
+    binary = tmp_path / "payload.bin"
+    binary.write_bytes(b"\x00\x01\x02")
+    tool = ReadTool(workspace_dir=str(tmp_path))
+
+    binary_result = await tool.execute(path="payload.bin")
+    directory_result = await tool.execute(path=".")
+
+    assert binary_result.success is False
+    assert "binary file" in binary_result.error
+    assert directory_result.success is False
+    assert "Use search_files" in directory_result.error
+
+
+@pytest.mark.asyncio
+async def test_search_files_lists_and_searches_without_bash(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("alpha\nneedle here\nomega\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("needle docs\n", encoding="utf-8")
+    tool = SearchFilesTool(workspace_dir=str(tmp_path))
+
+    files_result = await tool.execute(pattern="*.py", target="files", path=".")
+    content_result = await tool.execute(
+        pattern="needle",
+        target="content",
+        path=".",
+        file_glob="*.py",
+    )
+
+    assert files_result.success is True
+    assert files_result.content == "src/app.py"
+    assert content_result.success is True
+    assert "src/app.py:2:>needle here" in content_result.content
+    assert "README.md" not in content_result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_paginates_results(tmp_path):
+    for index in range(5):
+        (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")
+
+    result = await SearchFilesTool(workspace_dir=str(tmp_path)).execute(
+        pattern="*.txt",
+        target="files",
+        limit=2,
+    )
+
+    assert result.success is True
+    assert result.raw_output["total_matches"] == 5
+    assert result.raw_output["returned_matches"] == 2
+    assert result.raw_output["next_offset"] == 2
+    assert "Use offset=2, limit=2 to continue" in result.content
+
+
+@pytest.mark.asyncio
+async def test_search_files_returns_permission_request_for_host(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    engine = PermissionEngine(CapabilityPolicy(), workspace)
+    outside = Path.home() / "box-agent-search-permission-probe"
+    tool = SearchFilesTool(workspace_dir=str(workspace), permission_engine=engine)
+
+    result = await tool.execute(pattern="*", target="files", path=str(outside))
+
+    assert result.success is False
+    assert result.permission_request is not None
+    assert result.permission_request["scope"] == "filesystem"
+    assert result.permission_request["path"] == str(outside)
+
+
+def test_workspace_tools_register_search_files(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_skills=False,
+            enable_mcp=False,
+        ),
+    )
+    tools = []
+
+    add_workspace_tools(
+        tools,
+        config,
+        tmp_path,
+        allow_full_access=False,
+        output=lambda *_: None,
+        use_output_dir=False,
+    )
+
+    assert "search_files" in {tool.name for tool in tools}
 
 
 @pytest.mark.asyncio

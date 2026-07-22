@@ -20,6 +20,7 @@ from box_agent.tools.file_tools import (
     EditTool,
     MAX_FILE_TOOL_CONTENT_CHARS,
     ReadTool,
+    SearchFilesTool,
     WriteTool,
 )
 from box_agent.tools.image_generation_tool import (
@@ -488,6 +489,12 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         tools.extend(
             [
                 ReadTool(
+                    workspace_dir=str(workspace_dir),
+                    allow_full_access=allow_full_access,
+                    permission_engine=permission_engine,
+                    relative_root_dir=str(relative_root),
+                ),
+                SearchFilesTool(
                     workspace_dir=str(workspace_dir),
                     allow_full_access=allow_full_access,
                     permission_engine=permission_engine,

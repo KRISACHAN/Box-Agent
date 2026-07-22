@@ -772,7 +772,9 @@ class BashTool(Tool):
         shell_examples = {
             "Windows": """Execute PowerShell commands in foreground or background.
 
-For terminal operations like git, npm, docker, etc. DO NOT use for file operations - use specialized tools.
+Do NOT use Get-Content/type to read files; use read_file instead.
+Do NOT use Select-String/Get-ChildItem/dir to search or list files; use search_files instead.
+Reserve bash for git, builds, tests, package managers, processes, scripts, and system commands.
 
 Parameters:
   - command (required): PowerShell command to execute
@@ -791,7 +793,9 @@ Examples:
   - python -m http.server 8080 (with run_in_background=true)""",
             "Unix": """Execute bash commands in foreground or background.
 
-For terminal operations like git, npm, docker, etc. DO NOT use for file operations - use specialized tools.
+Do NOT use cat/head/tail to read files; use read_file instead.
+Do NOT use grep/rg/find/ls to search or list files; use search_files instead.
+Reserve bash for git, builds, tests, package managers, processes, scripts, and system commands.
 
 Parameters:
   - command (required): Bash command to execute

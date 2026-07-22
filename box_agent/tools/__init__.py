@@ -2,7 +2,7 @@
 
 from .base import Tool, ToolResult
 from .bash_tool import BashTool
-from .file_tools import AppendTool, EditTool, ReadTool, WriteTool
+from .file_tools import AppendTool, EditTool, ReadTool, SearchFilesTool, WriteTool
 from .obsidian_tool import ObsidianCreateNoteTool, ObsidianDailyNoteTool, ObsidianUpdateNoteTool
 from .plan_tool import PlanReadTool, PlanStore, PlanWriteTool
 from .request_user_input_tool import RequestUserInputTool
@@ -14,6 +14,7 @@ __all__ = [
     "Tool",
     "ToolResult",
     "ReadTool",
+    "SearchFilesTool",
     "WriteTool",
     "AppendTool",
     "EditTool",

@@ -1851,6 +1851,13 @@ def _tool_message_content_for_model(
     if not result.success:
         return f"Error: {visible_error}"
 
+    # read_file now enforces bounded line pagination and rejects pages above
+    # its character safety limit. Preserve each successful page verbatim so
+    # offset/limit can reliably retrieve content instead of replacing the
+    # requested region with another history preview.
+    if tool_name == "read_file" and (result.raw_output or {}).get("truncated") is False:
+        return visible_content
+
     if result.model_context is not None and visible_content == result.content:
         return result.model_context
 

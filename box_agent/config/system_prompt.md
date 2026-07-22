@@ -21,7 +21,7 @@
 
 - 使用绝对路径或相对 workspace 的路径，写文件前先确认父目录存在。
 - Bash 命令在执行前先说明，特别是涉及删改的命令；检查命令输出并处理异常。
-- 有专用工具时优先用专用工具，不要用 bash 拼接实现同样功能。
+- 读取文件正文使用 `read_file`；列目录、按名称找文件或搜索文件内容使用 `search_files`。不要用 bash 的 `cat/head/tail`、`grep/rg/find/ls` 拼接实现这些操作。
 
 ### Factual & Search Reliability
 

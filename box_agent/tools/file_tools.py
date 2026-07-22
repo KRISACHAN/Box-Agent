@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import tiktoken
 
 from ..model_history import (
     is_model_history_placeholder,
@@ -20,63 +21,107 @@ if TYPE_CHECKING:
     from .permissions import PermissionEngine
 
 
-def truncate_text_by_tokens(
-    text: str,
-    max_tokens: int,
-) -> str:
-    """Truncate text by token count if it exceeds the limit.
-
-    When text exceeds the specified token limit, performs intelligent truncation
-    by keeping the front and back parts while truncating the middle.
-
-    Args:
-        text: Text to be truncated
-        max_tokens: Maximum token limit
-
-    Returns:
-        str: Truncated text if it exceeds the limit, otherwise the original text.
-
-    Example:
-        >>> text = "very long text..." * 10000
-        >>> truncated = truncate_text_by_tokens(text, 64000)
-        >>> print(truncated)
-    """
-    encoding = tiktoken.get_encoding("cl100k_base")
-    token_count = len(encoding.encode(text))
-
-    # Return original text if under limit
-    if token_count <= max_tokens:
-        return text
-
-    # Calculate token/character ratio for approximation
-    char_count = len(text)
-    ratio = token_count / char_count
-
-    # Keep head and tail mode: allocate half space for each (with 5% safety margin)
-    chars_per_half = int((max_tokens / 2) / ratio * 0.95)
-
-    # Truncate front part: find nearest newline
-    head_part = text[:chars_per_half]
-    last_newline_head = head_part.rfind("\n")
-    if last_newline_head > 0:
-        head_part = head_part[:last_newline_head]
-
-    # Truncate back part: find nearest newline
-    tail_part = text[-chars_per_half:]
-    first_newline_tail = tail_part.find("\n")
-    if first_newline_tail > 0:
-        tail_part = tail_part[first_newline_tail + 1 :]
-
-    # Combine result
-    truncation_note = f"\n\n... [Content truncated: {token_count} tokens -> ~{max_tokens} tokens limit] ...\n\n"
-    return head_part + truncation_note + tail_part
-
-
 _MODEL_CONTEXT_EXTS = {".html", ".htm", ".json", ".md", ".txt", ".log", ".xml"}
 _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_SIZE_THRESHOLD = 8_000
 MAX_FILE_TOOL_CONTENT_CHARS = 8_000
 MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY = f"{MAX_FILE_TOOL_CONTENT_CHARS:,}"
+DEFAULT_READ_LIMIT = 500
+MAX_READ_LINES = 2_000
+MAX_READ_CHARS = 100_000
+DEFAULT_SEARCH_LIMIT = 50
+MAX_SEARCH_RESULTS = 200
+_BINARY_EXTENSIONS = {
+    ".7z", ".avi", ".bin", ".bmp", ".class", ".dll", ".dmg", ".doc",
+    ".docx", ".exe", ".gif", ".gz", ".ico", ".jar", ".jpeg", ".jpg",
+    ".mov", ".mp3", ".mp4", ".pdf", ".png", ".ppt", ".pptx", ".pyc",
+    ".so", ".tar", ".tif", ".tiff", ".webp", ".xls", ".xlsx", ".zip",
+}
+_BLOCKED_POSIX_DEVICES = {
+    "/dev/full", "/dev/null", "/dev/random", "/dev/stdin", "/dev/tty",
+    "/dev/urandom", "/dev/zero",
+}
+_BLOCKED_WINDOWS_DEVICE_NAMES = {
+    "aux", "clock$", "con", "nul", "prn",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
+
+
+def _normalize_read_pagination(
+    offset: int | None,
+    limit: int | None,
+) -> tuple[int, int]:
+    """Return bounded 1-indexed pagination values."""
+    normalized_offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 1
+    normalized_limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else DEFAULT_READ_LIMIT
+    return max(1, normalized_offset), max(1, min(normalized_limit, MAX_READ_LINES))
+
+
+def _normalize_search_pagination(offset: int | None, limit: int | None) -> tuple[int, int]:
+    normalized_offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 0
+    normalized_limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else DEFAULT_SEARCH_LIMIT
+    return max(0, normalized_offset), max(1, min(normalized_limit, MAX_SEARCH_RESULTS))
+
+
+def _blocked_device_error(file_path: Path) -> str | None:
+    """Reject special device paths before performing any I/O."""
+    normalized = file_path.as_posix().casefold()
+    if normalized in _BLOCKED_POSIX_DEVICES or normalized.startswith("/dev/fd/"):
+        return f"Cannot read device file: {file_path}"
+    device_name = file_path.name.split(".", 1)[0].casefold().rstrip(":")
+    if device_name in _BLOCKED_WINDOWS_DEVICE_NAMES:
+        return f"Cannot read Windows device path: {file_path}"
+    return None
+
+
+def _binary_file_error(file_path: Path) -> str | None:
+    """Return an actionable error for binary files, otherwise None."""
+    suffix = file_path.suffix.casefold()
+    if suffix in _BINARY_EXTENSIONS:
+        if suffix in {".docx", ".xlsx", ".pptx", ".pdf"}:
+            return (
+                f"Cannot read structured binary file '{file_path.name}' with read_file. "
+                "Use execute_code with the appropriate document library."
+            )
+        return f"Cannot read binary file '{file_path.name}' with read_file."
+    try:
+        with file_path.open("rb") as stream:
+            sample = stream.read(8_192)
+    except OSError:
+        return None
+    if b"\x00" in sample:
+        return f"Cannot read binary file '{file_path.name}' with read_file."
+    return None
+
+
+def _similar_file_suggestions(file_path: Path, limit: int = 5) -> list[str]:
+    """Return deterministic nearby filename suggestions for a missing path."""
+    parent = file_path.parent
+    try:
+        candidates = [candidate for candidate in parent.iterdir() if candidate.is_file()]
+    except OSError:
+        return []
+    wanted_name = file_path.name.casefold()
+    wanted_stem = file_path.stem.casefold()
+
+    def score(candidate: Path) -> tuple[int, str]:
+        name = candidate.name.casefold()
+        stem = candidate.stem.casefold()
+        value = 0
+        if stem == wanted_stem:
+            value = 90
+        elif name.startswith(wanted_name) or wanted_name.startswith(name):
+            value = 70
+        elif wanted_name in name or name in wanted_name:
+            value = 60
+        else:
+            overlap = len(set(wanted_stem) & set(stem))
+            value = overlap
+        return value, candidate.name
+
+    ranked = sorted(candidates, key=lambda candidate: (-score(candidate)[0], score(candidate)[1]))
+    return [str(candidate) for candidate in ranked[:limit] if score(candidate)[0] > 0]
 
 
 def _resolve_from_active_root(
@@ -261,9 +306,11 @@ class ReadTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Read file contents from the filesystem. Output always includes line numbers "
-            "in format 'LINE_NUMBER|LINE_CONTENT' (1-indexed). Supports reading partial content "
-            "by specifying line offset and limit for large files. "
+            "Read a text file with line numbers and bounded pagination. Use this instead of "
+            "cat/head/tail or shell commands that print file contents. Output uses "
+            "'LINE_NUMBER|LINE_CONTENT' (1-indexed). The default page is 500 lines and the "
+            "maximum is 2000; use offset and limit to continue through large files. "
+            "Binary and structured document files are rejected with an actionable error. "
             "You can call this tool multiple times in parallel to read different files simultaneously."
         )
 
@@ -278,11 +325,16 @@ class ReadTool(Tool):
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Starting line number (1-indexed). Use for large files to read from specific line",
+                    "description": "Starting line number (1-indexed, default: 1)",
+                    "default": 1,
+                    "minimum": 1,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Number of lines to read. Use with offset for large files to read in chunks",
+                    "description": "Maximum lines to read (default: 500, max: 2000)",
+                    "default": DEFAULT_READ_LIMIT,
+                    "minimum": 1,
+                    "maximum": MAX_READ_LINES,
                 },
             },
             "required": ["path"],
@@ -291,6 +343,7 @@ class ReadTool(Tool):
     async def execute(self, path: str, offset: int | None = None, limit: int | None = None) -> ToolResult:
         """Execute read file."""
         try:
+            offset, limit = _normalize_read_pagination(offset, limit)
             # Resolve relative paths from the active project/artifact root while
             # retaining workspace_dir as the filesystem security boundary.
             file_path = _resolve_from_active_root(
@@ -321,55 +374,93 @@ class ReadTool(Tool):
                 if error:
                     return ToolResult(success=False, content="", error=error)
 
+            device_error = _blocked_device_error(file_path)
+            if device_error:
+                return ToolResult(success=False, content="", error=device_error)
+
             if not file_path.exists():
+                suggestions = _similar_file_suggestions(file_path)
+                suggestion_text = (
+                    f" Did you mean: {', '.join(suggestions)}" if suggestions else ""
+                )
                 return ToolResult(
                     success=False,
                     content="",
-                    error=f"File not found: {path}",
+                    error=f"File not found: {path}.{suggestion_text}",
+                )
+            if not file_path.is_file():
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=(
+                        f"Path is not a file: {path}. Use search_files with "
+                        "target='files' to inspect a directory."
+                    ),
                 )
 
-            # Read file content with line numbers
-            try:
-                with open(file_path, encoding="utf-8") as f:
-                    lines = f.readlines()
-            except UnicodeDecodeError:
-                with open(file_path, encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-                source_char_count = sum(len(line) for line in lines)
-                # Prepend a warning that will appear before the content
-                lines.insert(0, "[Warning: File contains non-UTF-8 bytes, some characters replaced with \ufffd. "
-                              "For data files, consider using execute_code with pd.read_csv() or pd.read_excel().]\n")
-            else:
-                source_char_count = sum(len(line) for line in lines)
+            binary_error = _binary_file_error(file_path)
+            if binary_error:
+                return ToolResult(success=False, content="", error=binary_error)
 
-            # Apply offset and limit
-            start = (offset - 1) if offset else 0
-            end = (start + limit) if limit else len(lines)
-            if start < 0:
-                start = 0
-            if end > len(lines):
-                end = len(lines)
+            # Count while retaining only the requested page. This keeps memory
+            # bounded even when the source file is very large.
+            start = offset - 1
+            end = start + limit
+            selected_lines: list[str] = []
+            source_char_count = 0
+            total_lines = 0
+            replacement_seen = False
+            with open(file_path, encoding="utf-8", errors="replace") as stream:
+                for index, line in enumerate(stream):
+                    total_lines = index + 1
+                    source_char_count += len(line)
+                    replacement_seen = replacement_seen or "\ufffd" in line
+                    if start <= index < end:
+                        selected_lines.append(line)
 
-            selected_lines = lines[start:end]
             selected_char_count = sum(len(line) for line in selected_lines)
             selected_line_count = len(selected_lines)
 
+            if selected_char_count > MAX_READ_CHARS:
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=(
+                        f"Read produced {selected_char_count:,} characters, exceeding the "
+                        f"{MAX_READ_CHARS:,}-character safety limit. The file has "
+                        f"{total_lines:,} lines. Retry with a smaller limit from offset={offset}."
+                    ),
+                    raw_output={
+                        "source_char_count": source_char_count,
+                        "selected_char_count": selected_char_count,
+                        "selected_line_count": selected_line_count,
+                        "total_lines": total_lines,
+                        "truncated": False,
+                    },
+                )
+
             # Format with line numbers (1-indexed)
-            numbered_lines = []
+            numbered_lines: list[str] = []
             for i, line in enumerate(selected_lines, start=start + 1):
                 # Remove trailing newline for formatting
                 line_content = line.rstrip("\n")
                 numbered_lines.append(f"{i:6d}|{line_content}")
 
+            if replacement_seen:
+                numbered_lines.insert(
+                    0,
+                    "[Warning: File contains non-UTF-8 bytes; invalid bytes were replaced with \ufffd.]",
+                )
             content = "\n".join(numbered_lines)
+            has_more = end < total_lines
+            if has_more:
+                next_offset = offset + selected_line_count
+                content += (
+                    f"\n\n[Hint: showing lines {offset}-{offset + selected_line_count - 1} "
+                    f"of {total_lines}. Use offset={next_offset}, limit={limit} to continue.]"
+                )
 
-            # Apply token truncation if needed
-            max_tokens = 32000
-            full_content = content
-            content = truncate_text_by_tokens(full_content, max_tokens)
-            truncated = content != full_content
-
-            model_context = build_read_file_model_context(file_path, content, len(lines))
+            model_context = build_read_file_model_context(file_path, content, total_lines)
             return ToolResult(
                 success=True,
                 content=content,
@@ -378,11 +469,254 @@ class ReadTool(Tool):
                     "source_char_count": source_char_count,
                     "selected_char_count": selected_char_count,
                     "selected_line_count": selected_line_count,
-                    "truncated": truncated,
+                    "total_lines": total_lines,
+                    "truncated": False,
+                    "has_more": has_more,
+                    "next_offset": offset + selected_line_count if has_more else None,
                 },
             )
         except Exception as e:
             return ToolResult(success=False, content="", error=str(e))
+
+
+class SearchFilesTool(Tool):
+    """Search file names or text content without routing through a shell."""
+
+    parallel_safe = True
+
+    def __init__(
+        self,
+        workspace_dir: str = ".",
+        allow_full_access: bool = True,
+        permission_engine: PermissionEngine | None = None,
+        relative_root_dir: str | None = None,
+    ):
+        self.workspace_dir = Path(workspace_dir).absolute()
+        self.relative_root_dir = (
+            Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
+        )
+        self.allow_full_access = allow_full_access
+        self._perm = permission_engine
+
+    @property
+    def name(self) -> str:
+        return "search_files"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search file contents or find files by name. Use this instead of grep/rg/find/ls "
+            "in bash. target='content' performs a regular-expression text search; "
+            "target='files' finds files by glob pattern and is the correct way to inspect "
+            "a directory. Results are bounded and support offset/limit pagination."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex for content search or glob pattern for file search",
+                },
+                "target": {
+                    "type": "string",
+                    "enum": ["content", "files"],
+                    "default": "content",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory or file to search (default: active workspace root)",
+                    "default": ".",
+                },
+                "file_glob": {
+                    "type": "string",
+                    "description": "Optional glob limiting files during content search",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": DEFAULT_SEARCH_LIMIT,
+                    "minimum": 1,
+                    "maximum": MAX_SEARCH_RESULTS,
+                },
+                "offset": {"type": "integer", "default": 0, "minimum": 0},
+                "output_mode": {
+                    "type": "string",
+                    "enum": ["content", "files_only", "count"],
+                    "default": "content",
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "Context lines before and after content matches (max: 10)",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": 10,
+                },
+            },
+            "required": ["pattern"],
+        }
+
+    def _resolve_path(self, path: str) -> Path:
+        search_path = _resolve_from_active_root(
+            path,
+            workspace_dir=self.workspace_dir,
+            relative_root_dir=self.relative_root_dir,
+        )
+        if not search_path.exists() and not Path(path).is_absolute():
+            workspace_candidate = self.workspace_dir / path
+            if workspace_candidate.exists():
+                return workspace_candidate
+        return search_path
+
+    def _permission_error(self, search_path: Path) -> ToolResult | None:
+        if self._perm:
+            decision = self._perm.check(
+                capability="filesystem.read",
+                resource={"path": str(search_path)},
+                tool_name=self.name,
+            )
+            if not decision.allowed:
+                return ToolResult(
+                    success=False,
+                    error=decision.reason,
+                    permission_request=decision.permission_request,
+                )
+        elif not self.allow_full_access:
+            error = validate_path_in_workspace(search_path, self.workspace_dir)
+            if error:
+                return ToolResult(success=False, error=error)
+        return None
+
+    def _iter_files(self, search_path: Path) -> list[Path]:
+        if search_path.is_file():
+            return [search_path]
+        files: list[Path] = []
+        for current_root, directories, filenames in os.walk(search_path, followlinks=False):
+            directories[:] = sorted(
+                directory
+                for directory in directories
+                if directory not in {".git", ".hg", ".svn", "node_modules", "__pycache__"}
+            )
+            root_path = Path(current_root)
+            files.extend(root_path / filename for filename in sorted(filenames))
+        return files
+
+    def _file_allowed(self, file_path: Path) -> bool:
+        if not self._perm:
+            return True
+        return self._perm.check(
+            capability="filesystem.read",
+            resource={"path": str(file_path)},
+            tool_name=self.name,
+        ).allowed
+
+    async def execute(
+        self,
+        pattern: str,
+        target: str = "content",
+        path: str = ".",
+        file_glob: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        output_mode: str = "content",
+        context: int = 0,
+    ) -> ToolResult:
+        """Execute a bounded file-name or content search."""
+        try:
+            if not isinstance(pattern, str) or not pattern:
+                return ToolResult(success=False, error="search_files requires a non-empty pattern")
+            if target not in {"content", "files"}:
+                return ToolResult(success=False, error="target must be 'content' or 'files'")
+            if output_mode not in {"content", "files_only", "count"}:
+                return ToolResult(success=False, error="Invalid output_mode")
+            offset, limit = _normalize_search_pagination(offset, limit)
+            context = max(0, min(context if isinstance(context, int) else 0, 10))
+            search_path = self._resolve_path(path)
+            denied = self._permission_error(search_path)
+            if denied:
+                return denied
+            if not search_path.exists():
+                return ToolResult(success=False, error=f"Search path not found: {path}")
+
+            files = [file_path for file_path in self._iter_files(search_path) if self._file_allowed(file_path)]
+            matches: list[str] = []
+
+            if target == "files":
+                base = search_path if search_path.is_dir() else search_path.parent
+                for file_path in files:
+                    relative = file_path.relative_to(base).as_posix()
+                    if fnmatch(file_path.name, pattern) or fnmatch(relative, pattern):
+                        matches.append(relative)
+            else:
+                try:
+                    expression = re.compile(pattern)
+                except re.error as exc:
+                    return ToolResult(success=False, error=f"Invalid search regex: {exc}")
+                base = search_path if search_path.is_dir() else search_path.parent
+                counts: dict[str, int] = {}
+                seen_files: set[str] = set()
+                for file_path in files:
+                    relative = file_path.relative_to(base).as_posix()
+                    if file_glob and not (
+                        fnmatch(file_path.name, file_glob) or fnmatch(relative, file_glob)
+                    ):
+                        continue
+                    if _binary_file_error(file_path):
+                        continue
+                    try:
+                        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    except OSError:
+                        continue
+                    for line_index, line in enumerate(lines):
+                        if not expression.search(line):
+                            continue
+                        counts[relative] = counts.get(relative, 0) + 1
+                        if output_mode == "files_only":
+                            if relative not in seen_files:
+                                matches.append(relative)
+                                seen_files.add(relative)
+                            continue
+                        if output_mode == "count":
+                            continue
+                        first = max(0, line_index - context)
+                        last = min(len(lines), line_index + context + 1)
+                        rendered = []
+                        for context_index in range(first, last):
+                            text = lines[context_index]
+                            if len(text) > 2_000:
+                                text = text[:2_000] + "... [line truncated]"
+                            marker = ">" if context_index == line_index else " "
+                            rendered.append(f"{relative}:{context_index + 1}:{marker}{text}")
+                        matches.append("\n".join(rendered))
+                if output_mode == "count":
+                    matches = [f"{relative}:{count}" for relative, count in sorted(counts.items())]
+
+            total_matches = len(matches)
+            selected = matches[offset : offset + limit]
+            truncated = offset + limit < total_matches
+            content = "\n".join(selected)
+            if not content:
+                content = "No matches found."
+            if truncated:
+                content += (
+                    f"\n\n[Hint: showing results {offset + 1}-{offset + len(selected)} "
+                    f"of {total_matches}. Use offset={offset + limit}, limit={limit} to continue.]"
+                )
+            return ToolResult(
+                success=True,
+                content=content,
+                raw_output={
+                    "target": target,
+                    "path": str(search_path),
+                    "total_matches": total_matches,
+                    "returned_matches": len(selected),
+                    "truncated": truncated,
+                    "next_offset": offset + limit if truncated else None,
+                },
+            )
+        except Exception as exc:
+            return ToolResult(success=False, content="", error=str(exc))
 
 
 class WriteTool(Tool):
