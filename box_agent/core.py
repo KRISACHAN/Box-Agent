@@ -14,9 +14,7 @@ import asyncio
 import hashlib
 import json
 import logging
-import mimetypes
 import re
-import shlex
 import traceback
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -24,11 +22,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Final
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import tiktoken
 
+from .artifacts import (
+    OUTPUT_SUBDIR,
+    artifact_scan_root as _artifact_scan_root,
+    avoid_collision,
+    ensure_output_dir,
+    make_artifact as _make_artifact,
+    safe_output_name,
+)
 from .cache_fingerprint import build_cache_fingerprint
+from .evidence import (
+    extract_http_urls as _http_urls,
+    normalize_search_url as _normalize_search_url,
+)
 from .events import (
     AgentEvent,
     ArtifactEvent,
@@ -62,7 +72,6 @@ from .model_history import (
     is_model_instruction_source_path,
 )
 from .loop_guards import (
-    CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
     TOOL_CALL_LIMITS,
@@ -73,7 +82,6 @@ from .loop_guards import (
     CompletionGate,
     completion_budget_reserve_text,
     completion_gate_gaps,
-    completion_gate_progress_text,
     completion_gate_text,
     format_injected_message,
     looks_like_truncated_output,
@@ -97,6 +105,12 @@ PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import EventEmittingTool, Tool, ToolResult
 from .tools.skill_preload import build_active_skills_prompt
+from .turn_policy import (
+    text_is_short_acknowledgement,
+    text_is_short_non_task_reply,
+    text_requests_plan_start,
+)
+from .workflow_policy import WorkflowPolicy
 
 # Type alias — consumers supply a zero-arg callable that returns True
 # when the execution should be cancelled.
@@ -130,989 +144,6 @@ _BROWSER_SNAPSHOT_OUTPUT_PATH_ERROR = (
     "inside the current task artifact root. Use a path such as "
     "research/page-snapshot.md, or omit filename when no persisted snapshot is needed."
 )
-
-_CONTROLLED_CONTENT_PATCH_BLOCKED_TOOLS: Final[frozenset[str]] = frozenset(
-    {"read_file", "execute_code", "bash"}
-)
-_CONTROLLED_CONTENT_PATCH_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_PATCH_INPUT_READY: PATCH_INPUT in the latest checkpoint "
-    "already contains the exact outline content, slide mapping, prop shapes, and ready "
-    "media paths. Do not inspect files again. Write deck.patch.json now with write_file "
-    "(and append_file only if the body exceeds the file-tool limit)."
-)
-_CONTROLLED_IMAGE_GENERATION_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_IMAGE_INPUT_READY: IMAGE_INPUT already contains the "
-    "missing image paths, page intent, and theme palette. Call generate_image now "
-    "with an exact listed output_path and watermark=false; do not inspect files or "
-    "invent another path."
-)
-_CONTROLLED_SCAFFOLD_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY: SCAFFOLD_INPUT in the latest "
-    "checkpoint already contains every registered theme/layout id and every page "
-    "intent. Invoke inspect_deck_contract.js once now with --outline outline.json "
-    "and --out deck.json; do not reread files, list the registry, or invent ids."
-)
-_CONTROLLED_REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
-    {"write_file", "append_file", "request_user_input"}
-)
-_CONTROLLED_REPAIR_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: REPAIR_INPUT in the latest "
-    "checkpoint already contains the fresh issues, affected current props, outline "
-    "evidence, and authorized fact buckets. Write the minimal deck.patch.json now, "
-    "or ask once for a genuinely required missing user/private fact; do not reread "
-    "stale inputs or run another command first."
-)
-_CONTROLLED_OUTLINE_REPAIR_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_OUTLINE_REPAIR_INPUT_READY: REPAIR_INPUT in the "
-    "latest checkpoint already contains the complete current outline and fresh "
-    "validator issues. Write the corrected outline.json now; do not reread files, "
-    "inspect the schema, update todos/plans, or run another command first."
-)
-_CONTROLLED_IMAGE_STATUS_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_IMAGE_STATUS_SYNC_REQUIRED: all planned image files "
-    "exist. Run sync_image_manifest_status.js once with bash; do not reread/edit "
-    "manifest.json or regenerate an existing image."
-)
-_CONTROLLED_FINALIZE_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_FINALIZE_REQUIRED: run the single deterministic "
-    "finalizer now with bash using the absolute finalize_controlled_deck.js path "
-    "from the latest checkpoint, followed by deck.json --out "
-    "index.html. It validates spec/truth/media, compiles HTML, runs self-check, "
-    "and probes the editor in dependency order. Do not split that chain into "
-    "separate validator/render commands or add another shell command."
-)
-_CONTROLLED_APPLY_PATCH_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_APPLY_PATCH_REQUIRED: run the single deterministic "
-    "apply_deck_patch.js command from the latest checkpoint with deck.json and "
-    "deck.patch.json. Do not substitute another script, compound the command, or "
-    "rewrite deck.json directly."
-)
-_CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_APPLY_PATCH_REPAIR_REQUIRED: the latest deterministic "
-    "apply_deck_patch.js call returned an actionable error. You may only read, edit, "
-    "or rewrite deck.patch.json with the minimal named-field repair, "
-    "ask once for a genuinely missing required user/private fact, or rerun the exact "
-    "apply command. Do not read or rewrite deck.json or run discovery commands."
-)
-_CONTROLLED_APPLY_PATCH_FIELD_MISMATCH = (
-    "CONTROLLED_PRESENTATION_APPLY_PATCH_FIELD_MISMATCH: the proposed deck.patch.json "
-    "repair does not change any field named by the latest deterministic error. "
-    "Change one of these exact fields and leave unrelated slide content unchanged: {paths}."
-)
-_CONTROLLED_REPAIR_STALLED_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_REPAIR_STALLED: the same deterministic controlled-deck "
-    "step failed twice with the same error. Do not repeat that command or bypass the "
-    "stage guard with a compound shell command. Ask for user input only when the failure explicitly names "
-    "a genuinely missing required user/private fact; otherwise end this turn and "
-    "report the unresolved internal validation conflict."
-)
-_CONTROLLED_PRESENTATION_PLAN_SCOPE_ERROR = (
-    "CONTROLLED_PRESENTATION_PLAN_SCOPE_INCOMPLETE: the user requested a finished "
-    "presentation, so the execution plan cannot stop at outline/content planning. "
-    "Publish a corrected plan that covers outline.json, deck.json scaffolding, "
-    "content/media authoring, deterministic index.html finalization, and QA. Only "
-    "an explicit user request for outline-only output may omit those delivery stages."
-)
-_CONTROLLED_PLAN_OUTLINE_ONLY_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:"
-    r"(?:本轮|当前|这次)?[^。；;\n]{0,16}(?:仅|只)"
-    r"[^。；;\n]{0,32}(?:outline|大纲|内容方案)"
-    r"|(?:不进入|不生成|不制作|不渲染|不包含)"
-    r"[^。；;\n]{0,32}(?:html|pptx?|页面|幻灯片|主题|版式|布局|脚手架|deck)"
-    r"|\b(?:outline[- ]only|only\s+(?:produce|create|deliver)?\s*outline|"
-    r"do\s+not\s+(?:generate|create|render|deliver)\s+"
-    r"(?:slides?|pages?|html|deck))\b"
-    r")",
-    re.IGNORECASE,
-)
-_CONTROLLED_PLAN_DELIVERY_STEP_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:deck\.json|index\.html|finalize_controlled_deck|"
-    r"(?:生成|制作|编译|渲染|交付|导出)[^。；;\n]{0,32}"
-    r"(?:html|pptx?|页面|幻灯片|deck)|"
-    r"\b(?:scaffold|render|compile|finalize|deliver|export)\b)",
-    re.IGNORECASE,
-)
-_CONTROLLED_RESEARCH_HANDOFF_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_RESEARCH_HANDOFF_READY: research QA is complete. "
-    "Do not search/browse, create or update todos/plans, reread outline.md or the "
-    "research QA report, or inspect/list the filesystem. Read only a Markdown "
-    "handoff file explicitly named in RESEARCH_INPUT when its content is missing "
-    "from context; otherwise write outline.json now."
-)
-_CONTROLLED_FINALIZER_SCRIPT = (
-    Path(__file__).resolve().parent
-    / "skills"
-    / "document-skills"
-    / "pptx"
-    / "scripts"
-    / "finalize_controlled_deck.js"
-)
-_CONTROLLED_INSPECT_SCRIPT = _CONTROLLED_FINALIZER_SCRIPT.parent / "inspect_deck_contract.js"
-_CONTROLLED_APPLY_PATCH_SCRIPT = (
-    _CONTROLLED_FINALIZER_SCRIPT.parent / "apply_deck_patch.js"
-)
-_CONTROLLED_VALIDATE_OUTLINE_SCRIPT = (
-    _CONTROLLED_FINALIZER_SCRIPT.parent / "validate_outline.js"
-)
-
-
-def _controlled_presentation_plan_scope_error(
-    stage: str | None,
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> str | None:
-    if (
-        stage in {None, "complete"}
-        or tool_name != "plan_write"
-        or str(arguments.get("action") or "").lower() != "set"
-    ):
-        return None
-    restrictive_text = json.dumps(
-        {
-            "objective": arguments.get("objective"),
-            "scope": arguments.get("scope"),
-            "risks": arguments.get("risks"),
-            "assumptions": arguments.get("assumptions"),
-        },
-        ensure_ascii=False,
-        default=str,
-    )
-    if not _CONTROLLED_PLAN_OUTLINE_ONLY_RE.search(restrictive_text):
-        return None
-    delivery_text = json.dumps(
-        {
-            "steps": arguments.get("steps"),
-            "verification": arguments.get("verification"),
-        },
-        ensure_ascii=False,
-        default=str,
-    )
-    if _CONTROLLED_PLAN_DELIVERY_STEP_RE.search(delivery_text):
-        return None
-    return _CONTROLLED_PRESENTATION_PLAN_SCOPE_ERROR
-
-
-def _controlled_image_status_error(
-    stage: str | None,
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> str | None:
-    if stage != "image_status_sync":
-        return None
-    command = arguments.get("command")
-    if (
-        tool_name == "bash"
-        and isinstance(command, str)
-        and "sync_image_manifest_status.js" in command
-        and "assets/generated/manifest.json" in command
-    ):
-        return None
-    return _CONTROLLED_IMAGE_STATUS_TOOL_ERROR
-
-
-def _controlled_finalize_error(
-    stage: str | None,
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> str | None:
-    if stage != "finalize":
-        return None
-    command = arguments.get("command")
-    if tool_name != "bash" or not isinstance(command, str):
-        return _CONTROLLED_FINALIZE_TOOL_ERROR
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return _CONTROLLED_FINALIZE_TOOL_ERROR
-    script_indexes = [
-        index
-        for index, token in enumerate(tokens)
-        if Path(token).name == "finalize_controlled_deck.js"
-    ]
-    if len(script_indexes) != 1:
-        return _CONTROLLED_FINALIZE_TOOL_ERROR
-    script_index = script_indexes[0]
-    if script_index < 1:
-        return _CONTROLLED_FINALIZE_TOOL_ERROR
-    node_token = tokens[script_index - 1]
-    if not (
-        Path(node_token).name in {"node", "node.exe"}
-        or "BOX_AGENT_NODE" in node_token
-    ):
-        return _CONTROLLED_FINALIZE_TOOL_ERROR
-    supplied_script = Path(tokens[script_index])
-    if (
-        not supplied_script.is_absolute()
-        or supplied_script.resolve() != _CONTROLLED_FINALIZER_SCRIPT
-    ):
-        return _CONTROLLED_FINALIZE_TOOL_ERROR
-    command_prefix = tokens[: script_index - 1]
-    if command_prefix and not (
-        len(command_prefix) == 3
-        and command_prefix[0] == "cd"
-        and command_prefix[1]
-        and command_prefix[2] == "&&"
-    ):
-        return _CONTROLLED_FINALIZE_TOOL_ERROR
-    finalizer_args = tokens[script_index + 1 :]
-    if (
-        len(finalizer_args) == 3
-        and Path(finalizer_args[0]).name == "deck.json"
-        and finalizer_args[1] == "--out"
-        and Path(finalizer_args[2]).name == "index.html"
-    ):
-        return None
-    return _CONTROLLED_FINALIZE_TOOL_ERROR
-
-
-def _controlled_finalizer_failure_signature(
-    tool_name: str,
-    arguments: dict[str, Any],
-    result: ToolResult,
-) -> str | None:
-    """Return a stable semantic signature for a failed controlled finalizer call."""
-    if result.success or _controlled_finalize_error("finalize", tool_name, arguments):
-        return None
-    payload = "\n".join(
-        part for part in (result.error, result.content) if isinstance(part, str) and part
-    )
-    if not payload.strip():
-        return "empty-finalizer-failure"
-    marker = payload.find("FINALIZE_STOP")
-    semantic = payload[marker:] if marker >= 0 else payload
-    return re.sub(r"\s+", " ", semantic).strip()[:4000]
-
-
-def _is_controlled_outline_validation_call(
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> bool:
-    if tool_name != "bash":
-        return False
-    command = arguments.get("command")
-    if not isinstance(command, str):
-        return False
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return False
-    script_tokens = [
-        token
-        for token in tokens
-        if Path(token).name == "validate_outline.js"
-    ]
-    if len(script_tokens) != 1:
-        return False
-    supplied_script = Path(script_tokens[0])
-    return (
-        supplied_script.is_absolute()
-        and supplied_script.resolve() == _CONTROLLED_VALIDATE_OUTLINE_SCRIPT
-    )
-
-
-def _controlled_outline_validation_failure_signature(
-    tool_name: str,
-    arguments: dict[str, Any],
-    result: ToolResult,
-    workspace_dir: str | None,
-) -> str | None:
-    """Return the stable report issues for a failed outline validator call."""
-    if result.success or not _is_controlled_outline_validation_call(
-        tool_name,
-        arguments,
-    ):
-        return None
-
-    report_candidates: list[Path] = []
-    command = arguments.get("command")
-    try:
-        tokens = shlex.split(command) if isinstance(command, str) else []
-    except ValueError:
-        tokens = []
-    if "--report" in tokens:
-        report_index = tokens.index("--report") + 1
-        if report_index < len(tokens):
-            requested_report = Path(tokens[report_index])
-            if requested_report.is_absolute():
-                report_candidates.append(requested_report)
-            elif workspace_dir:
-                root = Path(workspace_dir)
-                report_candidates.extend(
-                    (root / requested_report, root / "output" / requested_report)
-                )
-    if workspace_dir:
-        report_candidates.extend(
-            (Path(workspace_dir) / "output").rglob("outline_check.json")
-        )
-    existing_reports = [path for path in report_candidates if path.is_file()]
-    if existing_reports:
-        report_path = max(
-            existing_reports,
-            key=lambda path: path.stat().st_mtime_ns,
-        )
-        try:
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            report = None
-        if isinstance(report, dict) and report.get("ok") is False:
-            semantic = {
-                "issues": report.get("issues") or [],
-                "warnings": report.get("warnings") or [],
-            }
-            return json.dumps(
-                semantic,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )[:4000]
-
-    payload = "\n".join(
-        part for part in (result.error, result.content) if isinstance(part, str) and part
-    )
-    return re.sub(r"\s+", " ", payload).strip()[:4000] or "empty-outline-failure"
-
-
-_CONTROLLED_JSON_MISSING = object()
-
-
-def _controlled_failure_field_paths(result: ToolResult) -> tuple[str, ...]:
-    payload = "\n".join(
-        part for part in (result.error, result.content) if isinstance(part, str) and part
-    )
-    return tuple(dict.fromkeys(re.findall(
-        r"(?m)^((?:slides)(?:\.[A-Za-z0-9_-]+){2,}):",
-        payload,
-    )))
-
-
-def _controlled_patch_file(
-    workspace_dir: str | None,
-    requested_path: str,
-) -> Path | None:
-    requested = Path(requested_path)
-    candidates: list[Path] = []
-    if requested.is_absolute():
-        candidates.append(requested)
-    elif workspace_dir:
-        root = Path(workspace_dir)
-        candidates.extend((root / requested, root / "output" / requested))
-        if requested.name == "deck.patch.json":
-            candidates.extend((root / "output").rglob("deck.patch.json"))
-    existing = [path for path in candidates if path.is_file()]
-    if not existing:
-        return None
-    return max(existing, key=lambda path: path.stat().st_mtime_ns)
-
-
-def _controlled_json_path_value(document: Any, field_path: str) -> Any:
-    parts = field_path.split(".")
-    if (
-        parts[:1] == ["slides"]
-        and isinstance(document, dict)
-        and not isinstance(document.get("slides"), dict)
-        and len(parts) > 1
-        and isinstance(document.get(parts[1]), dict)
-    ):
-        parts = parts[1:]
-    current = document
-    for part in parts:
-        if isinstance(current, dict) and part in current:
-            current = current[part]
-        elif isinstance(current, dict) and part.isdigit():
-            slide_keys = sorted(
-                (
-                    key
-                    for key in current
-                    if isinstance(key, str) and re.fullmatch(r"slide-\d+", key)
-                ),
-                key=lambda key: int(key.rsplit("-", 1)[-1]),
-            )
-            index = int(part)
-            if index >= len(slide_keys):
-                return _CONTROLLED_JSON_MISSING
-            current = current[slide_keys[index]]
-        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
-            current = current[int(part)]
-        else:
-            return _CONTROLLED_JSON_MISSING
-    return current
-
-
-def _controlled_patch_repair_changes_named_field(
-    tool_name: str,
-    arguments: dict[str, Any],
-    workspace_dir: str | None,
-    repair_paths: tuple[str, ...],
-) -> bool:
-    if not repair_paths:
-        return True
-    patch_arg = arguments.get("path")
-    if not isinstance(patch_arg, str):
-        return False
-    patch_file = _controlled_patch_file(workspace_dir, patch_arg)
-    try:
-        before_text = patch_file.read_text(encoding="utf-8") if patch_file else "{}"
-        before = json.loads(before_text)
-        if tool_name == "write_file":
-            after_text = arguments.get("content")
-        elif tool_name == "edit_file":
-            old_str = arguments.get("old_str")
-            new_str = arguments.get("new_str")
-            if (
-                not isinstance(old_str, str)
-                or not isinstance(new_str, str)
-                or old_str not in before_text
-            ):
-                return False
-            after_text = before_text.replace(old_str, new_str, 1)
-        else:
-            return False
-        if not isinstance(after_text, str):
-            return False
-        after = json.loads(after_text)
-    except (OSError, json.JSONDecodeError):
-        return False
-    return any(
-        _controlled_json_path_value(before, path)
-        != _controlled_json_path_value(after, path)
-        for path in repair_paths
-    )
-
-
-def _controlled_apply_patch_error(
-    stage: str | None,
-    tool_name: str,
-    arguments: dict[str, Any],
-    *,
-    repair_allowed: bool = False,
-    repair_paths: tuple[str, ...] = (),
-    workspace_dir: str | None = None,
-) -> str | None:
-    if stage != "apply_patch":
-        return None
-    if repair_allowed:
-        patch_path = arguments.get("path")
-        safe_patch_path = (
-            isinstance(patch_path, str)
-            and Path(patch_path).name == "deck.patch.json"
-            and ".." not in Path(patch_path).parts
-        )
-        if tool_name == "read_file" and safe_patch_path:
-            return None
-        if (
-            tool_name == "write_file"
-            and safe_patch_path
-            and isinstance(arguments.get("content"), str)
-        ):
-            return (
-                None
-                if _controlled_patch_repair_changes_named_field(
-                    tool_name,
-                    arguments,
-                    workspace_dir,
-                    repair_paths,
-                )
-                else _CONTROLLED_APPLY_PATCH_FIELD_MISMATCH.format(
-                    paths=", ".join(repair_paths)
-                )
-            )
-        if (
-            tool_name == "edit_file"
-            and safe_patch_path
-            and isinstance(arguments.get("old_str"), str)
-            and isinstance(arguments.get("new_str"), str)
-        ):
-            return (
-                None
-                if _controlled_patch_repair_changes_named_field(
-                    tool_name,
-                    arguments,
-                    workspace_dir,
-                    repair_paths,
-                )
-                else _CONTROLLED_APPLY_PATCH_FIELD_MISMATCH.format(
-                    paths=", ".join(repair_paths)
-                )
-            )
-        if tool_name == "request_user_input":
-            return None
-    command = arguments.get("command")
-    if tool_name != "bash" or not isinstance(command, str):
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    script_indexes = [
-        index
-        for index, token in enumerate(tokens)
-        if Path(token).name == "apply_deck_patch.js"
-    ]
-    if len(script_indexes) != 1:
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    script_index = script_indexes[0]
-    if script_index < 1:
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    node_token = tokens[script_index - 1]
-    if not (
-        Path(node_token).name in {"node", "node.exe"}
-        or "BOX_AGENT_NODE" in node_token
-    ):
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    supplied_script = Path(tokens[script_index])
-    if (
-        not supplied_script.is_absolute()
-        or supplied_script.resolve() != _CONTROLLED_APPLY_PATCH_SCRIPT
-    ):
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    command_prefix = tokens[: script_index - 1]
-    if command_prefix and not (
-        len(command_prefix) == 3
-        and command_prefix[0] == "cd"
-        and command_prefix[1]
-        and command_prefix[2] == "&&"
-    ):
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    if tokens[script_index + 1 :] != ["deck.json", "deck.patch.json"]:
-        return (
-            _CONTROLLED_APPLY_PATCH_REPAIR_TOOL_ERROR
-            if repair_allowed
-            else _CONTROLLED_APPLY_PATCH_TOOL_ERROR
-        )
-    return None
-
-
-def _controlled_apply_patch_failure_signature(
-    tool_name: str,
-    arguments: dict[str, Any],
-    result: ToolResult,
-) -> str | None:
-    """Return a stable signature for a failed, valid controlled patch command."""
-    if result.success or _controlled_apply_patch_error(
-        "apply_patch",
-        tool_name,
-        arguments,
-    ):
-        return None
-    payload = "\n".join(
-        part for part in (result.error, result.content) if isinstance(part, str) and part
-    )
-    if not payload.strip():
-        return "empty-apply-patch-failure"
-    marker = payload.find("Error:")
-    semantic = payload[marker:] if marker >= 0 else payload
-    return re.sub(r"\s+", " ", semantic).strip()[:4000]
-
-
-def _controlled_repair_stalled_checkpoint() -> str:
-    return (
-        "Internal controlled-presentation checkpoint; the same deterministic "
-        "controlled-deck step failed twice with the same error, so filesystem writes are now "
-        "stopped to prevent an unbounded repair loop.\n"
-        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled\n"
-        "NEXT_ACTION=Do not call another write/apply/finalize or validation tool. "
-        "If the latest failure explicitly identifies a genuinely missing required "
-        "user/private fact, call request_user_input once with that exact question. "
-        "Otherwise end the turn and state that delivery is incomplete because of "
-        "a repeated internal validation conflict."
-    )
-
-
-def _controlled_checkpoint_json(
-    checkpoint_text: str,
-    label: str,
-) -> dict[str, Any] | None:
-    prefix = f"{label}="
-    for line in checkpoint_text.splitlines():
-        if not line.startswith(prefix):
-            continue
-        try:
-            value = json.loads(line[len(prefix) :])
-        except json.JSONDecodeError:
-            return None
-        return value if isinstance(value, dict) else None
-    return None
-
-
-def _controlled_research_handoff_urls(
-    checkpoint_text: str,
-    workspace_dir: str | None,
-    artifact_root_dir: str | Path | None,
-) -> set[str]:
-    """Recover URL provenance from a fresh validated research handoff.
-
-    A controlled presentation may resume in a new ACP turn after research QA.
-    The runtime's in-memory search ledger is then empty even though the
-    filesystem checkpoint has accepted the fresh handoff.  Trust only the
-    Markdown files explicitly named by that authoritative checkpoint, keep all
-    reads inside the artifact root, and rebuild the URL set from those files.
-    """
-    research_input = _controlled_checkpoint_json(checkpoint_text, "RESEARCH_INPUT")
-    if not research_input or research_input.get("ready") is not True:
-        return set()
-    artifact_root = _artifact_scan_root(workspace_dir, artifact_root_dir)
-    if artifact_root is None:
-        return set()
-    artifact_root = artifact_root.resolve()
-    urls: set[str] = set()
-    files = research_input.get("files")
-    if not isinstance(files, list):
-        return urls
-    for relative_path in files:
-        if not isinstance(relative_path, str) or not relative_path.endswith(".md"):
-            continue
-        candidate = (artifact_root / relative_path).resolve()
-        if not candidate.is_relative_to(artifact_root):
-            continue
-        try:
-            if not candidate.is_file() or candidate.stat().st_size > 4 * 1024 * 1024:
-                continue
-            urls.update(_http_urls(candidate.read_text(encoding="utf-8")))
-        except OSError:
-            continue
-    return urls
-
-
-def _controlled_research_handoff_error(
-    stage: str | None,
-    research_mode: str | None,
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> str | None:
-    """Block backward workflow moves after deep-research QA has completed."""
-    if stage != "outline" or research_mode != "deep":
-        return None
-    if tool_name == "request_user_input":
-        return None
-    if tool_name == "write_file":
-        path = arguments.get("path")
-        if isinstance(path, str) and Path(path).name == "outline.json":
-            return None
-    if tool_name == "read_file":
-        path = arguments.get("path")
-        if isinstance(path, str):
-            candidate = Path(path)
-            if (
-                candidate.suffix.casefold() == ".md"
-                and candidate.name.casefold() != "outline.md"
-                and "research" in {part.casefold() for part in candidate.parts}
-            ):
-                return None
-    return _CONTROLLED_RESEARCH_HANDOFF_TOOL_ERROR
-
-
-def _controlled_scaffold_error(
-    tool_name: str,
-    arguments: dict[str, Any],
-    scaffold_input: dict[str, Any] | None,
-) -> str | None:
-    if scaffold_input is None:
-        return None
-    command = arguments.get("command")
-    if tool_name != "bash" or not isinstance(command, str):
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    script_indexes = [
-        index
-        for index, token in enumerate(tokens)
-        if Path(token).name == "inspect_deck_contract.js"
-    ]
-    script_index = script_indexes[0] if script_indexes else None
-    if (
-        script_index is None
-        or "--outline" not in tokens
-        or "--out" not in tokens
-    ):
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-
-    registered_layouts = {
-        item
-        for item in scaffold_input.get("registered_layout_ids", [])
-        if isinstance(item, str)
-    }
-    layout_ids: list[str] = []
-    for token in tokens[script_index + 1 :]:
-        if token.startswith("--"):
-            break
-        layout_ids.append(token)
-    invalid_layouts = [item for item in layout_ids if item not in registered_layouts]
-
-    registered_themes = {
-        item
-        for item in scaffold_input.get("registered_theme_ids", [])
-        if isinstance(item, str)
-    }
-    invalid_theme: str | None = None
-    if "--theme" in tokens:
-        theme_index = tokens.index("--theme") + 1
-        if (
-            theme_index >= len(tokens)
-            or (
-                tokens[theme_index].lower() != "auto"
-                and tokens[theme_index] not in registered_themes
-            )
-        ):
-            invalid_theme = tokens[theme_index] if theme_index < len(tokens) else "<missing>"
-    if invalid_layouts or invalid_theme is not None:
-        details = []
-        if invalid_theme is not None:
-            details.append(f"invalid theme id {invalid_theme!r}")
-        if invalid_layouts:
-            details.append(f"invalid layout ids {invalid_layouts!r}")
-        return (
-            "CONTROLLED_PRESENTATION_INVALID_REGISTRY_ID: "
-            + "; ".join(details)
-            + ". Choose exact ids from SCAFFOLD_INPUT and invoke "
-            "inspect_deck_contract.js once; the invalid command was not executed."
-        )
-
-    if len(script_indexes) != 1 or script_index is None or script_index < 1:
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    node_token = tokens[script_index - 1]
-    if not (
-        Path(node_token).name in {"node", "node.exe"}
-        or "BOX_AGENT_NODE" in node_token
-    ):
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    supplied_script = Path(tokens[script_index])
-    if (
-        not supplied_script.is_absolute()
-        or supplied_script.resolve() != _CONTROLLED_INSPECT_SCRIPT
-    ):
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    command_prefix = tokens[: script_index - 1]
-    if command_prefix and not (
-        len(command_prefix) == 3
-        and command_prefix[0] == "cd"
-        and command_prefix[1]
-        and command_prefix[2] == "&&"
-    ):
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    inspector_args = tokens[script_index + 1 :]
-    if any(token in {"&&", "||", ";", "|", "&", ">", ">>", "<", "<<"} for token in inspector_args):
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    if tokens.count("--outline") != 1 or tokens.count("--out") != 1:
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    outline_index = tokens.index("--outline") + 1
-    out_index = tokens.index("--out") + 1
-    if (
-        outline_index >= len(tokens)
-        or out_index >= len(tokens)
-        or Path(tokens[outline_index]).name != "outline.json"
-        or Path(tokens[out_index]).name != "deck.json"
-    ):
-        return _CONTROLLED_SCAFFOLD_TOOL_ERROR
-    return None
-
-
-def _controlled_scaffold_failure_signature(
-    tool_name: str,
-    arguments: dict[str, Any],
-    result: ToolResult,
-    scaffold_input: dict[str, Any] | None,
-) -> str | None:
-    """Return a stable signature for a failed, valid scaffold command."""
-    if (
-        result.success
-        or scaffold_input is None
-        or _controlled_scaffold_error(tool_name, arguments, scaffold_input)
-    ):
-        return None
-    payload = "\n".join(
-        part for part in (result.error, result.content) if isinstance(part, str) and part
-    )
-    if not payload.strip():
-        return "empty-scaffold-failure"
-    marker = payload.find("Error:")
-    semantic = payload[marker:] if marker >= 0 else payload
-    return re.sub(r"\s+", " ", semantic).strip()[:4000]
-
-
-def _controlled_image_generation_error(
-    stage: str | None,
-    tool_name: str,
-    arguments: dict[str, Any],
-    image_input: dict[str, Any] | None,
-) -> str | None:
-    if stage != "images" or image_input is None:
-        return None
-    entries = image_input.get("entries")
-    expected_paths = {
-        entry.get("output_path")
-        for entry in entries or []
-        if isinstance(entry, dict) and isinstance(entry.get("output_path"), str)
-    }
-    if (
-        tool_name == "generate_image"
-        and arguments.get("output_path") in expected_paths
-        and arguments.get("watermark") is False
-    ):
-        return None
-    return _CONTROLLED_IMAGE_GENERATION_TOOL_ERROR
-
-
-def _controlled_presentation_stage(checkpoint_text: str) -> str | None:
-    marker_index = checkpoint_text.find(CONTROLLED_PRESENTATION_CHECKPOINT_MARKER)
-    if marker_index < 0:
-        return None
-    stage_text = checkpoint_text[
-        marker_index + len(CONTROLLED_PRESENTATION_CHECKPOINT_MARKER) :
-    ]
-    stage = stage_text.splitlines()[0].strip()
-    return stage or None
-
-_PLAN_START_TRIGGERS = (
-    "先做规划",
-    "先规划",
-    "先做计划",
-    "先给规划",
-    "先给计划",
-    "先给方案",
-    "先出计划",
-    "先出一个计划",
-    "先出方案",
-    "规划一下",
-    "计划一下",
-    "制定计划",
-    "制定方案",
-    "执行方案",
-    "任务规划",
-    "任务计划",
-    "出一个计划",
-    "出个计划",
-    "给我一个计划",
-    "给个计划",
-    "做一个计划",
-    "做个计划",
-    "做个规划",
-    "生成计划",
-    "创建计划",
-    "使用plan",
-    "做一个plan",
-    "做个plan",
-    "生成plan",
-    "创建plan",
-    "make a plan",
-    "make plan",
-    "create a plan",
-    "write a plan",
-    "plan first",
-    "planning first",
-    "use plan",
-    "plan mode",
-)
-
-_PLAN_START_NEGATIONS = (
-    "不需要计划",
-    "无需计划",
-    "不要计划",
-    "不用计划",
-    "别计划",
-    "不需要规划",
-    "无需规划",
-    "不要规划",
-    "不用规划",
-    "不需要方案",
-    "无需方案",
-    "不要方案",
-    "不用方案",
-    "不使用plan",
-    "不用plan",
-    "不要plan",
-    "no plan",
-    "without plan",
-    "without a plan",
-)
-
-_PLAN_START_KEYWORDS = ("计划", "规划")
-_STANDALONE_PLAN_RE = re.compile(r"(^|[^a-z])plan([^a-z]|$)")
-_SHORT_ACK_STRIP_RE = re.compile(r"[\s,，.。!！?？;；:：\"'“”‘’`]+")
-_SHORT_ACKNOWLEDGEMENTS = {
-    "ok",
-    "okay",
-    "k",
-    "yes",
-    "yeah",
-    "yep",
-    "sure",
-    "approve",
-    "approved",
-    "confirm",
-    "confirmed",
-    "continue",
-    "proceed",
-    "goahead",
-    "execute",
-    "runit",
-    "run",
-    "好",
-    "好的",
-    "可以",
-    "可以的",
-    "行",
-    "行的",
-    "没问题",
-    "收到",
-    "明白",
-    "了解",
-    "嗯",
-    "嗯嗯",
-    "继续",
-    "继续执行",
-    "执行",
-    "确认",
-    "已确认",
-    "同意",
-    "批准",
-    "开始",
-    "开始吧",
-    "开始执行",
-}
-_SHORT_NON_TASK_REPLIES = _SHORT_ACKNOWLEDGEMENTS | {
-    "hi",
-    "hello",
-    "hey",
-    "thanks",
-    "thankyou",
-    "thx",
-    "你好",
-    "您好",
-    "嗨",
-    "哈喽",
-    "谢谢",
-    "谢谢你",
-}
 
 _FORCED_PLAN_GUIDANCE = (
     "Host UI requires a structured execution plan for this turn. "
@@ -1172,55 +203,6 @@ def final_summary_empty_retry_text(tool_call_count: int) -> str:
 # Regex to match file references like [foo.png] in tool output.
 _ARTIFACT_REF_RE = re.compile(r"\[([^\]\n]+\.\w{1,10})\]", re.IGNORECASE)
 
-# Coarse classification by MIME type — exposed to hosts via ArtifactEvent.kind.
-# Order matters: the first matching prefix/value wins.
-_MIME_KIND_PREFIX = (
-    ("image/", "image"),
-    ("video/", "video"),
-    ("audio/", "audio"),
-    ("text/csv", "data"),
-    ("text/tab-separated-values", "data"),
-    ("application/json", "data"),
-    ("application/x-ndjson", "data"),
-    ("application/xml", "data"),
-    ("text/x-python", "code"),
-    ("text/x-", "code"),
-    ("application/javascript", "code"),
-    ("application/typescript", "code"),
-    ("text/markdown", "document"),
-    ("text/html", "document"),
-    ("application/pdf", "document"),
-    ("application/msword", "document"),
-    ("application/vnd.openxmlformats-officedocument.wordprocessingml", "document"),
-    ("application/vnd.ms-excel", "spreadsheet"),
-    ("application/vnd.openxmlformats-officedocument.spreadsheetml", "spreadsheet"),
-    ("application/vnd.ms-powerpoint", "presentation"),
-    ("application/vnd.openxmlformats-officedocument.presentationml", "presentation"),
-    ("application/zip", "archive"),
-    ("application/x-tar", "archive"),
-    ("application/gzip", "archive"),
-    ("application/x-7z-compressed", "archive"),
-    ("text/", "document"),
-)
-
-# Extension fallback when MIME guess returns None.
-_EXT_KIND = {
-    ".csv": "data", ".tsv": "data", ".json": "data", ".jsonl": "data",
-    ".ndjson": "data", ".parquet": "data", ".xml": "data", ".yaml": "data", ".yml": "data",
-    ".py": "code", ".js": "code", ".ts": "code", ".jsx": "code", ".tsx": "code",
-    ".rs": "code", ".go": "code", ".java": "code", ".c": "code", ".cpp": "code",
-    ".rb": "code", ".sh": "code",
-    ".md": "document", ".rst": "document", ".html": "document", ".htm": "document",
-    ".pdf": "document", ".doc": "document", ".docx": "document", ".txt": "document",
-    ".xlsx": "spreadsheet", ".xls": "spreadsheet", ".ods": "spreadsheet",
-    ".pptx": "presentation", ".ppt": "presentation", ".key": "presentation",
-    ".zip": "archive", ".tar": "archive", ".gz": "archive", ".7z": "archive", ".rar": "archive",
-    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
-    ".svg": "image", ".webp": "image", ".bmp": "image", ".tiff": "image",
-    ".mp4": "video", ".webm": "video", ".mov": "video",
-    ".mp3": "audio", ".wav": "audio", ".ogg": "audio", ".flac": "audio",
-}
-
 
 def _message_text(content: str | list[dict[str, Any]]) -> str:
     if isinstance(content, str):
@@ -1239,32 +221,6 @@ def _latest_user_text(messages: list[Message]) -> str:
         if msg.role == "user":
             return _message_text(msg.content)
     return ""
-
-
-def text_requests_plan_start(text: str) -> bool:
-    normalized = text.lower()
-    compact = "".join(normalized.split())
-    if any(negation in compact for negation in _PLAN_START_NEGATIONS):
-        return False
-    return (
-        any(trigger in normalized for trigger in _PLAN_START_TRIGGERS)
-        or any(keyword in normalized for keyword in _PLAN_START_KEYWORDS)
-        or bool(_STANDALONE_PLAN_RE.search(normalized))
-    )
-
-
-def text_is_short_acknowledgement(text: str) -> bool:
-    compact = _SHORT_ACK_STRIP_RE.sub("", text.strip().lower())
-    if not compact or len(compact) > 40:
-        return False
-    return compact in _SHORT_ACKNOWLEDGEMENTS
-
-
-def text_is_short_non_task_reply(text: str) -> bool:
-    compact = _SHORT_ACK_STRIP_RE.sub("", text.strip().lower())
-    if not compact or len(compact) > 40:
-        return False
-    return compact in _SHORT_NON_TASK_REPLIES
 
 
 def _should_emit_plan_start(
@@ -1381,131 +337,6 @@ def _plan_start_payload(approval: dict[str, Any] | None = None) -> dict[str, Any
     if approval is not None:
         payload["approval"] = approval
     return payload
-
-
-def _classify_kind(filename: str, mime: str | None) -> str:
-    """Map (filename, mime) → coarse artifact kind."""
-    m = (mime or "").lower()
-    for prefix, kind in _MIME_KIND_PREFIX:
-        if m.startswith(prefix) or m == prefix:
-            return kind
-    ext = Path(filename).suffix.lower()
-    return _EXT_KIND.get(ext, "file")
-
-
-# ── Artifact directory contract ─────────────────────────────────
-#
-# In output mode artifacts land under the active artifact root. By default
-# that is ``{workspace}/output/``; desktop hosts may pass a per-session root
-# so concurrent sessions do not share one visible output workspace.
-
-OUTPUT_SUBDIR: Final[str] = "output"
-
-
-def ensure_output_dir(workspace_dir: str | Path) -> Path:
-    """Return ``{workspace}/output/``, creating it if needed."""
-    out = Path(workspace_dir).expanduser().resolve() / OUTPUT_SUBDIR
-    out.mkdir(parents=True, exist_ok=True)
-    return out
-
-
-_SAFE_NAME_RE = re.compile(r"[^a-z0-9._-]+")
-
-
-def safe_output_name(name: str, *, default_ext: str = "") -> str:
-    """Normalize a proposed artifact name: lowercase, ascii, kebab-safe."""
-    stem = name.strip()
-    if not stem:
-        stem = "artifact"
-    suffix = Path(stem).suffix.lower()
-    base = Path(stem).stem.lower()
-    base = _SAFE_NAME_RE.sub("-", base).strip("-._") or "artifact"
-    if not suffix and default_ext:
-        suffix = default_ext if default_ext.startswith(".") else f".{default_ext}"
-    return f"{base}{suffix}"
-
-
-def avoid_collision(directory: Path, filename: str) -> Path:
-    """Return a non-existing path inside ``directory`` by appending ``-N``."""
-    candidate = directory / filename
-    if not candidate.exists():
-        return candidate
-    stem = Path(filename).stem
-    suffix = Path(filename).suffix
-    n = 2
-    while True:
-        candidate = directory / f"{stem}-{n}{suffix}"
-        if not candidate.exists():
-            return candidate
-        n += 1
-
-
-# Filled in below from _EXT_KIND. Adds explicit MIME for extensions that
-# Python's mimetypes module doesn't always know (e.g. .md, .jsonl).
-_EXT_MIME_OVERRIDES = {
-    ".md": "text/markdown",
-    ".rst": "text/x-rst",
-    ".jsonl": "application/x-ndjson",
-    ".ndjson": "application/x-ndjson",
-    ".parquet": "application/vnd.apache.parquet",
-    ".tsv": "text/tab-separated-values",
-    ".yaml": "application/yaml",
-    ".yml": "application/yaml",
-    ".webp": "image/webp",
-    ".key": "application/vnd.apple.keynote",
-}
-
-
-def _make_artifact(tool_call_id: str, abs_file: Path, workspace_root: Path) -> ArtifactEvent:
-    """Build an ArtifactEvent from a real on-disk file."""
-    abs_resolved = abs_file.resolve()
-    try:
-        rel = abs_resolved.relative_to(workspace_root.resolve())
-        rel_str = rel.as_posix()
-    except ValueError:
-        rel_str = abs_resolved.name
-
-    mime, _ = mimetypes.guess_type(str(abs_resolved))
-    if not mime:
-        mime = _EXT_MIME_OVERRIDES.get(abs_resolved.suffix.lower())
-    mime = mime or "application/octet-stream"
-    kind = _classify_kind(abs_resolved.name, mime)
-    try:
-        size = abs_resolved.stat().st_size
-    except OSError:
-        size = -1
-
-    digest = ""
-    try:
-        if 0 <= size <= 64 * 1024 * 1024:
-            h = hashlib.sha256()
-            with abs_resolved.open("rb") as f:
-                for chunk in iter(lambda: f.read(1 << 16), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()[:16]
-    except OSError:
-        digest = ""
-
-    return ArtifactEvent(
-        tool_call_id=tool_call_id,
-        kind=kind,
-        filename=abs_resolved.name,
-        rel_path=rel_str,
-        abs_path=str(abs_resolved),
-        uri=abs_resolved.as_uri(),
-        mime=mime,
-        size=size,
-        sha256=digest,
-        produced_at=datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
-    )
-
-
-def _artifact_scan_root(workspace_dir: str | None, artifact_root_dir: str | Path | None = None) -> Path | None:
-    if artifact_root_dir:
-        return Path(artifact_root_dir).expanduser().resolve()
-    if not workspace_dir:
-        return None
-    return Path(workspace_dir).expanduser().resolve() / OUTPUT_SUBDIR
 
 
 def _prepare_browser_snapshot_output(
@@ -2569,13 +1400,6 @@ _WEB_SEARCH_RESULT_KEYS: Final[tuple[str, ...]] = (
     "data",
 )
 
-_URL_TRACKING_PARAMS: Final[set[str]] = {
-    "fbclid",
-    "gclid",
-    "mc_cid",
-    "mc_eid",
-}
-
 _SITE_QUERY_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:^|\s)site:([a-z0-9.-]+)",
     re.IGNORECASE,
@@ -2591,29 +1415,6 @@ _SEARCH_QUERY_TERM_RE: Final[re.Pattern[str]] = re.compile(
 _SEARCH_QUERY_STOPWORDS: Final[frozenset[str]] = frozenset(
     {"a", "all", "and", "for", "in", "of", "on", "the", "to"}
 )
-_HTTP_URL_RE: Final[re.Pattern[str]] = re.compile(
-    r"https?://[^\s<>\"'\]\[{}()]+",
-    re.IGNORECASE,
-)
-_DIRECT_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
-    {
-        "browser_open_url",
-        "browser_read_page",
-        "browser_read_article",
-        "browser_navigate",
-    }
-)
-
-# Deep-research evidence gathering has its own bounded search controller and
-# must not consume the downstream deck-production budget.  The exemption is
-# active only while the filesystem checkpoint is actually in ``research``;
-# after research QA passes these tools count normally again.
-_PRESENTATION_RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
-    _DIRECT_RESEARCH_READ_TOOLS | frozenset({WEB_SEARCH_TOOL_NAME})
-)
-_PRESENTATION_RESEARCH_READ_BATCH_SIZE: Final[int] = 2
-
-
 def _normalize_web_search_query(arguments: dict[str, Any]) -> str:
     query = _first_present(
         arguments,
@@ -2677,28 +1478,6 @@ def _requested_site_domain(arguments: dict[str, Any]) -> str:
     return match.group(1).strip(".").casefold()
 
 
-def _normalize_search_url(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    try:
-        parts = urlsplit(text)
-    except ValueError:
-        return text.casefold()
-
-    scheme = parts.scheme.casefold()
-    netloc = parts.netloc.casefold()
-    path = parts.path.rstrip("/") or parts.path
-    query_items = []
-    for key, val in parse_qsl(parts.query, keep_blank_values=True):
-        key_l = key.casefold()
-        if key_l.startswith("utm_") or key_l in _URL_TRACKING_PARAMS:
-            continue
-        query_items.append((key, val))
-    query = urlencode(query_items, doseq=True)
-    return urlunsplit((scheme, netloc, path, query, ""))
-
-
 def _normalize_search_title(value: Any) -> str:
     return " ".join(str(value or "").casefold().split())
 
@@ -2728,67 +1507,6 @@ def _url_matches_domain(value: Any, domain: str) -> bool:
     except ValueError:
         return False
     return hostname == domain or hostname.endswith(f".{domain}")
-
-
-def _http_urls(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return {
-            normalized
-            for match in _HTTP_URL_RE.findall(value)
-            if (normalized := _normalize_search_url(match.rstrip(".,;:!?，。；：！？")))
-        }
-    if isinstance(value, dict):
-        urls: set[str] = set()
-        for item in value.values():
-            urls.update(_http_urls(item))
-        return urls
-    if isinstance(value, (list, tuple, set)):
-        urls: set[str] = set()
-        for item in value:
-            urls.update(_http_urls(item))
-        return urls
-    return set()
-
-
-def _unverified_public_outline_evidence_error(
-    tool_name: str,
-    arguments: dict[str, Any],
-    verified_urls: set[str],
-) -> str | None:
-    if tool_name != "write_file":
-        return None
-    path_value = arguments.get("path")
-    if not isinstance(path_value, str) or Path(path_value).name != "outline.json":
-        return None
-    content = arguments.get("content")
-    if not isinstance(content, str):
-        return None
-    try:
-        outline = json.loads(content)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(outline, dict) or outline.get("source_mode") != "public_authoritative_research":
-        return None
-    slides = outline.get("slides")
-    if not isinstance(slides, list):
-        return None
-    evidence_urls: set[str] = set()
-    for slide in slides:
-        if isinstance(slide, dict):
-            evidence_urls.update(_http_urls(slide.get("evidence")))
-    unverified = sorted(evidence_urls - verified_urls)
-    if not unverified:
-        return None
-    preview = ", ".join(unverified[:3])
-    suffix = "" if len(unverified) <= 3 else f" (+{len(unverified) - 3} more)"
-    return (
-        "CONTROLLED_PRESENTATION_UNVERIFIED_EVIDENCE_URL: public-research outline "
-        "URLs must come from a successful web_search result, a URL supplied by the "
-        "user, or a successful direct browser read in this turn. Unverified URL(s): "
-        f"{preview}{suffix}. Do not invent or relabel a URL. If no authoritative "
-        "source was retrieved, call request_user_input once for the missing source "
-        "or scope, preserving the current artifacts."
-    )
 
 
 def _with_filtered_search_items(payload: Any, filtered_items: list[dict[str, Any]]) -> Any:
@@ -3207,6 +1925,7 @@ async def run_agent_loop(
     cache_fingerprint_context: dict[str, Any] | None = None,
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None,
     active_skill_activator: ActiveSkillActivator | None = None,
+    workflow_policy: WorkflowPolicy | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Execute the agent loop, yielding structured events.
 
@@ -3276,6 +1995,8 @@ async def run_agent_loop(
             cache-sensitive request fingerprints, such as selected skill names.
         cache_fingerprint_sink: Optional callback that receives each fingerprint
             before the LLM request, for hosts that do not use ``AgentLogger``.
+        workflow_policy: Optional host-neutral workflow hooks composed by
+            ``box_agent.runtime``. The kernel never selects a concrete workflow.
     """
     cancelled = is_cancelled or (lambda: False)
     hook_mgr = HookManager(hooks)
@@ -3433,106 +2154,6 @@ async def run_agent_loop(
     succeeded_tools: set[str] = set()
     gate_continuations = 0
     workflow_checkpoint_message: Message | None = None
-    last_workflow_checkpoint_text: str | None = None
-    workflow_checkpoint_stage: str | None = None
-    workflow_checkpoint_has_patch_input = False
-    workflow_checkpoint_has_scaffold_input = False
-    workflow_checkpoint_has_image_input = False
-    workflow_checkpoint_has_repair_input = False
-    workflow_checkpoint_scaffold_input: dict[str, Any] | None = None
-    workflow_checkpoint_image_input: dict[str, Any] | None = None
-    controlled_step_failure_counts: dict[str, int] = {}
-    controlled_repair_stalled = False
-    controlled_apply_patch_repair_allowed = False
-    controlled_apply_patch_repair_paths: tuple[str, ...] = ()
-
-    def _record_controlled_step_result(
-        stage: str | None,
-        tool_name: str,
-        arguments: dict[str, Any],
-        result: ToolResult,
-    ) -> None:
-        nonlocal controlled_apply_patch_repair_allowed
-        nonlocal controlled_apply_patch_repair_paths
-        nonlocal controlled_repair_stalled
-        if stage == "apply_patch" and result.success:
-            patch_path = arguments.get("path")
-            wrote_patch = (
-                tool_name in {"write_file", "edit_file"}
-                and isinstance(patch_path, str)
-                and Path(patch_path).name == "deck.patch.json"
-                and ".." not in Path(patch_path).parts
-            )
-            applied_patch = (
-                tool_name == "bash"
-                and _controlled_apply_patch_error(stage, tool_name, arguments) is None
-            )
-            if wrote_patch or applied_patch:
-                for key in tuple(controlled_step_failure_counts):
-                    if key.startswith("apply_patch:"):
-                        controlled_step_failure_counts.pop(key, None)
-            # A successful repair edit only fixes one or more named fields. Keep
-            # the repair window open so the rest of the named fields from the same
-            # deterministic report can be edited in the same model turn. The exact
-            # apply command is the transaction boundary that closes repair mode.
-            if applied_patch:
-                controlled_apply_patch_repair_allowed = False
-                controlled_apply_patch_repair_paths = ()
-        if stage == "outline_qa":
-            if result.success and _is_controlled_outline_validation_call(
-                tool_name,
-                arguments,
-            ):
-                for key in tuple(controlled_step_failure_counts):
-                    if key.startswith("outline_qa:"):
-                        controlled_step_failure_counts.pop(key, None)
-                signature = None
-            else:
-                signature = _controlled_outline_validation_failure_signature(
-                    tool_name,
-                    arguments,
-                    result,
-                    workspace_dir,
-                )
-        elif stage == "finalize":
-            signature = _controlled_finalizer_failure_signature(
-                tool_name,
-                arguments,
-                result,
-            )
-        elif stage == "apply_patch":
-            signature = _controlled_apply_patch_failure_signature(
-                tool_name,
-                arguments,
-                result,
-            )
-            if signature is not None:
-                controlled_apply_patch_repair_allowed = True
-                named_paths = _controlled_failure_field_paths(result)
-                if named_paths:
-                    controlled_apply_patch_repair_paths = named_paths
-        elif stage == "scaffold":
-            signature = _controlled_scaffold_failure_signature(
-                tool_name,
-                arguments,
-                result,
-                workflow_checkpoint_scaffold_input,
-            )
-        else:
-            signature = None
-        if signature is None:
-            return
-        scoped_signature = f"{stage}:{signature}"
-        repeat_count = controlled_step_failure_counts.get(scoped_signature, 0) + 1
-        controlled_step_failure_counts[scoped_signature] = repeat_count
-        if repeat_count >= 2:
-            controlled_repair_stalled = True
-            _log.warning(
-                "controlled_presentation/repair_stalled stage=%s repeated_failure=%d",
-                stage,
-                repeat_count,
-            )
-
     # Suspected-truncation continuation (opt-in via
     # ``truncation_continuation_enabled``). Bounds how many times the loop
     # may re-prompt the model to finish a reply that ended mid-sentence
@@ -3607,7 +2228,7 @@ async def run_agent_loop(
     final_summary_empty_retry_injected = False
     web_search_seen_queries: set[str] = set()
     web_search_seen_result_keys: set[str] = set()
-    verified_research_urls: set[str] = set()
+    verified_evidence_urls: set[str] = set()
     web_search_unique_results = 0
     web_search_duplicate_results = 0
     web_search_no_new_batches = 0
@@ -3634,7 +2255,7 @@ async def run_agent_loop(
     for step in range(max_steps):
         for message in messages:
             if message.role == "user":
-                verified_research_urls.update(_http_urls(message.content))
+                verified_evidence_urls.update(_http_urls(message.content))
 
         # ── Cancellation check (top of step) ────────────────
         # No cleanup needed here — messages are consistent at step boundaries.
@@ -3669,7 +2290,7 @@ async def run_agent_loop(
         web_search_step_duplicate_results = 0
         web_search_step_structured_results = 0
         web_search_step_labels: list[str] = []
-        presentation_research_read_step_executed = 0
+        workflow_evidence_read_step_executed = 0
         model_history_placeholder_auto_repair_requested = False
 
         # ── Drain inject queue (in-stream injection) ───────
@@ -3884,63 +2505,34 @@ async def run_agent_loop(
             yield InjectedMessageEvent(content=stall_text, injection_id=None, user_visible=False)
 
         # ── Filesystem-backed workflow checkpoint ─────────
-        # Long controlled-deck runs can outgrow the provider's reliable
-        # attention span even when the full conversation is still present.
-        # Re-derive the current stage from canonical artifacts and make the
-        # single next action the freshest instruction. This is intentionally
+        # Let the selected workflow re-derive its state from canonical
+        # artifacts and make the next action the freshest instruction. This is
         # skipped once any terminal wrap-up or total tool budget has fired.
         if (
             completion_gate is not None
+            and workflow_policy is not None
             and not wrapup_injected
             and (max_tool_calls is None or tool_call_total < max_tool_calls)
         ):
-            checkpoint_text = completion_gate_progress_text(
-                completion_gate,
-                workspace_dir,
-            )
-            if checkpoint_text is not None and controlled_repair_stalled:
-                checkpoint_text = _controlled_repair_stalled_checkpoint()
+            checkpoint_text = workflow_policy.build_checkpoint()
             if checkpoint_text is not None:
-                workflow_checkpoint_stage = _controlled_presentation_stage(
+                checkpoint_update = workflow_policy.update_checkpoint(
                     checkpoint_text
                 )
-                workflow_checkpoint_has_patch_input = "\nPATCH_INPUT=" in checkpoint_text
-                workflow_checkpoint_has_scaffold_input = (
-                    "\nSCAFFOLD_INPUT=" in checkpoint_text
+                checkpoint_text = checkpoint_update.text
+                checkpoint_changed = checkpoint_update.changed
+                verified_evidence_urls.update(
+                    checkpoint_update.recovered_evidence_urls
                 )
-                workflow_checkpoint_scaffold_input = _controlled_checkpoint_json(
-                    checkpoint_text,
-                    "SCAFFOLD_INPUT",
-                )
-                workflow_checkpoint_has_image_input = (
-                    "\nIMAGE_INPUT=" in checkpoint_text
-                )
-                workflow_checkpoint_image_input = _controlled_checkpoint_json(
-                    checkpoint_text,
-                    "IMAGE_INPUT",
-                )
-                workflow_checkpoint_has_repair_input = (
-                    "\nREPAIR_INPUT=" in checkpoint_text
-                )
-                checkpoint_changed = checkpoint_text != last_workflow_checkpoint_text
-                if checkpoint_changed:
-                    verified_research_urls.update(
-                        _controlled_research_handoff_urls(
-                            checkpoint_text,
-                            workspace_dir,
-                            artifact_root_dir,
-                        )
-                    )
                 workflow_checkpoint_message = Message(
                     role="user",
                     content=format_injected_message(checkpoint_text),
                 )
                 messages.append(workflow_checkpoint_message)
                 if checkpoint_changed:
-                    last_workflow_checkpoint_text = checkpoint_text
                     yield InjectedMessageEvent(
                         content=checkpoint_text,
-                        injection_id=CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
+                        injection_id=workflow_policy.checkpoint_injection_id,
                         user_visible=False,
                     )
 
@@ -4434,7 +3026,10 @@ async def run_agent_loop(
             # gate releases rather than trapping the agent forever.
             if (
                 completion_gate is not None
-                and workflow_checkpoint_stage != "repair_stalled"
+                and (
+                    workflow_policy is None
+                    or workflow_policy.allows_completion_continuation()
+                )
                 and gate_continuations < completion_gate.max_continuations
                 and completion_gate.pause_tools.isdisjoint(succeeded_tools)
                 # Once the hard tool budget is exhausted, another completion
@@ -4651,16 +3246,13 @@ async def run_agent_loop(
 
         def _reserve_tool_budget(tool_name: str) -> tuple[bool, str | None]:
             nonlocal tool_call_total
-            is_research_evidence_call = (
-                completion_gate is not None
-                and completion_gate.workflow_checkpoint_kind
-                == "controlled_presentation"
-                and workflow_checkpoint_stage == "research"
-                and tool_name in _PRESENTATION_RESEARCH_BUDGET_EXEMPT_TOOLS
+            is_workflow_budget_exempt = (
+                workflow_policy is not None
+                and workflow_policy.exempts_tool_budget(tool_name)
             )
             is_budgeted = (
                 tool_name not in budget_exempt_tools
-                and not is_research_evidence_call
+                and not is_workflow_budget_exempt
             )
             if (
                 is_budgeted
@@ -4721,25 +3313,27 @@ async def run_agent_loop(
             web_search_step_executed += 1
             return True, None
 
-        def _reserve_presentation_research_read_call(
+        def _reserve_workflow_evidence_read_call(
             tool_name: str,
         ) -> tuple[bool, str | None]:
-            nonlocal presentation_research_read_step_executed
-            if (
-                presentation_research_read_step_executed
-                >= _PRESENTATION_RESEARCH_READ_BATCH_SIZE
-            ):
+            nonlocal workflow_evidence_read_step_executed
+            batch_size = (
+                workflow_policy.evidence_read_batch_size
+                if workflow_policy is not None
+                else 2
+            )
+            if workflow_evidence_read_step_executed >= batch_size:
                 return (
                     False,
                     "Public-source page read deferred by runtime batching "
-                    f"(batch size {_PRESENTATION_RESEARCH_READ_BATCH_SIZE}). Review the "
+                    f"(batch size {batch_size}). Review the "
                     "completed page reads and search evidence before requesting another "
                     "specific missing source.",
                 )
             allowed_by_budget, budget_error = _reserve_tool_budget(tool_name)
             if not allowed_by_budget:
                 return False, budget_error
-            presentation_research_read_step_executed += 1
+            workflow_evidence_read_step_executed += 1
             return True, None
 
         # 1. Sequential execution for regular tools (preserves ordering)
@@ -4775,141 +3369,43 @@ async def run_agent_loop(
                 allowed_to_execute = False
                 internal_skip_error = browser_snapshot_path_error
             elif (
-                plan_scope_error := _controlled_presentation_plan_scope_error(
-                    workflow_checkpoint_stage,
-                    fn_name,
-                    fn_args,
+                workflow_policy is not None
+                and (
+                    plan_scope_error := workflow_policy.plan_scope_error(
+                        fn_name,
+                        fn_args,
+                    )
                 )
-            ) is not None:
+                is not None
+            ):
                 allowed_to_execute = False
                 internal_skip_error = plan_scope_error
             elif plan_approval_gate_active and fn_name != "plan_write":
                 allowed_to_execute = False
                 internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
             elif (
-                workflow_checkpoint_stage == "repair_stalled"
-                and fn_name != "request_user_input"
-            ):
-                allowed_to_execute = False
-                internal_skip_error = _CONTROLLED_REPAIR_STALLED_TOOL_ERROR
-            elif (
-                handoff_error := _controlled_research_handoff_error(
-                    workflow_checkpoint_stage,
-                    (
-                        completion_gate.presentation_research_mode
-                        if completion_gate is not None
-                        else None
-                    ),
-                    fn_name,
-                    fn_args,
-                )
-            ) is not None:
-                allowed_to_execute = False
-                internal_skip_error = handoff_error
-            elif (
-                workflow_checkpoint_stage
-                in {"outline", "outline_qa", "outline_repair", "outline_backfill"}
+                workflow_policy is not None
                 and (
-                    evidence_error := _unverified_public_outline_evidence_error(
+                    workflow_error := workflow_policy.tool_call_error(
                         fn_name,
                         fn_args,
-                        verified_research_urls,
+                        verified_evidence_urls=verified_evidence_urls,
                     )
                 )
                 is not None
             ):
                 allowed_to_execute = False
-                internal_skip_error = evidence_error
-            elif (
-                workflow_checkpoint_stage == "content_patch"
-                and workflow_checkpoint_has_patch_input
-                and fn_name in _CONTROLLED_CONTENT_PATCH_BLOCKED_TOOLS
-            ):
-                allowed_to_execute = False
-                internal_skip_error = _CONTROLLED_CONTENT_PATCH_TOOL_ERROR
-            elif (
-                workflow_checkpoint_stage == "scaffold"
-                and workflow_checkpoint_has_scaffold_input
-                and (
-                    scaffold_error := _controlled_scaffold_error(
-                        fn_name,
-                        fn_args,
-                        workflow_checkpoint_scaffold_input,
-                    )
-                )
-                is not None
-            ):
-                allowed_to_execute = False
-                internal_skip_error = scaffold_error
-            elif (
-                workflow_checkpoint_stage == "images"
-                and workflow_checkpoint_has_image_input
-                and (
-                    image_generation_error := _controlled_image_generation_error(
-                        workflow_checkpoint_stage,
-                        fn_name,
-                        fn_args,
-                        workflow_checkpoint_image_input,
-                    )
-                )
-                is not None
-            ):
-                allowed_to_execute = False
-                internal_skip_error = image_generation_error
-            elif (
-                workflow_checkpoint_stage == "outline_repair"
-                and workflow_checkpoint_has_repair_input
-                and fn_name not in {"write_file", "request_user_input"}
-            ):
-                allowed_to_execute = False
-                internal_skip_error = _CONTROLLED_OUTLINE_REPAIR_TOOL_ERROR
-            elif (
-                workflow_checkpoint_stage in {"deck_spec_repair", "truth_repair"}
-                and workflow_checkpoint_has_repair_input
-                and fn_name not in _CONTROLLED_REPAIR_ALLOWED_TOOLS
-            ):
-                allowed_to_execute = False
-                internal_skip_error = _CONTROLLED_REPAIR_TOOL_ERROR
-            elif (
-                image_status_error := _controlled_image_status_error(
-                    workflow_checkpoint_stage,
-                    fn_name,
-                    fn_args,
-                )
-            ) is not None:
-                allowed_to_execute = False
-                internal_skip_error = image_status_error
-            elif (
-                apply_patch_error := _controlled_apply_patch_error(
-                    workflow_checkpoint_stage,
-                    fn_name,
-                    fn_args,
-                    repair_allowed=controlled_apply_patch_repair_allowed,
-                    repair_paths=controlled_apply_patch_repair_paths,
-                    workspace_dir=workspace_dir,
-                )
-            ) is not None:
-                allowed_to_execute = False
-                internal_skip_error = apply_patch_error
-            elif (
-                finalize_error := _controlled_finalize_error(
-                    workflow_checkpoint_stage,
-                    fn_name,
-                    fn_args,
-                )
-            ) is not None:
-                allowed_to_execute = False
-                internal_skip_error = finalize_error
+                internal_skip_error = workflow_error
             elif fn_name == WEB_SEARCH_TOOL_NAME:
                 allowed_to_execute, internal_skip_error = _reserve_web_search_call(fn_args)
             elif (
-                workflow_checkpoint_stage == "research"
-                and fn_name in _DIRECT_RESEARCH_READ_TOOLS
+                workflow_policy is not None
+                and workflow_policy.uses_evidence_read_budget(fn_name)
             ):
                 (
                     allowed_to_execute,
                     internal_skip_error,
-                ) = _reserve_presentation_research_read_call(fn_name)
+                ) = _reserve_workflow_evidence_read_call(fn_name)
             else:
                 allowed_to_execute, internal_skip_error = _reserve_tool_budget(fn_name)
             tool_user_visible = (
@@ -5105,12 +3601,8 @@ async def run_agent_loop(
                 browser_snapshot_target,
             )
             result = _activate_skill_result(fn_name, fn_args, result)
-            _record_controlled_step_result(
-                workflow_checkpoint_stage,
-                fn_name,
-                fn_args,
-                result,
-            )
+            if workflow_policy is not None:
+                workflow_policy.record_tool_result(fn_name, fn_args, result)
             step_tool_success_by_id[tc_id] = result.success
 
             # Progress signal for the no-progress breaker: a successful tool
@@ -5147,12 +3639,16 @@ async def run_agent_loop(
                 if inspected:
                     web_search_step_structured_results += 1
                 web_search_step_labels.extend(new_labels[:3])
-                verified_research_urls.update(_web_search_urls(tc_content))
-            elif result.success and fn_name in _DIRECT_RESEARCH_READ_TOOLS:
+                verified_evidence_urls.update(_web_search_urls(tc_content))
+            elif (
+                result.success
+                and workflow_policy is not None
+                and workflow_policy.is_direct_evidence_read_tool(fn_name)
+            ):
                 direct_url = _first_present(fn_args, ("url", "URL", "href"))
                 normalized_direct_url = _normalize_search_url(direct_url)
                 if normalized_direct_url:
-                    verified_research_urls.add(normalized_direct_url)
+                    verified_evidence_urls.add(normalized_direct_url)
 
             # Append the tool message BEFORE yielding any events. The yields
             # below hand control back to the consumer, which may suspend or
@@ -5251,31 +3747,34 @@ async def run_agent_loop(
                     allowed_to_execute = False
                     internal_skip_error = browser_snapshot_path_error
                 elif (
-                    plan_scope_error := _controlled_presentation_plan_scope_error(
-                        workflow_checkpoint_stage,
-                        tc.function.name,
-                        par_fn_args,
+                    workflow_policy is not None
+                    and (
+                        plan_scope_error := workflow_policy.plan_scope_error(
+                            tc.function.name,
+                            par_fn_args,
+                        )
                     )
-                ) is not None:
+                    is not None
+                ):
                     allowed_to_execute = False
                     internal_skip_error = plan_scope_error
                 elif plan_approval_gate_active and tc.function.name != "plan_write":
                     allowed_to_execute = False
                     internal_skip_error = _PLAN_APPROVAL_SKIP_MESSAGE
                 elif (
-                    handoff_error := _controlled_research_handoff_error(
-                        workflow_checkpoint_stage,
-                        (
-                            completion_gate.presentation_research_mode
-                            if completion_gate is not None
-                            else None
-                        ),
-                        tc.function.name,
-                        par_fn_args,
+                    workflow_policy is not None
+                    and (
+                        workflow_error := workflow_policy.tool_call_error(
+                            tc.function.name,
+                            par_fn_args,
+                            verified_evidence_urls=verified_evidence_urls,
+                            parallel=True,
+                        )
                     )
-                ) is not None:
+                    is not None
+                ):
                     allowed_to_execute = False
-                    internal_skip_error = handoff_error
+                    internal_skip_error = workflow_error
                 elif tc.function.name == WEB_SEARCH_TOOL_NAME:
                     allowed_to_execute, internal_skip_error = _reserve_web_search_call(par_fn_args)
                 else:
@@ -5557,12 +4056,8 @@ async def run_agent_loop(
                     result,
                     par_browser_snapshot_targets.get(tc_id),
                 )
-                _record_controlled_step_result(
-                    workflow_checkpoint_stage,
-                    fn_name,
-                    fn_args,
-                    result,
-                )
+                if workflow_policy is not None:
+                    workflow_policy.record_tool_result(fn_name, fn_args, result)
                 step_tool_success_by_id[tc_id] = result.success
 
                 # Progress signal for the no-progress breaker.
@@ -5598,12 +4093,16 @@ async def run_agent_loop(
                     if inspected:
                         web_search_step_structured_results += 1
                     web_search_step_labels.extend(new_labels[:3])
-                    verified_research_urls.update(_web_search_urls(par_content))
-                elif result.success and fn_name in _DIRECT_RESEARCH_READ_TOOLS:
+                    verified_evidence_urls.update(_web_search_urls(par_content))
+                elif (
+                    result.success
+                    and workflow_policy is not None
+                    and workflow_policy.is_direct_evidence_read_tool(fn_name)
+                ):
                     direct_url = _first_present(par_fn_args, ("url", "URL", "href"))
                     normalized_direct_url = _normalize_search_url(direct_url)
                     if normalized_direct_url:
-                        verified_research_urls.add(normalized_direct_url)
+                        verified_evidence_urls.add(normalized_direct_url)
 
                 # Append the tool message BEFORE yielding any events — see
                 # the equivalent comment in the sequential branch above for
@@ -5830,10 +4329,8 @@ async def run_agent_loop(
             # conflicts with the authoritative checkpoint and caused research-
             # complete runs to stop before outline/deck/HTML authoring.
             and not (
-                completion_gate is not None
-                and completion_gate.workflow_checkpoint_kind
-                == "controlled_presentation"
-                and workflow_checkpoint_stage not in {None, "complete", "repair_stalled"}
+                workflow_policy is not None
+                and workflow_policy.suppresses_generic_final_summary()
             )
         ):
             final_summary_guidance_injected = True

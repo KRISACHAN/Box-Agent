@@ -61,7 +61,7 @@ If you have an idea for a new feature, please create an Issue first to discuss i
 #### Team Collaboration Baseline
 
 - Prefer small PRs that change one behavior or one subsystem.
-- Keep shared behavior in shared core logic. If a behavior must work in both CLI and ACP runtime, implement it in the shared core and keep CLI/ACP code as adapters.
+- Follow the [layered architecture and ownership rules](docs/ARCHITECTURE.md). Shared behavior does not automatically belong in `core.py`: prefer a capability/policy module behind the public contracts, and keep CLI/ACP code as adapters.
 - Before changing code paths, use `.understand-anything/` as the first navigation aid when it is available, then verify the path with source reads, `rg`, tests, logs, or runtime probes. See the [code map guide](docs/UNDERSTAND_ANYTHING.md) for scope and refresh steps.
 - Commit only shared Understand Anything configuration (`.understand-anything/.understandignore` and `.understand-anything/config.json`). Do not commit generated graph, fingerprint, intermediate, trash, or cache files.
 - Do not include local credentials or user config. `config.yaml`, `mcp.json`, logs, and `workspace/` are local runtime files.
@@ -69,13 +69,15 @@ If you have an idea for a new feature, please create an Issue first to discuss i
 
 #### Ownership Boundaries
 
-- Agent-loop behavior, event semantics, tool orchestration, cancellation, completion gates, artifact detection, and memory lifecycle belong in shared core modules such as `box_agent/core.py`, `box_agent/events.py`, and related shared helpers.
+- `box_agent/core.py` is a changeable but low-churn kernel owned by the core team. Product and capability modules must use `Agent.run_events()` or the explicit shared APIs; they must not import the Core implementation directly.
+- Agent-loop invariants, event semantics, scheduling, cancellation, tool-call closure, and security enforcement points belong to the stable kernel/contracts. Core changes require a core-maintainer review.
+- Reusable tools, skills, providers, storage, and workflow policy belong in the capability layer unless they require a new host-neutral kernel contract. Put stateful workflows in `box_agent/workflows/`, implement `WorkflowPolicy`, and compose them through `runtime.py` instead of importing them from Core.
 - CLI code should handle terminal interaction, rendering, slash commands, and local prompts. It should not fork core behavior that ACP also needs.
 - ACP code should translate shared events into ACP protocol updates and host extension methods. Keep stdout protocol-clean; diagnostics belong on stderr or structured logs.
 - Provider-specific wire behavior belongs in `box_agent/llm/`; do not spread provider assumptions into tools, skills, CLI, or ACP.
 - Tool behavior belongs in `box_agent/tools/` and should return structured `ToolResult` data. Add direct regression tests for new tool semantics.
 - Built-in skill loading is controlled by `box_agent/skill_loader.py`, `box_agent/skills/`, and `box_agent/skills/_manifest.json`. When built-in skills change, regenerate the manifest before review.
-- PPT/document capabilities are skill-driven unless there is an explicit core contract change. Do not add hidden PPT-specific modes to the core loop.
+- PPT/document capabilities are skill-driven unless there is an explicit core contract change. PPT intent routing, checkpoints, and tool policy belong in `box_agent/completion.py` and `box_agent/workflows/presentation_*`; do not add hidden PPT-specific modes to the core loop or `loop_guards.py`.
 - Packaged runtime behavior is not proven by source edits alone. If officev3 or a standalone runtime depends on the change, document the runtime rebuild/install/probe status.
 
 #### TPR Pull Request Standard

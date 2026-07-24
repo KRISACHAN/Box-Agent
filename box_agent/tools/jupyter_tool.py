@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from ..artifacts import ensure_output_dir
 from ._win_job import assign_pid_to_job
 from .base import Tool, ToolResult
 
@@ -1087,6 +1088,11 @@ class JupyterSandboxTool(Tool):
         self.output_dir = output_dir
         self._session_id: Optional[str] = None
 
+    @property
+    def session_id(self) -> str | None:
+        """Return the active kernel session id, if one has been created."""
+        return self._session_id
+
     def _get_sandbox_env(self) -> SandboxEnvironment:
         """Get or create the shared sandbox environment."""
         key = self._sandbox_env_cache_key()
@@ -1523,7 +1529,6 @@ Output formats:
         workspace mode, callers disable ``use_output_dir`` and the kernel uses
         the workspace/project root directly.
         """
-        from box_agent.core import ensure_output_dir
         if self.use_output_dir and self.output_dir:
             root = Path(self.output_dir).expanduser().resolve()
             root.mkdir(parents=True, exist_ok=True)

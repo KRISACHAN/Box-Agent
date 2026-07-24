@@ -24,7 +24,7 @@ def test_deep_presentation_preloads_research_synthesis_with_pptx() -> None:
             "output/**/*.html",
             "output/**/*.pptx",
         ),
-        presentation_research_mode="deep",
+        workflow_options={"research_mode": "deep"},
     )
 
     assert document_preload_skill_names(("pptx",), gate) == [
@@ -39,7 +39,7 @@ def test_non_deep_presentation_keeps_the_normal_pptx_preload() -> None:
             "output/**/*.html",
             "output/**/*.pptx",
         ),
-        presentation_research_mode="content_ready",
+        workflow_options={"research_mode": "content_ready"},
     )
 
     assert document_preload_skill_names(("pptx",), gate) == ["pptx"]

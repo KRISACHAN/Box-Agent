@@ -552,8 +552,9 @@ class SubAgentTool(EventEmittingTool):
         sub_agent_id: str,
         title: str,
     ) -> ToolResult:
-        # Import here to avoid circular dependency (core → tools → core).
-        from ..core import run_agent_loop
+        # Import lazily because the runtime facade initializes the core, which
+        # imports tool contracts while this module may still be loading.
+        from ..runtime import run_agent_loop
 
         final_content = ""
         pending_child_tc: dict[str, str] = {}

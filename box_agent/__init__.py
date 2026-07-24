@@ -3,11 +3,12 @@
 import sys
 from pathlib import Path
 
-from .agent import Agent
+from .agent import Agent, AgentRunOptions
 from .events import AgentEvent, StopReason
 from .hooks import BaseHook, HookManager, load_hooks
 from .llm import LLMClient
 from .schema import FunctionCall, LLMProvider, LLMResponse, Message, ToolCall
+from .workflow_policy import WorkflowCheckpointUpdate, WorkflowPolicy
 
 __version__ = "0.8.79"
 
@@ -29,6 +30,7 @@ __version__ = _frozen_runtime_version(__version__)
 __all__ = [
     "Agent",
     "AgentEvent",
+    "AgentRunOptions",
     "BaseHook",
     "FunctionCall",
     "HookManager",
@@ -38,5 +40,7 @@ __all__ = [
     "Message",
     "StopReason",
     "ToolCall",
+    "WorkflowCheckpointUpdate",
+    "WorkflowPolicy",
     "load_hooks",
 ]

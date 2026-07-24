@@ -9,6 +9,7 @@ contracts.
 
 | Topic | English | 中文 |
 | --- | --- | --- |
+| Layered architecture and ownership | [Architecture](ARCHITECTURE.md) | [分层架构](ARCHITECTURE_CN.md) |
 | Development and extension | [Development Guide](DEVELOPMENT_GUIDE.md) | [开发指南](DEVELOPMENT_GUIDE_CN.md) |
 | Understand Anything code map | [Code Map Guide](UNDERSTAND_ANYTHING.md) | [代码图谱指南](UNDERSTAND_ANYTHING_CN.md) |
 | Production and runtime packaging | [Production Guide](PRODUCTION_GUIDE.md) | [生产指南](PRODUCTION_GUIDE_CN.md) |

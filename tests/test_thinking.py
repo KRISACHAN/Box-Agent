@@ -238,16 +238,9 @@ async def test_acp_new_session_default_no_deep_think(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_run_turn_forwards_thinking_to_core(tmp_path, monkeypatch):
-    """Regression: ACP must pass ``agent.thinking_enabled`` into ``run_agent_loop``.
-
-    A prior bug wired ``deep_think`` into ``Agent.thinking_enabled`` but the ACP
-    turn-runner called ``run_agent_loop`` directly and dropped the flag — the
-    HTTP body never carried ``thinking``. This test asserts the kwarg reaches
-    core unchanged for the deep-think=True path.
-    """
+async def test_acp_run_turn_uses_agent_facade_with_deep_think(tmp_path, monkeypatch):
+    """ACP keeps deep-think on the Agent and supplies host turn options."""
     from box_agent.events import DoneEvent, StopReason
-    from box_agent import acp as acp_mod
 
     class _Conn:
         async def sessionUpdate(self, payload):
@@ -275,11 +268,12 @@ async def test_acp_run_turn_forwards_thinking_to_core(tmp_path, monkeypatch):
 
     captured: dict = {}
 
-    async def fake_loop(**kwargs):
+    async def fake_run_events(*, options=None, **kwargs):
+        captured["options"] = options
         captured.update(kwargs)
         yield DoneEvent(stop_reason=StopReason.END_TURN, final_content="ok")
 
-    monkeypatch.setattr(acp_mod, "run_agent_loop", fake_loop)
+    monkeypatch.setattr(state.agent, "run_events", fake_run_events)
 
     await agent.prompt(
         SimpleNamespace(
@@ -288,8 +282,11 @@ async def test_acp_run_turn_forwards_thinking_to_core(tmp_path, monkeypatch):
         )
     )
 
-    assert captured.get("thinking_enabled") is True, (
-        "ACP dropped thinking_enabled on the way to run_agent_loop"
-    )
-    assert captured.get("cache_fingerprint_context") is state.agent.cache_fingerprint_context
-    assert callable(captured.get("cache_fingerprint_sink"))
+    options = captured["options"]
+    assert state.agent.thinking_enabled is True
+    assert options.cache_fingerprint_context is state.agent.cache_fingerprint_context
+    assert options.memory_extractor is state.memory_extractor
+    assert options.inject_queue is state.inject_queue
+    assert options.artifact_root_dir == state.output_dir
+    assert options.artifact_detection_enabled is True
+    assert callable(options.cache_fingerprint_sink)

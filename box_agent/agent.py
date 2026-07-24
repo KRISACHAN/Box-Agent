@@ -1,8 +1,8 @@
-"""Core Agent implementation.
+"""Public Agent facade.
 
-The heavy lifting now lives in ``box_agent.core.run_agent_loop``.
+The heavy lifting lives behind ``box_agent.runtime.run_agent_loop``.
 This module keeps the public ``Agent`` API backward-compatible while
-delegating to the shared execution core.
+giving adapters one stable entry point for configuring and running a turn.
 """
 
 from __future__ import annotations
@@ -13,12 +13,11 @@ import json
 import logging
 import sys
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
-from .core import run_agent_loop
 from .events import (
     AgentEvent,
     ArtifactEvent,
@@ -42,14 +41,51 @@ from .events import (
 from .llm import LLMClient
 from .logger import AgentLogger
 from .loop_guards import CompletionGate
+from .runtime import run_agent_loop
 from .schema import Message
 from .tools.base import Tool, ToolResult
 from .tools.skill_preload import build_active_skills_prompt
 from .utils import calculate_display_width
+from .workflow_policy import WorkflowPolicy
 
 
 _log = logging.getLogger(__name__)
 _ACTIVE_SKILL_TOKEN_BUDGET = 32_000
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRunOptions:
+    """Complete per-turn integration options for :meth:`Agent.run_events`.
+
+    Obtain a correctly populated instance with
+    :meth:`Agent.default_run_options`, then use ``dataclasses.replace`` for
+    host-specific overrides.  Session configuration such as tools, context
+    limits, and parallelism remains owned by the ``Agent`` instance.
+    """
+
+    llm: Any
+    is_cancelled: Callable[[], bool] | None = None
+    logger: AgentLogger | None = None
+    permission_negotiator: Any | None = None
+    hooks: list[Any] | None = None
+    memory_manager: Any | None = None
+    memory_extractor: Any | None = None
+    memory_turn_id: str = ""
+    inject_queue: asyncio.Queue[str] | None = None
+    session_id: str = ""
+    force_plan_start: bool = False
+    require_plan_approval: bool = False
+    plan_approval: dict[str, Any] | None = None
+    plan_start_text: str | None = None
+    pause_after_plan_write: bool = False
+    max_tool_calls: int | None = None
+    no_progress_limit: int | None = None
+    completion_gate: CompletionGate | None = None
+    artifact_detection_enabled: bool = True
+    artifact_root_dir: str | Path | None = None
+    cache_fingerprint_context: dict[str, Any] | None = None
+    cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None
+    workflow_policy: WorkflowPolicy | None = None
 
 
 # ANSI color codes
@@ -712,10 +748,45 @@ class Agent:
         """
         self.inject_queue.put_nowait(content)
 
+    def set_permission_negotiator(self, negotiator: Any | None) -> None:
+        """Configure the session-level permission negotiation adapter."""
+        self._permission_negotiator = negotiator
+
+    def set_memory_extractor(self, extractor: Any | None) -> None:
+        """Configure the session-level memory extraction service."""
+        self._memory_extractor = extractor
+
+    def set_memory_proposal_negotiator(self, negotiator: Any | None) -> None:
+        """Configure the terminal renderer's memory proposal handler."""
+        self._proposal_negotiator = negotiator
+
+    def clear_history(self) -> int:
+        """Clear conversation turns while preserving the system message.
+
+        Returns the number of removed messages.
+        """
+        removed = max(0, len(self.messages) - 1)
+        del self.messages[1:]
+        return removed
+
     def _check_cancelled(self) -> bool:
         if self.cancel_event is not None and self.cancel_event.is_set():
             return True
         return False
+
+    def default_run_options(self) -> AgentRunOptions:
+        """Return a complete snapshot of the default integration options."""
+        return AgentRunOptions(
+            llm=self.llm,
+            is_cancelled=self._check_cancelled,
+            logger=self.logger,
+            permission_negotiator=self._permission_negotiator,
+            hooks=self._hooks,
+            memory_manager=getattr(self._memory_extractor, "_mgr", None),
+            memory_extractor=self._memory_extractor,
+            inject_queue=self.inject_queue,
+            cache_fingerprint_context=self.cache_fingerprint_context,
+        )
 
     # ── Event-stream API (new) ──────────────────────────────
 
@@ -723,53 +794,86 @@ class Agent:
         self,
         cancel_event: Optional[asyncio.Event] = None,
         *,
-        force_plan_start: bool = False,
-        require_plan_approval: bool = False,
+        options: AgentRunOptions | None = None,
+        force_plan_start: bool | None = None,
+        require_plan_approval: bool | None = None,
         plan_approval: dict | None = None,
-        pause_after_plan_write: bool = False,
+        pause_after_plan_write: bool | None = None,
         completion_gate: CompletionGate | None = None,
-        artifact_detection_enabled: bool = True,
+        artifact_detection_enabled: bool | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Execute the agent loop, yielding structured events.
 
         This is the preferred API for consumers that want fine-grained
-        control over rendering (e.g. ACP, JSON-RPC, custom UIs).
+        control over rendering (e.g. ACP, JSON-RPC, custom UIs).  Integrations
+        with host-specific services should pass ``AgentRunOptions`` instead of
+        calling the low-level core loop.
         """
+        effective_options = options or self.default_run_options()
+
         if cancel_event is not None:
             self.cancel_event = cancel_event
+            effective_options = replace(
+                effective_options,
+                is_cancelled=self._check_cancelled,
+            )
+
+        legacy_overrides: dict[str, Any] = {}
+        if force_plan_start is not None:
+            legacy_overrides["force_plan_start"] = force_plan_start
+        if require_plan_approval is not None:
+            legacy_overrides["require_plan_approval"] = require_plan_approval
+        if plan_approval is not None:
+            legacy_overrides["plan_approval"] = plan_approval
+        if pause_after_plan_write is not None:
+            legacy_overrides["pause_after_plan_write"] = pause_after_plan_write
+        if completion_gate is not None:
+            legacy_overrides["completion_gate"] = completion_gate
+        if artifact_detection_enabled is not None:
+            legacy_overrides["artifact_detection_enabled"] = artifact_detection_enabled
+        if legacy_overrides:
+            effective_options = replace(effective_options, **legacy_overrides)
 
         async for event in run_agent_loop(
-            llm=self.llm,
+            llm=effective_options.llm,
             messages=self.messages,
             tools=self.tools,
             max_steps=self.max_steps,
+            max_tool_calls=effective_options.max_tool_calls,
             token_limit=self.token_limit,
-            is_cancelled=self._check_cancelled,
-            logger=self.logger,
+            is_cancelled=effective_options.is_cancelled,
+            logger=effective_options.logger,
             workspace_dir=str(self.workspace_dir),
-            permission_negotiator=self._permission_negotiator,
-            hooks=self._hooks,
-            memory_manager=getattr(self._memory_extractor, "_mgr", None),
-            memory_extractor=self._memory_extractor,
+            permission_negotiator=effective_options.permission_negotiator,
+            hooks=effective_options.hooks,
+            memory_manager=effective_options.memory_manager,
+            memory_extractor=effective_options.memory_extractor,
+            memory_turn_id=effective_options.memory_turn_id,
             memory_promotion_enabled=self.memory_promotion_enabled,
             memory_promotion_hit_threshold=self.memory_promotion_hit_threshold,
             memory_promotion_cooldown_days=self.memory_promotion_cooldown_days,
-            inject_queue=self.inject_queue,
+            inject_queue=effective_options.inject_queue,
             thinking_enabled=self.thinking_enabled,
+            session_id=effective_options.session_id,
             max_parallel_tools=self.max_parallel_tools,
             parallel_tool_timeout_seconds=self.parallel_tool_timeout_seconds,
-            force_plan_start=force_plan_start,
-            require_plan_approval=require_plan_approval,
-            plan_approval=plan_approval,
-            pause_after_plan_write=pause_after_plan_write,
-            completion_gate=completion_gate,
+            force_plan_start=effective_options.force_plan_start,
+            require_plan_approval=effective_options.require_plan_approval,
+            plan_approval=effective_options.plan_approval,
+            plan_start_text=effective_options.plan_start_text,
+            pause_after_plan_write=effective_options.pause_after_plan_write,
+            no_progress_limit=effective_options.no_progress_limit,
+            completion_gate=effective_options.completion_gate,
             truncation_continuation_enabled=self.truncation_continuation_enabled,
             max_truncation_continuations=self.max_truncation_continuations,
             max_truncated_tool_call_retries=self.max_truncated_tool_call_retries,
             truncated_tool_call_boost_cap=self.truncated_tool_call_boost_cap,
-            artifact_detection_enabled=artifact_detection_enabled,
-            cache_fingerprint_context=self.cache_fingerprint_context,
+            artifact_detection_enabled=effective_options.artifact_detection_enabled,
+            artifact_root_dir=effective_options.artifact_root_dir,
+            cache_fingerprint_context=effective_options.cache_fingerprint_context,
+            cache_fingerprint_sink=effective_options.cache_fingerprint_sink,
             active_skill_activator=self.activate_skill_instructions,
+            workflow_policy=effective_options.workflow_policy,
         ):
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):

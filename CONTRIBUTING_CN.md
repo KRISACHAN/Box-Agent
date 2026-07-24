@@ -61,7 +61,7 @@
 #### 团队协作基线
 
 - 优先提交小 PR，一次只修改一个行为或一个子系统。
-- 共享行为应放在共享核心逻辑中。如果一个行为需要同时支持 CLI 和 ACP runtime，应优先在共享核心实现，CLI/ACP 只作为适配层。
+- 遵循[分层架构与所有权规则](docs/ARCHITECTURE_CN.md)。共享行为不自动属于 `core.py`：优先放在公共契约后的能力/策略模块中，CLI/ACP 保持为适配层。
 - 修改代码路径前，如果 `.understand-anything/` 可用，应先用它做代码导航，再用源码阅读、`rg`、测试、日志或运行探针验证。范围和刷新步骤见[代码图谱指南](docs/UNDERSTAND_ANYTHING_CN.md)。
 - 只提交 Understand Anything 的共享配置（`.understand-anything/.understandignore` 和 `.understand-anything/config.json`）。不要提交生成图谱、fingerprint、intermediate、trash 或 cache 文件。
 - 不要提交本地凭据或用户配置。`config.yaml`、`mcp.json`、日志和 `workspace/` 都属于本地运行文件。
@@ -69,13 +69,15 @@
 
 #### 归属边界
 
-- Agent 循环行为、事件语义、工具编排、取消、completion gate、产物检测和 memory 生命周期属于共享核心模块，例如 `box_agent/core.py`、`box_agent/events.py` 以及相关共享 helper。
+- `box_agent/core.py` 是可修改但低频变化、由核心团队维护的内核。产品层与能力层必须使用 `Agent.run_events()` 或明确的共享 API，不能直接导入 Core 实现。
+- Agent 循环不变量、事件语义、调度、取消、工具调用闭合和安全执行点属于稳定内核/契约；Core 改动需要核心维护者评审。
+- 可复用的工具、Skills、Provider、存储和工作流策略默认属于能力层，除非确实需要新增与宿主无关的内核契约。有状态工作流放入 `box_agent/workflows/`，实现 `WorkflowPolicy`，并由 `runtime.py` 组装，不要让 Core 导入具体实现。
 - CLI 代码负责终端交互、渲染、slash commands 和本地提示，不应复制 ACP 也需要的核心行为。
 - ACP 代码负责把共享事件翻译成 ACP protocol updates 和 host extension methods。stdout 必须保持协议纯净；诊断信息应走 stderr 或结构化日志。
 - Provider 特定的 wire 行为属于 `box_agent/llm/`，不要把 provider 假设散落到 tools、skills、CLI 或 ACP。
 - Tool 行为属于 `box_agent/tools/`，应返回结构化 `ToolResult`。新增工具语义需要直接回归测试。
 - 内置 skill 加载由 `box_agent/skill_loader.py`、`box_agent/skills/` 和 `box_agent/skills/_manifest.json` 控制。内置 skills 变化时，review 前必须重新生成 manifest。
-- PPT/文档能力默认由 skill 驱动，除非有明确的核心 contract 变化，不要向核心循环加入隐藏的 PPT 专用模式。
+- PPT/文档能力默认由 skill 驱动，除非有明确的核心 contract 变化。PPT 意图路由、checkpoint 与工具策略属于 `box_agent/completion.py` 和 `box_agent/workflows/presentation_*`，不要向核心循环或 `loop_guards.py` 加入隐藏的 PPT 专用模式。
 - Packaged runtime 行为不能只靠源码改动证明。如果 officev3 或 standalone runtime 依赖本次改动，需要说明 runtime rebuild/install/probe 状态。
 
 #### TPR Pull Request 标准

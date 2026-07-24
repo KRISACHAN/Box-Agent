@@ -9,6 +9,7 @@ from typing import Any, Literal, Mapping
 
 from box_agent.loop_guards import CompletionGate
 from box_agent.tools.skill_loader import SkillLoader
+from box_agent.workflows.presentation_contract import RESEARCH_MODE_OPTION
 
 AUTO_LOADED_SKILLS_HEADING = "## Auto-Loaded Skill Instructions"
 ACTIVE_SKILLS_HEADING = "## Active Skill Instructions"
@@ -135,7 +136,7 @@ def document_preload_skill_names(
         ):
             preload.append(skill_name)
     if (
-        getattr(completion_gate, "presentation_research_mode", None) == "deep"
+        completion_gate.workflow_options.get(RESEARCH_MODE_OPTION) == "deep"
         and "research-synthesis" not in preload
     ):
         preload.append("research-synthesis")

@@ -14,11 +14,10 @@ from box_agent.acp import (
     _inject_item_id,
     _latest_user_request_for_plan_detection,
     _looks_like_plan_approval_text,
-    _recover_controlled_presentation_gate,
-    _should_resume_pending_completion_gate,
     _tool_result_raw_output,
 )
 from box_agent.acp.stdio_compat import _READ_LIMIT
+from box_agent.completion import should_resume_pending_completion_gate
 from box_agent.config import (
     AgentConfig,
     Config,
@@ -38,6 +37,7 @@ from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS
 from box_agent.tools.skill_loader import SKILL_SLOT_SENTINEL, SkillLoader
 from box_agent.tools.skill_tool import create_skill_tools
 from box_agent.tools.setup import SANDBOX_INFO_PROMPT, build_sandbox_info_prompt
+from box_agent.workflows import recover_completion_gate
 
 
 class DummyConn:
@@ -1888,19 +1888,19 @@ async def test_acp_completion_gate_ignores_historical_deliverable_on_plain_conti
 
 
 def test_pending_completion_gate_resume_detection_is_session_scoped():
-    assert _should_resume_pending_completion_gate(
+    assert should_resume_pending_completion_gate(
         "输出 HTML",
         waiting_for_user_input=False,
     )
-    assert _should_resume_pending_completion_gate(
+    assert should_resume_pending_completion_gate(
         "TAM 120 亿元，SAM 30 亿元，SOM 3 亿元",
         waiting_for_user_input=True,
     )
-    assert not _should_resume_pending_completion_gate(
+    assert not should_resume_pending_completion_gate(
         "这个主题色是什么意思？",
         waiting_for_user_input=False,
     )
-    assert not _should_resume_pending_completion_gate(
+    assert not should_resume_pending_completion_gate(
         "取消，不用继续",
         waiting_for_user_input=True,
     )
@@ -1911,11 +1911,11 @@ def test_recover_controlled_presentation_gate_from_deep_research_checkpoint(tmp_
     research.mkdir(parents=True)
     (research / "topic_insight.md").write_text("validated evidence", encoding="utf-8")
 
-    gate = _recover_controlled_presentation_gate("继续完成 PPT", tmp_path)
+    gate = recover_completion_gate(tmp_path)
 
     assert gate is not None
     assert gate.workflow_checkpoint_kind == "controlled_presentation"
-    assert gate.presentation_research_mode == "deep"
+    assert gate.workflow_options["research_mode"] == "deep"
 
 
 def test_recover_controlled_presentation_gate_from_source_first_outline(tmp_path):
@@ -1923,11 +1923,11 @@ def test_recover_controlled_presentation_gate_from_source_first_outline(tmp_path
     output.mkdir()
     (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
 
-    gate = _recover_controlled_presentation_gate("继续", tmp_path)
+    gate = recover_completion_gate(tmp_path)
 
     assert gate is not None
     assert gate.workflow_checkpoint_kind == "controlled_presentation"
-    assert gate.presentation_research_mode == "auto"
+    assert gate.workflow_options["research_mode"] == "auto"
 
 
 def test_recover_controlled_presentation_gate_does_not_reopen_complete_deck(tmp_path):
@@ -1948,7 +1948,7 @@ def test_recover_controlled_presentation_gate_does_not_reopen_complete_deck(tmp_
     ):
         (qa / report_name).write_text('{"ok": true}', encoding="utf-8")
 
-    gate = _recover_controlled_presentation_gate("继续", tmp_path)
+    gate = recover_completion_gate(tmp_path)
 
     assert gate is None
 
@@ -1993,7 +1993,7 @@ async def test_acp_recovers_controlled_deck_after_new_session_from_filesystem(tm
     assert response.stopReason == "end_turn"
     assert captured["gate"] is not None
     assert captured["gate"] is state.pending_completion_gate
-    assert state.pending_completion_gate.presentation_research_mode == "deep"
+    assert state.pending_completion_gate.workflow_options["research_mode"] == "deep"
 
 
 @pytest.mark.asyncio

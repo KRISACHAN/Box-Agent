@@ -8,13 +8,13 @@ from box_agent.core import (
     _detect_artifacts,
     _detect_new_files,
     _snapshot_workspace,
-    run_agent_loop,
     text_is_short_acknowledgement,
     text_is_short_non_task_reply,
     text_requests_plan_start,
 )
 from box_agent.core import FINAL_SUMMARY_TOOL_CALL_THRESHOLD as _FS_THRESHOLD
 from box_agent.loop_guards import CompletionGate, repeated_stream_pattern
+from box_agent.runtime import run_agent_loop
 from box_agent.events import (
     ArtifactEvent,
     ContentEvent,
@@ -1835,7 +1835,7 @@ async def test_research_evidence_calls_preserve_controlled_deck_delivery_budget(
     echo = EchoTool()
     gate = CompletionGate(
         workflow_checkpoint_kind="controlled_presentation",
-        presentation_research_mode="deep",
+        workflow_options={"research_mode": "deep"},
         max_tool_calls=1,
     )
     llm = MockLLM(
@@ -1910,7 +1910,7 @@ async def test_controlled_research_batches_public_page_reads(tmp_path):
             max_steps=5,
             completion_gate=CompletionGate(
                 workflow_checkpoint_kind="controlled_presentation",
-                presentation_research_mode="deep",
+                workflow_options={"research_mode": "deep"},
                 max_continuations=0,
             ),
             workspace_dir=str(tmp_path),

@@ -35,11 +35,22 @@
 
 ## 1. Project Architecture
 
+The ownership rules, dependency direction, and stable integration API are
+defined in the [Layered Architecture](ARCHITECTURE.md). Read it before adding
+shared runtime behavior.
+
 ```
 box-agent/
 ├── box_agent/              # Core source code
 │   ├── core.py              # Execution core — run_agent_loop() (the agent loop)
 │   ├── agent.py             # Public API wrapper (Agent class)
+│   ├── runtime.py           # Composition root and stable Core bridge
+│   ├── completion.py        # Generic deliverable-router composition
+│   ├── delivery.py          # Generic deliverable-intent classification
+│   ├── workflow_policy.py   # Stable workflow contract consumed by Core
+│   ├── workflows/           # Workflow routing, checkpoints, and policies
+│   ├── artifacts.py         # Shared artifact contract helpers
+│   ├── turn_policy.py       # Shared turn classification policies
 │   ├── llm/                 # Provider clients and LLM wrapper
 │   ├── acp/                 # ACP server and host integration
 │   ├── cli.py               # Command-line interface

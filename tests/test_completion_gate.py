@@ -12,17 +12,19 @@ from pathlib import Path
 
 import pytest
 
-from box_agent.core import run_agent_loop
+from box_agent.completion import build_auto_completion_gate
+from box_agent.runtime import run_agent_loop
 from box_agent.loop_guards import (
-    CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
     CompletionGate,
+    artifact_signatures_for_globs,
+    completion_gate_gaps,
+    completion_gate_text,
+)
+from box_agent.workflows.presentation_checkpoint import (
+    CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
     _content_patch_input,
     _outline_repair_input,
-    artifact_signatures_for_globs,
-    build_auto_completion_gate,
-    completion_gate_gaps,
     completion_gate_progress_text,
-    completion_gate_text,
 )
 from box_agent.events import DoneEvent, InjectedMessageEvent, StopReason, ToolCallResult
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
@@ -470,7 +472,7 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
     assert gate.max_continuations == 3
     assert gate.max_tool_calls == 64
     assert gate.web_search_total_limit is None
-    assert gate.presentation_research_mode == "auto"
+    assert gate.workflow_options["research_mode"] == "auto"
     assert gate.completion_reserve_tool_calls == 10
     assert gate.pause_tools == frozenset({"request_user_input"})
     assert {
@@ -558,7 +560,7 @@ def test_build_auto_completion_gate_detects_explicit_ppt_continuation(tmp_path):
 
     assert gate is not None
     assert gate.workflow_checkpoint_kind == "controlled_presentation"
-    assert gate.presentation_research_mode == "deep"
+    assert gate.workflow_options["research_mode"] == "deep"
 
 
 def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
@@ -568,7 +570,7 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     )
 
     assert gate is not None
-    assert gate.presentation_research_mode == "deep"
+    assert gate.workflow_options["research_mode"] == "deep"
     assert gate.max_tool_calls == 80
     assert gate.web_search_total_limit is None
 
@@ -637,7 +639,7 @@ def test_short_solution_design_brief_skips_research_synthesis(tmp_path):
     )
 
     assert gate is not None
-    assert gate.presentation_research_mode == "content_ready"
+    assert gate.workflow_options["research_mode"] == "content_ready"
     assert gate.max_tool_calls == 64
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
@@ -690,7 +692,7 @@ def test_source_first_presentation_does_not_force_public_research(tmp_path):
     gate = build_auto_completion_gate("制作一份我司新员工入职培训 PPT", tmp_path)
 
     assert gate is not None
-    assert gate.presentation_research_mode == "source_first"
+    assert gate.workflow_options["research_mode"] == "source_first"
     assert gate.max_tool_calls == 64
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
@@ -1650,7 +1652,7 @@ async def test_controlled_outline_accepts_urls_from_validated_research_handoff(t
             max_steps=5,
             completion_gate=CompletionGate(
                 workflow_checkpoint_kind="controlled_presentation",
-                presentation_research_mode="deep",
+                workflow_options={"research_mode": "deep"},
                 max_continuations=0,
             ),
             workspace_dir=str(tmp_path),
@@ -1725,7 +1727,7 @@ async def test_validated_research_handoff_blocks_backward_discovery(tmp_path):
             max_steps=5,
             completion_gate=CompletionGate(
                 workflow_checkpoint_kind="controlled_presentation",
-                presentation_research_mode="deep",
+                workflow_options={"research_mode": "deep"},
                 max_continuations=0,
             ),
             workspace_dir=str(tmp_path),
@@ -4178,7 +4180,7 @@ def test_ppt_completion_gate_rejects_failed_html_self_check(tmp_path):
     gaps = completion_gate_gaps(gate, set(), str(tmp_path))
 
     assert len(gaps) == 1
-    assert "受控演示 QA 尚未完成" in gaps[0]
+    assert "交付物 QA 尚未完成" in gaps[0]
     assert "html_self_check.json" in gaps[0]
 
 
@@ -4198,6 +4200,24 @@ def test_explicit_pptx_completion_gate_requires_pptx(tmp_path):
 
     assert gate is not None
     assert gate.required_changed_artifact_globs == ("output/**/*.pptx",)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "生成一份 PPT，但不要导出 .pptx，交付可编辑 HTML。",
+        "生成一份 PPT，不要导出 .pptx。",
+        "Create a presentation, but do not export .pptx; deliver editable HTML.",
+        "Create a presentation. Do not export .pptx.",
+    ],
+)
+def test_negated_pptx_export_keeps_controlled_html_route(tmp_path, prompt):
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert "output/**/*.html" in gate.required_changed_artifact_globs
+    assert gate.required_changed_artifact_globs != ("output/**/*.pptx",)
 
 
 def test_gaps_empty_when_all_requirements_met(tmp_path):

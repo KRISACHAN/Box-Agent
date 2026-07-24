@@ -33,6 +33,7 @@ from prompt_toolkit.styles import Style
 import yaml
 
 from box_agent import LLMClient, __version__
+from box_agent.artifacts import ensure_output_dir
 from box_agent.agent import (
     Agent,
     GoalState,
@@ -43,7 +44,7 @@ from box_agent.agent import (
     should_continue_goal_autopilot,
 )
 from box_agent.config import Config
-from box_agent.loop_guards import build_auto_completion_gate
+from box_agent.completion import build_auto_completion_gate
 from box_agent.schema import LLMProvider, Message
 from box_agent.tools.base import Tool
 from box_agent.tools.jupyter_tool import JupyterSandboxTool, SandboxStatusTool
@@ -2089,17 +2090,17 @@ async def run_agent(
     # Wire CLI permission negotiator (parity with ACP in-band negotiation)
     if grant_store is not None and not non_interactive:
         from box_agent.cli_permissions import CLIPermissionNegotiator
-        agent._permission_negotiator = CLIPermissionNegotiator(grant_store)
+        agent.set_permission_negotiator(CLIPermissionNegotiator(grant_store))
 
     # Wire memory extractor
     if memory_extractor:
-        agent._memory_extractor = memory_extractor
+        agent.set_memory_extractor(memory_extractor)
 
     # Wire memory promotion negotiator (interactive prompts).
     # Non-interactive `--task` mode skips it to avoid blocking on stdin.
     if memory_mgr and config.agent.memory_promotion_proposal_enabled and not task:
         from box_agent.cli_memory_proposal import CLIMemoryProposalNegotiator
-        agent._proposal_negotiator = CLIMemoryProposalNegotiator(memory_mgr)
+        agent.set_memory_proposal_negotiator(CLIMemoryProposalNegotiator(memory_mgr))
 
     def _set_agent_system_prompt(system_prompt: str) -> None:
         agent.set_system_prompt(system_prompt)
@@ -2355,7 +2356,7 @@ async def run_agent(
                 sandbox_session_id = None
                 for tool in tools:
                     if isinstance(tool, JupyterSandboxTool):
-                        sandbox_session_id = tool._session_id
+                        sandbox_session_id = tool.session_id
                         break
                 if sandbox_session_id:
                     prompt_parts = [
@@ -2399,9 +2400,8 @@ async def run_agent(
 
                 elif command == "/clear":
                     # Clear message history but keep system prompt
-                    old_count = len(agent.messages)
-                    agent.messages = [agent.messages[0]]  # Keep only system message
-                    print(f"{Colors.GREEN}✅ Cleared {old_count - 1} messages, starting new session{Colors.RESET}\n")
+                    cleared_count = agent.clear_history()
+                    print(f"{Colors.GREEN}✅ Cleared {cleared_count} messages, starting new session{Colors.RESET}\n")
                     if sandbox_mode:
                         print(f"{Colors.YELLOW}⚠️  Note: /clear does not clear sandbox state.{Colors.RESET}")
                         print(f"{Colors.DIM}   Use /clear_all to clear both messages and sandbox.{Colors.RESET}\n")
@@ -2409,13 +2409,12 @@ async def run_agent(
 
                 elif command == "/clear_all":
                     # Clear both message history AND sandbox kernel
-                    old_count = len(agent.messages)
-                    agent.messages = [agent.messages[0]]  # Keep only system message
+                    cleared_count = agent.clear_history()
                     if sandbox_mode:
                         await JupyterSandboxTool.shutdown_all()
-                        print(f"{Colors.GREEN}✅ Cleared {old_count - 1} messages and shut down sandbox kernel{Colors.RESET}\n")
+                        print(f"{Colors.GREEN}✅ Cleared {cleared_count} messages and shut down sandbox kernel{Colors.RESET}\n")
                     else:
-                        print(f"{Colors.GREEN}✅ Cleared {old_count - 1} messages{Colors.RESET}\n")
+                        print(f"{Colors.GREEN}✅ Cleared {cleared_count} messages{Colors.RESET}\n")
                     continue
 
                 elif command == "/history":
@@ -2685,7 +2684,6 @@ def main() -> int:
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
     # Ensure the canonical artifact directory exists before any tool can write to it.
-    from box_agent.core import ensure_output_dir
     ensure_output_dir(workspace_dir)
 
     # Run the agent (config always loaded from package directory)

@@ -1,7 +1,7 @@
 """ACP (Agent Client Protocol) bridge for Box-Agent.
 
-Now consumes the shared execution core (``box_agent.core``) instead of
-maintaining its own agent loop.  This gives ACP automatic access to
+Consumes the public ``Agent.run_events`` facade instead of maintaining its own
+agent loop or importing the core implementation.  This gives ACP access to
 summarization, logging, and safety — features the old ``_run_turn``
 reimplementation was missing.
 
@@ -62,6 +62,7 @@ from acp.schema import AgentCapabilities, Implementation, McpCapabilities
 
 from box_agent import __version__
 from box_agent.acp.stdio_compat import stdio_streams_largebuf
+from box_agent.artifacts import ensure_output_dir
 from box_agent.agent import (
     Agent,
     goal_autopilot_prompt,
@@ -81,8 +82,7 @@ from box_agent.tools.setup import (
     register_mcp_tools,
 )
 from box_agent.config import Config
-from box_agent.core import (
-    run_agent_loop,
+from box_agent.turn_policy import (
     text_is_short_acknowledgement,
     text_requests_plan_start,
 )
@@ -107,13 +107,17 @@ from box_agent.events import (
 )
 from box_agent.llm import LLMClient
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
-from box_agent.loop_guards import (
-    CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
-    CompletionGate,
+from box_agent.completion import (
     build_auto_completion_gate,
-    completion_gate_gaps,
-    completion_gate_progress_text,
+    cancels_pending_completion_gate,
+    completion_gate_has_workflow_lifecycle,
+    should_resume_pending_completion_gate,
 )
+from box_agent.loop_guards import (
+    CompletionGate,
+    completion_gate_gaps,
+)
+from box_agent.workflows import recover_completion_gate
 from box_agent.acp.action_hints import (
     ActionHintStreamNormalizer,
     build_action_hints_prompt,
@@ -707,109 +711,6 @@ class SessionState:
 
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
 
-_PENDING_GATE_CANCEL_PHRASES = (
-    "取消",
-    "不用继续",
-    "不要继续",
-    "不做这个",
-    "先不做",
-    "换个任务",
-    "新任务",
-    "stop",
-    "cancel",
-    "never mind",
-)
-_PENDING_GATE_CONTINUE_PHRASES = (
-    "继续",
-    "接着",
-    "补完",
-    "完成",
-    "输出html",
-    "生成html",
-    "渲染html",
-    "continue",
-    "resume",
-    "finish",
-    "go on",
-    "output html",
-    "render html",
-)
-
-
-def _cancels_pending_completion_gate(user_text: str) -> bool:
-    normalized = " ".join(user_text.casefold().split())
-    return bool(normalized) and any(
-        phrase in normalized for phrase in _PENDING_GATE_CANCEL_PHRASES
-    )
-
-
-def _should_resume_pending_completion_gate(
-    user_text: str,
-    *,
-    waiting_for_user_input: bool,
-) -> bool:
-    """Recognize an answer or terse continuation of a retained delivery task."""
-    normalized = " ".join(user_text.casefold().split()).strip()
-    if not normalized or _cancels_pending_completion_gate(normalized):
-        return False
-    if waiting_for_user_input:
-        return True
-    compact = normalized.replace(" ", "")
-    if len(normalized) <= 80 and any(
-        phrase in normalized or phrase.replace(" ", "") in compact
-        for phrase in _PENDING_GATE_CONTINUE_PHRASES
-    ):
-        return True
-    return text_is_short_acknowledgement(normalized)
-
-
-def _recover_controlled_presentation_gate(
-    user_text: str,
-    workspace_dir: str | Path,
-) -> CompletionGate | None:
-    """Rebuild a lost controlled-deck gate from durable artifacts.
-
-    An officev3 app/runtime restart creates a new ACP ``SessionState`` and loses
-    the in-memory pending gate.  Each task already has an isolated workspace, so
-    a terse continuation may safely recover only when that workspace contains an
-    incomplete controlled-presentation checkpoint.  Completed decks are not
-    reopened implicitly.
-    """
-    if not _should_resume_pending_completion_gate(
-        user_text,
-        waiting_for_user_input=False,
-    ):
-        return None
-    workspace = Path(workspace_dir)
-    output = workspace / "output"
-    if not output.is_dir():
-        return None
-    research_root = output / "research"
-    has_research = research_root.is_dir() and any(
-        path.is_file() for path in research_root.rglob("*")
-    )
-    has_checkpoint = has_research or any(
-        path.is_file()
-        for filename in ("outline.json", "deck.json", "index.html")
-        for path in output.rglob(filename)
-    )
-    if not has_checkpoint:
-        return None
-    gate = build_auto_completion_gate("继续制作 PPT", workspace)
-    if gate is None:
-        return None
-    gate = replace(
-        gate,
-        presentation_research_mode="deep" if has_research else "auto",
-    )
-    checkpoint = completion_gate_progress_text(gate, str(workspace))
-    if checkpoint and (
-        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}complete" in checkpoint
-    ):
-        return None
-    return gate
-
-
 def _bind_user_source_text(state: SessionState, user_request: str) -> None:
     """Expose accumulated real user text to local provenance-aware tools.
 
@@ -1157,8 +1058,6 @@ class BoxACPAgent:
         output_dir: str | None = None
         artifact_root_dir = _artifact_root_from_meta(meta, workspace, artifact_mode)
         if artifact_mode != "project":
-            from box_agent.core import ensure_output_dir
-
             output_path = artifact_root_dir or ensure_output_dir(workspace)
             output_path.mkdir(parents=True, exist_ok=True)
             output_dir = str(output_path)
@@ -1730,16 +1629,23 @@ class BoxACPAgent:
         )
         resume_pending_gate = (
             state.pending_completion_gate is not None
-            and _should_resume_pending_completion_gate(
+            and should_resume_pending_completion_gate(
                 plan_detection_text,
                 waiting_for_user_input=state.waiting_for_user_input,
             )
         )
+        recover_from_workspace = should_resume_pending_completion_gate(
+            plan_detection_text,
+            waiting_for_user_input=False,
+        )
         recovered_completion_gate = (
             None
-            if state.artifact_mode == "project" or resume_pending_gate
-            else _recover_controlled_presentation_gate(
-                plan_detection_text,
+            if (
+                state.artifact_mode == "project"
+                or resume_pending_gate
+                or not recover_from_workspace
+            )
+            else recover_completion_gate(
                 state.agent.workspace_dir,
             )
         )
@@ -1757,17 +1663,14 @@ class BoxACPAgent:
             completion_gate_source = "new"
             if fresh_completion_gate is not None:
                 state.waiting_for_user_input = False
-                if (
-                    fresh_completion_gate.workflow_checkpoint_kind
-                    == "controlled_presentation"
-                ):
+                if completion_gate_has_workflow_lifecycle(fresh_completion_gate):
                     state.pending_completion_gate = fresh_completion_gate
                 elif state.pending_completion_gate is not None:
                     # A distinct deliverable request replaces the older pending
-                    # presentation. Terse continuations such as "输出 HTML" are
+                    # workflow. Terse continuations such as "输出 HTML" are
                     # handled by the resume branch above.
                     state.pending_completion_gate = None
-            elif _cancels_pending_completion_gate(plan_detection_text):
+            elif cancels_pending_completion_gate(plan_detection_text):
                 state.pending_completion_gate = None
                 state.waiting_for_user_input = False
         if completion_gate is not None:
@@ -1880,8 +1783,7 @@ class BoxACPAgent:
             reset_token_meter(meter_token)
         if (
             completion_gate is not None
-            and completion_gate.workflow_checkpoint_kind
-            == "controlled_presentation"
+            and completion_gate_has_workflow_lifecycle(completion_gate)
         ):
             remaining_gaps = completion_gate_gaps(
                 completion_gate,
@@ -2808,45 +2710,32 @@ class BoxACPAgent:
         if state.follow_up_suggestions_enabled:
             llm = _FollowUpSuggestionsExtractingLLM(llm)
 
-        async for event in run_agent_loop(
+        run_options = replace(
+            agent.default_run_options(),
             llm=llm,
-            messages=agent.messages,
-            tools=agent.tools,
-            max_steps=agent.max_steps,
-            token_limit=agent.token_limit,
             is_cancelled=lambda: state.cancelled,
             logger=None,  # ACP uses its own logging via the connection
-            workspace_dir=str(agent.workspace_dir),
             permission_negotiator=negotiator,
             hooks=self._hooks,
             memory_manager=self._memory,
             memory_extractor=state.memory_extractor,
             memory_turn_id=turn_id,
-            memory_promotion_enabled=self._config.agent.memory_promotion_proposal_enabled,
-            memory_promotion_hit_threshold=self._config.agent.memory_promotion_hit_threshold,
-            memory_promotion_cooldown_days=self._config.agent.memory_promotion_cooldown_days,
             inject_queue=state.inject_queue,
-            thinking_enabled=agent.thinking_enabled,
             session_id=state.upstream_session_id,
-            parallel_tool_timeout_seconds=agent.parallel_tool_timeout_seconds,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             plan_approval=plan_approval,
             plan_start_text=plan_start_text,
             pause_after_plan_write=not auto_approve_plan,
             completion_gate=completion_gate,
-            truncation_continuation_enabled=agent.truncation_continuation_enabled,
-            max_truncation_continuations=agent.max_truncation_continuations,
-            max_truncated_tool_call_retries=agent.max_truncated_tool_call_retries,
-            truncated_tool_call_boost_cap=agent.truncated_tool_call_boost_cap,
             artifact_detection_enabled=state.artifact_mode != "project",
             artifact_root_dir=state.output_dir,
-            cache_fingerprint_context=agent.cache_fingerprint_context,
             cache_fingerprint_sink=lambda fingerprint: self._log_cache_fingerprint(
                 session_id,
                 fingerprint,
             ),
-        ):
+        )
+        async for event in agent.run_events(options=run_options):
             try:
                 match event:
                     case ThinkingEvent() if event._streaming:
