@@ -33,9 +33,11 @@ on change):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from .memory import (
@@ -109,35 +111,78 @@ class MemoryMaintainer:
 
         Returns True if maintenance ran, False if skipped (disabled or
         marker too recent). All phases are best-effort: a failure in one
-        phase is logged and the rest still execute.
+        phase is logged and the rest still execute. Local filesystem and
+        CPU-heavy phases run in worker threads so ACP stdio remains responsive.
         """
         now = datetime.now(timezone.utc)
         if not self._due(now):
             return False
 
-        logger.info("MemoryMaintainer: starting run at %s", now.isoformat())
-        for phase_name, phase in (
-            ("decay", self._decay),
-            ("cleanup_archive", self._cleanup_archive),
-            ("dedup", self._dedup),
-            ("resolve_conflicts", self._resolve_conflicts),
-            ("compact", self._compact),
+        run_started = monotonic()
+        try:
+            entries_before = await asyncio.to_thread(
+                lambda: len(self._mgr.read_all_context_entries())
+            )
+        except Exception:
+            entries_before = -1
+            logger.exception("MemoryMaintainer: failed to count entries before run")
+
+        logger.info(
+            "MemoryMaintainer: run start entries=%d interval_hours=%d",
+            entries_before,
+            self._cfg.memory_maintainer_interval_hours,
+        )
+        phase_durations_ms: dict[str, int] = {}
+        for phase_name, phase, run_in_worker in (
+            ("decay", self._decay, True),
+            ("cleanup_archive", self._cleanup_archive, True),
+            ("dedup", self._dedup, True),
+            ("resolve_conflicts", self._resolve_conflicts, False),
+            ("compact", self._compact, False),
         ):
+            logger.info("MemoryMaintainer: phase start name=%s", phase_name)
+            phase_started = monotonic()
             try:
-                await phase(now)
+                if run_in_worker:
+                    await asyncio.to_thread(phase, now)
+                else:
+                    await phase(now)
             except Exception:
                 logger.exception("MemoryMaintainer: %s phase failed", phase_name)
+            finally:
+                phase_durations_ms[phase_name] = int(
+                    (monotonic() - phase_started) * 1000
+                )
 
         try:
-            self._last_run_marker.write_text(_now_iso_stamp() + "\n", encoding="utf-8")
+            await asyncio.to_thread(
+                self._last_run_marker.write_text,
+                _now_iso_stamp() + "\n",
+                encoding="utf-8",
+            )
         except OSError:
             logger.exception("MemoryMaintainer: could not write last-run marker")
 
+        try:
+            entries_after = await asyncio.to_thread(
+                lambda: len(self._mgr.read_all_context_entries())
+            )
+        except Exception:
+            entries_after = -1
+            logger.exception("MemoryMaintainer: failed to count entries after run")
+
+        logger.info(
+            "MemoryMaintainer: run complete entries=%d->%d duration_ms=%d phase_ms=%s",
+            entries_before,
+            entries_after,
+            int((monotonic() - run_started) * 1000),
+            phase_durations_ms,
+        )
         return True
 
     # ── Phase 1: decay ──────────────────────────────────────────
 
-    async def _decay(self, now: datetime) -> None:
+    def _decay(self, now: datetime) -> None:
         threshold = now - timedelta(days=self._cfg.memory_decay_days)
         entries = self._mgr.read_all_context_entries()
         if not entries:
@@ -164,7 +209,7 @@ class MemoryMaintainer:
 
     # ── Phase 2: archive cleanup → trash ────────────────────────
 
-    async def _cleanup_archive(self, now: datetime) -> None:
+    def _cleanup_archive(self, now: datetime) -> None:
         cutoff_days = self._cfg.memory_decay_days + self._cfg.memory_archive_days
         threshold = now - timedelta(days=cutoff_days)
         entries = parse_context_file(self._mgr.archive_file)
@@ -194,7 +239,7 @@ class MemoryMaintainer:
 
     # ── Phase 3: dedup ──────────────────────────────────────────
 
-    async def _dedup(self, _now: datetime) -> None:
+    def _dedup(self, _now: datetime) -> None:
         threshold = self._cfg.memory_dedup_jaccard
         entries = self._mgr.read_all_context_entries()
         if len(entries) < 2:
@@ -325,7 +370,7 @@ class MemoryMaintainer_Compact:  # placeholder so the file parses; will be inlin
         if not self._cfg.memory_compaction_enabled or self._llm is None:
             return
 
-        entries = self._mgr.read_all_context_entries()
+        entries = await asyncio.to_thread(self._mgr.read_all_context_entries)
         if len(entries) < 2:
             return
 
@@ -364,15 +409,18 @@ class MemoryMaintainer_Compact:  # placeholder so the file parses; will be inlin
 
         # Backup before overwrite — dump every topic file we currently have.
         trash_dir = self._mgr.trash_dir / now.strftime("%Y-%m-%d") / "compact"
-        try:
+        def _backup_context() -> None:
             trash_dir.mkdir(parents=True, exist_ok=True)
-            stamp = _now_iso_stamp()
+            stamp = _now_iso_stamp().replace(":", "-")
             for topic_path in sorted(self._mgr.context_dir.glob("*.md")):
                 backup_path = trash_dir / f"{topic_path.stem}.{stamp}.md"
                 backup_path.write_text(
                     topic_path.read_text(encoding="utf-8"),
                     encoding="utf-8",
                 )
+
+        try:
+            await asyncio.to_thread(_backup_context)
         except OSError:
             logger.exception("MemoryMaintainer: compact backup failed; aborting")
             return
@@ -399,7 +447,7 @@ class MemoryMaintainer_Compact:  # placeholder so the file parses; will be inlin
                 new.core_status = "rejected"
             new_entries.append(new)
 
-        self._mgr.write_all_context_entries(new_entries)
+        await asyncio.to_thread(self._mgr.write_all_context_entries, new_entries)
         logger.info(
             "MemoryMaintainer: compacted %d → %d entries (backup_dir=%s)",
             len(entries), len(new_entries), trash_dir,
@@ -529,11 +577,15 @@ class MemoryMaintainer_Conflict:  # placeholder — bound onto MemoryMaintainer 
         if not self._cfg.memory_conflict_resolution_enabled or self._llm is None:
             return
 
-        entries = self._mgr.read_all_context_entries()
+        entries = await asyncio.to_thread(self._mgr.read_all_context_entries)
         if len(entries) < 2:
             return
 
-        clusters = _cluster_by_jaccard(entries, self._cfg.memory_conflict_cluster_threshold)
+        clusters = await asyncio.to_thread(
+            _cluster_by_jaccard,
+            entries,
+            self._cfg.memory_conflict_cluster_threshold,
+        )
         if not clusters:
             return
 
@@ -586,15 +638,18 @@ class MemoryMaintainer_Conflict:  # placeholder — bound onto MemoryMaintainer 
         if not all_loser_ids:
             return
 
-        losers = [e for e in entries if e.id in all_loser_ids]
-        kept = [e for e in entries if e.id not in all_loser_ids]
+        def _apply_conflict_results() -> int:
+            losers = [e for e in entries if e.id in all_loser_ids]
+            kept = [e for e in entries if e.id not in all_loser_ids]
+            existing_archive = parse_context_file(self._mgr.archive_file)
+            write_context_file(self._mgr.archive_file, existing_archive + losers)
+            self._mgr.write_all_context_entries(kept)
+            return len(losers)
 
-        existing_archive = parse_context_file(self._mgr.archive_file)
-        write_context_file(self._mgr.archive_file, existing_archive + losers)
-        self._mgr.write_all_context_entries(kept)
+        loser_count = await asyncio.to_thread(_apply_conflict_results)
         logger.info(
             "MemoryMaintainer: resolved %d conflict losers across %d winners (clusters scanned=%d)",
-            len(losers), len(winners_touched), len(clusters),
+            loser_count, len(winners_touched), len(clusters),
         )
 
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 
 import pytest
 
@@ -68,6 +71,57 @@ def _entry(content: str, *, hits: int = 0, last_used_days_ago: int = 0,
 
 
 # ── Decay ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sync_maintenance_phase_does_not_block_event_loop(
+    mgr: MemoryManager,
+    config: AgentConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_decay(self, now):
+        started.set()
+        assert release.wait(timeout=1.0)
+
+    monkeypatch.setattr(MemoryMaintainer, "_decay", blocking_decay)
+    release_timer = threading.Timer(0.3, release.set)
+    release_timer.start()
+    started_at = monotonic()
+    task = asyncio.create_task(MemoryMaintainer(mgr, config).run_if_due())
+    try:
+        assert await asyncio.to_thread(started.wait, 1.0)
+        assert monotonic() - started_at < 0.15
+        await asyncio.wait_for(task, timeout=2.0)
+    finally:
+        release.set()
+        release_timer.cancel()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_logs_bounded_phase_diagnostics(
+    mgr: MemoryManager,
+    config: AgentConfig,
+    caplog: pytest.LogCaptureFixture,
+):
+    write_context_file(mgr.context_file, [_entry("- diagnostic entry")])
+
+    with caplog.at_level("INFO", logger="box_agent.memory_maintainer"):
+        await MemoryMaintainer(mgr, config).run_if_due()
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "box_agent.memory_maintainer"
+    ]
+    assert any("run start entries=1" in message for message in messages)
+    assert sum("phase start name=" in message for message in messages) == 5
+    assert any(
+        "run complete entries=1->1" in message and "phase_ms=" in message
+        for message in messages
+    )
 
 
 @pytest.mark.asyncio
