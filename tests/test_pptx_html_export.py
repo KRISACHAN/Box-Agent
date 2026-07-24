@@ -41,6 +41,7 @@ def _run_node(script: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
     unavailable = (
         "Cannot find module 'playwright'",
+        "Missing dependency: playwright",
         "Executable doesn't exist",
         "Playwright Chromium is not available",
     )
@@ -49,6 +50,25 @@ def _run_node(script: Path, *args: str) -> subprocess.CompletedProcess[str]:
     ):
         pytest.skip("Managed Playwright browser is unavailable")
     return result
+
+
+def test_run_node_skips_when_managed_playwright_dependency_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(globals(), "NODE", "node")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="",
+            stderr="Missing dependency: playwright\n",
+        ),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="Managed Playwright browser"):
+        _run_node(Path("unused.js"))
 
 
 def _last_json_object(output: str) -> dict:
