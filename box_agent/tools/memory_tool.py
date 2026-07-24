@@ -7,6 +7,7 @@ memory is searchable on demand.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from .base import Tool, ToolResult
@@ -77,21 +78,29 @@ class MemoryWriteTool(Tool):
         try:
             if category == "context":
                 if mode == "overwrite":
-                    self._mgr.write_context(content, topic=topic)
+                    await asyncio.to_thread(
+                        self._mgr.write_context,
+                        content,
+                        topic=topic,
+                    )
                     strategy = "overwrite"
                 elif self._llm is not None:
                     strategy = await self._mgr.update_context_with_llm(content, self._llm, topic=topic)
                 else:
-                    self._mgr.append_context(content, topic=topic)
+                    await asyncio.to_thread(
+                        self._mgr.append_context,
+                        content,
+                        topic=topic,
+                    )
                     strategy = "append_dedup"
-                current = self._mgr.read_context()
+                current = await asyncio.to_thread(self._mgr.read_context)
                 label = "context"
             else:
                 if mode == "overwrite":
-                    self._mgr.write_core(content)
+                    await asyncio.to_thread(self._mgr.write_core, content)
                 else:
-                    self._mgr.append_core(content)
-                current = self._mgr.read_core()
+                    await asyncio.to_thread(self._mgr.append_core, content)
+                current = await asyncio.to_thread(self._mgr.read_core)
                 label = "core"
                 strategy = mode
 
@@ -131,8 +140,10 @@ class MemoryReadTool(Tool):
 
     async def execute(self) -> ToolResult:
         try:
-            core = self._mgr.read_core()
-            context = self._mgr.read_context()
+            core, context = await asyncio.gather(
+                asyncio.to_thread(self._mgr.read_core),
+                asyncio.to_thread(self._mgr.read_context),
+            )
             if not core and not context:
                 return ToolResult(success=True, content="No long-term memory saved yet.")
 
@@ -200,7 +211,11 @@ class MemorySearchTool(Tool):
 
     async def execute(self, query: str, topic: str | None = None) -> ToolResult:
         try:
-            results = self._mgr.search(query, topic=topic)
+            results = await asyncio.to_thread(
+                self._mgr.search,
+                query,
+                topic=topic,
+            )
             if not results:
                 topic_suffix = f" in topic '{topic}'" if topic else ""
                 return ToolResult(

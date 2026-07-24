@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 
 import pytest
 
@@ -68,6 +71,137 @@ def _entry(content: str, *, hits: int = 0, last_used_days_ago: int = 0,
 
 
 # ── Decay ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sync_maintenance_phase_does_not_block_event_loop(
+    mgr: MemoryManager,
+    config: AgentConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_decay(self, now):
+        started.set()
+        assert release.wait(timeout=1.0)
+
+    monkeypatch.setattr(MemoryMaintainer, "_decay", blocking_decay)
+    release_timer = threading.Timer(0.3, release.set)
+    release_timer.start()
+    started_at = monotonic()
+    task = asyncio.create_task(MemoryMaintainer(mgr, config).run_if_due())
+    try:
+        assert await asyncio.to_thread(started.wait, 1.0)
+        assert monotonic() - started_at < 0.15
+        await asyncio.wait_for(task, timeout=2.0)
+    finally:
+        release.set()
+        release_timer.cancel()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_transaction_preserves_concurrent_append_and_search_hit(
+    mgr: MemoryManager,
+    config: AgentConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    stale = _entry("- stale memory", hits=0, last_used_days_ago=60)
+    active = _entry("- active durable memory", hits=0, last_used_days_ago=1)
+    mgr.write_all_context_entries([stale, active])
+
+    maintenance_ready_to_write = threading.Event()
+    allow_maintenance_write = threading.Event()
+    append_started = threading.Event()
+    search_started = threading.Event()
+    original_write_all = mgr.write_all_context_entries
+
+    def paused_maintenance_write(entries):
+        maintenance_ready_to_write.set()
+        assert allow_maintenance_write.wait(timeout=2.0)
+        original_write_all(entries)
+
+    monkeypatch.setattr(mgr, "write_all_context_entries", paused_maintenance_write)
+
+    maintenance_task = asyncio.create_task(
+        MemoryMaintainer(mgr, config).run_if_due()
+    )
+    try:
+        assert await asyncio.to_thread(
+            maintenance_ready_to_write.wait,
+            2.0,
+        )
+
+        def append_in_foreground():
+            append_started.set()
+            mgr.append_context(
+                "- concurrently added memory",
+                topic="project",
+            )
+
+        def search_in_foreground():
+            search_started.set()
+            return mgr.search("active durable memory")
+
+        append_task = asyncio.create_task(asyncio.to_thread(append_in_foreground))
+        search_task = asyncio.create_task(asyncio.to_thread(search_in_foreground))
+        assert await asyncio.to_thread(append_started.wait, 2.0)
+        assert await asyncio.to_thread(search_started.wait, 2.0)
+
+        # Both foreground operations reached the shared transaction boundary
+        # while maintenance still owns it.
+        await asyncio.sleep(0.05)
+        assert not append_task.done()
+        assert not search_task.done()
+
+        allow_maintenance_write.set()
+        search_results = await asyncio.wait_for(search_task, timeout=2.0)
+        await asyncio.wait_for(append_task, timeout=2.0)
+        await asyncio.wait_for(maintenance_task, timeout=2.0)
+    finally:
+        allow_maintenance_write.set()
+
+    entries = mgr.read_all_context_entries()
+    by_content = {entry.content: entry for entry in entries}
+    assert "- stale memory" not in by_content
+    assert "- active durable memory" in by_content
+    assert "- concurrently added memory" in by_content
+    assert by_content["- active durable memory"].hits == 1
+    assert search_results == ["- active durable memory"]
+
+    grouped = mgr.topic_store.read_all_grouped()
+    index = mgr.topic_store.read_index()
+    assert set(index) == set(grouped)
+    for topic, topic_entries in grouped.items():
+        assert index[topic]["count"] == len(topic_entries)
+        assert index[topic]["hits_total"] == sum(e.hits for e in topic_entries)
+        assert index[topic]["last_updated"] == max(
+            e.last_used for e in topic_entries
+        )
+
+
+@pytest.mark.asyncio
+async def test_maintenance_logs_bounded_phase_diagnostics(
+    mgr: MemoryManager,
+    config: AgentConfig,
+    caplog: pytest.LogCaptureFixture,
+):
+    write_context_file(mgr.context_file, [_entry("- diagnostic entry")])
+
+    with caplog.at_level("INFO", logger="box_agent.memory_maintainer"):
+        await MemoryMaintainer(mgr, config).run_if_due()
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "box_agent.memory_maintainer"
+    ]
+    assert any("run start entries=1" in message for message in messages)
+    assert sum("phase start name=" in message for message in messages) == 5
+    assert any(
+        "run complete entries=1->1" in message and "phase_ms=" in message
+        for message in messages
+    )
 
 
 @pytest.mark.asyncio
@@ -306,6 +440,18 @@ class FakeCompactLLM:
         return FakeLLMResponse(self.response_text)
 
 
+class PausedCompactLLM(FakeCompactLLM):
+    def __init__(self, response_text: str):
+        super().__init__(response_text)
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def generate(self, messages, **kwargs):
+        self.started.set()
+        await self.release.wait()
+        return await super().generate(messages, **kwargs)
+
+
 def _maint_cfg(**overrides) -> AgentConfig:
     base = dict(
         memory_maintainer_enabled=True,
@@ -415,6 +561,65 @@ async def test_compact_merges_topics_and_preserves_metadata(memory_dir):
     assert merged.source == "compact"
     # Strong-preference entry untouched in spirit (content + hits preserved).
     assert after["- project uses uv, never use pip"].hits == 12
+
+
+@pytest.mark.asyncio
+async def test_compact_preserves_concurrent_append_and_search_hit(memory_dir):
+    import json as _json
+
+    mgr = MemoryManager(memory_dir=str(memory_dir))
+    a = _new_entry("- alpha durable memory", topic="general")
+    b = _new_entry("- beta retained fact", topic="general")
+    c = _new_entry("- gamma retained fact", topic="general")
+    a.hits = b.hits = c.hits = 1
+    mgr.write_all_context_entries([a, b, c])
+
+    canned = _json.dumps([
+        {
+            "content": "- compacted durable memories",
+            "hits": 3,
+            "sources": [a.id, b.id, c.id],
+        },
+    ])
+    llm = PausedCompactLLM(canned)
+    maintainer = MemoryMaintainer(
+        mgr,
+        _maint_cfg(memory_context_max_entries=2),
+        llm=llm,
+    )
+
+    compact_task = asyncio.create_task(
+        maintainer._compact(datetime.now(timezone.utc))
+    )
+    await asyncio.wait_for(llm.started.wait(), timeout=2.0)
+
+    await asyncio.to_thread(
+        mgr.append_context,
+        "- concurrently added during compaction",
+        topic="project",
+    )
+    assert await asyncio.to_thread(mgr.search, "alpha durable memory") == [
+        "- alpha durable memory"
+    ]
+
+    llm.release.set()
+    await asyncio.wait_for(compact_task, timeout=2.0)
+
+    entries = mgr.read_all_context_entries()
+    by_content = {entry.content: entry for entry in entries}
+    assert set(by_content) == {
+        "- compacted durable memories",
+        "- concurrently added during compaction",
+    }
+    # Three original hits plus the concurrent search hit.
+    assert by_content["- compacted durable memories"].hits == 4
+
+    grouped = mgr.topic_store.read_all_grouped()
+    index = mgr.topic_store.read_index()
+    assert set(index) == set(grouped)
+    assert index["general"]["count"] == 1
+    assert index["general"]["hits_total"] == 4
+    assert index["project"]["count"] == 1
 
 
 @pytest.mark.asyncio

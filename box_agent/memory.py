@@ -10,15 +10,19 @@ Directory layout::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterator
 
 if TYPE_CHECKING:
     from .schema import Message
@@ -477,6 +481,17 @@ class TopicStore:
         }
 
 
+def _serialized_context(method):
+    """Run one complete context-memory operation under the manager transaction."""
+
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self.context_transaction():
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
 class MemoryManager:
     """Two-tier memory: MEMORY.md (core) + topic-sharded searchable context.
 
@@ -504,6 +519,7 @@ class MemoryManager:
         self.memory_dir = Path(memory_dir).expanduser()
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.dedup_jaccard_threshold = dedup_jaccard_threshold
+        self._context_transaction_lock = threading.RLock()
 
         # v2 is an overlay, not a migration.  New context/experience writes go
         # here; old context files remain untouched and are searched only as a
@@ -518,6 +534,13 @@ class MemoryManager:
         self._ensure_v2_state()
         self._topic_store.ensure_index()
         self.refresh_memory_summary()
+
+    @contextmanager
+    def context_transaction(self) -> Iterator[None]:
+        """Serialize a complete context-memory read-modify-write transaction."""
+
+        with self._context_transaction_lock:
+            yield
 
     # ── File paths ──────────────────────────────────────────────
 
@@ -635,6 +658,7 @@ class MemoryManager:
             return ""
         return "\n".join(e.content for e in entries).strip()
 
+    @_serialized_context
     def write_context(self, content: str, *, topic: str = "general") -> None:
         """Overwrite context entries for *topic* with *content*.
 
@@ -653,6 +677,7 @@ class MemoryManager:
         all_entries.extend(replacement)
         self._write_context_entries(all_entries)
 
+    @_serialized_context
     def append_context(self, content: str, *, topic: str = "general") -> None:
         """Append to CONTEXT.md, skipping lines already present in Core or Context.
 
@@ -736,10 +761,12 @@ class MemoryManager:
         self._topic_store.write_topics(entries)
         self.refresh_memory_summary()
 
+    @_serialized_context
     def read_all_context_entries(self) -> list[ContextEntry]:
         """Public: read every context entry across all topics."""
         return self._topic_store.read_all()
 
+    @_serialized_context
     def write_all_context_entries(self, entries: list[ContextEntry]) -> None:
         """Public: replace all context entries (sharded by ``entry.topic``)."""
         self._topic_store.write_all(entries)
@@ -896,6 +923,7 @@ class MemoryManager:
 
     # ── Search ──────────────────────────────────────────────────
 
+    @_serialized_context
     def search(self, query: str, *, limit: int = 5, topic: str | None = None) -> list[str]:
         """Keyword search across v2 experiences, then legacy fallback.
 
@@ -1241,9 +1269,9 @@ class MemoryManager:
 
         from .schema import Message as Msg
 
-        context = self.read_context()
+        context = await asyncio.to_thread(self.read_context)
         prompt = _CONTEXT_UPDATE_USER_PROMPT.format(
-            core_memory=self.read_core() or "(empty)",
+            core_memory=await asyncio.to_thread(self.read_core) or "(empty)",
             context_memory=context or "(empty)",
             candidate=content.strip(),
         )
@@ -1258,18 +1286,20 @@ class MemoryManager:
             data = json.loads(_strip_json_fences(response.content))
         except Exception:
             logger.exception("Context memory update planning failed; falling back to append")
-            before = self.read_context()
-            self.append_context(content, topic=topic)
-            return "fallback_appended" if self.read_context() != before else "no_change"
+            before = await asyncio.to_thread(self.read_context)
+            await asyncio.to_thread(self.append_context, content, topic=topic)
+            after = await asyncio.to_thread(self.read_context)
+            return "fallback_appended" if after != before else "no_change"
 
         operations = data.get("operations", [])
         # Stamp default topic on add operations that didn't specify one.
         for op in operations:
             if isinstance(op, dict) and op.get("action") == "add" and not op.get("topic"):
                 op["topic"] = topic
-        changed = self.apply_context_operations(operations)
+        changed = await asyncio.to_thread(self.apply_context_operations, operations)
         return "applied" if changed else "no_change"
 
+    @_serialized_context
     def apply_context_operations(self, operations: list[dict]) -> bool:
         """Safely apply model-planned context memory operations.
 
@@ -1405,6 +1435,7 @@ class MemoryManager:
             candidates.append(e)
         return candidates
 
+    @_serialized_context
     def mark_proposed(self, candidate_ids: list[str]) -> None:
         """Bump ``last_proposed`` on the given entries and persist."""
         if not candidate_ids:
@@ -1420,6 +1451,7 @@ class MemoryManager:
         if changed:
             self._write_context_entries(entries)
 
+    @_serialized_context
     def consume_core_proposal(self, decisions: dict[str, str]) -> dict[str, int]:
         """Apply user decisions to promotion candidates.
 
@@ -1588,6 +1620,7 @@ class MemoryManager:
             rationale=rationale,
         )
 
+    @_serialized_context
     def apply_promotion_plan(self, plan: "MemoryPromotionPlan") -> dict[str, int]:
         """Apply *plan*: overwrite MEMORY.md, drop consumed CONTEXT entries.
 
@@ -1602,6 +1635,7 @@ class MemoryManager:
             self._write_context_entries(keep)
         return {"applied": 1, "consumed": removed}
 
+    @_serialized_context
     def reject_promotion_plan(self, plan: "MemoryPromotionPlan") -> dict[str, int]:
         """Mark every consumed candidate ``core_status="rejected"`` (no core change)."""
         consumed_set = set(plan.consumed_entry_ids)
@@ -2292,11 +2326,14 @@ class MemoryExtractor:
 
         transcript = transcript[-6000:]  # Keep last ~6k chars
 
-        core_memory = self._mgr.read_core() or "(empty)"
+        core_memory, context_raw = await asyncio.gather(
+            asyncio.to_thread(self._mgr.read_core),
+            asyncio.to_thread(self._mgr.read_context),
+        )
+        core_memory = core_memory or "(empty)"
 
         # Only send last ~100 lines of Context for dedup reference (not the whole file).
         # Code-level dedup in append_context() handles Core overlap regardless.
-        context_raw = self._mgr.read_context()
         if context_raw:
             context_lines = context_raw.splitlines()
             context_memory = "\n".join(context_lines[-100:])
@@ -2317,7 +2354,12 @@ class MemoryExtractor:
             session_id=self._session_id,
         )
 
-        self._apply_updates(response.content, trigger=trigger, turn_id=turn_id)
+        await asyncio.to_thread(
+            self._apply_updates,
+            response.content,
+            trigger=trigger,
+            turn_id=turn_id,
+        )
 
     def _apply_updates(self, llm_output: str, *, trigger: str, turn_id: str) -> None:
         """Parse LLM JSON output and apply to CONTEXT.md.

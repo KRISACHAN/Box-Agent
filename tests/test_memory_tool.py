@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -47,6 +49,43 @@ async def test_memory_write_context_without_llm_uses_append_dedup(mgr: MemoryMan
     context = mgr.read_context()
     assert context.lower().count("q2 goal: dashboard") == 1
     assert "team lead: Bob" in context
+
+
+async def test_memory_write_waits_off_loop_for_maintenance_transaction(
+    mgr: MemoryManager,
+):
+    transaction_acquired = threading.Event()
+    release_transaction = threading.Event()
+
+    def hold_maintenance_transaction():
+        with mgr.context_transaction():
+            transaction_acquired.set()
+            assert release_transaction.wait(timeout=2.0)
+
+    holder = asyncio.create_task(
+        asyncio.to_thread(hold_maintenance_transaction)
+    )
+    assert await asyncio.to_thread(transaction_acquired.wait, 2.0)
+
+    write_task = asyncio.create_task(
+        MemoryWriteTool(mgr).execute(
+            "- first-turn concurrent memory",
+            category="context",
+        )
+    )
+    await asyncio.sleep(0)
+
+    loop_responsive = asyncio.Event()
+    asyncio.get_running_loop().call_soon(loop_responsive.set)
+    await asyncio.wait_for(loop_responsive.wait(), timeout=0.1)
+    assert not write_task.done()
+
+    release_transaction.set()
+    result = await asyncio.wait_for(write_task, timeout=2.0)
+    await asyncio.wait_for(holder, timeout=2.0)
+
+    assert result.success is True
+    assert "- first-turn concurrent memory" in mgr.read_context()
 
 
 async def test_memory_search_returns_structured_matches_for_host_ui(mgr: MemoryManager):
