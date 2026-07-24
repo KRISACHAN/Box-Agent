@@ -2494,6 +2494,69 @@ def test_scaffold_accepts_user_provided_quantitative_outline_without_links(
     assert json.loads(outline_check.stdout)["warnings"] == []
 
 
+def test_scaffold_keeps_project_media_and_metrics_as_project_case_study(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(
+        json.dumps(
+            {
+                "deck_goal": "制作设计工作室年终作品集",
+                "audience": "同行设计师与潜在客户",
+                "source_mode": "user_provided",
+                "storyline": "用精选项目展示工作室能力。",
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "精选项目三：空间",
+                        "message": "把品牌语言延伸到三维场景与展陈体验。",
+                        "bullets": [
+                            "项目名称：待补充",
+                            "一句话定位：待补充",
+                            "关键数字：待补充",
+                        ],
+                        "layout": "cards",
+                        "visual": "项目缩略图 + 一句话定位 + 2-3 个关键数字指标卡",
+                        "evidence": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "kpi-grid-v1",
+        "--outline",
+        str(outline_path),
+        "--require-field",
+        "1:metrics",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    contract = json.loads(result.stdout)
+    assert contract["layout_normalizations"] == [
+        {
+            "slide": 1,
+            "from": "kpi-grid-v1",
+            "to": "project-case-study-v1",
+            "reason": (
+                "outline asks for a project case study with both media and "
+                "project metrics"
+            ),
+        }
+    ]
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "project-case-study-v1"
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert report["required_fields"] == [{"slide": 1, "field": "metrics"}]
+
+
 def test_scaffold_persists_visual_intent_and_normalizes_strong_layout_mismatches(
     tmp_path: Path,
 ) -> None:
@@ -4064,6 +4127,121 @@ def test_deck_contract_rejects_layout_missing_required_page_field(tmp_path: Path
     assert accepted.returncode == 0, accepted.stderr
     report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
     assert report["required_fields"] == [{"slide": 2, "field": "metrics"}]
+
+
+def test_deck_contract_relaxes_decorative_tags_after_visual_cover_normalization(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(
+        json.dumps(
+            {
+                "deck_goal": "制作 NOON Studio 年终作品集",
+                "audience": "同行设计师与潜在客户",
+                "source_mode": "user_provided",
+                "storyline": "用强视觉封面建立作品集语气。",
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "NOON STUDIO — 2026 年终作品集",
+                        "message": "第三年，继续把设计做得更直接。",
+                        "bullets": ["品牌视觉 + 数字产品设计", "今年交付 28 个项目"],
+                        "layout": "cover",
+                        "visual": (
+                            "米白底、粗黑描边、高饱和色块、旋转角标；"
+                            "配一张生成的封面主视觉图"
+                        ),
+                        "evidence": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--outline",
+        str(outline_path),
+        "--require-field",
+        "1:tags",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "cover-hero-v1"
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert report["required_fields"] == []
+    assert report["required_field_relaxations"] == [
+        {
+            "slide": 1,
+            "field": "tags",
+            "requested_layout_id": "cover-editorial-v1",
+            "effective_layout_id": "cover-hero-v1",
+            "reason": (
+                "decorative field is not an explicit semantic outline requirement "
+                "and is unsupported by the effective layout"
+            ),
+        }
+    ]
+    assert report["warnings"] == [
+        (
+            "Slide 1 ignored decorative --require-field tags because "
+            "cover-hero-v1 does not expose it and the outline does not require "
+            "semantic tag content"
+        )
+    ]
+
+
+def test_deck_contract_keeps_explicit_tag_content_as_a_hard_requirement(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(
+        json.dumps(
+            {
+                "deck_goal": "制作带内容标签的作品集封面",
+                "audience": "潜在客户",
+                "source_mode": "user_provided",
+                "storyline": "用封面概括四条业务主线。",
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "NOON STUDIO",
+                        "message": "四条业务主线必须在封面可编辑。",
+                        "bullets": ["封面标签：品牌、产品、空间、文化"],
+                        "layout": "cover",
+                        "visual": "四个关键词标签与一张生成的封面主视觉图",
+                        "evidence": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--outline",
+        str(outline_path),
+        "--require-field",
+        "1:tags",
+        "--out",
+        str(tmp_path / "deck.json"),
+    )
+
+    assert result.returncode == 1
+    assert (
+        "layout cover-hero-v1 does not provide required field tags"
+        in result.stderr
+    )
 
 
 def test_strict_source_binding_rejects_derived_or_paraphrased_facts(
@@ -6313,6 +6491,8 @@ def test_pptx_theme_selection_has_no_hard_html_templates_dependency() -> None:
     assert "Never create a fake bitmap with Pillow" in text
     assert "--out deck.json" in text
     assert "--require-field" in text
+    assert "Do not convert visual styling language" in text
+    assert "not `--require-field 1:tags`" in text
     assert "BOX_AGENT_OUTPUT_DIR" in text
     assert 'write_file(path="deck.json", ...)' in text
     assert "required `image_plan` key" in text

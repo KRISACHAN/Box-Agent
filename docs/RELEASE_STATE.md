@@ -1,5 +1,12 @@
 # Release State
 
+## Unreleased — 0.8.85
+
+- Source package metadata and the built-in Skills manifest target `0.8.85`.
+- Release artifacts, tags, PyPI/GitHub publication, and officev3 runtime
+  rebuild/install/probe have not been produced yet. Add artifact hashes only
+  after those steps succeed.
+
 ## v0.8.79 (2026-07-13)
 
 - **Commit:** release commit tagged `v0.8.79`
@@ -83,7 +90,9 @@
 ### Follow-ups / known gaps
 
 - **Runtime: darwin-arm64 only.** 与 v0.8.70 相同，`darwin-x64` / `linux-*` / Windows runtime 未随本次发布构建。
-- **未发布的后续改动**：tag `v0.8.71` 之后 main 已累积多笔提交（图像水印、Windows 内核 PID 修复、权限收紧、Obsidian context write-back、PPTX/HyperFrames skill、MCP 与上下文保护等）。当前开发树已 bump 到 `0.8.79`，但尚未 tag/发布；详见本文顶部 Unreleased 段。下次发版必须以真实构建产物补齐 SHA256。
+- **后续改动状态**：tag `v0.8.71` 之后累积的改动已随
+  `v0.8.79` 发布；当前开发版本见本文顶部 Unreleased 段。后续发版仍须
+  以真实构建产物补齐 SHA256。
 
 ## v0.8.70 (2026-06-16)
 

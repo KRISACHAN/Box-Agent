@@ -62,6 +62,8 @@ const REQUIRED_FIELD_ALIASES = Object.freeze({
   "chart-data-v1": Object.freeze({ chart: "series", data: "series" }),
   "table-data-v1": Object.freeze({ items: "rows", matrix: "rows", table: "rows" }),
 });
+const RELAXABLE_DECORATIVE_FIELDS = new Set(["tags"]);
+const EXPLICIT_TAG_CONTENT_RE = /(?:标签|关键词|主线卡|\btags?\b|\bchips?\b)/i;
 
 function normalizeSourceText(value) {
   return String(value || "")
@@ -214,6 +216,29 @@ function normalizeRequiredField(layout, field) {
   if (Object.prototype.hasOwnProperty.call(layout.fields, field)) return field;
   const aliases = REQUIRED_FIELD_ALIASES[layout.id] || {};
   return aliases[field] || field;
+}
+
+function outlineExplicitlyRequiresField(outlineSlide, field) {
+  if (!outlineSlide || !RELAXABLE_DECORATIVE_FIELDS.has(field)) return true;
+  const content = [
+    outlineSlide.title,
+    outlineSlide.message,
+    outlineSlide.visual,
+    ...(Array.isArray(outlineSlide.bullets) ? outlineSlide.bullets : []),
+  ]
+    .map(value => String(value || "").trim())
+    .filter(Boolean)
+    .join("\n");
+  if (field === "tags") return EXPLICIT_TAG_CONTENT_RE.test(content);
+  return true;
+}
+
+function canRelaxMissingRequiredField(requirement, outlineSlide) {
+  return (
+    RELAXABLE_DECORATIVE_FIELDS.has(requirement.field)
+    && outlineSlide
+    && !outlineExplicitlyRequiresField(outlineSlide, requirement.field)
+  );
 }
 
 function canonicalizeSourceFacts(sourceFacts) {
@@ -964,7 +989,8 @@ function main() {
   const design = createDeckDesign(theme, opts.designSeed, designSelection.family);
   const selectedLayouts = [...new Set(effectiveLayoutIds)].map(layoutId => getLayout(layoutId));
   const requiredFieldNormalizations = [];
-  const normalizedRequiredFields = opts.requiredFields.map(requirement => {
+  const requiredFieldRelaxations = [];
+  const normalizedRequiredFields = opts.requiredFields.flatMap(requirement => {
     const layout = orderedLayouts[requirement.slide - 1];
     if (!layout) {
       throw new Error(
@@ -974,6 +1000,22 @@ function main() {
     }
     const field = normalizeRequiredField(layout, requirement.field);
     if (!Object.prototype.hasOwnProperty.call(layout.fields, field)) {
+      const outlineSlide = outlineBinding
+        ? outlineBinding.slides[requirement.slide - 1]
+        : null;
+      if (canRelaxMissingRequiredField(requirement, outlineSlide)) {
+        requiredFieldRelaxations.push({
+          slide: requirement.slide,
+          field: requirement.field,
+          requested_layout_id: opts.layoutIds[requirement.slide - 1],
+          effective_layout_id: layout.id,
+          reason: (
+            "decorative field is not an explicit semantic outline requirement " +
+            "and is unsupported by the effective layout"
+          ),
+        });
+        return [];
+      }
       throw new Error(
         `Slide ${requirement.slide} layout ${layout.id} does not provide required field ` +
         `${requirement.field}; available fields: ${Object.keys(layout.fields).join(", ")}`
@@ -986,7 +1028,7 @@ function main() {
         to: field,
       });
     }
-    return { slide: requirement.slide, field };
+    return [{ slide: requirement.slide, field }];
   });
   const sourceFactNormalization = canonicalizeSourceFacts(opts.sourceFacts);
   const researchFacts = [...new Set([
@@ -1141,6 +1183,7 @@ function main() {
       truth_contract: skeleton.truth_contract,
       source_binding_hash: sourceBinding.source_hash,
       required_fields: normalizedRequiredFields,
+      required_field_relaxations: requiredFieldRelaxations,
       theme_id_normalization: themeResolution.normalization,
       theme_selection: themeSelection,
       outline_binding: outlineBinding
@@ -1183,6 +1226,12 @@ function main() {
       layout_normalizations: layoutResolution.normalizations,
       required_fields: normalizedRequiredFields,
       required_field_normalizations: requiredFieldNormalizations,
+      required_field_relaxations: requiredFieldRelaxations,
+      warnings: requiredFieldRelaxations.map(item => (
+        `Slide ${item.slide} ignored decorative --require-field ${item.field} because ` +
+        `${item.effective_layout_id} does not expose it and the outline does not ` +
+        "require semantic tag content"
+      )),
       outline_binding: outlineBinding
         ? {
           outline_file: outlineBinding.file,
@@ -1279,9 +1328,12 @@ function main() {
         }
         : null,
       content_requirements: {
-        command: "Use repeated --require-field SLIDE_NUMBER:FIELD flags during scaffold when the brief mandates a field, such as 4:metrics.",
+        command: "Use --require-field SLIDE:FIELD only for explicit semantic content (for example 4:metrics), never decoration.",
         enforced: normalizedRequiredFields,
         normalizations: requiredFieldNormalizations,
+        ...(requiredFieldRelaxations.length
+          ? { relaxations: requiredFieldRelaxations }
+          : {}),
       },
       ...(layoutResolution.normalizations.length
         ? {

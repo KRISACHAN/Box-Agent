@@ -23,6 +23,9 @@ const INTEGRATION_RE = /(?:系统集成|集成架构|数据流(?:设计|图)?|�
 const DATA_PIPELINE_RE = /(?:数据管道|数据流水线|处理管道|ETL|ELT|data\s*pipeline|processing\s*pipeline)/i;
 const DASHBOARD_RE = /(?:数据看板|管理看板|管理驾驶舱|运营驾驶舱|dashboard(?:\s*overview)?)/i;
 const KPI_RE = /(?:KPI|指标卡|metrics?\s*(?:grid|board))/i;
+const PROJECT_CASE_RE = /(?:精选项目|项目案例|客户案例|案例研究|case\s*study|portfolio\s+project)/i;
+const PROJECT_CASE_MEDIA_RE = /(?:缩略图|项目(?:图片|视觉)|案例(?:图片|视觉)|hero|thumbnail|mockup|样机)/i;
+const PROJECT_CASE_METRICS_RE = /(?:关键数字|项目指标|成果指标|metrics?)/i;
 const GANTT_RE = /(?:甘特(?:图|计划)?|gantt(?:\s*(?:chart|plan|schedule))?)/i;
 const TIMELINE_RE = /(?:时间轴|路线图|里程碑|节点串联|timeline|roadmap)/i;
 const PROCESS_RE = /(?:三段式|四段式|能力路径|演进路径|流程路径|process\s*flow|journey)/i;
@@ -155,6 +158,18 @@ function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
       "technical-diagram-v1",
       ["technical-diagram-v1"],
       "outline asks for a DiagramSpec system integration or data-flow map"
+    );
+  }
+  if (
+    PROJECT_CASE_RE.test(all)
+    && PROJECT_CASE_MEDIA_RE.test(visual)
+    && PROJECT_CASE_METRICS_RE.test(visual)
+  ) {
+    return semanticRule(
+      "project-case-study",
+      "project-case-study-v1",
+      ["project-case-study-v1"],
+      "outline asks for a project case study with both media and project metrics"
     );
   }
   if (DASHBOARD_RE.test(visual)) {
