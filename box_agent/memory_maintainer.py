@@ -183,6 +183,10 @@ class MemoryMaintainer:
     # ── Phase 1: decay ──────────────────────────────────────────
 
     def _decay(self, now: datetime) -> None:
+        with self._mgr.context_transaction():
+            self._decay_transaction(now)
+
+    def _decay_transaction(self, now: datetime) -> None:
         threshold = now - timedelta(days=self._cfg.memory_decay_days)
         entries = self._mgr.read_all_context_entries()
         if not entries:
@@ -210,6 +214,10 @@ class MemoryMaintainer:
     # ── Phase 2: archive cleanup → trash ────────────────────────
 
     def _cleanup_archive(self, now: datetime) -> None:
+        with self._mgr.context_transaction():
+            self._cleanup_archive_transaction(now)
+
+    def _cleanup_archive_transaction(self, now: datetime) -> None:
         cutoff_days = self._cfg.memory_decay_days + self._cfg.memory_archive_days
         threshold = now - timedelta(days=cutoff_days)
         entries = parse_context_file(self._mgr.archive_file)
@@ -240,6 +248,10 @@ class MemoryMaintainer:
     # ── Phase 3: dedup ──────────────────────────────────────────
 
     def _dedup(self, _now: datetime) -> None:
+        with self._mgr.context_transaction():
+            self._dedup_transaction(_now)
+
+    def _dedup_transaction(self, _now: datetime) -> None:
         threshold = self._cfg.memory_dedup_jaccard
         entries = self._mgr.read_all_context_entries()
         if len(entries) < 2:
@@ -407,50 +419,77 @@ class MemoryMaintainer_Compact:  # placeholder so the file parses; will be inlin
             logger.warning("MemoryMaintainer: compact output invalid; keeping original")
             return
 
-        # Backup before overwrite — dump every topic file we currently have.
         trash_dir = self._mgr.trash_dir / now.strftime("%Y-%m-%d") / "compact"
-        def _backup_context() -> None:
-            trash_dir.mkdir(parents=True, exist_ok=True)
-            stamp = _now_iso_stamp().replace(":", "-")
-            for topic_path in sorted(self._mgr.context_dir.glob("*.md")):
-                backup_path = trash_dir / f"{topic_path.stem}.{stamp}.md"
-                backup_path.write_text(
-                    topic_path.read_text(encoding="utf-8"),
-                    encoding="utf-8",
-                )
+        snapshot_by_id = {e.id: e for e in entries}
+
+        def _commit_compaction() -> tuple[int, int] | None:
+            from .memory import _new_entry as _make_entry
+
+            with self._mgr.context_transaction():
+                current_entries = self._mgr.read_all_context_entries()
+                current_by_id = {e.id: e for e in current_entries}
+
+                # A concurrent replace/drop changes the semantic input that the
+                # LLM saw. Keep current data instead of committing stale output.
+                for entry_id, snapshot in snapshot_by_id.items():
+                    current = current_by_id.get(entry_id)
+                    if current is None or current.content != snapshot.content:
+                        logger.info(
+                            "MemoryMaintainer: compact snapshot changed; "
+                            "keeping current memory"
+                        )
+                        return None
+
+                compacted: list[ContextEntry] = []
+                for item in parsed:
+                    sources = [current_by_id[sid] for sid in item["sources"]]
+                    source_topics = {s.topic or "general" for s in sources}
+                    topic = (
+                        next(iter(source_topics))
+                        if len(source_topics) == 1
+                        else "general"
+                    )
+                    new = _make_entry(item["content"], source="compact", topic=topic)
+                    # Recompute metadata from the locked current state so search
+                    # hits recorded while the LLM was running are not lost.
+                    new.hits = sum(s.hits for s in sources)
+                    new.created = min(s.created for s in sources)
+                    new.last_used = max(s.last_used for s in sources)
+                    new.confidence = max(s.confidence for s in sources)
+                    if any(s.core_status == "rejected" for s in sources):
+                        new.core_status = "rejected"
+                    compacted.append(new)
+
+                # Entries added after the LLM snapshot were never part of its
+                # input and must survive the replacement.
+                concurrent = [
+                    e for e in current_entries if e.id not in snapshot_by_id
+                ]
+                final_entries = compacted + concurrent
+
+                trash_dir.mkdir(parents=True, exist_ok=True)
+                stamp = _now_iso_stamp().replace(":", "-")
+                for topic_path in sorted(self._mgr.context_dir.glob("*.md")):
+                    backup_path = trash_dir / f"{topic_path.stem}.{stamp}.md"
+                    backup_path.write_text(
+                        topic_path.read_text(encoding="utf-8"),
+                        encoding="utf-8",
+                    )
+
+                self._mgr.write_all_context_entries(final_entries)
+                return len(current_entries), len(final_entries)
 
         try:
-            await asyncio.to_thread(_backup_context)
+            committed_counts = await asyncio.to_thread(_commit_compaction)
         except OSError:
             logger.exception("MemoryMaintainer: compact backup failed; aborting")
             return
+        if committed_counts is None:
+            return
 
-        # Build new entries — preserve oldest created + most-recent last_used + max confidence
-        # from source entries; assign fresh ids. If a compacted entry only
-        # consumes one topic, keep it in that topic so topic-routed retrieval
-        # remains useful. Mixed-topic merges fall back to "general".
-        from .memory import _new_entry as _make_entry
-        by_id = {e.id: e for e in entries}
-        new_entries: list[ContextEntry] = []
-        for item in parsed:
-            sources = [by_id[sid] for sid in item["sources"]]
-            source_topics = {s.topic or "general" for s in sources}
-            topic = next(iter(source_topics)) if len(source_topics) == 1 else "general"
-            new = _make_entry(item["content"], source="compact", topic=topic)
-            new.hits = item["hits"]
-            new.created = min(s.created for s in sources)
-            new.last_used = max(s.last_used for s in sources)
-            new.confidence = max(s.confidence for s in sources)
-            # If any source was promoted-rejected, keep that flag so rejected
-            # facts can't sneak back into core through compaction.
-            if any(s.core_status == "rejected" for s in sources):
-                new.core_status = "rejected"
-            new_entries.append(new)
-
-        await asyncio.to_thread(self._mgr.write_all_context_entries, new_entries)
         logger.info(
             "MemoryMaintainer: compacted %d → %d entries (backup_dir=%s)",
-            len(entries), len(new_entries), trash_dir,
+            committed_counts[0], committed_counts[1], trash_dir,
         )
 
 
@@ -638,13 +677,30 @@ class MemoryMaintainer_Conflict:  # placeholder — bound onto MemoryMaintainer 
         if not all_loser_ids:
             return
 
+        snapshot_by_id = {e.id: e for e in entries}
+
         def _apply_conflict_results() -> int:
-            losers = [e for e in entries if e.id in all_loser_ids]
-            kept = [e for e in entries if e.id not in all_loser_ids]
-            existing_archive = parse_context_file(self._mgr.archive_file)
-            write_context_file(self._mgr.archive_file, existing_archive + losers)
-            self._mgr.write_all_context_entries(kept)
-            return len(losers)
+            with self._mgr.context_transaction():
+                current_entries = self._mgr.read_all_context_entries()
+                current_by_id = {e.id: e for e in current_entries}
+                decided_ids = all_loser_ids | winners_touched
+                for entry_id in decided_ids:
+                    snapshot = snapshot_by_id[entry_id]
+                    current = current_by_id.get(entry_id)
+                    if current is None or current.content != snapshot.content:
+                        logger.info(
+                            "MemoryMaintainer: conflict snapshot changed; "
+                            "keeping current memory"
+                        )
+                        return 0
+                losers = [e for e in current_entries if e.id in all_loser_ids]
+                if not losers:
+                    return 0
+                kept = [e for e in current_entries if e.id not in all_loser_ids]
+                existing_archive = parse_context_file(self._mgr.archive_file)
+                write_context_file(self._mgr.archive_file, existing_archive + losers)
+                self._mgr.write_all_context_entries(kept)
+                return len(losers)
 
         loser_count = await asyncio.to_thread(_apply_conflict_results)
         logger.info(
