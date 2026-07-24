@@ -9722,6 +9722,24 @@
                 "on": "开启",
                 "off": "关闭"
               }
+            },
+            "presentation": {
+              "label": "信息构图",
+              "options": {
+                "auto": "自动",
+                "standard": "标准图表",
+                "traction": "业务进展"
+              }
+            }
+          },
+          "collections": {
+            "highlights": {
+              "label": "核心指标",
+              "itemDefault": {
+                "value": "待补充",
+                "label": "指标名称",
+                "note": ""
+              }
             }
           },
           "chartData": {
@@ -9770,6 +9788,8 @@
           "animation": "on",
           "stacked": "off",
           "value_suffix": "",
+          "presentation": "auto",
+          "highlights": [],
           "insight": "用一句话指出趋势、差距或结构变化。",
           "source": ""
         }
@@ -9980,6 +10000,47 @@
           "editor": true,
           "role": "label"
         },
+        "presentation": {
+          "type": "enum",
+          "values": [
+            "auto",
+            "standard",
+            "traction"
+          ],
+          "default": "auto",
+          "required": false,
+          "editor": true
+        },
+        "highlights": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 0,
+          "maxItems": 3,
+          "itemShape": {
+            "value": {
+              "type": "text",
+              "maxChars": 18,
+              "required": true,
+              "editor": true,
+              "role": "metric"
+            },
+            "label": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "note": {
+              "type": "text",
+              "maxChars": 52,
+              "required": false,
+              "editor": true,
+              "role": "caption"
+            }
+          }
+        },
         "insight": {
           "type": "text",
           "maxChars": 140,
@@ -10002,6 +10063,8 @@
         "animation": "on",
         "stacked": "off",
         "value_suffix": "",
+        "presentation": "auto",
+        "highlights": [],
         "insight": "",
         "source": ""
       }

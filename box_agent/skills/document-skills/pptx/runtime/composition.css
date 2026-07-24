@@ -3162,6 +3162,20 @@ body[data-deck-composition="analytical-exhibit"] .data-table-wrap {
   border-top: 3px solid var(--deck-primary);
 }
 
+body[data-deck-composition="analytical-exhibit"] .chart-presentation-traction .slide-header {
+  min-height: 158px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+body[data-deck-composition="analytical-exhibit"] .chart-presentation-traction .slide-header .eyebrow::before {
+  display: none;
+}
+
+body[data-deck-composition="analytical-exhibit"] .chart-presentation-traction .composition-exhibit-decisions {
+  display: none;
+}
+
 body[data-deck-composition="analytical-exhibit"] .data-table th,
 body[data-deck-composition="analytical-exhibit"] .data-table td {
   border-color: var(--deck-border);

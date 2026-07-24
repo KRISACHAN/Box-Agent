@@ -1684,8 +1684,8 @@ console.log(JSON.stringify({ layouts: slides.length, migrations, enumControls, c
     assert json.loads(result.stdout) == {
         "layouts": 20,
         "migrations": 400,
-        "enumControls": 26,
-        "collectionControls": 18,
+        "enumControls": 27,
+        "collectionControls": 19,
     }
 
 
@@ -4043,7 +4043,7 @@ def test_deck_contract_normalizes_pitch_layout_and_required_field_aliases(
     )
 
     assert scaffold.returncode == 0, scaffold.stderr
-    assert len(scaffold.stdout) < 22_750
+    assert len(scaffold.stdout) < 23_750
     deck = json.loads(deck_path.read_text())
     assert [slide["layout_id"] for slide in deck["slides"]] == [
         "comparison-two-column-v1",
@@ -7378,6 +7378,135 @@ def test_animated_chart_layout_supports_seven_types_and_editable_matrix(
     assert "createChartDataControl" in html
     assert "add-chart-category" in html
     assert "add-chart-series" in html
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["issues"] == []
+
+
+def test_business_progress_line_chart_uses_editable_traction_presentation(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "chart-data-v1",
+        "chart-data-v1",
+        "chart-data-v1",
+        "--theme",
+        "product-console",
+        "--lock-theme",
+        "--title",
+        "Business progress chart",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["design"] = {
+        "version": 1,
+        "seed": "traction-regression",
+        "family": "analytical-exhibit",
+        "variant": "decision-board",
+    }
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "业务进展",
+            "title": "业务进展：30 家试点客户，年化收入 800 万元",
+            "subtitle": "产品-市场匹配初步验证，收入保持增长趋势",
+            "chart_type": "line",
+            "categories": ["一季度", "二季度", "三季度", "四季度"],
+            "series": [
+                {
+                    "name": "年化收入运行率（万元）",
+                    "values": ["300", "480", "620", "800"],
+                }
+            ],
+            "value_suffix": "万元",
+            "presentation": "auto",
+            "highlights": [],
+            "insight": "已有 30 家试点客户，当前年化收入 800 万元。",
+            "source": "来源：用户提供的客户数与年化收入。",
+        }
+    )
+    deck["slides"][1]["props"].update(
+        {
+            "eyebrow": "季度分析",
+            "title": "季度需求结构保持稳定",
+            "subtitle": "观察各季度变化",
+            "chart_type": "line",
+            "categories": ["Q1", "Q2", "Q3", "Q4"],
+            "series": [{"name": "需求量", "values": ["42", "44", "43", "45"]}],
+            "presentation": "auto",
+            "highlights": [],
+        }
+    )
+    deck["slides"][2]["props"].update(
+        {
+            "eyebrow": "经营信号",
+            "title": "关键经营指标与增长趋势",
+            "subtitle": "核心指标与趋势数据均可编辑",
+            "chart_type": "area",
+            "categories": ["Q1", "Q2", "Q3", "Q4"],
+            "series": [{"name": "收入", "values": ["12", "18", "25", "34"]}],
+            "presentation": "traction",
+            "highlights": [
+                {"value": "18 家", "label": "付费客户", "note": ""},
+                {"value": "34 万元", "label": "季度收入", "note": ""},
+            ],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    report_path = tmp_path / "html_self_check.json"
+
+    validation = _run("validate_deck_spec.js", str(deck_path))
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--report",
+        str(report_path),
+    )
+
+    assert validation.returncode == 0, validation.stdout
+    assert rendered.returncode == 0, rendered.stderr
+    assert self_check.returncode == 0, self_check.stdout
+    html = html_path.read_text(encoding="utf-8")
+    rendered_markup = html.split('<script data-deck-runtime="layout-registry">', 1)[0]
+    traction_slide, standard_slide, explicit_traction_slide = rendered_markup.split(
+        '<section class="slide layout-chart-data', 3
+    )[1:]
+    assert "chart-presentation-traction" in traction_slide
+    assert "chart-traction-body" in traction_slide
+    assert "chart-body chart-data-body" not in traction_slide
+    assert 'data-derived-highlight="value"' not in traction_slide
+    assert 'data-prop-path="highlights.0.value"' in traction_slide
+    assert 'data-prop-path="highlights.1.label"' in traction_slide
+    assert ">30 家</strong>" in traction_slide
+    assert ">800 万元</strong>" in traction_slide
+    embedded_document = json.loads(
+        html.split('<script type="application/json" id="deck-document">', 1)[1]
+        .split("</script>", 1)[0]
+    )
+    assert embedded_document["slides"][0]["props"]["highlights"] == [
+        {"value": "30 家", "label": "试点客户", "note": ""},
+        {"value": "800 万元", "label": "年化收入", "note": ""},
+    ]
+    assert "&quot;label_mode&quot;:&quot;endpoints&quot;" in traction_slide
+    assert 'data-native-chart="true"' in traction_slide
+    assert "chart-presentation-standard" in standard_slide
+    assert "chart-body chart-data-body" in standard_slide
+    assert "chart-presentation-traction" in explicit_traction_slide
+    assert 'data-prop-path="highlights.0.value"' in explicit_traction_slide
+    assert 'data-prop-path="highlights.1.label"' in explicit_traction_slide
+    assert (
+        'body[data-deck-theme="product-console"] '
+        ".chart-presentation-traction .eyebrow"
+    ) in html
+    assert (
+        'body[data-deck-composition="analytical-exhibit"] '
+        ".chart-presentation-traction .slide-header"
+    ) in html
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["issues"] == []
 

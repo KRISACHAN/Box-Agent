@@ -74,6 +74,8 @@
       animation: spec.animation === "off" ? "off" : "on",
       stacked: spec.stacked === "on" ? "on" : "off",
       value_suffix: String(spec.value_suffix || ""),
+      presentation: spec.presentation === "traction" ? "traction" : "standard",
+      label_mode: spec.label_mode === "endpoints" ? "endpoints" : "auto",
     };
   }
 
@@ -146,6 +148,7 @@
   }
 
   function valueLabel(spec) {
+    if (spec.label_mode === "endpoints") return true;
     if (spec.show_values === "on") return true;
     if (spec.show_values === "off") return false;
     return ["bar", "column", "pie", "donut"].includes(spec.type);
@@ -279,16 +282,17 @@
     };
     const cartesianSeries = spec.series.map((series, seriesIndex) => {
       const isLine = spec.type === "line" || spec.type === "area";
+      const endpointLabels = isLine && spec.label_mode === "endpoints";
       return {
         name: series.name,
         type: isLine ? "line" : "bar",
         data: series.values,
         stack: spec.stacked === "on" ? "total" : undefined,
-        smooth: isLine,
+        smooth: isLine && spec.presentation !== "traction",
         symbol: isLine ? "circle" : undefined,
         symbolSize: isLine ? 9 : undefined,
         showSymbol: isLine,
-        lineStyle: isLine ? { width: 4 } : undefined,
+        lineStyle: isLine ? { width: spec.presentation === "traction" ? 5 : 4 } : undefined,
         areaStyle: spec.type === "area" ? { opacity: 0.13 } : undefined,
         barMaxWidth: horizontal ? 34 : 58,
         itemStyle: isLine ? undefined : { borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0] },
@@ -299,7 +303,13 @@
           fontFamily: tokens.display,
           fontSize: 17,
           fontWeight: 600,
-          formatter: suffix ? `{c}${suffix}` : "{c}",
+          formatter: endpointLabels
+            ? params => {
+              const lastIndex = spec.categories.length - 1;
+              if (params.dataIndex !== 0 && params.dataIndex !== lastIndex) return "";
+              return `${params.value}${suffix}`;
+            }
+            : suffix ? `{c}${suffix}` : "{c}",
         },
         emphasis: { focus: "series" },
       };

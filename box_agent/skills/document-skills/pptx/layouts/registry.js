@@ -1024,6 +1024,76 @@ function chartCategoryUnits(series, categoryCount) {
   });
 }
 
+function chartPresentation(props, series) {
+  const requested = props.presentation || "auto";
+  if (requested === "standard" || requested === "traction") return requested;
+  const chartType = props.chart_type || "column";
+  if (!["line", "area"].includes(chartType) || series.length !== 1) return "standard";
+  const narrative = [
+    props.eyebrow,
+    props.title,
+    props.subtitle,
+    props.insight,
+  ].map(textValue).join(" ");
+  return /(?:业务进展|经营进展|商业进展|增长趋势|客户增长|用户增长|营收|收入|销售额|订单量|产品市场匹配|traction|growth|revenue|arr|mrr|customers?)/iu.test(narrative)
+    ? "traction"
+    : "standard";
+}
+
+function addTractionHighlight(highlights, candidate) {
+  const value = fitText(candidate && candidate.value, 18);
+  const label = fitText(candidate && candidate.label, 36);
+  if (!value || !label || highlights.some(item => item.value === value)) return;
+  highlights.push({
+    value,
+    label,
+    note: fitText(candidate && candidate.note, 52),
+  });
+}
+
+function extractTractionHighlights(props, categories, series) {
+  const derived = [];
+  const sources = [props.title, props.insight].map(textValue).filter(Boolean);
+  for (const source of sources) {
+    for (const match of source.matchAll(/(\d+(?:\.\d+)?)\s*(家|个)\s*([^，。、；;：:]{1,14})/gu)) {
+      addTractionHighlight(derived, {
+        value: `${match[1]} ${match[2]}`,
+        label: match[3].trim(),
+      });
+    }
+    for (const match of source.matchAll(/(年化收入|年度收入|营收|收入|ARR|MRR)[^\d]{0,8}(\d+(?:\.\d+)?)\s*(亿元|万元|元|亿|万)?/giu)) {
+      addTractionHighlight(derived, {
+        value: `${match[2]}${match[3] ? ` ${match[3]}` : ""}`,
+        label: match[1].toUpperCase(),
+      });
+    }
+    if (derived.length >= 3) break;
+  }
+
+  if (derived.length < 2 && series[0] && categories.length) {
+    const lastIndex = categories.length - 1;
+    const suffix = textValue(props.value_suffix);
+    const rawValue = textValue(series[0].values[lastIndex]);
+    addTractionHighlight(derived, {
+      value: `${rawValue}${suffix && !rawValue.endsWith(suffix) ? ` ${suffix}` : ""}`,
+      label: `${categories[lastIndex]} ${series[0].name}`,
+    });
+  }
+
+  const explicit = (Array.isArray(props.highlights) ? props.highlights : []).slice(0, 3);
+  const itemCount = Math.min(3, Math.max(explicit.length, derived.length));
+  return Array.from({ length: itemCount }, (_, index) => {
+    const authored = explicit[index] || {};
+    const fallback = derived[index] || {};
+    return {
+      value: firstText(authored.value, fallback.value),
+      label: firstText(authored.label, fallback.label),
+      note: firstText(authored.note, fallback.note),
+      authored: Boolean(explicit[index]),
+    };
+  }).filter(item => item.value && item.label);
+}
+
 function renderChartFrame(chartSpec, fallback, extraClass = "") {
   const className = ["chart-echarts-frame", extraClass].filter(Boolean).join(" ");
   return [
@@ -1038,6 +1108,7 @@ function renderDataChart(slide, index) {
   const p = slide.props;
   const categories = p.categories.slice(0, 12);
   const series = normalizedChartSeries(p.series, categories.length);
+  const presentation = chartPresentation(p, series);
   const categoryUnits = chartCategoryUnits(series, categories.length);
   const distinctUnits = new Set(categoryUnits);
   const independentScales = !p.value_suffix
@@ -1061,6 +1132,10 @@ function renderDataChart(slide, index) {
     animation: p.animation || "on",
     stacked: p.stacked || "off",
     value_suffix: p.value_suffix || inferredCommonSuffix || "",
+    presentation,
+    label_mode: presentation === "traction" && p.show_values === "auto"
+      ? "endpoints"
+      : "auto",
   };
   const fallbackRows = categories.map((category, categoryIndex) => [
     '<span class="chart-fallback-item">',
@@ -1115,16 +1190,84 @@ function renderDataChart(slide, index) {
       "</div>",
     ].join("\n");
   }
+  const className = [
+    "layout-chart-data",
+    `chart-type-${p.chart_type || "column"}`,
+    `chart-series-${series.length}`,
+    `chart-presentation-${presentation}`,
+  ].join(" ");
+  const header = [
+    '<header class="slide-header" data-layout-region="header">',
+    editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+    editableText("h2", "title", p.title),
+    editableText("p", "subtitle", p.subtitle || "", "header-note"),
+    "</header>",
+  ].join("\n");
+
+  if (presentation === "traction") {
+    let highlights = extractTractionHighlights(p, categories, series);
+    if ((!Array.isArray(p.highlights) || p.highlights.length === 0) && highlights.length) {
+      p.highlights = highlights.map(item => ({
+        value: item.value,
+        label: item.label,
+        note: item.note,
+      }));
+      highlights = highlights.map(item => ({ ...item, authored: true }));
+    }
+    const highlightMarkup = highlights.map((item, itemIndex) => {
+      const highlightText = (tag, field, value, className) => item.authored
+        ? editableText(
+          tag,
+          `highlights.${itemIndex}.${field}`,
+          value,
+          className,
+          { "data-prop-rerender": "true" }
+        )
+        : `<${tag} class="${className}" data-derived-highlight="${field}">${escapeHtml(value)}</${tag}>`;
+      return [
+        `<article class="chart-traction-kpi" data-item-index="${itemIndex}">`,
+        highlightText("strong", "value", item.value, "chart-traction-kpi-value"),
+        highlightText("span", "label", item.label, "chart-traction-kpi-label"),
+        item.note
+          ? highlightText("p", "note", item.note, "chart-traction-kpi-note")
+          : "",
+        "</article>",
+      ].join("\n");
+    }).join("\n");
+    const range = categories.length > 1
+      ? `${categories[0]} — ${categories[categories.length - 1]}`
+      : categories[0] || "";
+    return slideFrame(
+      slide,
+      index,
+      className,
+      [
+        header,
+        '<div class="chart-traction-body" data-layout-region="content">',
+        '<aside class="chart-traction-summary">',
+        '<p class="chart-traction-kicker">已验证信号</p>',
+        `<div class="chart-traction-kpis">${highlightMarkup}</div>`,
+        editableText("p", "insight", p.insight || "", "chart-traction-insight"),
+        "</aside>",
+        '<div class="chart-traction-plot">',
+        '<div class="chart-traction-meta">',
+        editableText("span", "series.0.name", series[0] ? series[0].name : "", "chart-traction-series"),
+        `<span class="chart-traction-range">${escapeHtml(range)}</span>`,
+        "</div>",
+        chartMarkup,
+        "</div>",
+        "</div>",
+        editableText("p", "source", p.source || "", "chart-traction-source"),
+      ].join("\n")
+    );
+  }
+
   return slideFrame(
     slide,
     index,
-    `layout-chart-data chart-type-${p.chart_type || "column"} chart-series-${series.length}`,
+    className,
     [
-      '<header class="slide-header" data-layout-region="header">',
-      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
-      editableText("h2", "title", p.title),
-      editableText("p", "subtitle", p.subtitle || "", "header-note"),
-      "</header>",
+      header,
       '<div class="chart-body chart-data-body" data-layout-region="content">',
       chartMarkup,
       '<div class="chart-footer">',
@@ -2152,6 +2295,16 @@ const layouts = [
             label: "播放动画",
             options: { on: "开启", off: "关闭" },
           },
+          presentation: {
+            label: "信息构图",
+            options: { auto: "自动", standard: "标准图表", traction: "业务进展" },
+          },
+        },
+        collections: {
+          highlights: {
+            label: "核心指标",
+            itemDefault: { value: "待补充", label: "指标名称", note: "" },
+          },
         },
         chartData: {
           label: "图表数据",
@@ -2178,6 +2331,8 @@ const layouts = [
         animation: "on",
         stacked: "off",
         value_suffix: "",
+        presentation: "auto",
+        highlights: [],
         insight: "用一句话指出趋势、差距或结构变化。",
         source: "",
       },
@@ -2225,6 +2380,12 @@ const layouts = [
       animation: enumField(["on", "off"], "on"),
       stacked: enumField(["off", "on"], "off"),
       value_suffix: textField(8, { required: false, role: "label" }),
+      presentation: enumField(["auto", "standard", "traction"], "auto"),
+      highlights: arrayField(0, 3, {
+        value: textField(18, { role: "metric" }),
+        label: textField(36, { role: "label" }),
+        note: textField(52, { required: false, role: "caption" }),
+      }),
       insight: textField(140, { required: false, role: "lead" }),
       source: textField(100, { required: false, role: "caption" }),
     },
@@ -2235,6 +2396,8 @@ const layouts = [
       animation: "on",
       stacked: "off",
       value_suffix: "",
+      presentation: "auto",
+      highlights: [],
       insight: "",
       source: "",
     },

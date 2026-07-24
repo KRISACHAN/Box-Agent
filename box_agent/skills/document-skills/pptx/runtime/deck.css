@@ -2025,6 +2025,152 @@ body[data-deck-composition] .layout-timeline.timeline-bodyless .timeline-step {
   padding-bottom: 0;
 }
 
+/* Business-progress charts: KPI evidence and a focused trend share one
+   editorial grid instead of sitting inside an application-style card. */
+.chart-presentation-traction .slide-header {
+  min-height: 158px;
+  padding-bottom: 24px;
+}
+
+.chart-presentation-traction .slide-header h2 {
+  font-size: 58px;
+}
+
+.chart-presentation-traction .slide-header .header-note {
+  font-size: 19px;
+}
+
+.chart-traction-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(330px, 0.32fr) minmax(0, 0.68fr);
+  min-height: 0;
+  margin-top: 24px;
+  border-top: 1px solid var(--deck-border);
+}
+
+.chart-traction-summary {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 30px 46px 18px 0;
+  border-right: 1px solid var(--deck-border);
+}
+
+.chart-traction-kicker {
+  color: var(--deck-muted);
+  font-family: var(--deck-label);
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.chart-traction-kpis {
+  display: grid;
+  gap: 0;
+  margin-top: 22px;
+}
+
+.chart-traction-kpi {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: end;
+  gap: 12px 18px;
+  padding: 22px 0;
+  border-top: 1px solid var(--deck-border);
+}
+
+.chart-traction-kpi:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.chart-traction-kpi-value {
+  color: var(--deck-primary-text);
+  font-family: var(--deck-display);
+  font-size: 66px;
+  line-height: 0.94;
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chart-traction-kpi-label {
+  max-width: 160px;
+  padding-bottom: 5px;
+  color: var(--deck-text);
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 650;
+}
+
+.chart-traction-kpi-note {
+  grid-column: 1 / -1;
+  color: var(--deck-muted);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.chart-traction-insight {
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--deck-border);
+  color: var(--deck-text);
+  font-size: 18px;
+  line-height: 1.45;
+  font-weight: 600;
+}
+
+.chart-traction-plot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 30px 0 12px 48px;
+}
+
+.chart-traction-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 32px;
+  min-height: 34px;
+  color: var(--deck-muted);
+  font-family: var(--deck-label);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.chart-traction-series {
+  max-width: 720px;
+  color: var(--deck-text);
+  font-weight: 650;
+}
+
+.chart-traction-range {
+  flex: 0 0 auto;
+  letter-spacing: 0.08em;
+}
+
+.chart-traction-plot .chart-echarts-frame {
+  flex: 1;
+  min-height: 420px;
+}
+
+.chart-traction-source {
+  min-height: 34px;
+  margin-top: 12px;
+  padding: 12px 90px 0 0;
+  border-top: 1px solid var(--deck-border);
+  color: var(--deck-muted);
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: right;
+}
+
 /* Editable data table */
 .heatmap-body {
   flex: 1;
@@ -3219,6 +3365,21 @@ body[data-deck-theme="product-console"] .data-table-wrap {
 body[data-deck-theme="product-console"] .data-table th {
   border-top: 0;
   background: var(--deck-primary-soft);
+}
+
+body[data-deck-theme="product-console"] .chart-presentation-traction .slide-header {
+  min-height: 158px;
+}
+
+body[data-deck-theme="product-console"] .chart-presentation-traction .eyebrow {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+body[data-deck-theme="product-console"] .chart-presentation-traction .eyebrow::before {
+  display: none;
 }
 
 /* Data Intelligence: a dark, evidence-first operating console. */
@@ -4605,6 +4766,15 @@ body[data-deck-theme="8-bit-orbit"] .closing-end-mark::after {
   font-weight: 700;
   letter-spacing: 0.02em;
   text-shadow: 7px 7px 0 #F0A6CA;
+}
+
+/* Traction charts stay on the slide grid instead of inheriting a DNA surface. */
+body .chart-presentation-traction .chart-plot {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
 }
 
 /* Controlled editor chrome: outside slide nodes, never exported to PPTX. */
