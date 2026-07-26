@@ -539,6 +539,32 @@ async def test_plan_promotion_filters_non_candidate_ids(mgr: MemoryManager):
     assert plan.consumed_entry_ids == (a.id,)
 
 
+async def test_plan_promotion_uses_current_locked_candidate_snapshot(
+    mgr: MemoryManager,
+):
+    from box_agent.memory import _new_entry, write_context_file
+
+    stale = _new_entry("- stale candidate")
+    current = _new_entry("- current candidate")
+    current.id = stale.id
+    write_context_file(mgr.context_file, [current])
+
+    llm = _make_planner_llm(
+        {
+            "new_core": "- current candidate promoted",
+            "consumed_entry_ids": [stale.id],
+            "rationale": "use current state",
+        }
+    )
+
+    plan = await mgr.plan_promotion([stale], llm)
+
+    assert plan is not None
+    prompt = llm.generate.await_args.kwargs["messages"][1]["content"]
+    assert "- current candidate" in prompt
+    assert "- stale candidate" not in prompt
+
+
 def test_apply_promotion_plan_overwrites_core_and_consumes_entries(mgr: MemoryManager):
     from box_agent.events import MemoryPromotionPlan
     from box_agent.memory import _new_entry, write_context_file

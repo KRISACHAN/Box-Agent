@@ -537,7 +537,11 @@ class MemoryManager:
 
     @contextmanager
     def context_transaction(self) -> Iterator[None]:
-        """Serialize a complete context-memory read-modify-write transaction."""
+        """Serialize one manager's context-memory transaction.
+
+        This lock is instance-local; coordinating multiple managers or processes
+        that share ``memory_dir`` requires a separate file-locking boundary.
+        """
 
         with self._context_transaction_lock:
             yield
@@ -651,6 +655,7 @@ class MemoryManager:
 
     # ── Context memory (CONTEXT.md) ─────────────────────────────
 
+    @_serialized_context
     def read_context(self) -> str:
         """Read v2 context plus legacy fallback as joined plain text."""
         entries = self._read_context_entries() + self._read_legacy_context_entries()
@@ -734,6 +739,7 @@ class MemoryManager:
 
         self._write_context_entries(existing_entries)
 
+    @_serialized_context
     def _read_context_entries(self) -> list[ContextEntry]:
         """Parse all v2 experience topic files into a flat entry list."""
         return self._topic_store.read_all()
@@ -772,10 +778,12 @@ class MemoryManager:
         self._topic_store.write_all(entries)
         self.refresh_memory_summary()
 
+    @_serialized_context
     def list_topics(self) -> list[str]:
         """Return the list of known topic slugs (excluding the JSON sidecar)."""
         return self._topic_store.list_topics()
 
+    @_serialized_context
     def read_context_topic(self, topic: str) -> str:
         """Return the joined v2 content of one topic, or empty if unknown."""
         entries = self._topic_store.read_topic(topic)
@@ -783,10 +791,12 @@ class MemoryManager:
             return ""
         return "\n".join(e.content for e in entries).strip()
 
+    @_serialized_context
     def read_memory_summary(self) -> str:
         """Return the generated memory routing summary, refreshing it first."""
         return self.refresh_memory_summary()
 
+    @_serialized_context
     def refresh_memory_summary(self) -> str:
         """Generate and persist a compact memory routing summary.
 
@@ -960,6 +970,7 @@ class MemoryManager:
             entries = self._read_legacy_context_entries()
         return self._search_entries(query_lower, entries, limit, None, update_usage=False)
 
+    @_serialized_context
     def auto_match_context(self, query: str, *, limit: int = 3) -> list[dict[str, str]]:
         """Return high-confidence context-memory matches for a user prompt.
 
@@ -1017,6 +1028,7 @@ class MemoryManager:
             for _, line_no, text, _ in top
         ]
 
+    @_serialized_context
     def _entries_for_query(
         self,
         query: str,
@@ -1116,6 +1128,7 @@ class MemoryManager:
 
     # ── Recall (system prompt injection) ────────────────────────
 
+    @_serialized_context
     def recall(self, **_kwargs) -> str:
         """Build a memory block for system-prompt injection.
 
@@ -1391,6 +1404,7 @@ class MemoryManager:
 
     # ── Core-promotion candidates ───────────────────────────────
 
+    @_serialized_context
     def list_promotion_candidates(
         self,
         *,
@@ -1541,18 +1555,30 @@ class MemoryManager:
         if not candidates:
             return None
 
-        current_core = self.read_core()
-        candidate_ids = {e.id for e in candidates}
+        def _snapshot_inputs() -> tuple[str, list[ContextEntry]]:
+            with self.context_transaction():
+                return self.read_core(), self._read_context_entries()
 
+        current_core, context_entries = await asyncio.to_thread(_snapshot_inputs)
+        context_by_id = {entry.id: entry for entry in context_entries}
+        snapshot_candidates = [
+            context_by_id[candidate.id]
+            for candidate in candidates
+            if candidate.id in context_by_id
+        ]
+        if not snapshot_candidates:
+            return None
+
+        candidate_ids = {entry.id for entry in snapshot_candidates}
         other_entries = [
-            e for e in self._read_context_entries() if e.id not in candidate_ids
+            e for e in context_entries if e.id not in candidate_ids
         ]
         other_context = "\n".join(
             f"{e.id}: {e.content.strip()}" for e in other_entries
         )
         candidates_block = "\n".join(
             f"{e.id} (hits={e.hits}, confidence={e.confidence}):\n{e.content.strip()}"
-            for e in candidates
+            for e in snapshot_candidates
         )
 
         user_prompt = _PROMOTION_PLAN_USER_PROMPT.format(

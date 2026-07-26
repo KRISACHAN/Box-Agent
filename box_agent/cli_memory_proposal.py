@@ -135,13 +135,19 @@ class CLIMemoryProposalNegotiator:
 
         try:
             if choice in _APPLY_KEYS:
-                counts = self._mgr.apply_promotion_plan(plan)
+                counts = await asyncio.to_thread(
+                    self._mgr.apply_promotion_plan,
+                    plan,
+                )
                 print(
                     f"{Colors.GREEN}✓ 已应用 — consumed {counts.get('consumed', 0)} "
                     f"条 context{Colors.RESET}"
                 )
             elif choice in _PLAN_REJECT_KEYS:
-                counts = self._mgr.reject_promotion_plan(plan)
+                counts = await asyncio.to_thread(
+                    self._mgr.reject_promotion_plan,
+                    plan,
+                )
                 print(
                     f"{Colors.RED}✗ 已拒绝 — {counts.get('rejected', 0)} "
                     f"条永不再提议{Colors.RESET}"
@@ -182,7 +188,10 @@ class CLIMemoryProposalNegotiator:
             print()
 
         try:
-            counts = self._mgr.consume_core_proposal(decisions)
+            counts = await asyncio.to_thread(
+                self._mgr.consume_core_proposal,
+                decisions,
+            )
         except Exception as exc:
             print(f"{Colors.RED}记忆升级写入失败: {exc}{Colors.RESET}")
             return

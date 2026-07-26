@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+import threading
+from time import monotonic
+
 import pytest
 
 from box_agent.core import (
@@ -1571,6 +1574,61 @@ async def test_auto_memory_match_injects_weak_context_before_llm_call():
     assert "Possibly relevant memory" in user_message.content
     assert "Use them only if they are clearly relevant" in user_message.content
     assert "ignore them and do not assume continuity" in user_message.content
+
+
+@pytest.mark.asyncio
+async def test_auto_memory_match_waits_off_event_loop_for_memory_snapshot(tmp_path):
+    from box_agent.memory import MemoryManager
+
+    memory = MemoryManager(memory_dir=str(tmp_path / "memory"))
+    memory.write_context("- saved context", topic="project")
+
+    transaction_acquired = threading.Event()
+    release_transaction = threading.Event()
+
+    def hold_transaction() -> None:
+        with memory.context_transaction():
+            transaction_acquired.set()
+            assert release_transaction.wait(timeout=2.0)
+
+    holder = asyncio.create_task(asyncio.to_thread(hold_transaction))
+    assert await asyncio.to_thread(transaction_acquired.wait, 2.0)
+
+    llm = MockLLM([LLMResponse(content="done", finish_reason="stop")])
+    run_task = asyncio.create_task(
+        collect(
+            run_agent_loop(
+                llm=llm,
+                messages=_msgs(),
+                tools={},
+                max_steps=5,
+                memory_manager=memory,
+            )
+        )
+    )
+
+    heartbeat_at = 0.0
+    started_at = monotonic()
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_at
+        await asyncio.sleep(0.01)
+        heartbeat_at = monotonic()
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    release_timer = threading.Timer(0.3, release_transaction.set)
+    release_timer.start()
+    try:
+        await heartbeat_task
+        heartbeat_delay = heartbeat_at - started_at
+        assert not run_task.done()
+    finally:
+        release_transaction.set()
+        release_timer.cancel()
+        await asyncio.wait_for(holder, timeout=2.0)
+        await asyncio.wait_for(run_task, timeout=2.0)
+
+    assert heartbeat_delay < 0.15
 
 
 @pytest.mark.asyncio

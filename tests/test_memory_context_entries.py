@@ -10,10 +10,12 @@ Covers:
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
 
+import box_agent.memory as memory_module
 from box_agent.memory import (
     ContextEntry,
     MemoryManager,
@@ -305,6 +307,120 @@ def test_write_all_context_entries_refreshes_memory_summary(mgr: MemoryManager):
     summary = mgr.memory_summary_file.read_text(encoding="utf-8")
     assert "`project`" in summary
     assert "uses" in summary
+
+
+def _start_paused_topic_commit(
+    mgr: MemoryManager,
+    monkeypatch: pytest.MonkeyPatch,
+    entries: list[ContextEntry],
+) -> tuple[threading.Event, threading.Thread]:
+    alpha_written = threading.Event()
+    allow_commit = threading.Event()
+    original_write = memory_module.write_context_file
+
+    def paused_write(path: Path, topic_entries: list[ContextEntry]) -> None:
+        original_write(path, topic_entries)
+        if path.name == "alpha.md" and any(
+            entry.content == "alpha-new" for entry in topic_entries
+        ):
+            alpha_written.set()
+            assert allow_commit.wait(timeout=2.0)
+
+    monkeypatch.setattr(memory_module, "write_context_file", paused_write)
+    writer = threading.Thread(
+        target=mgr.write_all_context_entries,
+        args=(entries,),
+    )
+    writer.start()
+    assert alpha_written.wait(timeout=2.0)
+    return allow_commit, writer
+
+
+def test_read_context_waits_for_multi_topic_commit(
+    mgr: MemoryManager,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    mgr.write_all_context_entries([
+        _new_entry("alpha-old", topic="alpha"),
+        _new_entry("beta-old", topic="beta"),
+    ])
+
+    allow_commit, writer = _start_paused_topic_commit(
+        mgr,
+        monkeypatch,
+        [
+            _new_entry("alpha-new", topic="alpha"),
+            _new_entry("beta-new", topic="beta"),
+        ],
+    )
+
+    reader_started = threading.Event()
+    reader_finished = threading.Event()
+    observed: list[str] = []
+
+    def read_during_commit() -> None:
+        reader_started.set()
+        observed.extend(mgr.read_context().splitlines())
+        reader_finished.set()
+
+    reader = threading.Thread(target=read_during_commit)
+    reader.start()
+    assert reader_started.wait(timeout=2.0)
+    reader_waited = not reader_finished.wait(timeout=0.05)
+
+    try:
+        assert reader_waited
+    finally:
+        allow_commit.set()
+        writer.join(timeout=2.0)
+        reader.join(timeout=2.0)
+
+    assert not writer.is_alive()
+    assert not reader.is_alive()
+    assert observed == ["alpha-new", "beta-new"]
+
+
+def test_memory_summary_waits_for_complete_topic_snapshot(
+    mgr: MemoryManager,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    mgr.write_all_context_entries([
+        _new_entry("alpha-old", topic="alpha"),
+        _new_entry("beta-old", topic="beta"),
+    ])
+
+    allow_commit, writer = _start_paused_topic_commit(
+        mgr,
+        monkeypatch,
+        [
+            _new_entry("alpha-new", topic="alpha"),
+            _new_entry("gamma-new", topic="gamma"),
+        ],
+    )
+
+    summary_finished = threading.Event()
+
+    def refresh_during_commit() -> None:
+        mgr.refresh_memory_summary()
+        summary_finished.set()
+
+    refresher = threading.Thread(target=refresh_during_commit)
+    refresher.start()
+    summary_waited = not summary_finished.wait(timeout=0.05)
+
+    try:
+        assert summary_waited
+    finally:
+        allow_commit.set()
+        writer.join(timeout=2.0)
+        refresher.join(timeout=2.0)
+
+    assert not writer.is_alive()
+    assert not refresher.is_alive()
+    summary = mgr.memory_summary_file.read_text(encoding="utf-8")
+    assert "`alpha`" in summary
+    assert "`gamma`" in summary
+    assert "`beta`" not in summary
 
 
 def test_memory_manager_leaves_legacy_context_index_untouched(memory_dir: Path):

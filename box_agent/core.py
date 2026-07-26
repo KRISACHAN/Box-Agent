@@ -773,7 +773,10 @@ def _extract_web_search_payload(tool_name: str, content: str) -> dict[str, Any] 
     return payload
 
 
-def _auto_match_memory_for_latest_prompt(messages: list[Message], memory_manager: Any) -> ToolCallResult | None:
+async def _auto_match_memory_for_latest_prompt(
+    messages: list[Message],
+    memory_manager: Any,
+) -> ToolCallResult | None:
     """Conservatively match v2 experience memory against the latest user prompt.
 
     Matches are injected as weak, one-turn context: the model is told these
@@ -787,7 +790,10 @@ def _auto_match_memory_for_latest_prompt(messages: list[Message], memory_manager
 
     user_text = latest_user.content if isinstance(latest_user.content, str) else str(latest_user.content)
     try:
-        matches = memory_manager.auto_match_context(user_text)
+        matches = await asyncio.to_thread(
+            memory_manager.auto_match_context,
+            user_text,
+        )
     except Exception:
         return None
 
@@ -2032,7 +2038,10 @@ async def run_agent_loop(
         await hook_mgr.fire_agent_start(messages=messages, tools=tools, max_steps=max_steps)
 
     if memory_manager:
-        injected = _auto_match_memory_for_latest_prompt(messages, memory_manager)
+        injected = await _auto_match_memory_for_latest_prompt(
+            messages,
+            memory_manager,
+        )
         if injected is not None:
             yield injected
 
@@ -2052,12 +2061,13 @@ async def run_agent_loop(
             healed,
         )
 
-    def _build_proposal_event() -> MemoryProposalEvent | None:
+    async def _build_proposal_event() -> MemoryProposalEvent | None:
         """Read promotion candidates from memory and bump their last_proposed."""
         if not (memory_promotion_enabled and memory_manager):
             return None
         try:
-            entries = memory_manager.list_promotion_candidates(
+            entries = await asyncio.to_thread(
+                memory_manager.list_promotion_candidates,
                 hit_threshold=memory_promotion_hit_threshold,
                 cooldown_days=memory_promotion_cooldown_days,
             )
@@ -2066,7 +2076,10 @@ async def run_agent_loop(
         if not entries:
             return None
         try:
-            memory_manager.mark_proposed([e.id for e in entries])
+            await asyncio.to_thread(
+                memory_manager.mark_proposed,
+                [e.id for e in entries],
+            )
         except Exception:
             pass
         return MemoryProposalEvent(
@@ -2086,13 +2099,16 @@ async def run_agent_loop(
         single core rewrite consuming the hot candidates.  On any planner
         failure, falls back to the legacy per-candidate proposal (plan=None).
         """
-        event = _build_proposal_event()
+        event = await _build_proposal_event()
         if event is None:
             return None
         wanted = {c.entry_id for c in event.candidates}
         try:
+            context_entries = await asyncio.to_thread(
+                memory_manager.read_all_context_entries,
+            )
             entries = [
-                e for e in memory_manager._read_context_entries() if e.id in wanted
+                e for e in context_entries if e.id in wanted
             ]
         except Exception as exc:
             _log.warning(

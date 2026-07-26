@@ -2054,7 +2054,7 @@ async def run_agent(
 
     # 6.6 Inject Memory context
     if memory_mgr:
-        memory_block = memory_mgr.recall()
+        memory_block = await asyncio.to_thread(memory_mgr.recall)
         if memory_block:
             system_prompt = f"{system_prompt.rstrip()}\n\n{memory_block}"
             print(f"{Colors.GREEN}✅ Loaded memory context{Colors.RESET}")
@@ -2466,14 +2466,18 @@ async def run_agent(
                         else:
                             from box_agent.cli_memory_proposal import CLIMemoryProposalNegotiator
                             from box_agent.events import MemoryProposalEvent, MemoryPromotionCandidate
-                            entries = memory_mgr.list_promotion_candidates(
+                            entries = await asyncio.to_thread(
+                                memory_mgr.list_promotion_candidates,
                                 hit_threshold=config.agent.memory_promotion_hit_threshold,
                                 cooldown_days=0,  # manual review bypasses cooldown
                             )
                             if not entries:
                                 print(f"{Colors.DIM}🧠 暂无可升级到核心记忆的候选条目。{Colors.RESET}\n")
                             else:
-                                memory_mgr.mark_proposed([e.id for e in entries])
+                                await asyncio.to_thread(
+                                    memory_mgr.mark_proposed,
+                                    [e.id for e in entries],
+                                )
                                 evt = MemoryProposalEvent(
                                     candidates=tuple(
                                         MemoryPromotionCandidate(

@@ -1169,7 +1169,7 @@ class BoxACPAgent:
         # Inject memory context (skipped for lightweight utility sessions)
         memory_block: str | None = None
         if self._memory and not utility:
-            recalled = self._memory.recall()
+            recalled = await asyncio.to_thread(self._memory.recall)
             if recalled:
                 memory_block = recalled
                 system_prompt = f"{system_prompt.rstrip()}\n\n{memory_block}"
@@ -2030,7 +2030,7 @@ class BoxACPAgent:
         if method == "memory_proposal_list":
             return await self._memory_proposal_list(params)
         if method == "memory_proposal_apply":
-            return self._memory_proposal_apply(params)
+            return await self._memory_proposal_apply(params)
         if method == "llm/prompt":
             return await self._llm_prompt(params)
         if method == "mcp/status":
@@ -2201,7 +2201,8 @@ class BoxACPAgent:
             if bool(params.get("includeCooldown"))
             else self._config.agent.memory_promotion_cooldown_days
         )
-        entries = self._memory.list_promotion_candidates(
+        entries = await asyncio.to_thread(
+            self._memory.list_promotion_candidates,
             hit_threshold=self._config.agent.memory_promotion_hit_threshold,
             cooldown_days=cooldown_days,
         )
@@ -2223,8 +2224,11 @@ class BoxACPAgent:
         if include_plan and entries:
             wanted = {e.id for e in entries}
             try:
+                context_entries = await asyncio.to_thread(
+                    self._memory.read_all_context_entries,
+                )
                 full_entries = [
-                    e for e in self._memory._read_context_entries() if e.id in wanted
+                    e for e in context_entries if e.id in wanted
                 ]
             except Exception as exc:
                 log.warn(
@@ -2270,7 +2274,7 @@ class BoxACPAgent:
             response["plan"] = plan_payload
         return response
 
-    def _memory_proposal_apply(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _memory_proposal_apply(self, params: dict[str, Any]) -> dict[str, Any]:
         """Apply user decisions to promotion candidates.
 
         Two schemas are accepted:
@@ -2323,7 +2327,12 @@ class BoxACPAgent:
             )
 
             if decision == "apply":
-                counts = self._memory.apply_promotion_plan(plan)
+                def _apply_plan() -> tuple[dict[str, int], str]:
+                    with self._memory.context_transaction():
+                        counts = self._memory.apply_promotion_plan(plan)
+                        return counts, self._memory.read_core()
+
+                counts, core = await asyncio.to_thread(_apply_plan)
                 log.info(
                     "memory/plan_apply",
                     session_id=session_id,
@@ -2332,10 +2341,15 @@ class BoxACPAgent:
                 return {
                     "applied": counts.get("applied", 1),
                     "consumed": counts.get("consumed", 0),
-                    "core": self._memory.read_core(),
+                    "core": core,
                 }
             if decision == "reject":
-                counts = self._memory.reject_promotion_plan(plan)
+                def _reject_plan() -> tuple[dict[str, int], str]:
+                    with self._memory.context_transaction():
+                        counts = self._memory.reject_promotion_plan(plan)
+                        return counts, self._memory.read_core()
+
+                counts, core = await asyncio.to_thread(_reject_plan)
                 log.info(
                     "memory/plan_reject",
                     session_id=session_id,
@@ -2343,11 +2357,12 @@ class BoxACPAgent:
                 )
                 return {
                     "rejected": counts.get("rejected", 0),
-                    "core": self._memory.read_core(),
+                    "core": core,
                 }
             # skip: host is just dropping its cache; nothing to do here.
             log.info("memory/plan_skip", session_id=session_id)
-            return {"skipped": 1, "core": self._memory.read_core()}
+            core = await asyncio.to_thread(self._memory.read_core)
+            return {"skipped": 1, "core": core}
 
         # ── Legacy per-candidate branch ───────────────────
         raw = params.get("decisions") or {}
@@ -2358,7 +2373,12 @@ class BoxACPAgent:
             for entry_id, value in raw.items()
             if isinstance(value, str) and value in ("pin", "skip", "reject")
         }
-        counts = self._memory.consume_core_proposal(decisions)
+        def _consume_proposal() -> tuple[dict[str, int], str]:
+            with self._memory.context_transaction():
+                counts = self._memory.consume_core_proposal(decisions)
+                return counts, self._memory.read_core()
+
+        counts, core = await asyncio.to_thread(_consume_proposal)
         log.info(
             "memory/proposal_apply",
             session_id=session_id,
@@ -2368,7 +2388,7 @@ class BoxACPAgent:
             "pinned": counts["pinned"],
             "rejected": counts["rejected"],
             "skipped": counts["skipped"],
-            "core": self._memory.read_core(),
+            "core": core,
         }
 
     async def _run_turn(
@@ -3441,10 +3461,16 @@ class _MemoryProposalNegotiator:
                 return
             try:
                 if decision == "apply":
-                    counts = self._mgr.apply_promotion_plan(plan)
+                    counts = await asyncio.to_thread(
+                        self._mgr.apply_promotion_plan,
+                        plan,
+                    )
                     log.info("memory/plan_applied", consumed=counts.get("consumed", 0))
                 elif decision == "reject":
-                    counts = self._mgr.reject_promotion_plan(plan)
+                    counts = await asyncio.to_thread(
+                        self._mgr.reject_promotion_plan,
+                        plan,
+                    )
                     log.info("memory/plan_rejected", rejected=counts.get("rejected", 0))
                 else:
                     log.info("memory/plan_skipped")
@@ -3473,7 +3499,10 @@ class _MemoryProposalNegotiator:
             return
 
         try:
-            counts = self._mgr.consume_core_proposal(decisions)
+            counts = await asyncio.to_thread(
+                self._mgr.consume_core_proposal,
+                decisions,
+            )
             log.info(
                 "memory/proposal_applied",
                 pinned=counts.get("pinned", 0),

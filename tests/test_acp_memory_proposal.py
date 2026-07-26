@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
+from time import monotonic
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,6 +49,44 @@ def _make_agent(tmp_path: Path, *, hit_threshold: int = 5, cooldown_days: int = 
     return agent, memory_mgr
 
 
+async def _run_while_memory_transaction_is_held(mgr, operation):
+    transaction_acquired = threading.Event()
+    release_transaction = threading.Event()
+
+    def hold_transaction() -> None:
+        with mgr.context_transaction():
+            transaction_acquired.set()
+            assert release_transaction.wait(timeout=2.0)
+
+    holder = asyncio.create_task(asyncio.to_thread(hold_transaction))
+    assert await asyncio.to_thread(transaction_acquired.wait, 2.0)
+
+    operation_task = asyncio.create_task(operation)
+    heartbeat_at = 0.0
+    started_at = monotonic()
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_at
+        await asyncio.sleep(0.01)
+        heartbeat_at = monotonic()
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    release_timer = threading.Timer(0.3, release_transaction.set)
+    release_timer.start()
+    try:
+        await heartbeat_task
+        heartbeat_delay = heartbeat_at - started_at
+        assert not operation_task.done()
+    finally:
+        release_transaction.set()
+        release_timer.cancel()
+        await asyncio.wait_for(holder, timeout=2.0)
+
+    result = await asyncio.wait_for(operation_task, timeout=2.0)
+    assert heartbeat_delay < 0.15
+    return result
+
+
 # ── memory_proposal_list ───────────────────────────────────────
 
 
@@ -65,6 +107,39 @@ async def test_memory_proposal_list_returns_eligible_candidates(tmp_path: Path):
     sample = result["candidates"][0]
     assert sample["hits"] == 7
     assert "created" in sample and "last_used" in sample and "last_proposed" in sample
+
+
+@pytest.mark.asyncio
+async def test_memory_proposal_list_waits_off_event_loop(tmp_path: Path):
+    agent, mgr = _make_agent(tmp_path)
+    write_context_file(mgr.context_file, [_entry("- promote me", hits=7)])
+
+    result = await _run_while_memory_transaction_is_held(
+        mgr,
+        agent.ext_method("memory_proposal_list", {"sessionId": ""}),
+    )
+
+    assert [candidate["content"] for candidate in result["candidates"]] == [
+        "- promote me"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_recall_waits_off_event_loop(tmp_path: Path):
+    agent, mgr = _make_agent(tmp_path)
+    mgr.write_context("- project memory", topic="project")
+
+    session = await _run_while_memory_transaction_is_held(
+        mgr,
+        agent.newSession(
+            SimpleNamespace(
+                cwd=str(tmp_path),
+                field_meta={"session_mode": "general"},
+            )
+        ),
+    )
+
+    assert session.sessionId in agent._sessions
 
 
 @pytest.mark.asyncio
@@ -232,6 +307,27 @@ async def test_memory_proposal_apply_pins_and_returns_core(tmp_path: Path):
     assert "- pin me" not in remaining
     assert remaining["- reject me"].core_status == "rejected"
     assert remaining["- skip me"].core_status == "none"
+
+
+@pytest.mark.asyncio
+async def test_memory_proposal_apply_waits_off_event_loop(tmp_path: Path):
+    agent, mgr = _make_agent(tmp_path)
+    pin = _entry("- pin me", hits=10)
+    write_context_file(mgr.context_file, [pin])
+
+    result = await _run_while_memory_transaction_is_held(
+        mgr,
+        agent.ext_method(
+            "memory_proposal_apply",
+            {
+                "sessionId": "",
+                "decisions": {pin.id: "pin"},
+            },
+        ),
+    )
+
+    assert result["pinned"] == 1
+    assert "- pin me" in result["core"]
 
 
 @pytest.mark.asyncio
