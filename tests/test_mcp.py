@@ -5,11 +5,13 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from box_agent.tools.mcp_loader import (
     MCPServerConnection,
+    MCPTool,
     MCPTimeoutConfig,
     _determine_connection_type,
     cleanup_mcp_connections,
@@ -129,6 +131,43 @@ class TestMCPToolRegistration:
         merge_mcp_tools(base_tools, [mcp_tool])
 
         assert base_tools == [mcp_tool]
+
+
+class TestMCPToolExecution:
+    """Tests for defensive normalization of remote MCP results."""
+
+    @pytest.mark.asyncio
+    async def test_structured_error_envelope_is_failure_without_is_error_flag(self):
+        class FakeSession:
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(
+                    content=[
+                        SimpleNamespace(
+                            text=json.dumps(
+                                {
+                                    "error": {
+                                        "message": "Query 不能为空。",
+                                        "type": "search_error",
+                                    }
+                                },
+                                ensure_ascii=False,
+                            )
+                        )
+                    ],
+                    isError=False,
+                )
+
+        tool = MCPTool(
+            name="web_search",
+            description="search",
+            parameters={"type": "object"},
+            session=FakeSession(),
+        )
+
+        result = await tool.execute(Query="")
+
+        assert result.success is False
+        assert result.error == "Query 不能为空。"
 
 
 # =============================================================================

@@ -46,6 +46,25 @@ def _warn(msg: str) -> None:
     """Write diagnostic message to stderr (never stdout)."""
     sys.stderr.write(msg + "\n")
 
+
+def _structured_mcp_error_message(content: str) -> str | None:
+    """Recover error envelopes from servers that forget MCP ``isError=true``."""
+    try:
+        payload = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or "error" not in payload:
+        return None
+    error = payload["error"]
+    if isinstance(error, str):
+        return error.strip() or "Tool returned error"
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+    return "Tool returned error"
+
+
 # Connection type aliases
 ConnectionType = Literal["stdio", "sse", "http", "streamable_http"]
 
@@ -193,8 +212,9 @@ class MCPTool(Tool):
 
             is_error = result.isError if hasattr(result, "isError") else False
 
-            if is_error:
-                err_msg = content_str.strip() or "Tool returned error"
+            structured_error = _structured_mcp_error_message(content_str)
+            if is_error or structured_error:
+                err_msg = structured_error or content_str.strip() or "Tool returned error"
                 return ToolResult(success=False, content=content_str, error=err_msg)
             return ToolResult(success=True, content=content_str, error=None)
 
