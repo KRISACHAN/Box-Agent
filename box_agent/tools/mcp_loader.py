@@ -69,6 +69,88 @@ def _structured_mcp_error_message(content: str) -> str | None:
     return None
 
 
+def _walk_exception_tree(error: BaseException | None):
+    """Yield an exception and its nested group/cause/context exceptions once."""
+    if error is None:
+        return
+
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        yield current
+
+        nested = getattr(current, "exceptions", ())
+        if isinstance(nested, tuple):
+            pending.extend(reversed(nested))
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            pending.append(cause)
+        context = getattr(current, "__context__", None)
+        if isinstance(context, BaseException):
+            pending.append(context)
+
+
+def _http_statuses_from_exception(error: BaseException | None) -> set[int]:
+    statuses: set[int] = set()
+    for current in _walk_exception_tree(error):
+        status = getattr(current, "status_code", None)
+        if status is None:
+            status = getattr(getattr(current, "response", None), "status_code", None)
+        try:
+            normalized = int(status)
+        except (TypeError, ValueError):
+            continue
+        if 100 <= normalized <= 599:
+            statuses.add(normalized)
+    return statuses
+
+
+def _mcp_auth_status(*errors: BaseException | None) -> int | None:
+    statuses = {
+        status
+        for error in errors
+        for status in _http_statuses_from_exception(error)
+    }
+    for preferred in (401, 403):
+        if preferred in statuses:
+            return preferred
+    return None
+
+
+def _is_mcp_authentication_error(error: BaseException | None) -> bool:
+    return _mcp_auth_status(error) is not None
+
+
+def _mcp_connection_error_message(
+    primary_error: BaseException,
+    cleanup_error: BaseException | None = None,
+) -> str:
+    """Prefer the transport's real HTTP failure over cancellation side effects."""
+    auth_status = _mcp_auth_status(primary_error, cleanup_error)
+    if auth_status == 401:
+        return "Authentication failed: Token is invalid or expired (HTTP 401)"
+    if auth_status == 403:
+        return "Authorization failed: Access denied or insufficient permissions (HTTP 403)"
+
+    # Streamable HTTP may cancel ``session.initialize()`` and only expose the
+    # actionable transport error while its task group is being closed.
+    if isinstance(primary_error, asyncio.CancelledError) and cleanup_error is not None:
+        for current in _walk_exception_tree(cleanup_error):
+            if getattr(current, "exceptions", ()):
+                continue
+            message = str(current).strip()
+            if message and not isinstance(current, asyncio.CancelledError):
+                return message
+
+    return str(primary_error).strip() or type(primary_error).__name__
+
+
 # Connection type aliases
 ConnectionType = Literal["stdio", "sse", "http", "streamable_http"]
 
@@ -299,15 +381,23 @@ class MCPServerConnection:
             f"timeout_s={connect_timeout}{command_label}"
         )
 
-        async def _close_exit_stack() -> None:
+        async def _close_exit_stack() -> BaseException | None:
             if not self.exit_stack:
-                return
+                return None
+            cleanup_error: BaseException | None = None
             try:
                 await self.exit_stack.aclose()
-            except BaseException as cleanup_error:  # noqa: BLE001
-                _warn(f"⚠ Failed to clean up MCP connection '{self.name}': {cleanup_error}")
+            except BaseException as error:  # noqa: BLE001
+                cleanup_error = error
             finally:
                 self.exit_stack = None
+                self.session = None
+            return cleanup_error
+
+        def _warn_unexpected_cleanup_error(cleanup_error: BaseException | None) -> None:
+            if cleanup_error is None or _is_mcp_authentication_error(cleanup_error):
+                return
+            _warn(f"⚠ Failed to clean up MCP connection '{self.name}': {cleanup_error}")
 
         try:
             self.exit_stack = AsyncExitStack()
@@ -371,31 +461,48 @@ class MCPServerConnection:
             self.last_error = None
             return True
 
-        except TimeoutError:
+        except TimeoutError as e:
             self.last_error = f"Connection timed out after {connect_timeout}s during {stage}"
-            _warn(
-                f"[mcp] connect:timeout server={self.name!r} stage={stage} "
-                f"timeout_s={connect_timeout} elapsed_ms={elapsed_ms()}"
-            )
-            await _close_exit_stack()
+            cleanup_error = await _close_exit_stack()
+            auth_failure = _is_mcp_authentication_error(cleanup_error)
+            if auth_failure:
+                self.last_error = _mcp_connection_error_message(e, cleanup_error)
+                _warn(
+                    f"[mcp] connect:failed server={self.name!r} stage={stage} "
+                    f"elapsed_ms={elapsed_ms()} error={self.last_error}"
+                )
+            else:
+                _warn(
+                    f"[mcp] connect:timeout server={self.name!r} stage={stage} "
+                    f"timeout_s={connect_timeout} elapsed_ms={elapsed_ms()} error={self.last_error}"
+                )
+            _warn_unexpected_cleanup_error(cleanup_error)
             return False
 
         except asyncio.CancelledError as e:
-            self.last_error = f"Connection cancelled: {e}"
-            _warn(
-                f"[mcp] connect:cancelled server={self.name!r} stage={stage} "
-                f"elapsed_ms={elapsed_ms()}"
-            )
-            await _close_exit_stack()
+            cleanup_error = await _close_exit_stack()
+            self.last_error = _mcp_connection_error_message(e, cleanup_error)
+            if _is_mcp_authentication_error(cleanup_error):
+                _warn(
+                    f"[mcp] connect:failed server={self.name!r} stage={stage} "
+                    f"elapsed_ms={elapsed_ms()} error={self.last_error}"
+                )
+            else:
+                _warn(
+                    f"[mcp] connect:cancelled server={self.name!r} stage={stage} "
+                    f"elapsed_ms={elapsed_ms()} error={self.last_error}"
+                )
+            _warn_unexpected_cleanup_error(cleanup_error)
             return False
 
         except Exception as e:
-            self.last_error = str(e)
+            cleanup_error = await _close_exit_stack()
+            self.last_error = _mcp_connection_error_message(e, cleanup_error)
             _warn(
                 f"[mcp] connect:failed server={self.name!r} stage={stage} "
-                f"elapsed_ms={elapsed_ms()} error={e}"
+                f"elapsed_ms={elapsed_ms()} error={self.last_error}"
             )
-            await _close_exit_stack()
+            _warn_unexpected_cleanup_error(cleanup_error)
             import traceback
 
             traceback.print_exc()
