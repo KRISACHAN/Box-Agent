@@ -2766,6 +2766,7 @@ class BoxACPAgent:
                 session_id,
                 fingerprint,
             ),
+            current_turn_text=plan_start_text,
         )
         async for event in agent.run_events(options=run_options):
             try:

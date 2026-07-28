@@ -435,7 +435,9 @@ def test_workspace_tools_register_search_files(tmp_path):
         use_output_dir=False,
     )
 
-    assert "search_files" in {tool.name for tool in tools}
+    tool_names = {tool.name for tool in tools}
+    assert "search_files" in tool_names
+    assert "report_execution_result" in tool_names
 
 
 @pytest.mark.asyncio

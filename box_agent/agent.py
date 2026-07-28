@@ -86,6 +86,7 @@ class AgentRunOptions:
     cache_fingerprint_context: dict[str, Any] | None = None
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None
     workflow_policy: WorkflowPolicy | None = None
+    current_turn_text: str | None = None
 
 
 # ANSI color codes
@@ -874,6 +875,7 @@ class Agent:
             cache_fingerprint_sink=effective_options.cache_fingerprint_sink,
             active_skill_activator=self.activate_skill_instructions,
             workflow_policy=effective_options.workflow_policy,
+            current_turn_text=effective_options.current_turn_text,
         ):
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):
@@ -892,6 +894,7 @@ class Agent:
         pause_after_plan_write: bool = False,
         completion_gate: CompletionGate | None = None,
         artifact_detection_enabled: bool = True,
+        current_turn_text: str | None = None,
     ) -> str:
         """Execute agent loop with terminal rendering.
 
@@ -900,8 +903,12 @@ class Agent:
         """
         final_content = ""
         self.last_stop_reason = None
+        options = self.default_run_options()
+        if current_turn_text is not None:
+            options = replace(options, current_turn_text=current_turn_text)
         async for event in self.run_events(
             cancel_event,
+            options=options,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             plan_approval=plan_approval,

@@ -1889,7 +1889,7 @@ async def test_controlled_presentation_does_not_receive_conflicting_final_summar
 @pytest.mark.asyncio
 async def test_research_evidence_calls_preserve_controlled_deck_delivery_budget(tmp_path):
     """Search/browser evidence has a separate guard from artifact production."""
-    browser = NamedTool("browser_read_page")
+    browser = CountingBrowserReadTool()
     echo = EchoTool()
     gate = CompletionGate(
         workflow_checkpoint_kind="controlled_presentation",
@@ -1906,7 +1906,7 @@ async def test_research_evidence_calls_preserve_controlled_deck_delivery_budget(
                         type="function",
                         function=FunctionCall(
                             name="browser_read_page",
-                            arguments={"text": "source"},
+                            arguments={"url": "https://example.com/source"},
                         ),
                     ),
                     ToolCall(

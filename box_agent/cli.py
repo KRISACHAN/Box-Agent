@@ -2209,6 +2209,7 @@ async def run_agent(
             final_content = await agent.run(
                 force_plan_start=force_plan_start,
                 completion_gate=completion_gate,
+                current_turn_text=task,
             )
             while auto_enabled and should_continue_goal_autopilot(agent, agent.last_stop_reason):
                 elapsed = perf_counter() - auto_started
@@ -2583,7 +2584,10 @@ async def run_agent(
 
             try:
                 agent_task = asyncio.create_task(
-                    agent.run(force_plan_start=force_plan_next_turn)
+                    agent.run(
+                        force_plan_start=force_plan_next_turn,
+                        current_turn_text=user_input,
+                    )
                 )
                 force_plan_next_turn = False
 

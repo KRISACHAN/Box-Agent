@@ -42,6 +42,7 @@ async def test_agent_run_forwards_core_execution_options(
         force_plan_start=True,
         completion_gate=gate,
         artifact_detection_enabled=False,
+        current_turn_text="current user request",
     )
 
     assert result == "done"
@@ -50,6 +51,7 @@ async def test_agent_run_forwards_core_execution_options(
     assert captured["artifact_detection_enabled"] is False
     assert captured["thinking_enabled"] is True
     assert captured["active_skill_activator"] == agent.activate_skill_instructions
+    assert captured["current_turn_text"] == "current user request"
 
 
 @pytest.mark.asyncio
@@ -87,6 +89,7 @@ async def test_agent_run_events_forwards_host_run_options(
         artifact_root_dir=artifact_root,
         cache_fingerprint_sink=fingerprint_sink,
         workflow_policy=workflow_policy,
+        current_turn_text="host current turn",
     )
 
     events = [event async for event in agent.run_events(options=options)]
@@ -100,6 +103,7 @@ async def test_agent_run_events_forwards_host_run_options(
     assert captured["artifact_root_dir"] == artifact_root
     assert captured["cache_fingerprint_sink"] is fingerprint_sink
     assert captured["workflow_policy"] is workflow_policy
+    assert captured["current_turn_text"] == "host current turn"
 
 
 def test_agent_public_runtime_configuration_and_history_reset(tmp_path: Path) -> None:

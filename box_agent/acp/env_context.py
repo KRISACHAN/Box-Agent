@@ -479,6 +479,8 @@ def _format_browser_capability_policy(
     lines = [
         "- 浏览器能力策略：Playwright 是隔离网页自动化通道；真实浏览器连接器是用户当前浏览器上下文的读写通道。"
         "必须按页面上下文选择，而不是按点击/填写等动作类型选择。"
+        "“看一下”“帮我看看”“查一下”“了解一下”等通用请求动词本身不表示用户在引用当前页面；"
+        "只有明确提到当前页、这个页面、当前标签页等上下文，或延续刚完成的浏览器操作时，才能读取用户当前页。"
     ]
     if playwright_available and connector_available:
         lines.append(

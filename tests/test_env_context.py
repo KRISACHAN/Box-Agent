@@ -290,6 +290,8 @@ def test_browser_policy_distinguishes_both_available() -> None:
     assert "standalone Playwright MCP tools" in out
     assert "source_preference:playwright" in out
     assert "browser_connector" in out
+    assert "“看一下”" in out
+    assert "本身不表示用户在引用当前页面" in out
 
 
 def test_browser_policy_connector_only_supports_allowlisted_actions() -> None:

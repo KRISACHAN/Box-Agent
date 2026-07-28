@@ -104,6 +104,7 @@ _log = logging.getLogger(__name__)
 PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import EventEmittingTool, Tool, ToolResult
+from .tools.browser_intent import BrowserToolIntentPolicy
 from .tools.skill_preload import build_active_skills_prompt
 from .turn_policy import (
     text_is_short_acknowledgement,
@@ -1934,6 +1935,7 @@ async def run_agent_loop(
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None,
     active_skill_activator: ActiveSkillActivator | None = None,
     workflow_policy: WorkflowPolicy | None = None,
+    current_turn_text: str | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Execute the agent loop, yielding structured events.
 
@@ -2005,6 +2007,9 @@ async def run_agent_loop(
             before the LLM request, for hosts that do not use ``AgentLogger``.
         workflow_policy: Optional host-neutral workflow hooks composed by
             ``box_agent.runtime``. The kernel never selects a concrete workflow.
+        current_turn_text: Optional host-sanitized latest user request used to
+            gate tools that access the user's active browser tab. When omitted,
+            the latest user message is used.
     """
     cancelled = is_cancelled or (lambda: False)
     hook_mgr = HookManager(hooks)
@@ -2046,6 +2051,11 @@ async def run_agent_loop(
         )
         if injected is not None:
             yield injected
+
+    browser_intent_policy = BrowserToolIntentPolicy.for_turn(
+        current_turn_text=current_turn_text,
+        messages=messages,
+    )
 
     api_total_tokens = 0
     api_prompt_tokens = 0
@@ -2561,6 +2571,11 @@ async def run_agent_loop(
 
         # ── LLM call (streaming) ──────────────────────────────
         tool_list = list(tools.values())
+        tool_list = [
+            tool
+            for tool in tool_list
+            if browser_intent_policy.is_tool_visible(tool.name)
+        ]
         if (
             completion_gate is not None
             and completion_gate.restrict_tools_until_required_succeed
@@ -3414,8 +3429,15 @@ async def run_agent_loop(
                 and model_history_placeholder_repairs
                 < _MODEL_HISTORY_PLACEHOLDER_REPAIR_LIMIT
             )
+            browser_intent_error = browser_intent_policy.tool_call_error(
+                fn_name,
+                fn_args,
+            )
 
-            if placeholder_argument is not None:
+            if browser_intent_error is not None:
+                allowed_to_execute = False
+                internal_skip_error = browser_intent_error
+            elif placeholder_argument is not None:
                 allowed_to_execute = False
                 internal_skip_error = (
                     f"{_MODEL_HISTORY_PLACEHOLDER_TOOL_ERROR} "
@@ -3801,7 +3823,14 @@ async def run_agent_loop(
                     artifact_root_dir,
                 )
                 par_browser_snapshot_targets[tc.id] = browser_snapshot_target
-                if browser_snapshot_path_error is not None:
+                browser_intent_error = browser_intent_policy.tool_call_error(
+                    tc.function.name,
+                    par_fn_args,
+                )
+                if browser_intent_error is not None:
+                    allowed_to_execute = False
+                    internal_skip_error = browser_intent_error
+                elif browser_snapshot_path_error is not None:
                     allowed_to_execute = False
                     internal_skip_error = browser_snapshot_path_error
                 elif (

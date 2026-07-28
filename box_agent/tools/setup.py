@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, List, Mapping, Optional
 from box_agent.config import Config
 from box_agent.tools.base import Tool
 from box_agent.tools.bash_tool import BashKillTool, BashOutputTool, BashTool
+from box_agent.tools.execution_result_tool import ReportExecutionResultTool
 from box_agent.tools.file_tools import (
     AppendTool,
     EditTool,
@@ -544,6 +545,11 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     # missing facts or abandon an in-progress artifact workflow.
     tools.append(RequestUserInputTool())
     _out(f"{Colors.GREEN}✅ Loaded user-input request tool{Colors.RESET}")
+
+    # Host-neutral execution receipt. External workflow identity, task context,
+    # versions, and submission remain the host's responsibility.
+    tools.append(ReportExecutionResultTool())
+    _out(f"{Colors.GREEN}✅ Loaded execution result reporting tool{Colors.RESET}")
 
     # Jupyter sandbox tool - Python code execution environment
     if sandbox_mode:
