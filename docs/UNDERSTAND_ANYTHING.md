@@ -1,6 +1,6 @@
 # Understand Anything Code Map
 
-Box-Agent uses Understand Anything as a local architecture index for code
+Box-Agent uses Understand Anything as a versioned architecture index for code
 discovery, ownership tracing, dependency inspection, and guided onboarding. The
 graph accelerates navigation, but the source tree, focused tests, logs, and
 runtime probes remain the source of truth.
@@ -19,10 +19,21 @@ Only these shared files belong in Git:
 
 - `.understand-anything/.understandignore`
 - `.understand-anything/config.json`
+- [`.understand-anything/knowledge-graph.json`](../.understand-anything/knowledge-graph.json)
 
-Do not commit `knowledge-graph.json`, `meta.json`, fingerprints, intermediate
-files, trash directories, dashboard tokens, or caches. They are local generated
-artifacts and are ignored by `.gitignore`.
+The versioned `knowledge-graph.json` lets contributors explore the same
+architecture snapshot immediately after cloning the repository. Do not commit
+`meta.json`, fingerprints, intermediate files, trash directories, dashboard
+tokens, or caches. Those files are local refresh state and remain ignored by
+`.gitignore`.
+
+## Explore the shared graph
+
+After cloning the repository, run `/understand-dashboard` from a client with the
+Understand Anything plugin. The dashboard reads the committed
+`.understand-anything/knowledge-graph.json`; open the tokenized URL printed by
+the plugin. The JSON file can also be inspected directly by other graph-aware
+tools without running a refresh first.
 
 ## Refresh workflow
 
@@ -32,23 +43,29 @@ artifacts and are ignored by `.gitignore`.
    changed. Use `/understand` for a normal incremental refresh.
 3. Confirm that validation reports no critical issues and that every analyzed
    file-level node belongs to exactly one architecture layer.
-4. Keep `scan-result.json` and the fingerprint baseline locally so later
+4. Update the versioned `knowledge-graph.json` after validation succeeds. Keep
+   this generated graph change reviewable and do not hand-edit it.
+5. Keep `scan-result.json` and the fingerprint baseline locally so later
    incremental refreshes can compare structure efficiently.
-5. If the dashboard is launched, open the tokenized URL emitted by the plugin;
+6. If the dashboard is launched, open the tokenized URL emitted by the plugin;
    the bare local server URL is not sufficient.
 
 Refresh the graph after changes to entry points, subsystem boundaries, shared
 tools, ACP contracts, runtime packaging, or documentation that should appear in
-the guided tour. A source-only change does not require committing generated
-graph files.
+the guided tour. Small source changes that do not affect graph structure or the
+guided tour do not require an immediate graph refresh.
 
 ## Verification and review
 
 Use the graph to identify likely files and relationships, then verify important
 conclusions with direct file reads, `rg`, focused `uv run pytest` commands, logs,
-or runtime probes. If graph metadata does not match the current commit, describe
-it as stale until it is refreshed.
+or runtime probes. Compare the graph's analyzed baseline with later source
+changes; describe the graph as stale when those changes affect its architecture
+or guided tour.
 
-Graph-only changes are local maintenance. If shared scope or language settings
-change, include the relevant configuration diff and explain the intended
-coverage in the pull request's Task, Proof, and Risk sections.
+The graph's `project.gitCommitHash` identifies the analyzed source baseline. A
+dedicated graph commit normally follows that baseline commit, so this hash can
+legitimately point to the graph commit's parent. For graph updates, include
+validation statistics and remaining warnings in the pull request's Task, Proof,
+and Risk sections. If shared scope or language settings change, include the
+relevant configuration diff and explain the intended coverage.

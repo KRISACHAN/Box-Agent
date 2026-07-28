@@ -29,11 +29,12 @@ env/
 # graphify
 graphify-out
 
-# Understand Anything: keep shared config, ignore generated local graph/cache
+# Understand Anything: share the code map and config; ignore local refresh state
 .understand-anything/*
 !.understand-anything/
 !.understand-anything/.understandignore
 !.understand-anything/config.json
+!.understand-anything/knowledge-graph.json
 
 # IDE
 .vscode/

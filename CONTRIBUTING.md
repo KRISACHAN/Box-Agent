@@ -63,7 +63,7 @@ If you have an idea for a new feature, please create an Issue first to discuss i
 - Prefer small PRs that change one behavior or one subsystem.
 - Follow the [layered architecture and ownership rules](docs/ARCHITECTURE.md). Shared behavior does not automatically belong in `core.py`: prefer a capability/policy module behind the public contracts, and keep CLI/ACP code as adapters.
 - Before changing code paths, use `.understand-anything/` as the first navigation aid when it is available, then verify the path with source reads, `rg`, tests, logs, or runtime probes. See the [code map guide](docs/UNDERSTAND_ANYTHING.md) for scope and refresh steps.
-- Commit only shared Understand Anything configuration (`.understand-anything/.understandignore` and `.understand-anything/config.json`). Do not commit generated graph, fingerprint, intermediate, trash, or cache files.
+- Keep the shared Understand Anything graph and configuration in Git (`.understand-anything/knowledge-graph.json`, `.understand-anything/.understandignore`, and `.understand-anything/config.json`). Refresh and validate the graph when architecture boundaries or the guided tour change. Do not commit fingerprints, `meta.json`, intermediate, trash, dashboard tokens, or cache files.
 - Do not include local credentials or user config. `config.yaml`, `mcp.json`, logs, and `workspace/` are local runtime files.
 - If a change affects officev3 or any packaged runtime, say whether you verified only source behavior or also rebuilt/installed/probed the runtime artifact.
 
