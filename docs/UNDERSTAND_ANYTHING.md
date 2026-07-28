@@ -20,12 +20,21 @@ Only these shared files belong in Git:
 - `.understand-anything/.understandignore`
 - `.understand-anything/config.json`
 - [`.understand-anything/knowledge-graph.json`](../.understand-anything/knowledge-graph.json)
+- `.understand-anything/meta.json`
+- `.understand-anything/fingerprints.json`
 
 The versioned `knowledge-graph.json` lets contributors explore the same
-architecture snapshot immediately after cloning the repository. Do not commit
-`meta.json`, fingerprints, intermediate files, trash directories, dashboard
-tokens, or caches. Those files are local refresh state and remain ignored by
-`.gitignore`.
+architecture snapshot immediately after cloning the repository. `meta.json`
+provides its refresh timestamp, analyzed source commit, format version, and file
+count. `fingerprints.json` gives the plugin a structural comparison baseline so
+later runs can distinguish unchanged, cosmetic, and structural changes without
+reanalyzing the entire repository.
+
+Keep these three generated files together as one refresh baseline. Do not
+hand-edit them or update only `meta.json`: the plugin requires fingerprints to
+support reliable incremental updates. Do not commit `last-run-summary.json`,
+intermediate files, trash directories, dashboard tokens, or caches. Those
+files remain local refresh state and are ignored by `.gitignore`.
 
 ## Explore the shared graph
 
@@ -35,6 +44,11 @@ Understand Anything plugin. The dashboard reads the committed
 the plugin. The JSON file can also be inspected directly by other graph-aware
 tools without running a refresh first.
 
+For a quick freshness check, compare `meta.json.gitCommitHash` with the graph's
+`project.gitCommitHash`, then inspect source changes after that baseline. When
+running `/understand`, the plugin uses `fingerprints.json` automatically; it is
+not intended to be queried for architecture answers.
+
 ## Refresh workflow
 
 1. Review `.understand-anything/.understandignore` before changing graph scope.
@@ -43,10 +57,11 @@ tools without running a refresh first.
    changed. Use `/understand` for a normal incremental refresh.
 3. Confirm that validation reports no critical issues and that every analyzed
    file-level node belongs to exactly one architecture layer.
-4. Update the versioned `knowledge-graph.json` after validation succeeds. Keep
-   this generated graph change reviewable and do not hand-edit it.
-5. Keep `scan-result.json` and the fingerprint baseline locally so later
-   incremental refreshes can compare structure efficiently.
+4. After validation succeeds, update `knowledge-graph.json`, `meta.json`, and
+   `fingerprints.json` together in the same reviewable change. Do not hand-edit
+   these generated files.
+5. Keep `scan-result.json` locally so later incremental runs can reuse the
+   deterministic file inventory.
 6. If the dashboard is launched, open the tokenized URL emitted by the plugin;
    the bare local server URL is not sufficient.
 

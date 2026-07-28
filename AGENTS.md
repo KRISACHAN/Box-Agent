@@ -6,7 +6,36 @@
 
 ## Code Discovery & Understand Anything
 
-For non-trivial code lookup, first check whether `.understand-anything/` is available and use it as the initial navigation layer for likely files, symbols, ownership, and dependencies. Treat the graph as an index, not a source of truth: verify every conclusion with `rg`, direct file reads, focused tests, logs, or runtime probes before editing or explaining behavior. If the graph or tooling is missing or stale, say so, recommend installing or initializing Understand Anything for this repository, and continue with normal source search when the task can still proceed. Commit shared Understand Anything config only (`.understand-anything/.understandignore`, `.understand-anything/config.json`); do not commit generated graph/cache files.
+For architecture, ownership, dependency, onboarding, and change-impact questions,
+use this default order:
+
+1. Check the committed `.understand-anything/knowledge-graph.json` and read its
+   `project.gitCommitHash` as the analyzed source baseline. Compare that
+   baseline with later source changes before treating the graph as current.
+   Cross-check `.understand-anything/meta.json` for the refresh timestamp,
+   baseline commit, graph version, and analyzed file count. If present, inspect
+   `.understand-anything/last-run-summary.json` for refresh status.
+2. Use `.understand-anything/knowledge-graph.json`, or the most relevant
+   `.understand-anything/domain-graphs/*knowledge-graph.json` when such a graph
+   exists, as the initial codebase index.
+3. Extract only the relevant nodes, edges, layers, or tour steps with `jq`,
+   `rg`, or a focused keyword search. Do not load or summarize the entire graph
+   when a narrow query is sufficient.
+4. Open the smallest useful set of real source files and verify the graph-based
+   conclusion with direct reads, `rg`, focused tests, logs, or runtime probes as
+   appropriate.
+
+Treat every graph as a navigation index, not the source of truth. If the graph,
+metadata, or tooling is missing or stale, state the limitation and continue
+with normal source search when the task can still proceed; recommend a refresh
+when it would materially improve the result.
+
+Keep the shared `.understand-anything/knowledge-graph.json`, `meta.json`,
+`fingerprints.json`, `.understandignore`, and `config.json` in Git. The graph,
+metadata, and fingerprints form one refresh baseline and must be regenerated
+and reviewed together; do not hand-edit them. Keep `last-run-summary.json`,
+intermediate files, dashboard tokens, trash, and caches local. Add any future
+shared domain graph to Git intentionally together with its scope documentation.
 
 ## Build, Test, and Development Commands
 

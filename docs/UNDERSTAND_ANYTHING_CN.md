@@ -19,10 +19,18 @@ Git 中只应提交以下共享文件：
 - `.understand-anything/.understandignore`
 - `.understand-anything/config.json`
 - [`.understand-anything/knowledge-graph.json`](../.understand-anything/knowledge-graph.json)
+- `.understand-anything/meta.json`
+- `.understand-anything/fingerprints.json`
 
 纳入版本管理的 `knowledge-graph.json` 让贡献者在克隆仓库后即可浏览同一份架构快照。
-不要提交 `meta.json`、fingerprint、intermediate、trash、dashboard token 或缓存；
-这些属于本地刷新状态，仍由 `.gitignore` 忽略。
+`meta.json` 记录刷新时间、被分析的源码提交、格式版本和文件数量；
+`fingerprints.json` 为 plugin 提供结构对比基线，使后续运行能够区分未变化、仅外观变化
+和结构变化，避免每次重新分析整个仓库。
+
+这三个生成文件应作为同一份刷新基线一起维护。不要手工编辑，也不要只更新
+`meta.json`：plugin 需要配套 fingerprint 才能可靠执行增量更新。不要提交
+`last-run-summary.json`、intermediate、trash、dashboard token 或缓存；这些仍属于
+本地刷新状态，由 `.gitignore` 忽略。
 
 ## 浏览共享图谱
 
@@ -30,6 +38,10 @@ Git 中只应提交以下共享文件：
 `/understand-dashboard`。Dashboard 会直接读取仓库中的
 `.understand-anything/knowledge-graph.json`，请打开 plugin 输出的带 token URL。
 其他支持该图谱格式的工具也可以直接读取 JSON，无需先执行刷新。
+
+快速检查新鲜度时，先比较 `meta.json.gitCommitHash` 与图谱中的
+`project.gitCommitHash`，再检查该基线之后的源码变化。执行 `/understand` 时，plugin
+会自动使用 `fingerprints.json`；它不用于回答架构问题。
 
 ## 刷新流程
 
@@ -39,10 +51,9 @@ Git 中只应提交以下共享文件：
    `/understand`。
 3. 确认验证结果没有 critical issue，并且每个已分析的文件级节点都只属于一个
    架构层。
-4. 验证通过后更新纳入版本管理的 `knowledge-graph.json`。保持生成图谱的改动可审查，
-   不要手工编辑图谱内容。
-5. 在本地保留 `scan-result.json` 和 fingerprint 基线，让后续增量刷新可以高效比较
-   结构变化。
+4. 验证通过后，在同一个可审查改动中一起更新 `knowledge-graph.json`、`meta.json`
+   和 `fingerprints.json`，不要手工编辑这些生成文件。
+5. 在本地保留 `scan-result.json`，让后续增量运行可以复用确定性的文件清单。
 6. 启动 dashboard 后，应打开 plugin 输出的带 token URL；仅访问本地服务裸地址
    无法通过访问校验。
 
