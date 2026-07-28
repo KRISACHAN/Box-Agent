@@ -482,8 +482,8 @@ def _compact_visible_tool_content_for_model(
                 f"Characters returned: {len(content)}\n"
                 f"{compacted}"
             )
-        head_limit = 36_000
-        tail_limit = 8_000
+        head_limit = 7_000
+        tail_limit = 2_000
         return (
             "[Large unstructured web_search result bounded for model history]\n"
             f"Characters returned: {len(content)}\n"
@@ -2246,7 +2246,6 @@ async def run_agent_loop(
     empty_final_answer_retry_injected = False
     web_search_seen_queries: set[str] = set()
     web_search_seen_result_keys: set[str] = set()
-    discovered_evidence_urls: set[str] = set()
     verified_evidence_urls: set[str] = set()
     web_search_unique_results = 0
     web_search_duplicate_results = 0
@@ -3695,7 +3694,7 @@ async def run_agent_loop(
                 if inspected:
                     web_search_step_structured_results += 1
                 web_search_step_labels.extend(new_labels[:3])
-                discovered_evidence_urls.update(_web_search_urls(tc_content))
+                verified_evidence_urls.update(_web_search_urls(tc_content))
             elif (
                 result.success
                 and workflow_policy is not None
@@ -4149,7 +4148,7 @@ async def run_agent_loop(
                     if inspected:
                         web_search_step_structured_results += 1
                     web_search_step_labels.extend(new_labels[:3])
-                    discovered_evidence_urls.update(_web_search_urls(par_content))
+                    verified_evidence_urls.update(_web_search_urls(par_content))
                 elif (
                     result.success
                     and workflow_policy is not None

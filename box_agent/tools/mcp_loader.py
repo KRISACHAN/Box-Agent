@@ -56,8 +56,10 @@ def _structured_mcp_error_message(content: str) -> str | None:
     if not isinstance(payload, dict) or "error" not in payload:
         return None
     error = payload["error"]
+    if not error:
+        return None
     if isinstance(error, str):
-        return error.strip() or "Tool returned error"
+        return error.strip() or None
     if isinstance(error, dict):
         message = error.get("message")
         if isinstance(message, str) and message.strip():

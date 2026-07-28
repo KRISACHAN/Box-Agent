@@ -169,6 +169,36 @@ class TestMCPToolExecution:
         assert result.success is False
         assert result.error == "Query 不能为空。"
 
+    @pytest.mark.asyncio
+    async def test_null_error_field_remains_a_success(self):
+        class FakeSession:
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(
+                    content=[
+                        SimpleNamespace(
+                            text=json.dumps(
+                                {
+                                    "error": None,
+                                    "data": {"status": "ok"},
+                                }
+                            )
+                        )
+                    ],
+                    isError=False,
+                )
+
+        tool = MCPTool(
+            name="status",
+            description="status",
+            parameters={"type": "object"},
+            session=FakeSession(),
+        )
+
+        result = await tool.execute()
+
+        assert result.success is True
+        assert json.loads(result.content)["data"] == {"status": "ok"}
+
 
 # =============================================================================
 # MCPServerConnection Initialization Tests

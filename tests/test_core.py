@@ -1993,6 +1993,79 @@ async def test_controlled_research_batches_public_page_reads(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_controlled_outline_accepts_url_from_prior_web_search(tmp_path):
+    query = "official product release"
+    source_url = "https://example.gov/releases/latest"
+    outline_content = json.dumps(
+        {
+            "source_mode": "public_authoritative_research",
+            "slides": [{"evidence": [source_url]}],
+        }
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="search-evidence",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": query},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-outline",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "outline.json",
+                                "content": outline_content,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "web_search": JsonWebSearchTool({query: source_url}),
+                "write_file": WriteTool(workspace_dir=str(tmp_path)),
+            },
+            max_steps=2,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                workflow_options={"research_mode": "deep"},
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    write_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "write-outline"
+    )
+    assert write_result.success is True
+    assert (tmp_path / "outline.json").is_file()
+
+
+@pytest.mark.asyncio
 async def test_at_threshold_does_not_inject_final_summary_guidance():
     """Exactly at the threshold (boundary) does not trigger the wrap-up nudge."""
     llm = MockLLM(
@@ -3874,6 +3947,26 @@ def test_large_web_search_result_is_compact_for_synthesis_turn():
     assert "Large web_search result bounded for model history" in model_content
     assert "https://example.com/result-1" in model_content
     assert "https://example.com/result-5" in model_content
+
+
+@pytest.mark.parametrize("size", [12_000, 20_000, 50_000])
+def test_unstructured_web_search_compaction_is_smaller_than_input(size):
+    from box_agent.core import _tool_message_content_for_model
+    from box_agent.tools.base import ToolResult
+
+    full_content = "x" * size
+    model_content = _tool_message_content_for_model(
+        tool_name="web_search",
+        arguments={"Query": "latest official release"},
+        result=ToolResult(success=True, content=full_content),
+        visible_content=full_content,
+        visible_error=None,
+    )
+
+    assert len(model_content) < len(full_content)
+    assert len(model_content) <= 10_000
+    assert f"Characters omitted: {size - 9_000}" in model_content
+    assert "Characters omitted: -" not in model_content
 
 
 def test_micro_compact_token_budget_shrinks_keep_window_when_recent_oversized():
