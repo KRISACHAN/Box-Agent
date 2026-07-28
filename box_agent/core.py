@@ -191,13 +191,16 @@ def final_summary_wrapup_text(tool_call_count: int) -> str:
     )
 
 
-def final_summary_empty_retry_text(tool_call_count: int) -> str:
+def empty_final_answer_retry_text(tool_call_count: int) -> str:
     return (
-        "The previous natural end produced no visible final answer after a long tool-heavy turn "
-        f"({tool_call_count} visible tool calls). "
+        "The previous natural end produced no visible final answer after using "
+        f"{tool_call_count} visible tool call(s). "
         "Answer the user now with a concise final conclusion. Do not call tools unless the task is impossible "
         "to summarize without one."
     )
+
+
+_EMPTY_FINAL_ANSWER_ERROR = "工具已执行完成，但模型未生成最终答复，请重试。"
 
 
 # Regex to match file references like [foo.png] in tool output.
@@ -418,7 +421,7 @@ _MODEL_CONTEXT_PATH_NAMES = {"qa.json", "html_self_check.json", "visual_review.m
 _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_CONTENT_THRESHOLD = 12_000
 _GENERIC_MODEL_CONTEXT_CHAR_LIMIT = 24_000
-_WEB_SEARCH_MODEL_CONTEXT_CHAR_LIMIT = 48_000
+_WEB_SEARCH_MODEL_CONTEXT_CHAR_LIMIT = 10_000
 
 
 def _strip_plot_data(text: str) -> str:
@@ -461,17 +464,16 @@ def _compact_visible_tool_content_for_model(
 ) -> str:
     """Fallback compaction for tool content before it is appended to history."""
     if tool_name == WEB_SEARCH_TOOL_NAME:
-        # Search depth depends on the model seeing the returned evidence, not
-        # only five title/snippet previews. Keep ordinary structured results
-        # verbatim for the next reasoning step. Only pathological payloads are
-        # bounded here; old tool turns are still compacted later by
-        # ``_micro_compact`` after the model has had a chance to use them.
+        # Search is a discovery step. Large page bodies returned inline by an
+        # MCP server crowd out the synthesis turn and should be fetched later
+        # through a direct page-read tool. Keep the full payload in the visible
+        # tool event/log, but give the model a compact evidence index.
         if len(content) <= _WEB_SEARCH_MODEL_CONTEXT_CHAR_LIMIT:
             return content
         compacted = _compact_web_search_result_for_model(
             content,
-            max_items=12,
-            snippet_limit=2_500,
+            max_items=5,
+            snippet_limit=600,
         )
         if compacted is not None:
             return (
@@ -480,8 +482,8 @@ def _compact_visible_tool_content_for_model(
                 f"Characters returned: {len(content)}\n"
                 f"{compacted}"
             )
-        head_limit = 36_000
-        tail_limit = 8_000
+        head_limit = 7_000
+        tail_limit = 2_000
         return (
             "[Large unstructured web_search result bounded for model history]\n"
             f"Characters returned: {len(content)}\n"
@@ -2241,7 +2243,7 @@ async def run_agent_loop(
     tool_budget_wrapup_injected: set[str] = set()
     visible_tool_call_total = 0
     final_summary_guidance_injected = False
-    final_summary_empty_retry_injected = False
+    empty_final_answer_retry_injected = False
     web_search_seen_queries: set[str] = set()
     web_search_seen_result_keys: set[str] = set()
     verified_evidence_urls: set[str] = set()
@@ -3103,30 +3105,70 @@ async def run_agent_loop(
                 yield StepEnd(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
                 continue
 
-            if (
-                visible_tool_call_total > FINAL_SUMMARY_TOOL_CALL_THRESHOLD
-                and final_summary_guidance_injected
-                and not final_summary_empty_retry_injected
-                and not response.content.strip()
-            ):
-                final_summary_empty_retry_injected = True
-                retry_text = final_summary_empty_retry_text(visible_tool_call_total)
-                messages.append(Message(role="user", content=format_injected_message(retry_text)))
-                yield InjectedMessageEvent(content=retry_text, injection_id=None, user_visible=False)
+            if visible_tool_call_total > 0 and not response.content.strip():
+                if (
+                    not empty_final_answer_retry_injected
+                    and step + 1 < max_steps
+                ):
+                    empty_final_answer_retry_injected = True
+                    retry_text = empty_final_answer_retry_text(visible_tool_call_total)
+                    messages.append(
+                        Message(role="user", content=format_injected_message(retry_text))
+                    )
+                    yield InjectedMessageEvent(
+                        content=retry_text,
+                        injection_id=None,
+                        user_visible=False,
+                    )
+                    elapsed = perf_counter() - step_start
+                    total = perf_counter() - run_start
+                    if hook_mgr.hooks:
+                        await hook_mgr.fire_step_end(
+                            step=step + 1,
+                            elapsed_seconds=elapsed,
+                            total_elapsed_seconds=total,
+                        )
+                    yield StepEnd(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                    continue
+
                 elapsed = perf_counter() - step_start
                 total = perf_counter() - run_start
+                _log.error(
+                    "empty final answer after bounded retry: visible_tool_calls=%d request_id=%s",
+                    visible_tool_call_total,
+                    provider_request_id,
+                )
+                _cleanup_incomplete_messages(messages)
                 if hook_mgr.hooks:
                     await hook_mgr.fire_step_end(
                         step=step + 1,
                         elapsed_seconds=elapsed,
                         total_elapsed_seconds=total,
                     )
+                    await hook_mgr.fire_error(
+                        message=_EMPTY_FINAL_ANSWER_ERROR,
+                        is_fatal=True,
+                        exception=None,
+                    )
+                    await hook_mgr.fire_done(
+                        stop_reason=StopReason.ERROR,
+                        final_content=_EMPTY_FINAL_ANSWER_ERROR,
+                    )
                 yield StepEnd(
                     step=step + 1,
                     elapsed_seconds=elapsed,
                     total_elapsed_seconds=total,
                 )
-                continue
+                yield ErrorEvent(message=_EMPTY_FINAL_ANSWER_ERROR, is_fatal=True)
+                yield DoneEvent(
+                    stop_reason=StopReason.ERROR,
+                    final_content=_EMPTY_FINAL_ANSWER_ERROR,
+                )
+                return
 
             elapsed = perf_counter() - step_start
             total = perf_counter() - run_start

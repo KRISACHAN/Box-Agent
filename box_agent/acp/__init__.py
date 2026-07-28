@@ -707,6 +707,7 @@ class SessionState:
     source_text: str = ""  # accumulated real user requests for source-bound artifact checks
     pending_completion_gate: CompletionGate | None = None
     waiting_for_user_input: bool = False
+    last_error: str | None = None
 
 
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
@@ -1837,7 +1838,17 @@ class BoxACPAgent:
             and state.agent.goal.status == "active"
         ):
             acp_stop_reason = "max_turn_requests"
+        failed = stop_reason == StopReason.ERROR.value
+        # ACP has no generic error stop reason. Keep stopReason protocol-valid
+        # and expose the internal outcome in stable response metadata instead.
         response_meta: dict[str, Any] = {
+            "ok": not failed,
+            "error": (
+                state.last_error or "Agent execution failed."
+                if failed
+                else None
+            ),
+            "lastStopReason": stop_reason,
             "usage": {
                 "totalTokens": turn_total_tokens,
                 "sessionId": billing_session_id,
@@ -2407,6 +2418,7 @@ class BoxACPAgent:
     ) -> str:
         """Consume the shared execution core and translate events to ACP updates."""
         agent = state.agent
+        state.last_error = None
 
         # Clear prompt-level grants at the start of each prompt
         if state.grant_store:
@@ -2972,6 +2984,7 @@ class BoxACPAgent:
 
                     case ErrorEvent(message=msg, is_fatal=True):
                         log.error("error", session_id=session_id, message=msg, is_fatal=True)
+                        state.last_error = msg
                         await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))
                         # Don't return yet — let the loop consume the subsequent DoneEvent
                         # so the async generator is properly exhausted.

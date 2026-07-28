@@ -1993,6 +1993,79 @@ async def test_controlled_research_batches_public_page_reads(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_controlled_outline_accepts_url_from_prior_web_search(tmp_path):
+    query = "official product release"
+    source_url = "https://example.gov/releases/latest"
+    outline_content = json.dumps(
+        {
+            "source_mode": "public_authoritative_research",
+            "slides": [{"evidence": [source_url]}],
+        }
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="search-evidence",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": query},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-outline",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "outline.json",
+                                "content": outline_content,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "web_search": JsonWebSearchTool({query: source_url}),
+                "write_file": WriteTool(workspace_dir=str(tmp_path)),
+            },
+            max_steps=2,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                workflow_options={"research_mode": "deep"},
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    write_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "write-outline"
+    )
+    assert write_result.success is True
+    assert (tmp_path / "outline.json").is_file()
+
+
+@pytest.mark.asyncio
 async def test_at_threshold_does_not_inject_final_summary_guidance():
     """Exactly at the threshold (boundary) does not trigger the wrap-up nudge."""
     llm = MockLLM(
@@ -2050,6 +2123,103 @@ async def test_tool_heavy_empty_final_answer_retries_for_conclusion():
     assert any("produced no visible final answer" in e.content for e in injected)
     done = [e for e in events if isinstance(e, DoneEvent)]
     assert done[-1].final_content == "最终结论：文件已处理。"
+
+
+@pytest.mark.asyncio
+async def test_single_visible_tool_empty_final_answer_retries_for_conclusion():
+    """Even a short tool turn must not end successfully without a visible answer."""
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=_echo_tool_calls(1),
+                finish_reason="tool",
+            ),
+            LLMResponse(content="", finish_reason="stop"),
+            LLMResponse(content="最终结论：搜索结果已整理。", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": EchoTool()},
+            max_steps=5,
+        )
+    )
+
+    injected = [e for e in events if isinstance(e, InjectedMessageEvent)]
+    assert any("produced no visible final answer" in e.content for e in injected)
+    done = [e for e in events if isinstance(e, DoneEvent)]
+    assert done[-1].stop_reason == StopReason.END_TURN
+    assert done[-1].final_content == "最终结论：搜索结果已整理。"
+
+
+@pytest.mark.asyncio
+async def test_repeated_empty_final_answer_after_tool_returns_error():
+    """A bounded retry failure is explicit instead of a successful empty END_TURN."""
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=_echo_tool_calls(1),
+                finish_reason="tool",
+            ),
+            LLMResponse(content="", finish_reason="stop"),
+            LLMResponse(content="", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": EchoTool()},
+            max_steps=5,
+        )
+    )
+
+    errors = [e for e in events if isinstance(e, ErrorEvent)]
+    assert errors
+    assert "未生成最终答复" in errors[-1].message
+    done = [e for e in events if isinstance(e, DoneEvent)]
+    assert done[-1].stop_reason == StopReason.ERROR
+    assert done[-1].final_content
+
+
+@pytest.mark.asyncio
+async def test_empty_final_answer_on_last_step_returns_error():
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=_echo_tool_calls(1),
+                finish_reason="tool",
+            ),
+            LLMResponse(content="", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": EchoTool()},
+            max_steps=2,
+        )
+    )
+
+    retry_messages = [
+        event
+        for event in events
+        if isinstance(event, InjectedMessageEvent)
+        and "produced no visible final answer" in event.content
+    ]
+    assert retry_messages == []
+    assert any(isinstance(event, ErrorEvent) for event in events)
+    done = [event for event in events if isinstance(event, DoneEvent)]
+    assert done[-1].stop_reason == StopReason.ERROR
 
 
 @pytest.mark.asyncio
@@ -2572,7 +2742,7 @@ async def test_web_search_site_query_filters_nested_web_results_payload():
 
 
 @pytest.mark.asyncio
-async def test_web_search_tool_result_is_preserved_for_the_next_model_step():
+async def test_web_search_tool_result_is_compacted_for_the_next_model_step():
     tool_call = ToolCall(
         id="web-large",
         type="function",
@@ -2605,13 +2775,13 @@ async def test_web_search_tool_result_is_preserved_for_the_next_model_step():
         for m in llm.message_calls[1]
         if m.role == "tool" and m.name == "web_search" and m.tool_call_id == "web-large"
     )
-    assert tool_message.content == visible_result.content
-    assert '"Query": "policy 400g"' in tool_message.content
+    assert tool_message.content != visible_result.content
+    assert "query=policy 400g" in tool_message.content
     assert "Official policy result" in tool_message.content
     assert "https://example.gov/policy" in tool_message.content
     assert "A concise summary of the policy" in tool_message.content
-    assert "RAW_SEARCH_BODY_" in tool_message.content
-    assert len(tool_message.content) > 20_000
+    assert "RAW_SEARCH_BODY_" not in tool_message.content
+    assert len(tool_message.content) < 10_000
 
 
 @pytest.mark.asyncio
@@ -3779,6 +3949,58 @@ def test_generic_large_tool_result_is_bounded_only_for_model_history():
     assert "Characters returned: 100027" in model_content
     assert "final exit status: 0" in model_content
     assert full_content.endswith("final exit status: 0")
+
+
+def test_large_web_search_result_is_compact_for_synthesis_turn():
+    from box_agent.core import _tool_message_content_for_model
+    from box_agent.tools.base import ToolResult
+
+    refs = [
+        {
+            "Title": f"Official result {index}",
+            "Url": f"https://example.com/result-{index}",
+            "Content": f"Evidence {index} " + ("x" * 5_000),
+        }
+        for index in range(1, 6)
+    ]
+    full_content = json.dumps(
+        {"Result": {"ResultCount": len(refs), "WebResults": refs}},
+        ensure_ascii=False,
+    )
+
+    model_content = _tool_message_content_for_model(
+        tool_name="web_search",
+        arguments={"Query": "latest official release"},
+        result=ToolResult(success=True, content=full_content),
+        visible_content=full_content,
+        visible_error=None,
+    )
+
+    assert len(full_content) > 10_000
+    assert len(model_content) < 10_000
+    assert "Large web_search result bounded for model history" in model_content
+    assert "https://example.com/result-1" in model_content
+    assert "https://example.com/result-5" in model_content
+
+
+@pytest.mark.parametrize("size", [12_000, 20_000, 50_000])
+def test_unstructured_web_search_compaction_is_smaller_than_input(size):
+    from box_agent.core import _tool_message_content_for_model
+    from box_agent.tools.base import ToolResult
+
+    full_content = "x" * size
+    model_content = _tool_message_content_for_model(
+        tool_name="web_search",
+        arguments={"Query": "latest official release"},
+        result=ToolResult(success=True, content=full_content),
+        visible_content=full_content,
+        visible_error=None,
+    )
+
+    assert len(model_content) < len(full_content)
+    assert len(model_content) <= 10_000
+    assert f"Characters omitted: {size - 9_000}" in model_content
+    assert "Characters omitted: -" not in model_content
 
 
 def test_micro_compact_token_budget_shrinks_keep_window_when_recent_oversized():
