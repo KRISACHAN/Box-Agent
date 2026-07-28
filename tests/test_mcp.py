@@ -7,8 +7,10 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
+from box_agent.tools import mcp_loader
 from box_agent.tools.mcp_loader import (
     MCPServerConnection,
     MCPTool,
@@ -548,6 +550,56 @@ class TestMCPServerConnectionTimeout:
         stderr = capsys.readouterr().err
         assert "[mcp] connect:start server='slow-stdio' transport=stdio" in stderr
         assert "[mcp] connect:timeout server='slow-stdio' stage=open-stdio-transport" in stderr
+
+    @pytest.mark.asyncio
+    async def test_streamable_http_auth_failure_survives_transport_cancellation(
+        self, monkeypatch, capsys
+    ):
+        """A transport 401 raised during cleanup must replace cancel-scope noise."""
+
+        request = httpx.Request("POST", "https://example.com/mcp")
+        response = httpx.Response(401, request=request)
+        auth_error = httpx.HTTPStatusError(
+            "401 Authorization Required",
+            request=request,
+            response=response,
+        )
+
+        class FakeCleanupError(Exception):
+            exceptions = (auth_error,)
+
+        class FakeExitStack:
+            async def enter_async_context(self, context):
+                return context
+
+            async def aclose(self):
+                raise FakeCleanupError("unhandled errors in a TaskGroup")
+
+        class FakeSession:
+            async def initialize(self):
+                raise asyncio.CancelledError("Cancelled via cancel scope")
+
+        conn = MCPServerConnection(
+            name="invalid-token",
+            connection_type="streamable_http",
+            url="https://example.com/mcp",
+        )
+
+        async def fake_transport():
+            return object(), object()
+
+        monkeypatch.setattr(mcp_loader, "AsyncExitStack", FakeExitStack)
+        monkeypatch.setattr(mcp_loader, "ClientSession", lambda *_args: FakeSession())
+        monkeypatch.setattr(conn, "_connect_streamable_http", fake_transport)
+
+        assert await conn.connect() is False
+        assert conn.last_error == "Authentication failed: Token is invalid or expired (HTTP 401)"
+        assert conn.exit_stack is None
+        assert conn.session is None
+
+        stderr = capsys.readouterr().err
+        assert "[mcp] connect:failed server='invalid-token'" in stderr
+        assert "Failed to clean up MCP connection" not in stderr
 
 
 # =============================================================================
