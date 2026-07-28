@@ -450,12 +450,18 @@ class MCPServerConnection:
         except TimeoutError as e:
             self.last_error = f"Connection timed out after {connect_timeout}s during {stage}"
             cleanup_error = await _close_exit_stack()
-            if _is_mcp_authentication_error(cleanup_error):
+            auth_failure = _is_mcp_authentication_error(cleanup_error)
+            if auth_failure:
                 self.last_error = _mcp_connection_error_message(e, cleanup_error)
-            _warn(
-                f"[mcp] connect:timeout server={self.name!r} stage={stage} "
-                f"timeout_s={connect_timeout} elapsed_ms={elapsed_ms()} error={self.last_error}"
-            )
+                _warn(
+                    f"[mcp] connect:failed server={self.name!r} stage={stage} "
+                    f"elapsed_ms={elapsed_ms()} error={self.last_error}"
+                )
+            else:
+                _warn(
+                    f"[mcp] connect:timeout server={self.name!r} stage={stage} "
+                    f"timeout_s={connect_timeout} elapsed_ms={elapsed_ms()} error={self.last_error}"
+                )
             _warn_unexpected_cleanup_error(cleanup_error)
             return False
 
