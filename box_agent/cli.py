@@ -45,6 +45,7 @@ from box_agent.agent import (
 )
 from box_agent.config import Config
 from box_agent.completion import build_auto_completion_gate
+from box_agent.events import StopReason
 from box_agent.schema import LLMProvider, Message
 from box_agent.tools.base import Tool
 from box_agent.tools.jupyter_tool import JupyterSandboxTool, SandboxStatusTool
@@ -2197,6 +2198,7 @@ async def run_agent(
         auto_budget_exhausted = False
         auto_no_progress_turns = 0
         auto_no_progress_exhausted = False
+        final_content = ""
         auto_enabled = (
             goal_autopilot_enabled
             and config.agent.goal_autopilot_enabled
@@ -2204,7 +2206,7 @@ async def run_agent(
         )
         auto_started = perf_counter()
         try:
-            await agent.run(
+            final_content = await agent.run(
                 force_plan_start=force_plan_start,
                 completion_gate=completion_gate,
             )
@@ -2231,7 +2233,7 @@ async def run_agent(
                     )
                 )
                 before_signature = goal_autopilot_progress_signature(agent.goal)
-                await agent.run(completion_gate=completion_gate)
+                final_content = await agent.run(completion_gate=completion_gate)
                 after_signature = goal_autopilot_progress_signature(agent.goal)
                 if should_continue_goal_autopilot(agent, agent.last_stop_reason):
                     if after_signature == before_signature:
@@ -2244,6 +2246,9 @@ async def run_agent(
                     ):
                         auto_no_progress_exhausted = True
                         break
+            if agent.last_stop_reason == StopReason.ERROR.value:
+                ok = False
+                error = final_content.strip() or "Agent execution failed."
         except Exception as e:
             ok = False
             error = str(e)

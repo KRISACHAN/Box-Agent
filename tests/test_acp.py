@@ -361,6 +361,31 @@ class DoneLLM:
         return LLMResponse(content="done", finish_reason="stop")
 
 
+class EmptyFinalAnswerLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def generate_stream(self, messages, tools=None, **_):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="empty-final-echo",
+                        type="function",
+                        function=FunctionCall(
+                            name="echo",
+                            arguments={"text": "evidence"},
+                        ),
+                    )
+                ],
+            )
+            return
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+
 class SkillUsageLLM:
     def __init__(self):
         self.calls = 0
@@ -3426,6 +3451,38 @@ async def test_acp_prompt_response_reports_turn_token_total(tmp_path):
         "turnId": "turn-response-1",
         "turn_id": "turn-response-1",
     }
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_response_marks_done_error_as_failure(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_todo=False),
+    )
+    conn = DummyConn()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        EmptyFinalAnswerLLM(),
+        [EchoTool()],
+        "system",
+    )
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "Use echo and summarize the result"}],
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    assert response.field_meta["ok"] is False
+    assert response.field_meta["error"]
+    assert response.field_meta["lastStopReason"] == "error"
 
 
 @pytest.mark.asyncio

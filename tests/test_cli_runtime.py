@@ -9,6 +9,7 @@ from pathlib import Path
 import box_agent.cli as cli
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, ToolCall
+from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.skill_loader import SkillLoader
 from box_agent.tools.runtime import build_skill_runtime_context, build_skill_runtime_prompt
 from box_agent.tools.setup import add_workspace_tools
@@ -89,6 +90,52 @@ class _PreloadedSkillThenGetSkillLLM(_CaptureStreamLLM):
             return
         yield StreamEvent(type="text", delta="done.")
         yield StreamEvent(type="finish", finish_reason="stop")
+
+
+class _EmptyFinalAnswerLLM:
+    def __init__(self, *args, **kwargs) -> None:
+        self.calls = 0
+
+    async def generate_stream(self, *, messages, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="echo-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="echo",
+                            arguments={"text": "evidence"},
+                        ),
+                    )
+                ],
+            )
+            return
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+
+class _EchoTool(Tool):
+    @property
+    def name(self) -> str:
+        return "echo"
+
+    @property
+    def description(self) -> str:
+        return "Echo input"
+
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        }
+
+    async def execute(self, text: str) -> ToolResult:
+        return ToolResult(success=True, content=text)
 
 
 def test_cli_workspace_tools_receive_self_managed_node_runtime(tmp_path: Path) -> None:
@@ -247,3 +294,65 @@ def test_cli_task_preloads_pptx_even_when_filter_drops_it(tmp_path: Path, monkey
         "Follow its system instructions directly."
     ]
     assert "# PPTX FULL RULES" not in tool_messages[0]
+
+
+def test_cli_task_returns_failure_for_done_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_key: test\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=3,
+            workspace_dir=str(workspace),
+            enable_memory=False,
+            enable_memory_extraction=False,
+            memory_maintainer_enabled=False,
+            memory_promotion_proposal_enabled=False,
+        ),
+        tools=ToolsConfig(
+            enable_file_tools=False,
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_mcp=False,
+            enable_skills=False,
+            allow_full_access=True,
+        ),
+    )
+    async def fake_initialize_base_tools(*args, **kwargs):
+        return [_EchoTool()], None, None, None
+
+    monkeypatch.setattr(
+        cli.Config,
+        "get_default_config_path",
+        staticmethod(lambda: config_path),
+    )
+    monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
+    monkeypatch.setattr(cli, "LLMClient", _EmptyFinalAnswerLLM)
+    monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
+    monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
+
+    exit_code = asyncio.run(
+        cli.run_agent(
+            workspace,
+            task="Use echo and summarize the result",
+            sandbox_mode=False,
+            verify_api=False,
+            json_summary=True,
+            completion_gate_enabled=False,
+            goal_autopilot_enabled=False,
+        )
+    )
+
+    output = capsys.readouterr().out
+    summary = json.loads(output[output.rfind("\n{") + 1 :])
+    assert exit_code == 1
+    assert summary["ok"] is False
+    assert summary["error"]
+    assert summary["goalAutopilot"]["lastStopReason"] == "error"
