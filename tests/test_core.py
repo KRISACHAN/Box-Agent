@@ -2189,6 +2189,40 @@ async def test_repeated_empty_final_answer_after_tool_returns_error():
 
 
 @pytest.mark.asyncio
+async def test_empty_final_answer_on_last_step_returns_error():
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=_echo_tool_calls(1),
+                finish_reason="tool",
+            ),
+            LLMResponse(content="", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": EchoTool()},
+            max_steps=2,
+        )
+    )
+
+    retry_messages = [
+        event
+        for event in events
+        if isinstance(event, InjectedMessageEvent)
+        and "produced no visible final answer" in event.content
+    ]
+    assert retry_messages == []
+    assert any(isinstance(event, ErrorEvent) for event in events)
+    done = [event for event in events if isinstance(event, DoneEvent)]
+    assert done[-1].stop_reason == StopReason.ERROR
+
+
+@pytest.mark.asyncio
 async def test_setup_tools_do_not_count_toward_final_summary_threshold():
     """Setup/bookkeeping tools (skills, plan, todos, memory) must not trip the
     wrap-up nudge — even far beyond the threshold they are not 'process log' work."""

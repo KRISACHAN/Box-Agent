@@ -169,8 +169,12 @@ class TestMCPToolExecution:
         assert result.success is False
         assert result.error == "Query 不能为空。"
 
+    @pytest.mark.parametrize(
+        "error_value",
+        [None, "", {}, {"count": 0}, []],
+    )
     @pytest.mark.asyncio
-    async def test_null_error_field_remains_a_success(self):
+    async def test_non_error_values_remain_a_success(self, error_value):
         class FakeSession:
             async def call_tool(self, name, arguments):
                 return SimpleNamespace(
@@ -178,7 +182,7 @@ class TestMCPToolExecution:
                         SimpleNamespace(
                             text=json.dumps(
                                 {
-                                    "error": None,
+                                    "error": error_value,
                                     "data": {"status": "ok"},
                                 }
                             )

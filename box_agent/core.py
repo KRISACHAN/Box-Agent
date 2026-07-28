@@ -3106,7 +3106,10 @@ async def run_agent_loop(
                 continue
 
             if visible_tool_call_total > 0 and not response.content.strip():
-                if not empty_final_answer_retry_injected:
+                if (
+                    not empty_final_answer_retry_injected
+                    and step + 1 < max_steps
+                ):
                     empty_final_answer_retry_injected = True
                     retry_text = empty_final_answer_retry_text(visible_tool_call_total)
                     messages.append(

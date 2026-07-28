@@ -64,7 +64,9 @@ def _structured_mcp_error_message(content: str) -> str | None:
         message = error.get("message")
         if isinstance(message, str) and message.strip():
             return message.strip()
-    return "Tool returned error"
+        if any(error.get(key) not in (None, "", False) for key in ("code", "type")):
+            return "Tool returned error"
+    return None
 
 
 # Connection type aliases
