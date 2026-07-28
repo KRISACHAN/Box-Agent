@@ -551,22 +551,47 @@ class TestMCPServerConnectionTimeout:
         assert "[mcp] connect:start server='slow-stdio' transport=stdio" in stderr
         assert "[mcp] connect:timeout server='slow-stdio' stage=open-stdio-transport" in stderr
 
+    @pytest.mark.parametrize(
+        ("statuses", "expected_error"),
+        [
+            (
+                (500, 401),
+                "Authentication failed: Token is invalid or expired (HTTP 401)",
+            ),
+            (
+                (401, 500),
+                "Authentication failed: Token is invalid or expired (HTTP 401)",
+            ),
+            (
+                (500, 403),
+                "Authorization failed: Access denied or insufficient permissions (HTTP 403)",
+            ),
+            (
+                (403, 500),
+                "Authorization failed: Access denied or insufficient permissions (HTTP 403)",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
     async def test_streamable_http_auth_failure_survives_transport_cancellation(
-        self, monkeypatch, capsys
+        self, monkeypatch, capsys, statuses, expected_error
     ):
-        """A transport 401 raised during cleanup must replace cancel-scope noise."""
+        """Transport auth failures must replace cancel-scope noise regardless of order."""
 
-        request = httpx.Request("POST", "https://example.com/mcp")
-        response = httpx.Response(401, request=request)
-        auth_error = httpx.HTTPStatusError(
-            "401 Authorization Required",
-            request=request,
-            response=response,
-        )
+        errors = []
+        for status in statuses:
+            request = httpx.Request("POST", "https://example.com/mcp")
+            response = httpx.Response(status, request=request)
+            errors.append(
+                httpx.HTTPStatusError(
+                    f"HTTP {status}",
+                    request=request,
+                    response=response,
+                )
+            )
 
         class FakeCleanupError(Exception):
-            exceptions = (auth_error,)
+            exceptions = tuple(errors)
 
         class FakeExitStack:
             async def enter_async_context(self, context):
@@ -593,7 +618,7 @@ class TestMCPServerConnectionTimeout:
         monkeypatch.setattr(conn, "_connect_streamable_http", fake_transport)
 
         assert await conn.connect() is False
-        assert conn.last_error == "Authentication failed: Token is invalid or expired (HTTP 401)"
+        assert conn.last_error == expected_error
         assert conn.exit_stack is None
         assert conn.session is None
 

@@ -96,7 +96,8 @@ def _walk_exception_tree(error: BaseException | None):
             pending.append(context)
 
 
-def _http_status_from_exception(error: BaseException | None) -> int | None:
+def _http_statuses_from_exception(error: BaseException | None) -> set[int]:
+    statuses: set[int] = set()
     for current in _walk_exception_tree(error):
         status = getattr(current, "status_code", None)
         if status is None:
@@ -106,12 +107,24 @@ def _http_status_from_exception(error: BaseException | None) -> int | None:
         except (TypeError, ValueError):
             continue
         if 100 <= normalized <= 599:
-            return normalized
+            statuses.add(normalized)
+    return statuses
+
+
+def _mcp_auth_status(*errors: BaseException | None) -> int | None:
+    statuses = {
+        status
+        for error in errors
+        for status in _http_statuses_from_exception(error)
+    }
+    for preferred in (401, 403):
+        if preferred in statuses:
+            return preferred
     return None
 
 
 def _is_mcp_authentication_error(error: BaseException | None) -> bool:
-    return _http_status_from_exception(error) in {401, 403}
+    return _mcp_auth_status(error) is not None
 
 
 def _mcp_connection_error_message(
@@ -119,10 +132,11 @@ def _mcp_connection_error_message(
     cleanup_error: BaseException | None = None,
 ) -> str:
     """Prefer the transport's real HTTP failure over cancellation side effects."""
-    for error in (primary_error, cleanup_error):
-        status = _http_status_from_exception(error)
-        if status in {401, 403}:
-            return f"Authentication failed: Token is invalid or expired (HTTP {status})"
+    auth_status = _mcp_auth_status(primary_error, cleanup_error)
+    if auth_status == 401:
+        return "Authentication failed: Token is invalid or expired (HTTP 401)"
+    if auth_status == 403:
+        return "Authorization failed: Access denied or insufficient permissions (HTTP 403)"
 
     # Streamable HTTP may cancel ``session.initialize()`` and only expose the
     # actionable transport error while its task group is being closed.
