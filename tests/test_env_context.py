@@ -292,6 +292,10 @@ def test_browser_policy_distinguishes_both_available() -> None:
     assert "browser_connector" in out
     assert "“看一下”" in out
     assert "本身不表示用户在引用当前页面" in out
+    assert "纯公开网页检索、爬取、批量采集" in out
+    assert "无头 Playwright" in out
+    assert "填好后亲自查看、确认、接管或最后点击" in out
+    assert "填写完成后停下等待用户操作" in out
 
 
 def test_browser_policy_connector_only_supports_allowlisted_actions() -> None:

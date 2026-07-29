@@ -513,6 +513,10 @@ def _format_browser_capability_policy(
         "发送、发布、购买、删除等有外部副作用的提交必须先获得本次操作的明确确认，再调用 `browser_connector_submit`。"
     )
     lines.append(
+        "  - 纯公开网页检索、爬取、批量采集默认使用 `web_search` 或无头 Playwright，不要仅为展示过程而打开用户浏览器；"
+        "如果用户要求填好后亲自查看、确认、接管或最后点击，则从任务开始就使用真实浏览器连接器，填写完成后停下等待用户操作。"
+    )
+    lines.append(
         "  - 如果连接器返回 `extension_not_connected`：仅当任务不依赖真实浏览器状态且有普通公开 URL 时才改用 Playwright；"
         "依赖当前页、登录态或内网状态时不得静默切换，应提示用户连接扩展。"
     )
