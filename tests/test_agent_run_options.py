@@ -84,6 +84,8 @@ async def test_agent_run_events_forwards_host_run_options(
         llm=host_llm,
         session_id="host-session",
         memory_turn_id="turn-1",
+        turn_id="turn-1",
+        title="Quarterly review",
         max_tool_calls=9,
         no_progress_limit=2,
         artifact_root_dir=artifact_root,
@@ -98,6 +100,8 @@ async def test_agent_run_events_forwards_host_run_options(
     assert captured["llm"] is host_llm
     assert captured["session_id"] == "host-session"
     assert captured["memory_turn_id"] == "turn-1"
+    assert captured["turn_id"] == "turn-1"
+    assert captured["title"] == "Quarterly review"
     assert captured["max_tool_calls"] == 9
     assert captured["no_progress_limit"] == 2
     assert captured["artifact_root_dir"] == artifact_root

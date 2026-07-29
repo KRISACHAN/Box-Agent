@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
@@ -117,6 +119,29 @@ _NON_NATIVE_IMAGE_DELIVERY_KEYWORDS: Final[tuple[str, ...]] = (
     "报告",
 )
 
+_HOST_EXECUTION_CONTRACT_RE: Final[re.Pattern[str]] = re.compile(
+    r"<host_execution_contract\b(?P<attributes>[^>]*)>",
+    re.IGNORECASE,
+)
+_HOST_ACCEPTANCE_CRITERIA_COUNT_RE: Final[re.Pattern[str]] = re.compile(
+    r"""\bacceptance_criteria_count\s*=\s*["'](?P<count>\d+)["']""",
+    re.IGNORECASE,
+)
+
+
+def _host_execution_contract(user_text: str) -> tuple[bool, int | None]:
+    matches = list(_HOST_EXECUTION_CONTRACT_RE.finditer(user_text))
+    if not matches:
+        return False, None
+    match = matches[-1]
+    count_match = _HOST_ACCEPTANCE_CRITERIA_COUNT_RE.search(
+        match.group("attributes")
+    )
+    if count_match is None:
+        return True, None
+    count = int(count_match.group("count"))
+    return True, count if 1 <= count <= 50 else None
+
 
 def _is_native_image_generation_request(
     text: str,
@@ -171,7 +196,10 @@ def build_auto_completion_gate(
     workspace_dir: str | Path,
 ) -> CompletionGate | None:
     """Create an evidence-backed gate for a recognized deliverable request."""
-    if not has_deliverable_intent(user_text):
+    requires_host_receipt, execution_result_criteria_count = (
+        _host_execution_contract(user_text)
+    )
+    if not has_deliverable_intent(user_text) and not requires_host_receipt:
         return None
 
     presentation_gate = build_presentation_completion_gate(
@@ -179,7 +207,16 @@ def build_auto_completion_gate(
         workspace_dir,
     )
     if presentation_gate is not None:
-        return presentation_gate
+        if not requires_host_receipt:
+            return presentation_gate
+        return replace(
+            presentation_gate,
+            required_tools=(
+                presentation_gate.required_tools
+                | frozenset({"report_execution_result"})
+            ),
+            execution_result_criteria_count=execution_result_criteria_count,
+        )
 
     text = user_text.strip().lower()
     positive_format_text = strip_negated_format_clauses(text)
@@ -194,17 +231,33 @@ def build_auto_completion_gate(
         for keywords, artifact_patterns in _GENERIC_COMPLETION_GATE_PATTERNS:
             if any(keyword in positive_format_text for keyword in keywords):
                 patterns.extend(artifact_patterns)
+    required_tools = (
+        frozenset({"report_execution_result"})
+        if requires_host_receipt
+        else frozenset()
+    )
     if not patterns:
-        return None
+        if not required_tools:
+            return None
+        return CompletionGate(
+            required_tools=required_tools,
+            execution_result_criteria_count=execution_result_criteria_count,
+            max_continuations=3,
+            deadline_seconds=900.0,
+        )
 
     deduped_patterns = tuple(dict.fromkeys(patterns))
     workspace = str(workspace_dir)
     return CompletionGate(
         required_tools=(
-            frozenset({"generate_image"})
-            if native_image_generation
-            else frozenset()
+            (
+                frozenset({"generate_image"})
+                if native_image_generation
+                else frozenset()
+            )
+            | required_tools
         ),
+        execution_result_criteria_count=execution_result_criteria_count,
         restrict_tools_until_required_succeed=native_image_generation,
         required_changed_artifact_globs=deduped_patterns,
         baseline_artifact_signatures=artifact_signatures_for_globs(

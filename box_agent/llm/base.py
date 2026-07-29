@@ -55,7 +55,10 @@ class LLMClientBase(ABC):
         # Callback for tracking retry count
         self.retry_callback = None
 
-    def _auth_headers(self, existing: dict[str, str] | None = None) -> dict[str, str]:
+    def _auth_headers(
+        self,
+        existing: dict[str, str | bytes] | None = None,
+    ) -> dict[str, str | bytes]:
         """Read current login auth and return request headers."""
         headers = dict(existing or {})
         if self.api_key.strip() not in HOSTED_AUTH_API_KEY_PLACEHOLDERS:
@@ -69,17 +72,27 @@ class LLMClientBase(ABC):
         )
 
     @staticmethod
-    def _session_header(session_id: str = "") -> dict[str, str]:
-        """Return the per-request session header for upstream trace correlation.
+    def _agent_headers(
+        session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
+    ) -> dict[str, str | bytes]:
+        """Return non-empty agent correlation headers for one LLM request."""
+        values = (
+            ("X-RACCOON-Session-ID", session_id),
+            ("X-RACCOON-Turn-ID", turn_id),
+            ("X-RACCOON-Title", title),
+        )
+        return {
+            header: cleaned if cleaned.isascii() else cleaned.encode("utf-8")
+            for header, value in values
+            if (cleaned := (value or "").strip())
+        }
 
-        When ``session_id`` is a non-empty string, emit ``X-RACCOON-Session-ID``
-        so the gateway can attach the request to a caller-owned Langfuse session.
-        An empty value yields an empty dict, so the gateway falls back to its
-        default session-creation rule. The value is forwarded verbatim — the
-        client never generates or rewrites it.
-        """
-        sid = (session_id or "").strip()
-        return {"X-RACCOON-Session-ID": sid} if sid else {}
+    @staticmethod
+    def _session_header(session_id: str = "") -> dict[str, str | bytes]:
+        """Backward-compatible helper for callers that only have a session id."""
+        return LLMClientBase._agent_headers(session_id=session_id)
 
     @abstractmethod
     async def generate(
@@ -89,6 +102,8 @@ class LLMClientBase(ABC):
         *,
         thinking_enabled: bool = False,
         session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
     ) -> LLMResponse:
         """Generate response from LLM.
 
@@ -99,10 +114,10 @@ class LLMClientBase(ABC):
                 provider (Anthropic native, or Qwen-style ``enable_thinking``
                 for OpenAI-compatible endpoints). Silent no-op for providers
                 that don't support it.
-            session_id: Optional caller-owned session id. When non-empty, sent
-                as the ``X-RACCOON-Session-ID`` header so the gateway groups the
-                request under that Langfuse session; empty falls back to the
-                gateway default.
+            session_id: Optional caller-owned session id.
+            turn_id: Optional caller-owned turn id.
+            title: Optional trace title. Non-ASCII values are emitted as UTF-8
+                header bytes so localized titles remain valid.
 
         Returns:
             LLMResponse containing the generated content, thinking, and tool calls
@@ -117,6 +132,8 @@ class LLMClientBase(ABC):
         *,
         thinking_enabled: bool = False,
         session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from LLM.
 
@@ -128,6 +145,8 @@ class LLMClientBase(ABC):
             tools: Optional list of Tool objects or dicts
             thinking_enabled: See ``generate()``.
             session_id: See ``generate()``.
+            turn_id: See ``generate()``.
+            title: See ``generate()``.
 
         Yields:
             StreamEvent chunks

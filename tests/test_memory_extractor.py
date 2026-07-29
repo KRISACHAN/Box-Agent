@@ -68,6 +68,7 @@ async def test_extract_threads_session_id(mgr: MemoryManager):
         llm=llm,
         memory_manager=mgr,
         session_id="office-session-1",
+        turn_id="office-turn-1",
     )
 
     result = await extractor.maybe_extract(
@@ -77,6 +78,7 @@ async def test_extract_threads_session_id(mgr: MemoryManager):
 
     assert result is True
     assert llm.generate.await_args.kwargs["session_id"] == "office-session-1"
+    assert llm.generate.await_args.kwargs["turn_id"] == "office-turn-1"
 
 
 async def test_extract_additions_stamp_session_turn_and_trigger(mgr: MemoryManager):

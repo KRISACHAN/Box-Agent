@@ -111,6 +111,8 @@ class LLMClient:
         *,
         thinking_enabled: bool = False,
         session_id: str = "",
+        turn_id: str = "",
+        title: str = "Box-Agent",
     ) -> LLMResponse:
         """Generate response from LLM.
 
@@ -118,14 +120,20 @@ class LLMClient:
             messages: List of conversation messages
             tools: Optional list of Tool objects or dicts
             thinking_enabled: Enable provider-native extended thinking.
-            session_id: Optional caller-owned session id forwarded as the
-                ``X-RACCOON-Session-ID`` header (empty = gateway default).
+            session_id: Optional caller-owned session id.
+            turn_id: Optional caller-owned turn id.
+            title: Optional trace title.
 
         Returns:
             LLMResponse containing the generated content
         """
         response = await self._client.generate(
-            messages, tools, thinking_enabled=thinking_enabled, session_id=session_id
+            messages,
+            tools,
+            thinking_enabled=thinking_enabled,
+            session_id=session_id,
+            turn_id=turn_id,
+            title=title,
         )
         record_usage(response.usage)
         if response.content and "<think>" in response.content:
@@ -142,6 +150,8 @@ class LLMClient:
         *,
         thinking_enabled: bool = False,
         session_id: str = "",
+        turn_id: str = "",
+        title: str = "Box-Agent",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from LLM.
 
@@ -152,14 +162,20 @@ class LLMClient:
             messages: List of conversation messages
             tools: Optional list of Tool objects or dicts
             thinking_enabled: Enable provider-native extended thinking.
-            session_id: Optional caller-owned session id forwarded as the
-                ``X-RACCOON-Session-ID`` header (empty = gateway default).
+            session_id: Optional caller-owned session id.
+            turn_id: Optional caller-owned turn id.
+            title: Optional trace title.
 
         Yields:
             StreamEvent chunks
         """
         upstream = self._client.generate_stream(
-            messages, tools, thinking_enabled=thinking_enabled, session_id=session_id
+            messages,
+            tools,
+            thinking_enabled=thinking_enabled,
+            session_id=session_id,
+            turn_id=turn_id,
+            title=title,
         )
         async for event in unwrap_think_tags(upstream):
             if event.type == "finish":

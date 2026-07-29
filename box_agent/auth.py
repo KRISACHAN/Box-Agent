@@ -77,9 +77,9 @@ def resolve_auth_token(
 
 def bearer_auth_headers(
     token: str | None,
-    existing: Mapping[str, str] | None = None,
+    existing: Mapping[str, str | bytes] | None = None,
     url: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | bytes]:
     """Return headers with ``Authorization: Bearer <token>`` when safe.
 
     Existing Authorization headers are preserved so user-configured provider
@@ -117,8 +117,8 @@ def should_attach_auth_header(url: str) -> bool:
 def request_auth_headers(
     auth_file: str | Path | None = None,
     explicit_token: str | None = None,
-    existing: Mapping[str, str] | None = None,
+    existing: Mapping[str, str | bytes] | None = None,
     url: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | bytes]:
     """Return request headers after reading the current auth token."""
     return bearer_auth_headers(resolve_auth_token(explicit_token, auth_file), existing, url=url)

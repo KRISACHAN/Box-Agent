@@ -14,16 +14,32 @@ Recommended host layout:
 
 Box-Agent emits per-user-turn usage snapshots as `update_tool_call.rawOutput.type === "turn_usage"`. A turn is one user-visible prompt/response loop, not one model call. Tool calls, retries, summarization, and auto-continuations within that loop should be aggregated under the same turn id.
 
-Hosts should pass the business conversation id on `session/new._meta.session_id` and the business turn id on every `session/prompt._meta.turnId` (or `_meta.turn_id`):
+Hosts should pass the business conversation id and optional display title on
+`session/new._meta`, and the business turn id on every `session/prompt._meta.turnId`
+(or `_meta.turn_id`):
 
 ```json
 {
   "_meta": {
     "session_id": "chat-a",
+    "title": "季度复盘"
+  }
+}
+```
+
+```json
+{
+  "_meta": {
     "turnId": "chat-a-turn-17"
   }
 }
 ```
+
+Box-Agent forwards these values on every model request as
+`X-RACCOON-Session-ID`, `X-RACCOON-Turn-ID`, and `X-RACCOON-Title`. A prompt
+may override the cached title with `_meta.title`, `_meta.session_title`, or
+`_meta.sessionTitle`. If no title is provided, the title defaults to
+`Box-Agent`. Empty session or turn ids are omitted.
 
 The stream payload includes both the host-facing ids and the ACP-local session id:
 

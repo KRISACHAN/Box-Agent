@@ -159,6 +159,7 @@ from .debug_logger import acp_logger as log
 
 # Keep stdlib logger for backward compat with existing log calls
 logger = logging.getLogger(__name__)
+_DEFAULT_AGENT_TITLE = "Box-Agent"
 
 try:
     class InitializeRequestPatch(InitializeRequest):
@@ -692,7 +693,8 @@ class SessionState:
     skill_loader: Any | None = None  # session-local loader for expert-only recommended skills
     skill_selector: Any | None = None  # SkillSelector — filters skill metadata per turn
     expert_context: ExpertSessionContext | None = None
-    upstream_session_id: str = ""  # caller-owned session id from _meta.session_id; forwarded as X-RACCOON-Session-ID
+    upstream_session_id: str = ""  # caller-owned session id from _meta.session_id
+    upstream_title: str = _DEFAULT_AGENT_TITLE
     force_plan_start: bool = False  # host-controlled deterministic plan skeleton toggle
     require_plan_approval: bool = False  # host requires approval after plan_write before execution
     pending_plan_approval: dict[str, Any] | None = None
@@ -1014,6 +1016,7 @@ class BoxACPAgent:
         env_context: EnvContext | None = None
         expert_context: ExpertSessionContext | None = None
         upstream_session_id = ""
+        upstream_title = _DEFAULT_AGENT_TITLE
         force_plan_start = False
         require_plan_approval = False
         artifact_mode = "output"
@@ -1044,13 +1047,16 @@ class BoxACPAgent:
             )
             env_context = EnvContext.from_meta(meta.get("env_context"))
             expert_context = ExpertSessionContext.from_meta(meta)
-            # Caller-owned session id (e.g. officev3 chat session id). Forwarded
-            # verbatim as X-RACCOON-Session-ID so the gateway groups LLM calls
-            # under that Langfuse session. Distinct from the ACP `session_id`
-            # above (``sess-N-xxxx``), which is our own per-connection handle.
+            # Caller-owned correlation metadata forwarded to the LLM gateway.
+            # This session id is distinct from the ACP `session_id` above
+            # (``sess-N-xxxx``), which is our own per-connection handle.
             raw_upstream = meta.get("session_id")
             if isinstance(raw_upstream, str):
                 upstream_session_id = raw_upstream.strip()
+            upstream_title = (
+                _meta_string(meta, "title", "session_title", "sessionTitle")
+                or _DEFAULT_AGENT_TITLE
+            )
 
         # Canonical artifact directory is only part of output mode. Existing
         # project workspaces are edited in place and must not get an implicit
@@ -1285,6 +1291,7 @@ class BoxACPAgent:
             skill_loader=session_skill_loader,
             expert_context=expert_context,
             upstream_session_id=upstream_session_id,
+            upstream_title=upstream_title,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             preloaded_skill_hashes=preloaded_skill_hashes,
@@ -1507,6 +1514,14 @@ class BoxACPAgent:
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")
         turn_id = provided_turn_id or f"{session_id}-turn-{state.turn_counter}"
+        provided_title = _meta_string(
+            prompt_meta,
+            "title",
+            "session_title",
+            "sessionTitle",
+        )
+        if provided_title:
+            state.upstream_title = provided_title
         billing_session_id = state.upstream_session_id or session_id
         state.current_turn_id = turn_id
         if state.memory_extractor is not None and hasattr(state.memory_extractor, "set_turn_id"):
@@ -1575,6 +1590,7 @@ class BoxACPAgent:
             upstream_session_id=state.upstream_session_id,
             turn_id=turn_id,
             turn_id_source="host" if provided_turn_id else "fallback",
+            title=state.upstream_title,
             plan_detection_text=plan_detection_text[:500],
             host_plan_hint=host_plan_hint,
             force_plan_start=force_plan_start,
@@ -1620,14 +1636,30 @@ class BoxACPAgent:
             except Exception as exc:
                 log.warn("skills/filter_error", session_id=session_id, message=str(exc))
 
-        fresh_completion_gate = (
-            None
-            if state.artifact_mode == "project"
-            else build_auto_completion_gate(
-                plan_detection_text,
-                state.agent.workspace_dir,
-            )
+        detected_completion_gate = build_auto_completion_gate(
+            plan_detection_text,
+            state.agent.workspace_dir,
         )
+        if (
+            state.artifact_mode == "project"
+            and detected_completion_gate is not None
+            and "report_execution_result"
+            in detected_completion_gate.required_tools
+        ):
+            fresh_completion_gate = CompletionGate(
+                required_tools=frozenset({"report_execution_result"}),
+                execution_result_criteria_count=(
+                    detected_completion_gate.execution_result_criteria_count
+                ),
+                max_continuations=3,
+                deadline_seconds=900.0,
+            )
+        else:
+            fresh_completion_gate = (
+                None
+                if state.artifact_mode == "project"
+                else detected_completion_gate
+            )
         resume_pending_gate = (
             state.pending_completion_gate is not None
             and should_resume_pending_completion_gate(
@@ -2105,6 +2137,11 @@ class BoxACPAgent:
         purpose = meta.get("purpose") or params.get("purpose") or ""
         raw_session_id = meta.get("session_id")
         session_id = raw_session_id.strip() if isinstance(raw_session_id, str) else ""
+        turn_id = _meta_string(meta, "turn_id", "turnId")
+        title = (
+            _meta_string(meta, "title", "session_title", "sessionTitle")
+            or _DEFAULT_AGENT_TITLE
+        )
         workspace_label = params.get("workspaceLabel") or ""
 
         if not isinstance(prompt, str) or not prompt.strip():
@@ -2127,6 +2164,8 @@ class BoxACPAgent:
                 prompt,
                 system_prompt=system_prompt,
                 session_id=session_id,
+                turn_id=turn_id,
+                title=title,
                 timeout=timeout,
             )
         except LightweightInvalidArgs as exc:
@@ -2754,6 +2793,8 @@ class BoxACPAgent:
             memory_turn_id=turn_id,
             inject_queue=state.inject_queue,
             session_id=state.upstream_session_id,
+            turn_id=turn_id,
+            title=state.upstream_title,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
             plan_approval=plan_approval,

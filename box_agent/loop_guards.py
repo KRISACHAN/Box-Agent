@@ -340,6 +340,10 @@ class CompletionGate:
     # Tools that must each have produced at least one successful, non-empty
     # result before END_TURN is allowed.
     required_tools: frozenset[str] = field(default_factory=frozenset)
+    # When a host-bound ``report_execution_result`` declares completed work,
+    # require exact zero-based coverage of this many acceptance criteria
+    # before treating the tool as satisfying ``required_tools``.
+    execution_result_criteria_count: int | None = None
     # When true, expose only still-required tools to the model until they have
     # succeeded.  This is intentionally narrower than the completion check:
     # it prevents an alternate implementation path from taking over before a
@@ -459,6 +463,35 @@ def completion_gate_gaps(
             f"（匹配：{patterns}，且 JSON `ok` 必须为 true）"
         )
     return gaps
+
+
+def completion_gate_tool_satisfies_requirements(
+    gate: CompletionGate,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> bool:
+    """Return whether a successful tool call satisfies host-bound gate facts."""
+    expected_count = gate.execution_result_criteria_count
+    if tool_name != "report_execution_result" or expected_count is None:
+        return True
+    if arguments.get("outcome") != "completed":
+        return True
+    evaluations = arguments.get("criteria_evaluations")
+    if not isinstance(evaluations, list) or len(evaluations) != expected_count:
+        return False
+    indices = [
+        evaluation.get("criterion_index")
+        for evaluation in evaluations
+        if isinstance(evaluation, dict)
+    ]
+    return (
+        len(indices) == expected_count
+        and all(
+            isinstance(index, int) and not isinstance(index, bool)
+            for index in indices
+        )
+        and set(indices) == set(range(expected_count))
+    )
 
 
 def artifact_signatures_for_globs(

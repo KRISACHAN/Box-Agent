@@ -39,7 +39,14 @@ class _FakeLLM:
         self.calls: list[dict[str, Any]] = []
 
     async def generate(
-        self, messages, tools=None, *, thinking_enabled: bool = False, session_id: str = ""
+        self,
+        messages,
+        tools=None,
+        *,
+        thinking_enabled: bool = False,
+        session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
     ) -> LLMResponse:
         self.calls.append(
             {
@@ -47,6 +54,8 @@ class _FakeLLM:
                 "tools": tools,
                 "thinking_enabled": thinking_enabled,
                 "session_id": session_id,
+                "turn_id": turn_id,
+                "title": title,
             }
         )
         if self._delay:

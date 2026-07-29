@@ -95,6 +95,20 @@ class DummyLLM:
             yield StreamEvent(type="finish", finish_reason="stop")
 
 
+class CorrelationCaptureLLM:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def generate(self, messages, tools=None, **kwargs):
+        self.calls.append({"mode": "generate", **kwargs})
+        return LLMResponse(content="done", finish_reason="stop")
+
+    async def generate_stream(self, messages, tools=None, **kwargs):
+        self.calls.append({"mode": "stream", **kwargs})
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+
 @pytest.mark.asyncio
 async def test_acp_exposes_loading_then_ready_capability_state(tmp_path):
     gate = asyncio.Event()
@@ -1334,6 +1348,57 @@ async def test_acp_emits_turn_usage_for_tools_mcp_and_tokens(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_threads_session_turn_and_title_to_llm(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=3,
+            workspace_dir=str(tmp_path),
+            enable_memory_extraction=False,
+        ),
+        tools=ToolsConfig(enable_todo=False, enable_sub_agent=False),
+    )
+    llm = CorrelationCaptureLLM()
+    agent = BoxACPAgent(DummyConn(), config, llm, [], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=None,
+            field_meta={
+                "session_mode": "general",
+                "session_id": "office-session-a",
+                "title": "Quarterly review",
+            },
+        )
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "summarize"}],
+            field_meta={"turnId": "office-turn-1"},
+        )
+    )
+
+    stream_calls = [call for call in llm.calls if call["mode"] == "stream"]
+    assert stream_calls[0]["session_id"] == "office-session-a"
+    assert stream_calls[0]["turn_id"] == "office-turn-1"
+    assert stream_calls[0]["title"] == "Quarterly review"
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "continue"}],
+            field_meta={"sessionTitle": "Updated review"},
+        )
+    )
+
+    stream_calls = [call for call in llm.calls if call["mode"] == "stream"]
+    assert stream_calls[1]["session_id"] == "office-session-a"
+    assert stream_calls[1]["turn_id"] == f"{session.sessionId}-turn-2"
+    assert stream_calls[1]["title"] == "Updated review"
+
+
+@pytest.mark.asyncio
 async def test_acp_goal_ext_method_injects_active_goal_into_prompt(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
@@ -1643,6 +1708,48 @@ async def test_acp_project_artifact_mode_does_not_create_output(tmp_path):
     assert "当前工作区/代码项目根目录" in state.agent.system_prompt
     assert "{SANDBOX_INFO}" not in state.agent.system_prompt
     assert session.field_meta["artifact_mode"] == "project"
+
+
+@pytest.mark.asyncio
+async def test_acp_project_artifact_mode_keeps_host_execution_gate(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"artifact_mode": "project"})
+    )
+    captured: dict[str, object] = {}
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured["gate"] = kwargs.get("completion_gate")
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[
+                {
+                    "text": (
+                        "用户问题：Implement the assigned code task.\n"
+                        '<host_execution_contract acceptance_criteria_count="2">\n'
+                        "Report every criterion before ending.\n"
+                        "</host_execution_contract>"
+                    )
+                }
+            ],
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    gate = captured["gate"]
+    assert isinstance(gate, CompletionGate)
+    assert "report_execution_result" in gate.required_tools
+    assert gate.execution_result_criteria_count == 2
 
 
 @pytest.mark.asyncio

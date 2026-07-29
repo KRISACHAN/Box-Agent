@@ -2378,6 +2378,7 @@ class MemoryExtractor:
                 Msg(role="user", content=prompt),
             ],
             session_id=self._session_id,
+            turn_id=turn_id,
         )
 
         await asyncio.to_thread(

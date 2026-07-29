@@ -73,6 +73,8 @@ class AgentRunOptions:
     memory_turn_id: str = ""
     inject_queue: asyncio.Queue[str] | None = None
     session_id: str = ""
+    turn_id: str = ""
+    title: str = ""
     force_plan_start: bool = False
     require_plan_approval: bool = False
     plan_approval: dict[str, Any] | None = None
@@ -856,6 +858,8 @@ class Agent:
             inject_queue=effective_options.inject_queue,
             thinking_enabled=self.thinking_enabled,
             session_id=effective_options.session_id,
+            turn_id=effective_options.turn_id,
+            title=effective_options.title,
             max_parallel_tools=self.max_parallel_tools,
             parallel_tool_timeout_seconds=self.parallel_tool_timeout_seconds,
             force_plan_start=effective_options.force_plan_start,

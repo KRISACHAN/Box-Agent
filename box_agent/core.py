@@ -82,6 +82,7 @@ from .loop_guards import (
     CompletionGate,
     completion_budget_reserve_text,
     completion_gate_gaps,
+    completion_gate_tool_satisfies_requirements,
     completion_gate_text,
     format_injected_message,
     looks_like_truncated_output,
@@ -1132,6 +1133,8 @@ async def _create_summary(
     messages: list[Message],
     round_num: int,
     session_id: str = "",
+    turn_id: str = "",
+    title: str = "",
 ) -> str:
     """Summarize a bounded history segment via exactly one LLM call."""
     if not messages:
@@ -1156,6 +1159,8 @@ async def _create_summary(
         tools=None,
         thinking_enabled=False,
         session_id=session_id,
+        turn_id=turn_id,
+        title=title,
     )
     return response.content[:_LOCAL_FALLBACK_CHAR_LIMIT]
 
@@ -1218,6 +1223,8 @@ async def _maybe_summarize(
     skip_check: bool,
     session_id: str = "",
     *,
+    turn_id: str = "",
+    title: str = "",
     api_prompt_tokens: int | None = None,
     tools: dict[str, Tool] | None = None,
     allow_llm_summary: bool = True,
@@ -1277,7 +1284,14 @@ async def _maybe_summarize(
         if not allow_llm_summary:
             raise RuntimeError("LLM summary disabled")
         summary_calls = 1
-        summary = await _create_summary(llm, source, 1, session_id=session_id)
+        summary = await _create_summary(
+            llm,
+            source,
+            1,
+            session_id=session_id,
+            turn_id=turn_id,
+            title=title,
+        )
         if not summary.strip():
             raise RuntimeError("summary provider returned empty content")
     except Exception as exc:
@@ -1916,6 +1930,8 @@ async def run_agent_loop(
     inject_queue: asyncio.Queue[str] | None = None,
     thinking_enabled: bool = False,
     session_id: str = "",
+    turn_id: str = "",
+    title: str = "",
     force_plan_start: bool = False,
     require_plan_approval: bool = False,
     plan_approval: dict[str, Any] | None = None,
@@ -2452,6 +2468,8 @@ async def run_agent_loop(
             api_total_tokens,
             False,
             session_id=session_id,
+            turn_id=turn_id,
+            title=title,
             api_prompt_tokens=api_prompt_tokens,
             tools=tools,
             allow_llm_summary=summary_failure_cooldown_steps == 0,
@@ -2623,6 +2641,8 @@ async def run_agent_loop(
             llm_stream = llm.generate_stream(
                 messages=messages, tools=tool_list, thinking_enabled=thinking_enabled,
                 session_id=session_id,
+                turn_id=turn_id,
+                title=title,
             )
             async for chunk in llm_stream:
                 if cancelled():
@@ -3689,7 +3709,15 @@ async def run_agent_loop(
             # call with non-empty content counts as making progress.
             if result.success and (result.content or "").strip():
                 step_made_progress = True
-                succeeded_tools.add(fn_name)
+                if (
+                    completion_gate is None
+                    or completion_gate_tool_satisfies_requirements(
+                        completion_gate,
+                        fn_name,
+                        fn_args,
+                    )
+                ):
+                    succeeded_tools.add(fn_name)
 
             # Hook: tool result (interceptor — may modify content/error)
             tc_content = result.content
@@ -4150,7 +4178,15 @@ async def run_agent_loop(
                 # Progress signal for the no-progress breaker.
                 if result.success and (result.content or "").strip():
                     step_made_progress = True
-                    succeeded_tools.add(fn_name)
+                    if (
+                        completion_gate is None
+                        or completion_gate_tool_satisfies_requirements(
+                            completion_gate,
+                            fn_name,
+                            par_fn_args,
+                        )
+                    ):
+                        succeeded_tools.add(fn_name)
 
                 # Hook: tool result (interceptor)
                 par_content = result.content

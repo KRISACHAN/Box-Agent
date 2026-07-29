@@ -86,6 +86,8 @@ class AnthropicClient(LLMClientBase):
         *,
         thinking_enabled: bool = False,
         session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
     ) -> anthropic.types.Message:
         """Execute API request (core method that can be retried).
 
@@ -118,7 +120,9 @@ class AnthropicClient(LLMClientBase):
         if thinking_enabled:
             params["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET}
 
-        auth_headers = self._auth_headers(self._session_header(session_id))
+        auth_headers = self._auth_headers(
+            self._agent_headers(session_id, turn_id, title)
+        )
         if auth_headers:
             params["extra_headers"] = auth_headers
 
@@ -327,6 +331,8 @@ class AnthropicClient(LLMClientBase):
         *,
         thinking_enabled: bool = False,
         session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
     ) -> LLMResponse:
         """Generate response from Anthropic LLM.
 
@@ -334,8 +340,9 @@ class AnthropicClient(LLMClientBase):
             messages: List of conversation messages
             tools: Optional list of available tools
             thinking_enabled: Enable Anthropic extended thinking.
-            session_id: Optional caller-owned session id forwarded as the
-                ``X-RACCOON-Session-ID`` header (empty = gateway default).
+            session_id: Optional caller-owned session id.
+            turn_id: Optional caller-owned turn id.
+            title: Optional trace title.
 
         Returns:
             LLMResponse containing the generated content
@@ -358,6 +365,8 @@ class AnthropicClient(LLMClientBase):
                 request_params["tools"],
                 thinking_enabled=thinking_enabled,
                 session_id=session_id,
+                turn_id=turn_id,
+                title=title,
             )
         else:
             # Don't use retry
@@ -367,6 +376,8 @@ class AnthropicClient(LLMClientBase):
                 request_params["tools"],
                 thinking_enabled=thinking_enabled,
                 session_id=session_id,
+                turn_id=turn_id,
+                title=title,
             )
 
         # Parse and return response
@@ -379,6 +390,8 @@ class AnthropicClient(LLMClientBase):
         *,
         thinking_enabled: bool = False,
         session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from Anthropic LLM.
 
@@ -400,7 +413,9 @@ class AnthropicClient(LLMClientBase):
         if thinking_enabled:
             params["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET}
 
-        auth_headers = self._auth_headers(self._session_header(session_id))
+        auth_headers = self._auth_headers(
+            self._agent_headers(session_id, turn_id, title)
+        )
         if auth_headers:
             params["extra_headers"] = auth_headers
 
