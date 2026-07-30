@@ -2010,6 +2010,213 @@ def test_scaffold_rejects_outline_count_and_normalizes_qualitative_quantitative_
     ]
 
 
+def test_market_size_chart_scaffold_respects_illustrative_authorization(
+    tmp_path: Path,
+) -> None:
+    outline = {
+        "deck_goal": "完成 AI 质检与智能排产平台融资沟通",
+        "audience": "一线 VC 投资人",
+        "source_mode": "user_provided",
+        "storyline": "从产品切入点进入市场扩展空间。",
+        "slides": [
+            {
+                "page": 1,
+                "title": "市场规模：以中小制造工厂软件化改造为切入口",
+                "message": (
+                    "市场规模页用示意假设展示 TAM/SAM/SOM 逻辑，帮助投资人"
+                    "理解从质检与排产切入到工厂级运营平台的扩展空间。"
+                ),
+                "bullets": [
+                    (
+                        "市场规模图使用示意假设：目标可服务市场按中小制造工厂"
+                        "软件与 AI 改造支出分层估算。"
+                    ),
+                    "切入市场：优先服务有高频质检与排产需求的离散制造工厂。",
+                    "正式融资材料建议补充第三方市场报告或客户池测算。",
+                ],
+                "layout": "market-sizing-chart",
+                "visual": (
+                    "市场规模图：TAM/SAM/SOM 漏斗或分层柱状图；金额使用示意"
+                    "假设，并在备注标明“示意 / 假设”。"
+                ),
+                "evidence": [
+                    (
+                        "用户要求：具体市场金额未提供，使用合理假设并标明"
+                        "“示意 / 假设”。"
+                    )
+                ],
+            }
+        ],
+    }
+
+    safe_dir = tmp_path / "safe"
+    safe_dir.mkdir()
+    safe_outline = safe_dir / "outline.json"
+    safe_outline.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    safe_scaffold = _run(
+        "inspect_deck_contract.js",
+        "chart-bar-v1",
+        "--outline",
+        str(safe_outline),
+        "--out",
+        str(safe_dir / "deck.json"),
+    )
+
+    assert safe_scaffold.returncode == 0, safe_scaffold.stdout + safe_scaffold.stderr
+    safe_payload = json.loads(safe_scaffold.stdout)
+    assert safe_payload["deck_skeleton"]["slides"][0]["layout_id"] == "cards-grid-v1"
+    assert safe_payload["layout_normalizations"] == [
+        {
+            "slide": 1,
+            "from": "chart-bar-v1",
+            "to": "cards-grid-v1",
+            "reason": (
+                "outline names a quantitative visual without quantitative evidence "
+                "or an authorized illustrative assumption, so preserve the qualitative "
+                "argument in editable cards instead of inventing values"
+            ),
+        }
+    ]
+
+    authorized_dir = tmp_path / "authorized"
+    authorized_dir.mkdir()
+    authorized_outline = authorized_dir / "outline.json"
+    authorized_outline.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    source_text = (
+        "制作市场规模页。未提供的具体数据请使用合理假设数据，"
+        "并在备注中标明为示意 / 假设。"
+    )
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        source_text.encode("utf-8")
+    ).decode("ascii")
+    authorized_deck = authorized_dir / "deck.json"
+    authorized_scaffold = _run(
+        "inspect_deck_contract.js",
+        "chart-bar-v1",
+        "--outline",
+        str(authorized_outline),
+        "--assumption",
+        "市场规模示意假设：TAM 100 亿元、SAM 30 亿元、SOM 5 亿元",
+        "--out",
+        str(authorized_deck),
+        env=env,
+    )
+
+    assert (
+        authorized_scaffold.returncode == 0
+    ), authorized_scaffold.stdout + authorized_scaffold.stderr
+    authorized_payload = json.loads(authorized_scaffold.stdout)
+    assert (
+        authorized_payload["deck_skeleton"]["slides"][0]["layout_id"]
+        == "chart-bar-v1"
+    )
+    assert authorized_payload.get("layout_normalizations", []) == []
+
+    deck = json.loads(authorized_deck.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "市场空间",
+            "title": outline["slides"][0]["title"],
+            "subtitle": outline["slides"][0]["message"],
+            "series_label": "示意规模",
+            "items": [
+                {"label": "TAM", "value": "100 亿元", "note": "总目标市场"},
+                {"label": "SAM", "value": "30 亿元", "note": "可服务市场"},
+                {"label": "SOM", "value": "5 亿元", "note": "近期可获得市场"},
+            ],
+            "insight": outline["slides"][0]["bullets"][0],
+            "source": "示意 / 假设，正式材料需替换为可验证市场数据",
+        }
+    )
+    authorized_deck.write_text(
+        json.dumps(deck, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    spec_check = _run("validate_deck_spec.js", str(authorized_deck))
+
+    assert spec_check.returncode == 0, spec_check.stdout + spec_check.stderr
+
+    illustrative_dir = tmp_path / "illustrative"
+    illustrative_dir.mkdir()
+    illustrative_outline = illustrative_dir / "outline.json"
+    illustrative_outline.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    illustrative_scaffold = _run(
+        "inspect_deck_contract.js",
+        "chart-bar-v1",
+        "--truth-mode",
+        "illustrative",
+        "--outline",
+        str(illustrative_outline),
+        "--out",
+        str(illustrative_dir / "deck.json"),
+    )
+
+    assert (
+        illustrative_scaffold.returncode == 0
+    ), illustrative_scaffold.stdout + illustrative_scaffold.stderr
+    assert (
+        json.loads(illustrative_scaffold.stdout)["deck_skeleton"]["slides"][0][
+            "layout_id"
+        ]
+        == "chart-bar-v1"
+    )
+
+
+def test_market_size_chart_rejects_unauthorized_assumption(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "市场规模",
+            "message": "用 TAM/SAM/SOM 说明市场空间。",
+            "layout": "market-sizing-chart",
+            "visual": "TAM/SAM/SOM 分层柱状图",
+            "evidence": [],
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "制作市场规模页，不可以使用假设数据。".encode("utf-8")
+    ).decode("ascii")
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "chart-bar-v1",
+        "--outline",
+        str(outline_path),
+        "--assumption",
+        "TAM 100 亿元、SAM 30 亿元、SOM 5 亿元",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert "Assumption binding failed" in result.stderr
+    assert not deck_path.exists()
+
+
 def test_scaffold_recovers_architecture_integration_and_qualitative_dashboard(
     tmp_path: Path,
 ) -> None:
@@ -4900,6 +5107,235 @@ def test_authorized_assumptions_support_disclosed_percent_chart_data(
     assert any("visible 假设/示意 disclosure" in issue for issue in rejected_payload["issues"])
 
 
+def test_truth_validator_accepts_only_matching_zero_padded_structure_ordinals(
+    tmp_path: Path,
+) -> None:
+    source_text = "公司名为 ACME。"
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        source_text.encode("utf-8")
+    ).decode("ascii")
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "kpi-grid-v1",
+        "--fact",
+        "ACME",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "ACME",
+            "title": "ACME",
+            "subtitle": "产品介绍",
+            "meta": "",
+        }
+    )
+    deck["slides"][1]["props"].update(
+        {
+            "eyebrow": "01 痛点",
+            "title": "产品痛点",
+            "subtitle": "",
+            "items": [
+                {"kicker": "质量", "title": "检测", "body": "质量流程"},
+                {"kicker": "计划", "title": "排产", "body": "计划流程"},
+                {"kicker": "交付", "title": "履约", "body": "交付流程"},
+            ],
+        }
+    )
+    deck["slides"][2]["props"].update(
+        {
+            "eyebrow": "02 产品",
+            "title": "产品模块",
+            "subtitle": "",
+            "items": [
+                {"label": "检测", "value": "01", "detail": "", "delta": ""},
+                {"label": "排产", "value": "02", "detail": "", "delta": ""},
+                {"label": "预警", "value": "03", "detail": "", "delta": ""},
+            ],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    accepted = _run("validate_deck_truth.js", str(deck_path), env=env)
+
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+    deck["slides"][1]["props"]["eyebrow"] = "02 痛点"
+    deck["slides"][2]["props"]["items"][0]["value"] = "02"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    rejected = _run("validate_deck_truth.js", str(deck_path), env=env)
+
+    assert rejected.returncode == 1
+    issues = "\n".join(
+        json.loads(rejected.stdout.split("\nDeck truth validation:", 1)[0])["issues"]
+    )
+    assert "slides.slide-02.props.eyebrow" in issues
+    assert "slides.slide-03.props.items.0.value" in issues
+
+
+def test_truth_validator_accepts_disclosed_unenumerated_chart_assumptions(
+    tmp_path: Path,
+) -> None:
+    source_text = (
+        "公司名为 ACME。未提供的具体数据可以使用合理假设数据，"
+        "并标明为示意 / 假设。"
+    )
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        source_text.encode("utf-8")
+    ).decode("ascii")
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "chart-data-v1",
+        "chart-bar-v1",
+        "--fact",
+        "ACME",
+        "--assumption",
+        "市场规模、预测趋势与资金用途拆分均为示意 / 假设数据。",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "市场空间",
+            "title": "ACME 市场空间",
+            "subtitle": "预测数字仅作路演表达。",
+            "chart_type": "column",
+            "categories": ["2025Q1", "2030E"],
+            "series": [{"name": "2030E 预测", "values": ["90", "660"]}],
+            "highlights": [
+                {
+                    "value": "3个入口",
+                    "label": "2030E 合计空间",
+                    "note": "示意 / 假设",
+                }
+            ],
+            "source": "示意 / 假设数据",
+        }
+    )
+    deck["slides"][1]["props"].update(
+        {
+            "eyebrow": "资金用途",
+            "title": "ACME 资金用途",
+            "subtitle": "拆分比例仅作路演表达。",
+            "series_label": "2030E 计划",
+            "items": [
+                {"label": "研发 2026E", "value": "45", "note": "规划"},
+                {"label": "销售", "value": "35", "note": "规划"},
+                {"label": "交付", "value": "20", "note": "规划"},
+            ],
+            "source": "示意 / 假设数据",
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    result = _run("validate_deck_truth.js", str(deck_path), env=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_truth_validator_keeps_unenumerated_assumption_guardrails(
+    tmp_path: Path,
+) -> None:
+    source_text = (
+        "公司名为 ACME。未提供的具体数据可以使用合理假设数据，"
+        "并标明为示意 / 假设。"
+    )
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        source_text.encode("utf-8")
+    ).decode("ascii")
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "chart-data-v1",
+        "statement-focus-v1",
+        "--fact",
+        "ACME",
+        "--assumption",
+        "市场规模与预测趋势均为示意 / 假设数据。",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "市场空间",
+            "title": "ACME 市场空间",
+            "subtitle": "规划数据",
+            "chart_type": "column",
+            "categories": ["2025Q1", "2030E"],
+            "series": [{"name": "2030E 预测", "values": ["90", "660"]}],
+            "highlights": [],
+            "source": "内部规划",
+        }
+    )
+    deck["slides"][1]["props"].update(
+        {
+            "eyebrow": "长期目标",
+            "statement": "2030 年目标收入 660 亿元（示意 / 假设）",
+            "support": "示意 / 假设数据",
+            "proofs": [],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    without_disclosure = _run("validate_deck_truth.js", str(deck_path), env=env)
+
+    assert without_disclosure.returncode == 1
+    issues = "\n".join(
+        json.loads(
+            without_disclosure.stdout.split("\nDeck truth validation:", 1)[0]
+        )["issues"]
+    )
+    assert "slides.slide-01.props.categories.0" in issues
+    assert "slides.slide-02.props.statement" in issues
+
+    deck["slides"][0]["props"]["source"] = "示意 / 假设数据"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    authorized = _run("validate_deck_truth.js", str(deck_path), env=env)
+    authorized_issues = "\n".join(
+        json.loads(authorized.stdout.split("\nDeck truth validation:", 1)[0])["issues"]
+    )
+
+    assert authorized.returncode == 1
+    assert "slides.slide-01.props.categories.0" not in authorized_issues
+    assert "slides.slide-02.props.statement" in authorized_issues
+
+    unauthorized_env = os.environ.copy()
+    unauthorized_env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "公司名为 ACME。请制作一份介绍。".encode("utf-8")
+    ).decode("ascii")
+    unauthorized = _run(
+        "validate_deck_truth.js",
+        str(deck_path),
+        env=unauthorized_env,
+    )
+    unauthorized_issues = "\n".join(
+        json.loads(unauthorized.stdout.split("\nDeck truth validation:", 1)[0])["issues"]
+    )
+
+    assert unauthorized.returncode == 1
+    assert "truth_contract.assumptions requires explicit user permission" in unauthorized_issues
+    assert "slides.slide-01.props.categories.0" in unauthorized_issues
+
+
 @pytest.mark.parametrize(
     "source_text",
     [
@@ -4931,7 +5367,8 @@ def test_assumptions_require_unambiguous_user_permission(
 
     assert result.returncode == 1
     assert "Assumption binding failed" in result.stderr
-    assert "request_user_input" in result.stderr
+    assert "explicit placeholders without pausing" in result.stderr
+    assert "request_user_input" not in result.stderr
 
 
 def test_authorized_assumptions_cannot_be_smuggled_into_source_facts(
@@ -6516,12 +6953,15 @@ def test_pptx_solution_briefs_do_not_default_to_deep_research() -> None:
     assert "a concise proposal brief stays in branch 2" in outline
 
 
-def test_pptx_missing_required_input_resumes_existing_deck() -> None:
+def test_pptx_missing_facts_use_placeholders_without_pausing() -> None:
     text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "call `request_user_input` once with one focused question" in text
+    assert "Do not use `request_user_input` for a missing fact" in text
+    assert "Missing case metrics, quote amounts, contact names" in text
+    assert "are never pre-delivery blockers" in text
+    assert "`暂无可验证公开数据`" in text
     assert "The user's next reply resumes this same deck" in text
-    assert "do not scaffold a second `deck.json`" in text
+    assert "Never pause a truth/spec repair for missing facts" in text
 
 
 def test_outline_validator_writes_report_and_flags_reused_evidence(
@@ -6754,6 +7194,42 @@ def test_public_research_outline_requires_evidence_on_every_slide(
         "requires at least one claim | source | http(s) URL evidence item"
         in issue
         for issue in payload["issues"]
+    )
+
+
+def test_public_research_outline_allows_required_unavailable_fact_placeholder(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1)
+    outline["slides"][0].update(
+        {
+            "title": "市场规模口径",
+            "message": "暂无可验证公开数据",
+            "bullets": ["公开来源未披露统一口径", "交付后可替换为客户确认数据"],
+            "evidence": [],
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--min-slides",
+        "1",
+        "--max-slides",
+        "1",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert any(
+        "marks a required fact as unavailable" in warning
+        for warning in payload["warnings"]
     )
 
 

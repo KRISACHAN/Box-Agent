@@ -153,6 +153,7 @@ from box_agent.tools.skill_preload import (
     host_runtime_preload_skill_names,
     strip_auto_loaded_skills,
     turn_preload_skill_names,
+    web_search_total_limit_for_active_skills,
 )
 
 from .debug_logger import acp_logger as log
@@ -1814,26 +1815,34 @@ class BoxACPAgent:
             state.turn_active = False
             turn_meter = get_token_meter()
             reset_token_meter(meter_token)
+        delivery_status: str | None = None
+        delivery_gaps: list[str] = []
         if (
             completion_gate is not None
             and completion_gate_has_workflow_lifecycle(completion_gate)
         ):
-            remaining_gaps = completion_gate_gaps(
+            delivery_gaps = completion_gate_gaps(
                 completion_gate,
                 set(),
                 state.agent.workspace_dir,
             )
-            if remaining_gaps:
+            if delivery_gaps:
                 state.pending_completion_gate = completion_gate
+                delivery_status = (
+                    "waiting_for_user"
+                    if state.waiting_for_user_input
+                    else "incomplete"
+                )
                 log.info(
                     "completion_gate/pending",
                     session_id=session_id,
-                    gap_count=len(remaining_gaps),
+                    gap_count=len(delivery_gaps),
                     waiting_for_user=state.waiting_for_user_input,
                 )
             else:
                 state.pending_completion_gate = None
                 state.waiting_for_user_input = False
+                delivery_status = "complete"
                 log.info(
                     "completion_gate/complete",
                     session_id=session_id,
@@ -1898,6 +1907,10 @@ class BoxACPAgent:
                 "noProgressTurns": auto_no_progress_turns,
                 "lastStopReason": stop_reason,
             }
+        if delivery_status is not None:
+            response_meta["deliveryStatus"] = delivery_status
+            response_meta["deliveryGaps"] = delivery_gaps
+            response_meta["recoverable"] = delivery_status != "complete"
         # Per-turn token total (multi-step loop + summarization + in-turn
         # memory extraction) for host-side telemetry. Best-effort: fire-and-
         # forget memory extractions that finish after this point are not
@@ -2076,6 +2089,8 @@ class BoxACPAgent:
             return await self._memory_proposal_apply(params)
         if method == "llm/prompt":
             return await self._llm_prompt(params)
+        if method == "presentation/preflight":
+            return await self._presentation_preflight(params)
         if method == "mcp/status":
             from box_agent.tools.mcp_loader import get_mcp_status, is_mcp_loading, get_mcp_config_path
             servers = get_mcp_status()
@@ -2113,6 +2128,74 @@ class BoxACPAgent:
         return {"error": f"unknown_method: {method}"}
 
     ext_method = extMethod
+
+    async def _presentation_preflight(
+        self,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Recommend bounded startup options for a new presentation task."""
+        from box_agent.workflows.presentation_preflight import (
+            build_presentation_preflight_result,
+            build_presentation_recommendation_prompt,
+            load_presentation_preflight_config,
+        )
+
+        prompt = params.get("prompt", "")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return {
+                "error": {
+                    "code": "invalid_args",
+                    "message": "prompt must be a non-empty string",
+                }
+            }
+        has_existing_presentation = params.get("hasExistingPresentation") is True
+        baseline_result = build_presentation_preflight_result(
+            prompt,
+            has_existing_presentation=has_existing_presentation,
+        )
+        if not baseline_result.get("matched") or not baseline_result.get("shouldShow"):
+            return baseline_result
+
+        config = load_presentation_preflight_config()
+        missing_fields = baseline_result.get("missingFields", [])
+        model_text = ""
+        if missing_fields:
+            llm_result = await self._llm_prompt(
+                {
+                    "prompt": build_presentation_recommendation_prompt(
+                        prompt,
+                        config,
+                        missing_fields,
+                    ),
+                    "systemPrompt": (
+                        "你是演示文稿配置分类器。严格从给定枚举中选择并只输出 JSON。"
+                    ),
+                    "timeoutMs": params.get("timeoutMs", 8000),
+                    "workspaceLabel": "presentation-preflight",
+                    "_meta": {"purpose": "presentation_preflight"},
+                }
+            )
+            if isinstance(llm_result.get("text"), str):
+                model_text = llm_result["text"]
+            elif isinstance(llm_result.get("error"), dict):
+                log.warn(
+                    "presentation/preflight_fallback",
+                    code=llm_result["error"].get("code"),
+                    message=llm_result["error"].get("message"),
+                )
+
+        result = build_presentation_preflight_result(
+            prompt,
+            model_text=model_text,
+            has_existing_presentation=has_existing_presentation,
+        )
+        log.info(
+            "presentation/preflight",
+            matched=result.get("matched"),
+            should_show=result.get("shouldShow"),
+            missing_fields=result.get("missingFields"),
+        )
+        return result
 
     async def _llm_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
         """Run a single tool-free completion (titles/summaries/rewrites).
@@ -2800,6 +2883,14 @@ class BoxACPAgent:
             plan_approval=plan_approval,
             plan_start_text=plan_start_text,
             pause_after_plan_write=not auto_approve_plan,
+            web_search_total_limit=web_search_total_limit_for_active_skills(
+                (
+                    state.skill_selector.matched_skill_names
+                    if state.skill_selector is not None
+                    else ()
+                ),
+                tuple(state.preloaded_skill_names),
+            ),
             completion_gate=completion_gate,
             artifact_detection_enabled=state.artifact_mode != "project",
             artifact_root_dir=state.output_dir,

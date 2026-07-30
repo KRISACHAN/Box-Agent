@@ -506,8 +506,6 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
     assert gate.required_changed_artifact_globs == (
         "output/**/*.html",
         "output/**/*.htm",
-        "output/**/*.pptx",
-        "output/**/*.ppt",
     )
     assert gate.required_success_report_globs == (
         "output/**/qa/outline_check.json",
@@ -603,8 +601,6 @@ def test_ppt_brief_does_not_treat_reference_document_or_slide_table_as_formats(
     assert gate.required_changed_artifact_globs == (
         "output/**/*.html",
         "output/**/*.htm",
-        "output/**/*.pptx",
-        "output/**/*.ppt",
     )
 
 
@@ -657,7 +653,7 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "deep"
     assert gate.max_tool_calls == 80
-    assert gate.web_search_total_limit is None
+    assert gate.web_search_total_limit == 36
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
@@ -836,7 +832,8 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert "bullets and evidence are arrays" in checkpoint
     assert "use [] when evidence is empty" in checkpoint
     assert "goal, slide_no, layout_intent, or visual_intent" in checkpoint
-    assert "at least one evidence item per page" in checkpoint
+    assert "at least one evidence item unless it explicitly marks" in checkpoint
+    assert "a required fact as unavailable" in checkpoint
     assert "Runtime provenance binding rejects URLs" in checkpoint
     assert "do not invent the expected URL" in checkpoint
     assert "do not read outline.md again" in checkpoint
@@ -3125,6 +3122,75 @@ async def test_controlled_repair_input_blocks_fresh_report_reread(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path):
+    _write_truth_repair_fixture(tmp_path)
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content=f"read truth again {attempt}",
+                tool_calls=[
+                    ToolCall(
+                        id=f"read-truth-{attempt}",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": "qa/truth_check.json"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            )
+            for attempt in range(1, 4)
+        ]
+        + [_final("Stopped after two no-progress repair attempts.")]
+    )
+    read_tool = CountingReadTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"read_file": read_tool},
+            max_steps=6,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert read_tool.calls == 0
+    second = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "read-truth-2"
+    )
+    assert second.success is False
+    assert "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY" in (second.error or "")
+    third = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "read-truth-3"
+    )
+    assert third.success is False
+    assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in (third.error or "")
+    assert any(
+        isinstance(event, InjectedMessageEvent)
+        and f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled"
+        in event.content
+        for event in events
+    )
+    assert any(
+        isinstance(event, DoneEvent)
+        and event.final_content == "Stopped after two no-progress repair attempts."
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_controlled_outline_repair_input_blocks_repeated_report_reads(tmp_path):
     output = tmp_path / "output"
     qa = output / "qa"
@@ -3209,7 +3275,7 @@ async def test_controlled_outline_repair_input_blocks_repeated_report_reads(tmp_
 
 
 @pytest.mark.asyncio
-async def test_controlled_repair_allows_required_user_input_pause(tmp_path):
+async def test_controlled_repair_rejects_missing_fact_pause(tmp_path):
     _write_truth_repair_fixture(tmp_path)
     llm = MockLLM(
         [
@@ -3231,7 +3297,7 @@ async def test_controlled_repair_allows_required_user_input_pause(tmp_path):
                 ],
                 finish_reason="tool",
             ),
-            _final("请补充这个项目的正式名称。"),
+            _final("已改用明确占位继续修复。"),
         ]
     )
 
@@ -3256,10 +3322,12 @@ async def test_controlled_repair_allows_required_user_input_pause(tmp_path):
         if isinstance(event, ToolCallResult)
         and event.tool_name == "request_user_input"
     )
-    assert result.success is True
+    assert result.success is False
+    assert "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY" in (result.error or "")
+    assert "do not ask for missing facts" in (result.error or "")
     assert any(
         isinstance(event, DoneEvent)
-        and event.final_content == "请补充这个项目的正式名称。"
+        and event.final_content == "已改用明确占位继续修复。"
         for event in events
     )
 
@@ -4269,7 +4337,7 @@ def test_ppt_completion_gate_rejects_failed_html_self_check(tmp_path):
     assert "html_self_check.json" in gaps[0]
 
 
-def test_ppt_completion_gate_allows_pptx_without_html_report(tmp_path):
+def test_ppt_completion_gate_rejects_pptx_without_html_delivery(tmp_path):
     gate = build_auto_completion_gate("生成一份 PPT", tmp_path)
     assert gate is not None
 
@@ -4277,14 +4345,61 @@ def test_ppt_completion_gate_allows_pptx_without_html_report(tmp_path):
     output.mkdir()
     (output / "deck.pptx").write_text("pptx", encoding="utf-8")
 
-    assert completion_gate_gaps(gate, set(), str(tmp_path)) == []
+    gaps = completion_gate_gaps(gate, set(), str(tmp_path))
+
+    assert len(gaps) == 1
+    assert "尚未产生新的或更新过的交付产物" in gaps[0]
+    assert "output/**/*.html" in gaps[0]
 
 
-def test_explicit_pptx_completion_gate_requires_pptx(tmp_path):
-    gate = build_auto_completion_gate("导出一份 PPTX", tmp_path)
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "导出一份 PPTX",
+        "帮我做一份季度汇报，导出 PPT 文件",
+        "制作一份可交付的 PowerPoint 文件",
+        "Export this as a PowerPoint file.",
+    ],
+)
+def test_explicit_powerpoint_file_completion_gate_requires_pptx(tmp_path, prompt):
+    gate = build_auto_completion_gate(prompt, tmp_path)
 
     assert gate is not None
     assert gate.required_changed_artifact_globs == ("output/**/*.pptx",)
+
+
+def test_ppt_content_wording_keeps_controlled_html_route(tmp_path):
+    gate = build_auto_completion_gate(
+        "请输出完整 PPT 内容方案，并制作成可编辑演示文稿",
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.required_changed_artifact_globs == (
+        "output/**/*.html",
+        "output/**/*.htm",
+    )
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "使用 pptx skill，制作一份创意的《纳瓦尔宝典》读书分享 PPT",
+        "使用PPTX技能，制作一份创意的《纳瓦尔宝典》读书分享 PPT",
+    ],
+)
+def test_pptx_skill_reference_keeps_controlled_html_route(tmp_path, prompt):
+    gate = build_auto_completion_gate(
+        prompt,
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert gate.required_changed_artifact_globs == (
+        "output/**/*.html",
+        "output/**/*.htm",
+    )
 
 
 @pytest.mark.parametrize(

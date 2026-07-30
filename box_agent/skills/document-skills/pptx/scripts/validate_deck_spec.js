@@ -91,6 +91,20 @@ function collectText(value, output = []) {
   return output;
 }
 
+function allowsIllustrativeQuantitative(deck) {
+  const truthContract = deck && deck.truth_contract;
+  return Boolean(
+    truthContract
+    && (
+      truthContract.mode === "illustrative"
+      || (
+        Array.isArray(truthContract.assumptions)
+        && truthContract.assumptions.length > 0
+      )
+    )
+  );
+}
+
 function validateOutlineBinding(deckPath, deck) {
   const outlinePath = path.join(path.dirname(deckPath), "outline.json");
   if (!fs.existsSync(outlinePath)) {
@@ -134,6 +148,9 @@ function validateOutlineBinding(deckPath, deck) {
   }
   const issues = [];
   const deckSlides = deck && Array.isArray(deck.slides) ? deck.slides : [];
+  const layoutPolicy = {
+    allowIllustrativeQuantitative: allowsIllustrativeQuantitative(deck),
+  };
   const requiresPersistedIntent = Number(contract.contract_version || 1) >= 2;
   if (deckSlides.length !== outlineSlides.length) {
     issues.push(
@@ -175,7 +192,11 @@ function validateOutlineBinding(deckPath, deck) {
         );
       });
     }
-    const semantic = analyzeOutlineLayoutIntent(outlineSlide, outline.source_mode);
+    const semantic = analyzeOutlineLayoutIntent(
+      outlineSlide,
+      outline.source_mode,
+      layoutPolicy
+    );
     if (semantic && !semantic.allowed_layout_ids.includes(slide.layout_id)) {
       issues.push(
         `${basePath}.layout_id: ${JSON.stringify(slide.layout_id)} does not express ` +

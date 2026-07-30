@@ -114,7 +114,7 @@ function hasEvidence(slide) {
 }
 
 const ASSUMPTION_EVIDENCE_RE = /假设|示意|假定|assum(?:e|ed|ption)|illustrative|hypothetical/i;
-const MISSING_PRIVATE_FACT_RE = /未提供|未给出|待补充|待确认|缺失|未知|not\s+provided|not\s+supplied|missing|unknown|tbd/i;
+const UNAVAILABLE_FACT_PLACEHOLDER_RE = /未提供|未给出|待补充|待确认|缺失|未知|暂无可验证公开数据|not\s+provided|not\s+supplied|missing|unknown|tbd|no\s+verifiable\s+public\s+data/i;
 const PRIVATE_IDENTITY_FACT_RE = /(?:融资(?:阶段|轮次)|(?:种子|天使|成长)轮|pre[-\s]?a|series\s+[a-z]|[a-f]\s*轮|(?:公司|项目|产品)(?:名称|名为)|成立(?:年份|时间)|创始人|团队(?:成员姓名|姓名|履历|规模|人数|来源)|客户(?:名称|名单)|奖项|获奖|排名)/i;
 
 function validate(outline, opts) {
@@ -258,10 +258,24 @@ function validate(outline, opts) {
       issues.push(`${label}: evidence must be an array, use [] for non-evidence slides`);
     } else {
       if (publicResearch && slide.evidence.length === 0) {
-        issues.push(
-          `${label}: public-authoritative research requires at least one ` +
-          "claim | source | http(s) URL evidence item on every slide"
-        );
+        const slideNarrative = [
+          slide.title,
+          slide.message,
+          ...(Array.isArray(slide.bullets) ? slide.bullets : []),
+          slide.notes,
+        ].map(text).join(" ");
+        if (UNAVAILABLE_FACT_PLACEHOLDER_RE.test(slideNarrative)) {
+          warnings.push(
+            `${label}: public-research page has no evidence because it explicitly ` +
+            "marks a required fact as unavailable"
+          );
+        } else {
+          issues.push(
+            `${label}: public-authoritative research requires at least one ` +
+            "claim | source | http(s) URL evidence item on every slide unless the " +
+            "page explicitly marks a required fact as unavailable"
+          );
+        }
       }
       slide.evidence.forEach((item, evidenceIndex) => {
         const key = normalize(item);
@@ -287,14 +301,14 @@ function validate(outline, opts) {
         if (
           ASSUMPTION_EVIDENCE_RE.test(String(item || ""))
           && PRIVATE_IDENTITY_FACT_RE.test(String(item || ""))
-          && !MISSING_PRIVATE_FACT_RE.test(String(item || ""))
+          && !UNAVAILABLE_FACT_PLACEHOLDER_RE.test(String(item || ""))
         ) {
           issues.push(
             `${label}: evidence.${evidenceIndex} assumes a private identity fact ` +
             "(such as a company/project name, financing round, founding/team/client " +
             "fact, award, or ranking). Assumptions are allowed only for visibly " +
-            "disclosed illustrative metrics/scenarios; use 待补充, ask once, or omit " +
-            "this private fact"
+            "disclosed illustrative metrics/scenarios; use 待补充 for a required " +
+            "field or omit this private fact without pausing"
           );
         }
       });

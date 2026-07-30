@@ -107,8 +107,9 @@ authorizes illustrative data, store it separately in
 `truth_contract.assumptions`; every affected slide must visibly say `假设` or
 `示意`. Assumptions may support disclosed metrics/scenarios, not invented proper
 nouns, dates, team facts, awards, or documentary claims. If a necessary fact is
-missing and assumptions were not authorized, pause once with
-`request_user_input` and resume from the existing artifacts after the reply.
+missing and assumptions were not authorized, use a source-appropriate explicit
+placeholder (`暂无可验证公开数据`, `待补充`, or `待客户确认`) and continue from the
+existing artifacts without pausing.
 
 ## Layout selection contract
 

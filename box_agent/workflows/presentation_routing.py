@@ -9,6 +9,7 @@ from typing import Final
 from ..artifacts import OUTPUT_SUBDIR
 from ..delivery import has_deliverable_intent, strip_negated_format_clauses
 from ..loop_guards import (
+    DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
     CompletionGate,
     artifact_signatures_for_globs,
@@ -27,9 +28,43 @@ PRESENTATION_DELIVERY_KEYWORDS: Final[tuple[str, ...]] = (
     "presentation",
 )
 
-_EXPLICIT_PPTX_DELIVERY_KEYWORDS: Final[tuple[str, ...]] = (
-    "pptx",
-    ".pptx",
+_PPTX_SKILL_REFERENCE_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:(?<![a-z0-9])pptx(?![a-z0-9])\s*(?:skill|技能)"
+    r"|(?:skill|技能)\s*(?<![a-z0-9])pptx(?![a-z0-9]))",
+    re.IGNORECASE,
+)
+_EXPLICIT_PPTX_DELIVERY_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"(?:导出|交付|输出|生成|制作|创建|保存|另存为|转换|转成)"
+    r"[^，。；;.!?\n]{0,24}(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
+    r"|(?:export|deliver|output|generate|create|save|convert)"
+    r"[^,.;!?\n]{0,24}(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
+    r"|(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
+    r"[^，。；;.!?\n]{0,12}(?:文件|格式|版本|交付物|file|format|version)"
+    r"|\.pptx(?![a-z0-9])"
+    r")",
+    re.IGNORECASE,
+)
+_EXPLICIT_PPT_FILE_DELIVERY_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"(?:导出|交付|保存|另存为|转换|转成)"
+    r"[^，。；;.!?\n]{0,24}(?:(?<![a-z0-9])ppt(?![a-z0-9])|powerpoint)"
+    r"(?:\s*(?:文件|格式|版本|交付物))?"
+    r"|(?:输出|生成|制作|创建)"
+    r"[^，。；;.!?\n]{0,24}(?:(?<![a-z0-9])ppt(?![a-z0-9])|powerpoint)"
+    r"\s*(?:文件|格式|版本|交付物)"
+    r"|(?:(?<![a-z0-9])ppt(?![a-z0-9])|powerpoint)"
+    r"\s*(?:文件|格式|版本|交付物)"
+    r"|(?:export|deliver|save|convert)"
+    r"[^,.;!?\n]{0,24}(?:(?<![a-z0-9])ppt(?![a-z0-9])|powerpoint)"
+    r"(?:\s*(?:file|format|version|deliverable))?"
+    r"|(?:output|generate|create)"
+    r"[^,.;!?\n]{0,24}(?:(?<![a-z0-9])ppt(?![a-z0-9])|powerpoint)"
+    r"\s*(?:file|format|version|deliverable)"
+    r"|(?:(?<![a-z0-9])ppt(?![a-z0-9])|powerpoint)"
+    r"\s*(?:file|format|version|deliverable)"
+    r")",
+    re.IGNORECASE,
 )
 
 _RESEARCH_SOURCE_FIRST_RE: Final[re.Pattern[str]] = re.compile(
@@ -90,8 +125,6 @@ _SUCCESS_REPORT_GLOBS: Final[tuple[str, ...]] = (
 _CONTROLLED_ARTIFACT_GLOBS: Final[tuple[str, ...]] = (
     f"{OUTPUT_SUBDIR}/**/*.html",
     f"{OUTPUT_SUBDIR}/**/*.htm",
-    f"{OUTPUT_SUBDIR}/**/*.pptx",
-    f"{OUTPUT_SUBDIR}/**/*.ppt",
 )
 _PRESENTATION_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
     FINAL_SUMMARY_EXCLUDED_TOOLS | frozenset({"request_user_input"})
@@ -132,6 +165,15 @@ def _research_mode(user_text: str) -> str:
     return "auto"
 
 
+def _explicit_pptx_delivery_requested(positive_format_text: str) -> bool:
+    """Distinguish a requested PowerPoint file from a reference to the Skill."""
+    delivery_text = _PPTX_SKILL_REFERENCE_RE.sub(" ", positive_format_text)
+    return (
+        _EXPLICIT_PPTX_DELIVERY_RE.search(delivery_text) is not None
+        or _EXPLICIT_PPT_FILE_DELIVERY_RE.search(delivery_text) is not None
+    )
+
+
 def build_presentation_completion_gate(
     user_text: str,
     workspace_dir: str | Path,
@@ -149,10 +191,7 @@ def build_presentation_completion_gate(
     if _OUTLINE_ONLY_RE.search(text):
         return None
 
-    explicit_pptx = any(
-        keyword in positive_format_text
-        for keyword in _EXPLICIT_PPTX_DELIVERY_KEYWORDS
-    )
+    explicit_pptx = _explicit_pptx_delivery_requested(positive_format_text)
     patterns = (
         (f"{OUTPUT_SUBDIR}/**/*.pptx",)
         if explicit_pptx
@@ -186,7 +225,11 @@ def build_presentation_completion_gate(
         max_continuations=3,
         deadline_seconds=900.0,
         max_tool_calls=80 if research_mode == "deep" else 64,
-        web_search_total_limit=None,
+        web_search_total_limit=(
+            DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT
+            if research_mode == "deep"
+            else None
+        ),
         budget_exempt_tools=_PRESENTATION_BUDGET_EXEMPT_TOOLS,
         completion_reserve_tool_calls=10,
         pause_tools=frozenset({"request_user_input"}),

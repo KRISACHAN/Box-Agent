@@ -14,7 +14,7 @@ const {
   validateAndNormalizeDeck,
 } = require("./deck_spec_core.js");
 
-const PLACEHOLDER_RE = /待补充|待确认|tbd|to be confirmed|unknown/i;
+const PLACEHOLDER_RE = /待补充|待确认|暂无可验证公开数据|tbd|to be confirmed|unknown|no verifiable public data/i;
 const PERFORMANCE_RE = /复购|转化(?!为)|增长|提升|提高|降低|下降|减少|节省|缩短|扩大|翻倍|达到|超过|覆盖|排名|获奖|赢得|刊载|published|featured|award(?:ed)?|\bwon\b|growth|increase|decrease|conversion|retention|repeat purchase|saved|reduced|improved|grew/i;
 const SOURCE_ONLY_PERFORMANCE_RE = /排名|获奖|赢得|刊载|published|featured|award(?:ed)?|\bwon\b|ranking/i;
 const OBSERVED_CLAIM_CONTEXT_RE = /已|已经|当前|截至|实际|实现|结果|成果|成功|达到|超过|项目(?:交付|成果|结果)|客户案例|案例|业绩|收入|营收|复购率|转化率|留存率|同比|环比|过去|already|current|actual|achiev|result|outcome|case\s*study|delivered|revenue|retention|conversion/i;
@@ -145,6 +145,18 @@ function isNumberBackedForSlide(token, statements, slide, fieldPath = "") {
 function slideDisclosesAssumptions(slide) {
   return collectTextEntries(slide && slide.props ? slide.props : {}, "props")
     .some(entry => ASSUMPTION_DISCLOSURE_RE.test(entry.text));
+}
+
+function isChartAssumptionDataEntry(entry, slide) {
+  if (!slide || !entry) return false;
+  if (slide.layout_id === "chart-data-v1") {
+    return /\.props\.(?:categories\.\d+|series\.\d+\.(?:name|values\.\d+)|highlights\.\d+\.(?:value|label))$/
+      .test(entry.path);
+  }
+  if (slide.layout_id === "chart-bar-v1") {
+    return /\.props\.(?:series_label|items\.\d+\.(?:label|value))$/.test(entry.path);
+  }
+  return false;
 }
 
 function isMediaObject(value) {
@@ -572,9 +584,51 @@ function validateStrictNarrativeFields(
   }
 }
 
-function isStructuralNumber(entry, token, slide, slideCount = 0) {
+function expectedEyebrowOrdinal(slides, slideIndex) {
+  const firstSlide = Array.isArray(slides) ? slides[0] : null;
+  const startsWithCover = Boolean(
+    firstSlide
+    && typeof firstSlide.layout_id === "string"
+    && /^cover-/i.test(firstSlide.layout_id)
+  );
+  return startsWithCover ? slideIndex : slideIndex + 1;
+}
+
+function isStructuralNumber(
+  entry,
+  token,
+  slide,
+  slideCount = 0,
+  eyebrowOrdinal = null
+) {
   const numeric = Number(token.replace(/%$/, ""));
   if (!Number.isInteger(numeric) || numeric < 1 || numeric > 40) return false;
+  const entryText = String(entry && entry.text ? entry.text : "").normalize("NFKC");
+  const eyebrowMatch = entryText.match(
+    /^\s*(0\d{1,2})(?=$|[\s｜|·:：—–-])/u
+  );
+  if (
+    eyebrowMatch
+    && Number.isInteger(eyebrowOrdinal)
+    && eyebrowOrdinal > 0
+    && /\.props\.eyebrow$/.test(entry.path)
+    && numeric === Number(eyebrowMatch[1])
+    && numeric === eyebrowOrdinal
+  ) {
+    return true;
+  }
+  const itemValueMatch = String(entry.path).match(/\.props\.items\.(\d+)\.value$/);
+  const itemOrdinalMatch = entryText.match(/^\s*(0\d{1,2})\s*$/u);
+  if (
+    slide
+    && slide.layout_id === "kpi-grid-v1"
+    && itemValueMatch
+    && itemOrdinalMatch
+    && numeric === Number(itemOrdinalMatch[1])
+    && numeric === Number(itemValueMatch[1]) + 1
+  ) {
+    return true;
+  }
   if (
     numeric === slideCount
     && /\.props\.meta$/.test(entry.path)
@@ -693,14 +747,23 @@ function sanitizeUnsupportedClaims(
   sourceFacts,
   normalizedSources,
   changes,
-  slide = null
+  slide = null,
+  structuralContext = {}
 ) {
   if (typeof value === "string") {
     if (isHonestPlaceholder(value)) return value;
-    const structural = /\.(?:kicker|phase)$/.test(fieldPath)
-      || isDiagramStructuralEntry({ path: fieldPath }, slide);
-    const hasUnsupportedNumber = !structural && numberTokens(value)
-      .some(token => !isNumberBackedForSlide(token, sourceFacts, slide, fieldPath));
+    const entry = { path: fieldPath, text: value };
+    const hasUnsupportedNumber = numberTokens(value).some(token =>
+      !isNumberBackedForSlide(token, sourceFacts, slide, fieldPath)
+      && !isDiagramStructuralEntry(entry, slide)
+      && !isStructuralNumber(
+        entry,
+        token,
+        slide,
+        structuralContext.slideCount,
+        structuralContext.eyebrowOrdinal
+      )
+    );
     const shortConceptBacked = /\.(?:label|title|eyebrow)$/.test(fieldPath)
       && isShortSourceConceptBacked(value, normalizedSources.join(" "));
     const hasUnsupportedPerformance = requiresPerformanceBacking(value)
@@ -721,7 +784,8 @@ function sanitizeUnsupportedClaims(
       sourceFacts,
       normalizedSources,
       changes,
-      slide
+      slide,
+      structuralContext
     ));
   }
   if (!isPlainObject(value) || isMediaObject(value)) return value;
@@ -733,7 +797,8 @@ function sanitizeUnsupportedClaims(
       sourceFacts,
       normalizedSources,
       changes,
-      slide
+      slide,
+      structuralContext
     );
   });
   return result;
@@ -1126,7 +1191,11 @@ function sanitizeStrictSourceDeck(deck) {
       claimFacts,
       normalizedSources,
       changes,
-      slide
+      slide,
+      {
+        slideCount: sanitized.slides.length,
+        eyebrowOrdinal: expectedEyebrowOrdinal(sanitized.slides, slideIndex),
+      }
     );
   });
   return { deck: sanitized, changes };
@@ -1162,12 +1231,20 @@ function validateSourceBoundDeck(deck) {
     normalizeText(sourceBinding.source_text),
   ].filter(Boolean);
   const strictSourceOnly = sourceBinding.strict && sourceFacts.length > 0;
+  const hasAuthorizedAssumptions = Boolean(
+    sourceBinding.available
+    && sourceBinding.allows_assumptions
+    && assumptions.length > 0
+  );
 
   deck.slides.forEach((slide, index) => {
     const basePath = slidePropsPath(slide, index);
     const entries = collectTextEntries(slide.props, basePath);
     const combined = entries.map(entry => entry.text).join(" ");
     const disclosesAssumptions = slideDisclosesAssumptions(slide);
+    const hasDisclosedAuthorizedAssumptions = (
+      hasAuthorizedAssumptions && disclosesAssumptions
+    );
 
     entries.forEach(entry => {
       if (
@@ -1183,13 +1260,24 @@ function validateSourceBoundDeck(deck) {
           slide,
           entry.path
         );
-        const assumptionBackedNumber = !CALENDAR_YEAR_TOKEN_RE.test(token)
-          && disclosesAssumptions
-          && isNumberBackedForSlide(token, assumptions, slide, entry.path);
+        const assumptionBackedNumber = hasDisclosedAuthorizedAssumptions
+          && (
+            (
+              !CALENDAR_YEAR_TOKEN_RE.test(token)
+              && isNumberBackedForSlide(token, assumptions, slide, entry.path)
+            )
+            || isChartAssumptionDataEntry(entry, slide)
+          );
         if (
           !sourceBackedNumber
           && !assumptionBackedNumber
-          && !isStructuralNumber(entry, token, slide, deck.slides.length)
+          && !isStructuralNumber(
+            entry,
+            token,
+            slide,
+            deck.slides.length,
+            expectedEyebrowOrdinal(deck.slides, index)
+          )
         ) {
           issues.push(
             `${entry.path}: numeric claim ${JSON.stringify(token)} is not present in ` +
@@ -1206,7 +1294,7 @@ function validateSourceBoundDeck(deck) {
         && isShortSourceConceptBacked(entry.text, sourceBinding.source_text);
       const semanticSourceBackedPerformance = !strictSourceOnly
         && isSourceSemanticPerformanceParaphrase(entry.text, sourceFacts);
-      const assumptionBackedPerformance = disclosesAssumptions
+      const assumptionBackedPerformance = hasDisclosedAuthorizedAssumptions
         && !SOURCE_ONLY_PERFORMANCE_RE.test(entry.text);
       if (
         requiresPerformanceBacking(entry.text)

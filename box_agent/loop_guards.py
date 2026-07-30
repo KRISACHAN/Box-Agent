@@ -43,6 +43,7 @@ from typing import Any, Final
 WEB_SEARCH_TOOL_NAME: Final = "web_search"
 WEB_SEARCH_BATCH_SIZE: Final = 6
 WEB_SEARCH_TOTAL_LIMIT: Final = 24
+DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT: Final = 36
 
 # Per-turn call caps for tools the model tends to over-request.
 TOOL_CALL_LIMITS: Final[dict[str, int]] = {

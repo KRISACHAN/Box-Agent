@@ -2388,6 +2388,69 @@ async def test_completion_gate_can_apply_a_stricter_web_search_budget():
 
 
 @pytest.mark.asyncio
+async def test_explicit_web_search_budget_can_expand_the_default():
+    first_batch = [
+        ToolCall(
+            id=f"web-expanded-{index}",
+            type="function",
+            function=FunctionCall(
+                name="web_search",
+                arguments={"query": f"expanded research fact {index}"},
+            ),
+        )
+        for index in range(6)
+    ]
+    second_batch = [
+        ToolCall(
+            id=f"web-expanded-{index}",
+            type="function",
+            function=FunctionCall(
+                name="web_search",
+                arguments={"query": f"expanded research fact {index}"},
+            ),
+        )
+        for index in range(6, 9)
+    ]
+    web_search = CountingWebSearchTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=MockLLM(
+                [
+                    LLMResponse(
+                        content="",
+                        tool_calls=first_batch,
+                        finish_reason="tool",
+                    ),
+                    LLMResponse(
+                        content="",
+                        tool_calls=second_batch,
+                        finish_reason="tool",
+                    ),
+                    LLMResponse(content="final", finish_reason="stop"),
+                ]
+            ),
+            messages=_msgs(),
+            tools={"web_search": web_search},
+            max_steps=5,
+            web_search_total_limit=8,
+        )
+    )
+
+    assert web_search.calls == 8
+    hidden_errors = [
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_name == "web_search"
+        and not event.user_visible
+        and not event.success
+    ]
+    assert len(hidden_errors) == 1
+    assert "budget reached" in (hidden_errors[0].error or "")
+
+
+@pytest.mark.asyncio
 async def test_total_tool_call_budget_is_a_hard_loop_limit():
     tool_calls = [
         ToolCall(
@@ -3961,7 +4024,7 @@ def test_large_web_search_result_is_compact_for_synthesis_turn():
             "Url": f"https://example.com/result-{index}",
             "Content": f"Evidence {index} " + ("x" * 5_000),
         }
-        for index in range(1, 6)
+        for index in range(1, 10)
     ]
     full_content = json.dumps(
         {"Result": {"ResultCount": len(refs), "WebResults": refs}},
@@ -3980,7 +4043,8 @@ def test_large_web_search_result_is_compact_for_synthesis_turn():
     assert len(model_content) < 10_000
     assert "Large web_search result bounded for model history" in model_content
     assert "https://example.com/result-1" in model_content
-    assert "https://example.com/result-5" in model_content
+    assert "https://example.com/result-8" in model_content
+    assert "https://example.com/result-9" not in model_content
 
 
 @pytest.mark.parametrize("size", [12_000, 20_000, 50_000])

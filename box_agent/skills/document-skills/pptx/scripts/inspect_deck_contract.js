@@ -546,7 +546,11 @@ function readOutlineBinding(outlineInput, expectedSlideCount) {
   };
 }
 
-function normalizeOutlineDrivenLayoutIds(layoutIds, outlineBinding) {
+function normalizeOutlineDrivenLayoutIds(
+  layoutIds,
+  outlineBinding,
+  layoutPolicy = {}
+) {
   const normalizations = [];
   if (!outlineBinding) return { layoutIds: layoutIds.slice(), normalizations };
   const effective = layoutIds.map((layoutId, index) => {
@@ -587,7 +591,11 @@ function normalizeOutlineDrivenLayoutIds(layoutIds, outlineBinding) {
       });
       return "cards-grid-v1";
     }
-    const semantic = analyzeOutlineLayoutIntent(slide, outlineBinding.sourceMode);
+    const semantic = analyzeOutlineLayoutIntent(
+      slide,
+      outlineBinding.sourceMode,
+      layoutPolicy
+    );
     if (semantic && !semantic.allowed_layout_ids.includes(layoutId)) {
       normalizations.push({
         slide: index + 1,
@@ -600,6 +608,7 @@ function normalizeOutlineDrivenLayoutIds(layoutIds, outlineBinding) {
     if (
       ["chart-bar-v1", "chart-data-v1", "kpi-grid-v1"].includes(layoutId)
       && !outlineHasQuantitativeEvidence(slide, outlineBinding.sourceMode)
+      && !layoutPolicy.allowIllustrativeQuantitative
     ) {
       normalizations.push({
         slide: index + 1,
@@ -614,14 +623,15 @@ function normalizeOutlineDrivenLayoutIds(layoutIds, outlineBinding) {
   return { layoutIds: effective, normalizations };
 }
 
-function validateOutlineLayoutFit(orderedLayouts, outlineBinding) {
+function validateOutlineLayoutFit(orderedLayouts, outlineBinding, layoutPolicy = {}) {
   if (!outlineBinding) return;
   const quantitativeLayouts = new Set(["chart-bar-v1", "chart-data-v1", "kpi-grid-v1"]);
   const issues = [];
   orderedLayouts.forEach((layout, index) => {
     const semantic = analyzeOutlineLayoutIntent(
       outlineBinding.slides[index],
-      outlineBinding.sourceMode
+      outlineBinding.sourceMode,
+      layoutPolicy
     );
     if (semantic && !semantic.allowed_layout_ids.includes(layout.id)) {
       issues.push(
@@ -636,6 +646,7 @@ function validateOutlineLayoutFit(orderedLayouts, outlineBinding) {
         outlineBinding.slides[index],
         outlineBinding.sourceMode
       )
+      && !layoutPolicy.allowIllustrativeQuantitative
     ) {
       issues.push(
         `slide ${index + 1}: ${layout.id} requires quantitative evidence, but outline page ` +
@@ -950,10 +961,27 @@ function main() {
   const outlineBinding = opts.outline
     ? readOutlineBinding(opts.outline, opts.layoutIds.length)
     : null;
-  const layoutResolution = normalizeOutlineDrivenLayoutIds(opts.layoutIds, outlineBinding);
+  const assumptions = [...new Set(
+    opts.assumptions.map(value => value.trim()).filter(Boolean)
+  )];
+  const assumptionBinding = validateAssumptionsAgainstRuntime(assumptions);
+  if (assumptionBinding.issues.length) {
+    throw new Error(`Assumption binding failed:\n${assumptionBinding.issues.join("\n")}`);
+  }
+  const layoutPolicy = {
+    allowIllustrativeQuantitative: (
+      opts.truthMode === "illustrative"
+      || assumptionBinding.assumption_count > 0
+    ),
+  };
+  const layoutResolution = normalizeOutlineDrivenLayoutIds(
+    opts.layoutIds,
+    outlineBinding,
+    layoutPolicy
+  );
   const effectiveLayoutIds = layoutResolution.layoutIds;
   const orderedLayouts = effectiveLayoutIds.map(layoutId => getLayout(layoutId));
-  validateOutlineLayoutFit(orderedLayouts, outlineBinding);
+  validateOutlineLayoutFit(orderedLayouts, outlineBinding, layoutPolicy);
   const runtimeBinding = runtimeSourceBinding();
   const themeResolution = selectTheme(opts, {
     title: opts.title,
@@ -1047,7 +1075,7 @@ function main() {
         ...(researchFacts.length
           ? { research_facts: researchFacts }
           : {}),
-        assumptions: [...new Set(opts.assumptions.map(value => value.trim()).filter(Boolean))],
+        assumptions,
       },
       slides: orderedLayouts.map((layout, index) => buildSlide(
         layout.id,
@@ -1076,13 +1104,6 @@ function main() {
   if (researchBinding.issues.length) {
     throw new Error(`Research fact binding failed:\n${researchBinding.issues.join("\n")}`);
   }
-  const assumptionBinding = validateAssumptionsAgainstRuntime(
-    skeleton ? skeleton.truth_contract.assumptions : []
-  );
-  if (assumptionBinding.issues.length) {
-    throw new Error(`Assumption binding failed:\n${assumptionBinding.issues.join("\n")}`);
-  }
-
   let deckFile = null;
   let contractReport = null;
   let imageManifest = null;

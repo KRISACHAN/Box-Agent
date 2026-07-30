@@ -81,6 +81,7 @@ class AgentRunOptions:
     plan_start_text: str | None = None
     pause_after_plan_write: bool = False
     max_tool_calls: int | None = None
+    web_search_total_limit: int | None = None
     no_progress_limit: int | None = None
     completion_gate: CompletionGate | None = None
     artifact_detection_enabled: bool = True
@@ -843,6 +844,7 @@ class Agent:
             tools=self.tools,
             max_steps=self.max_steps,
             max_tool_calls=effective_options.max_tool_calls,
+            web_search_total_limit=effective_options.web_search_total_limit,
             token_limit=self.token_limit,
             is_cancelled=effective_options.is_cancelled,
             logger=effective_options.logger,

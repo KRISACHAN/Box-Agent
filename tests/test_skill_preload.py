@@ -15,6 +15,7 @@ from box_agent.tools.skill_preload import (
     host_runtime_preload_skill_names,
     resolve_skill_preload_attributions,
     strip_active_skills,
+    web_search_total_limit_for_active_skills,
 )
 
 
@@ -43,6 +44,29 @@ def test_non_deep_presentation_keeps_the_normal_pptx_preload() -> None:
     )
 
     assert document_preload_skill_names(("pptx",), gate) == ["pptx"]
+
+
+def test_controlled_presentation_gate_preloads_pptx_even_for_html_artifacts() -> None:
+    gate = CompletionGate(
+        required_changed_artifact_globs=(
+            "output/**/*.html",
+            "output/**/*.htm",
+        ),
+        workflow_checkpoint_kind="controlled_presentation",
+    )
+
+    assert document_preload_skill_names((), gate) == ["pptx"]
+
+
+def test_research_synthesis_expands_web_search_budget() -> None:
+    assert web_search_total_limit_for_active_skills(
+        ("research-synthesis",),
+    ) == 36
+    assert web_search_total_limit_for_active_skills(
+        (),
+        ("research-synthesis",),
+    ) == 36
+    assert web_search_total_limit_for_active_skills(("pptx",)) is None
 
 
 class SummaryLLM:

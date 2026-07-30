@@ -83,10 +83,29 @@ function outlineHasQuantitativeEvidence(slide, sourceMode = "") {
   return /\d|%|％|[$¥￥€£]|[一二三四五六七八九十百千万]+(?:次|年|届|名|个|项|座|枚|金牌|冠军)/.test(content);
 }
 
-function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
+function analyzeOutlineLayoutIntent(
+  slide,
+  sourceMode = "",
+  { allowIllustrativeQuantitative = false } = {}
+) {
   const all = selectionText(slide);
   const visual = visualSelectionText(slide);
   const layout = text(slide && slide.layout);
+  const hasQuantitativeEvidence = outlineHasQuantitativeEvidence(slide, sourceMode);
+
+  const quantitativeRule = (kind, preferred, allowed, reason) => {
+    if (hasQuantitativeEvidence || allowIllustrativeQuantitative) {
+      return semanticRule(kind, preferred, allowed, reason);
+    }
+    return semanticRule(
+      `qualitative-${kind}`,
+      "cards-grid-v1",
+      ["cards-grid-v1"],
+      "outline names a quantitative visual without quantitative evidence or an " +
+      "authorized illustrative assumption, so preserve the qualitative argument " +
+      "in editable cards instead of inventing values"
+    );
+  };
 
   if (QUADRANT_RE.test(visual)) {
     return semanticRule(
@@ -121,7 +140,7 @@ function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
     );
   }
   if (BAR_CHART_RE.test(visual)) {
-    return semanticRule(
+    return quantitativeRule(
       "bar-chart",
       "chart-bar-v1",
       ["chart-bar-v1", "chart-data-v1"],
@@ -129,7 +148,7 @@ function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
     );
   }
   if (DATA_CHART_RE.test(visual)) {
-    return semanticRule(
+    return quantitativeRule(
       "data-chart",
       "chart-data-v1",
       ["chart-data-v1"],
@@ -173,8 +192,7 @@ function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
     );
   }
   if (DASHBOARD_RE.test(visual)) {
-    const quantitative = outlineHasQuantitativeEvidence(slide, sourceMode);
-    return quantitative
+    return hasQuantitativeEvidence || allowIllustrativeQuantitative
       ? semanticRule(
         "quantitative-dashboard",
         "kpi-grid-v1",
@@ -189,7 +207,7 @@ function analyzeOutlineLayoutIntent(slide, sourceMode = "") {
       );
   }
   if (KPI_RE.test(visual)) {
-    return semanticRule(
+    return quantitativeRule(
       "kpi",
       "kpi-grid-v1",
       ["kpi-grid-v1", "chart-data-v1", "chart-bar-v1"],

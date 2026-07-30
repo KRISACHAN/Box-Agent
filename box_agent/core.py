@@ -424,6 +424,7 @@ _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_CONTENT_THRESHOLD = 12_000
 _GENERIC_MODEL_CONTEXT_CHAR_LIMIT = 24_000
 _WEB_SEARCH_MODEL_CONTEXT_CHAR_LIMIT = 10_000
+_WEB_SEARCH_COMPACT_MAX_ITEMS = 8
 
 
 def _strip_plot_data(text: str) -> str:
@@ -474,7 +475,7 @@ def _compact_visible_tool_content_for_model(
             return content
         compacted = _compact_web_search_result_for_model(
             content,
-            max_items=5,
+            max_items=_WEB_SEARCH_COMPACT_MAX_ITEMS,
             snippet_limit=600,
         )
         if compacted is not None:
@@ -1675,7 +1676,7 @@ def _dedupe_web_search_content(
 def _compact_web_search_result_for_model(
     content: str,
     *,
-    max_items: int = 5,
+    max_items: int = _WEB_SEARCH_COMPACT_MAX_ITEMS,
     snippet_limit: int = 220,
 ) -> str | None:
     """Preserve usable search evidence when compacting old web_search results."""
@@ -1915,6 +1916,7 @@ async def run_agent_loop(
     tools: dict[str, Tool],
     max_steps: int = 200,
     max_tool_calls: int | None = None,
+    web_search_total_limit: int | None = None,
     token_limit: int = 113400,
     is_cancelled: CancelChecker | None = None,
     logger: AgentLogger | None = None,
@@ -1965,6 +1967,7 @@ async def run_agent_loop(
         tools: ``{name: Tool}`` dict.
         max_steps: Maximum LLM call iterations.
         max_tool_calls: Optional hard cap across all tool executions in this loop.
+        web_search_total_limit: Optional per-turn web search override.
         token_limit: Token threshold for triggering summarization.
         is_cancelled: Optional callable — return ``True`` to stop.
         logger: Optional ``AgentLogger`` for file-based logging.
@@ -2042,12 +2045,15 @@ async def run_agent_loop(
     )
     tool_call_limits = dict(TOOL_CALL_LIMITS)
     if (
-        completion_gate is not None
+        web_search_total_limit is None
+        and completion_gate is not None
         and completion_gate.web_search_total_limit is not None
     ):
+        web_search_total_limit = completion_gate.web_search_total_limit
+    if web_search_total_limit is not None:
         tool_call_limits[WEB_SEARCH_TOOL_NAME] = max(
             0,
-            completion_gate.web_search_total_limit,
+            web_search_total_limit,
         )
     web_search_total_limit = tool_call_limits[WEB_SEARCH_TOOL_NAME]
 

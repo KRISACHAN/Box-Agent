@@ -1971,7 +1971,7 @@ async def test_acp_auto_completion_gate_continues_until_ppt_artifact(tmp_path):
     response = await agent.prompt(
         SimpleNamespace(
             sessionId=session.sessionId,
-            prompt=[{"text": "做一份 15 页售前竞标方案 PPT"}],
+            prompt=[{"text": "做一份 15 页售前竞标方案，导出 PPTX 文件"}],
         )
     )
 
@@ -2163,6 +2163,9 @@ async def test_acp_output_html_followup_reuses_pending_presentation_gate(tmp_pat
     assert response.stopReason == "end_turn"
     assert captured["gate"] is pending_gate
     assert state.pending_completion_gate is pending_gate
+    assert response.field_meta["deliveryStatus"] == "incomplete"
+    assert response.field_meta["recoverable"] is True
+    assert response.field_meta["deliveryGaps"]
 
 
 @pytest.mark.asyncio
@@ -2205,6 +2208,9 @@ async def test_acp_resumes_controlled_deck_after_required_user_input(tmp_path):
     assert state.pending_completion_gate is not None
     assert state.waiting_for_user_input is True
     assert not (output_dir / "index.html").exists()
+    assert first.field_meta["deliveryStatus"] == "waiting_for_user"
+    assert first.field_meta["recoverable"] is True
+    assert first.field_meta["deliveryGaps"]
 
     second = await agent.prompt(
         SimpleNamespace(
@@ -2219,6 +2225,9 @@ async def test_acp_resumes_controlled_deck_after_required_user_input(tmp_path):
     assert (output_dir / "index.html").is_file()
     assert state.pending_completion_gate is None
     assert state.waiting_for_user_input is False
+    assert second.field_meta["deliveryStatus"] == "complete"
+    assert second.field_meta["recoverable"] is False
+    assert second.field_meta["deliveryGaps"] == []
     assert "TAM 120 亿元" in state.source_text
     rendered = "\n".join(str(update) for update in conn.updates)
     assert "已根据补充数据继续完成 HTML" in rendered

@@ -15,6 +15,12 @@ prompt already contains a page-by-page breakdown with titles, content, and
 order, preserve it as a direct traceability mapping rather than expanding or
 reordering it.
 
+When the host includes a `<presentation_config>` block, treat those values as
+confirmed framing. Use its audience and page-count choice in `outline.json`,
+adapt tone/storyline to its role and scene, and activate `creative_image_mode`
+only when its mode is `creative`. Do not ask for a choice already present in
+that block.
+
 Typical cases that benefit from an outline:
 
 - The user gives only a broad topic, goal, or document type.
@@ -80,29 +86,34 @@ research**. Pick the branch that fits:
    user/source text. Treat `AuthLevel` as a ranking hint, not proof that a result
    is authoritative. When a first-party domain is known, prefer a `site:`-
    constrained query; discard SEO-looking, mirror, or unrelated results. Every
-   public-research page must have at least one evidence item, and every item
-   must contain the actual http(s) URL used for that claim, preferably as
+   public-research page must have at least one evidence item unless the page
+   explicitly marks a required fact as unavailable; every non-empty evidence
+   item must contain the actual http(s) URL used for that claim, preferably as
    `claim | source | URL`. Never label a source FIFA/IOC/official unless that
    returned URL belongs to the named institution. The runtime rejects evidence
    URLs that were not returned by successful search, supplied by the user, or
    read successfully through a direct browser tool in this turn. If a `site:`
    query returns no matching host, never invent the expected URL; successfully
-   read a known exact first-party URL or ask once for the missing source/scope.
+   read a known exact first-party URL, omit the optional claim, or use
+   `暂无可验证公开数据` when the field itself is required.
    A normal factual-deck request already permits research
    from public authoritative sources; do not pause later to ask for permission
-   to use those sources. Ask only for a strict/private source boundary,
-   unavailable required evidence, or a material conflict in sources.
-   If `research-synthesis` is unavailable
-   in this session, say so plainly and ask
-   the user to supply the source material — never present unsourced content as
-   fact. Keep the boundary clear: this skill turns researched/supplied content
-   into a slide plan; it does not itself perform deep research, fact-checking, or
-   source-credibility judgement.
+   to use those sources. Respect a strict/private source boundary, use an
+   explicit placeholder when the allowed sources do not contain a required
+   fact, and disclose material source conflicts with neutral wording.
+   If `research-synthesis` is unavailable in this session, use available
+   search/browser tools for at most two targeted official-source attempts per
+   unresolved slide-relevant claim and never repeat an equivalent failed
+   search. If those tools are unavailable or insufficient, omit optional claims
+   and use explicit placeholders for required facts — never pause the deck or
+   present unsourced content as fact. Keep the boundary clear: this skill turns
+   researched/supplied content into a slide plan; it does not itself perform
+   deep research, fact-checking, or source-credibility judgement.
 
 Reserve a hard `BLOCKED` for the `creative_image_mode` image requirement only. A
-normal deck that is merely under-specified is handled by asking back or routing
-to research — warmly, with a concrete next step — never by a cold "I can't do
-this".
+normal deck that is merely under-specified is handled by a structural-choice
+question, bounded research, omission, or an explicit placeholder — never by a
+cold "I can't do this".
 
 ## Required Output
 
@@ -179,8 +190,7 @@ does not get trapped in a repair loop.
    illustrative metrics or scenarios, but never private identity facts such as
    a company/project name, financing round or stage, founding date, team
    member/history/size, client, award, or ranking. For a required missing
-   private fact, use `待补充` and ask once when it materially blocks the deck;
-   otherwise omit it.
+   private fact, use `待补充` or `待客户确认` and continue; otherwise omit it.
 5. Choose the intended `layout` and `visual` for each slide before selecting
    controlled layout ids and filling `deck.json`.
    These are executable semantic requirements, not disposable prompting hints:
@@ -213,8 +223,8 @@ does not get trapped in a repair loop.
 - Do not reuse the same evidence as the main support for more than two pages;
   combine repetitive pages or research another distinct fact.
 - For public-research decks, omit nonessential gaps instead of planning visible
-  `待补充` fields. Use `待补充` only for genuinely unavailable required
-  user/private inputs.
+  placeholders. Use `暂无可验证公开数据` only for a required unavailable public
+  fact; use `待补充` or `待客户确认` for required user/private inputs.
 - Avoid sparse content slides that leave the lower half of the canvas empty.
   Divider, cover, quote, and cinematic pause slides may use intentional
   whitespace; normal business/product/demo/training slides should turn spare

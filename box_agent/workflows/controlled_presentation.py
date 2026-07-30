@@ -58,14 +58,18 @@ _SCAFFOLD_TOOL_ERROR = (
     "and --out deck.json; do not reread files, list the registry, or invent ids."
 )
 _REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
-    {"write_file", "append_file", "request_user_input"}
+    {"write_file", "append_file"}
+)
+_REPAIR_STAGES: Final[frozenset[str]] = frozenset(
+    {"outline_repair", "deck_spec_repair", "truth_repair"}
 )
 _REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: REPAIR_INPUT in the latest "
     "checkpoint already contains the fresh issues, affected current props, outline "
     "evidence, and authorized fact buckets. Write the minimal deck.patch.json now, "
-    "or ask once for a genuinely required missing user/private fact; do not reread "
-    "stale inputs or run another command first."
+    "using an explicit placeholder for any required unavailable fact or omitting an "
+    "unsupported optional claim; do not ask for missing facts, reread stale inputs, "
+    "or run another command first."
 )
 _OUTLINE_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_OUTLINE_REPAIR_INPUT_READY: REPAIR_INPUT in the "
@@ -96,8 +100,9 @@ _APPLY_PATCH_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_APPLY_PATCH_REPAIR_REQUIRED: the latest deterministic "
     "apply_deck_patch.js call returned an actionable error. You may only read, edit, "
     "or rewrite deck.patch.json with the minimal named-field repair, "
-    "ask once for a genuinely missing required user/private fact, or rerun the exact "
-    "apply command. Do not read or rewrite deck.json or run discovery commands."
+    "replace a required unavailable fact with an explicit placeholder, omit an "
+    "unsupported optional claim, or rerun the exact apply command. Do not ask for "
+    "missing facts, read or rewrite deck.json, or run discovery commands."
 )
 _APPLY_PATCH_FIELD_MISMATCH = (
     "CONTROLLED_PRESENTATION_APPLY_PATCH_FIELD_MISMATCH: the proposed deck.patch.json "
@@ -105,10 +110,9 @@ _APPLY_PATCH_FIELD_MISMATCH = (
     "Change one of these exact fields and leave unrelated slide content unchanged: {paths}."
 )
 _REPAIR_STALLED_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_REPAIR_STALLED: the same deterministic controlled-deck "
-    "step failed twice with the same error. Do not repeat that command or bypass the "
-    "stage guard with a compound shell command. Ask for user input only when the failure explicitly names "
-    "a genuinely missing required user/private fact; otherwise end this turn and "
+    "CONTROLLED_PRESENTATION_REPAIR_STALLED: two consecutive repair tool attempts "
+    "failed to make progress. Do not repeat the call or bypass the stage guard with "
+    "a compound shell command, and do not ask for missing facts. End this turn and "
     "report the unresolved internal validation conflict."
 )
 _PLAN_SCOPE_ERROR = (
@@ -529,8 +533,6 @@ def _apply_patch_error(
                     paths=", ".join(repair_paths)
                 )
             )
-        if tool_name == "request_user_input":
-            return None
     command = arguments.get("command")
     if tool_name != "bash" or not isinstance(command, str):
         return _APPLY_PATCH_REPAIR_TOOL_ERROR if repair_allowed else _APPLY_PATCH_TOOL_ERROR
@@ -597,10 +599,9 @@ def _repair_stalled_checkpoint() -> str:
         "stopped to prevent an unbounded repair loop.\n"
         f"{CHECKPOINT_MARKER}repair_stalled\n"
         "NEXT_ACTION=Do not call another write/apply/finalize or validation tool. "
-        "If the latest failure explicitly identifies a genuinely missing required "
-        "user/private fact, call request_user_input once with that exact question. "
-        "Otherwise end the turn and state that delivery is incomplete because of "
-        "a repeated internal validation conflict."
+        "Do not ask for missing facts; they must already have been represented by "
+        "explicit placeholders or omitted when optional. End the turn and state that "
+        "delivery is incomplete because of a repeated internal validation conflict."
     )
 
 
@@ -871,8 +872,9 @@ def _unverified_outline_evidence_error(
         "URLs must come from a successful web_search result, a URL supplied by the "
         "user, or a successful direct browser read in this turn. Unverified URL(s): "
         f"{preview}{suffix}. Do not invent or relabel a URL. If no authoritative "
-        "source was retrieved, call request_user_input once for the missing source "
-        "or scope, preserving the current artifacts."
+        "source was retrieved within the bounded research budget, remove the "
+        "unsupported optional claim or use 暂无可验证公开数据 for a required field, "
+        "then rewrite the outline without asking the user."
     )
 
 
@@ -895,6 +897,8 @@ class ControlledPresentationPolicy:
     apply_patch_repair_paths: tuple[str, ...] = ()
     _last_checkpoint_text: str | None = None
     _step_failure_counts: dict[str, int] = field(default_factory=dict)
+    _repair_failure_stage: str | None = None
+    _repair_failure_streak: int = 0
 
     kind: ClassVar[str] = WORKFLOW_KIND
     checkpoint_injection_id: ClassVar[str] = CHECKPOINT_MARKER
@@ -911,7 +915,13 @@ class ControlledPresentationPolicy:
         """Parse a fresh filesystem checkpoint and update policy state."""
         if self.repair_stalled:
             checkpoint_text = _repair_stalled_checkpoint()
-        self.stage = _stage(checkpoint_text)
+        next_stage = _stage(checkpoint_text)
+        if next_stage != self._repair_failure_stage:
+            self._repair_failure_stage = (
+                next_stage if next_stage in _REPAIR_STAGES else None
+            )
+            self._repair_failure_streak = 0
+        self.stage = next_stage
         self.has_patch_input = "\nPATCH_INPUT=" in checkpoint_text
         self.has_scaffold_input = "\nSCAFFOLD_INPUT=" in checkpoint_text
         self.scaffold_input = _checkpoint_json(checkpoint_text, "SCAFFOLD_INPUT")
@@ -962,7 +972,7 @@ class ControlledPresentationPolicy:
         )
         if parallel:
             return handoff_error
-        if self.stage == "repair_stalled" and tool_name != "request_user_input":
+        if self.stage == "repair_stalled":
             return _REPAIR_STALLED_TOOL_ERROR
         if handoff_error is not None:
             return handoff_error
@@ -1005,7 +1015,7 @@ class ControlledPresentationPolicy:
         if (
             self.stage == "outline_repair"
             and self.has_repair_input
-            and tool_name not in {"write_file", "request_user_input"}
+            and tool_name != "write_file"
         ):
             return _OUTLINE_REPAIR_TOOL_ERROR
         if (
@@ -1036,6 +1046,22 @@ class ControlledPresentationPolicy:
         result: ToolResult,
     ) -> None:
         """Update deterministic-repair state after one tool result."""
+        if self.stage in _REPAIR_STAGES:
+            if result.success:
+                self._repair_failure_streak = 0
+            else:
+                self._repair_failure_stage = self.stage
+                self._repair_failure_streak += 1
+                if self._repair_failure_streak >= 2:
+                    self.repair_stalled = True
+                    _log.warning(
+                        "controlled_presentation/repair_stalled "
+                        "stage=%s consecutive_failed_tools=%d",
+                        self.stage,
+                        self._repair_failure_streak,
+                    )
+            return
+
         if self.stage == "apply_patch" and result.success:
             patch_path = arguments.get("path")
             wrote_patch = (

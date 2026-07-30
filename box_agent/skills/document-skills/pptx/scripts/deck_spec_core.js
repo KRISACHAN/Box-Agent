@@ -201,8 +201,8 @@ function validateResearchFactsAgainstRuntime(researchFacts) {
   if (facts.length && binding.available && binding.strict) {
     issues.push(
       "truth_contract.research_facts is not allowed for a strict source-only request; " +
-      "use only verbatim user-provided --fact values, omit the claim, or ask the user " +
-      "to expand the allowed source material"
+      "use only verbatim user-provided --fact values, omit an optional claim, or use " +
+      "an explicit placeholder for a required unavailable fact"
     );
   }
   return {
@@ -219,7 +219,8 @@ function validateAssumptionsAgainstRuntime(assumptions) {
   if (entries.length && binding.available && !binding.allows_assumptions) {
     issues.push(
       "truth_contract.assumptions requires explicit user permission for assumed or " +
-      "illustrative data; omit the assumptions or pause with request_user_input"
+      "illustrative data; omit the assumptions and use sourced values or explicit " +
+      "placeholders without pausing"
     );
   }
   return {

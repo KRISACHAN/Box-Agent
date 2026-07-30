@@ -87,6 +87,7 @@ async def test_agent_run_events_forwards_host_run_options(
         turn_id="turn-1",
         title="Quarterly review",
         max_tool_calls=9,
+        web_search_total_limit=36,
         no_progress_limit=2,
         artifact_root_dir=artifact_root,
         cache_fingerprint_sink=fingerprint_sink,
@@ -103,6 +104,7 @@ async def test_agent_run_events_forwards_host_run_options(
     assert captured["turn_id"] == "turn-1"
     assert captured["title"] == "Quarterly review"
     assert captured["max_tool_calls"] == 9
+    assert captured["web_search_total_limit"] == 36
     assert captured["no_progress_limit"] == 2
     assert captured["artifact_root_dir"] == artifact_root
     assert captured["cache_fingerprint_sink"] is fingerprint_sink

@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal, Mapping
 
-from box_agent.loop_guards import CompletionGate
+from box_agent.loop_guards import (
+    DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT,
+    CompletionGate,
+)
 from box_agent.tools.skill_loader import SkillLoader
 from box_agent.workflows.presentation_contract import RESEARCH_MODE_OPTION
 
@@ -124,6 +127,8 @@ def document_preload_skill_names(
         return []
     patterns = tuple(completion_gate.required_changed_artifact_globs)
     preload: list[str] = []
+    if completion_gate.workflow_checkpoint_kind == "controlled_presentation":
+        preload.append("pptx")
     for skill_name, suffixes in GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES.items():
         if any(suffix in pattern for pattern in patterns for suffix in suffixes):
             preload.append(skill_name)
@@ -141,6 +146,18 @@ def document_preload_skill_names(
     ):
         preload.append("research-synthesis")
     return preload
+
+
+def web_search_total_limit_for_active_skills(
+    matched_skill_names: tuple[str, ...],
+    preloaded_skill_names: tuple[str, ...] = (),
+) -> int | None:
+    """Expand the per-turn search budget only for research synthesis."""
+    if "research-synthesis" in matched_skill_names or (
+        "research-synthesis" in preloaded_skill_names
+    ):
+        return DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT
+    return None
 
 
 def has_explicit_video_deliverable_intent(user_text: str | None) -> bool:
