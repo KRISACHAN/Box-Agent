@@ -496,6 +496,7 @@ function main() {
     );
   }
   const sourceBinding = runtimeSourceBinding();
+  const truthWarnings = [];
   if (patch.title !== undefined) deck.title = patch.title;
   if (patch.truth_contract !== undefined) {
     if (!isPlainObject(patch.truth_contract)) {
@@ -536,7 +537,7 @@ function main() {
         patch.truth_contract.assumptions
       );
       if (assumptionBinding.issues.length) {
-        throw new Error(`Assumption binding failed:\n${assumptionBinding.issues.join("\n")}`);
+        truthWarnings.push(...assumptionBinding.issues);
       }
       deck.truth_contract.assumptions = clone(patch.truth_contract.assumptions);
     }
@@ -591,7 +592,7 @@ function main() {
   if (!validation.ok) {
     throw new Error(`Patched deck is invalid:\n${validation.issues.join("\n")}`);
   }
-  let truthGuard = { changes: [], issues: [] };
+  let truthGuard = { changes: [], warnings: [...truthWarnings] };
   const truthContract = validation.normalized.truth_contract;
   const shouldGuardSourceTruth = Boolean(
     truthContract
@@ -608,14 +609,17 @@ function main() {
     let truthResult = validateSourceBoundDeck(validation.normalized);
     truthGuard = {
       changes: sanitized.changes,
-      issues: truthResult.issues,
+      warnings: [
+        ...truthWarnings,
+        ...truthResult.issues,
+        ...truthResult.warnings,
+      ],
     };
     if (
-      truthResult.issues.length
-      && !sourceBinding.strict
+      [...truthResult.issues, ...truthResult.warnings].length
       && omitUnsupportedOptionalResearchProofs(
         validation.normalized,
-        truthResult.issues,
+        [...truthResult.issues, ...truthResult.warnings],
         truthGuard.changes
       )
     ) {
@@ -624,13 +628,11 @@ function main() {
         throw new Error(`Research-proof-normalized deck is invalid:\n${validation.issues.join("\n")}`);
       }
       truthResult = validateSourceBoundDeck(validation.normalized);
-      truthGuard.issues = truthResult.issues;
-    }
-    if (truthResult.issues.length) {
-      throw new Error(
-        "Patched deck still violates the source-bound truth contract after normalization:\n" +
-        truthResult.issues.join("\n")
-      );
+      truthGuard.warnings = [
+        ...truthWarnings,
+        ...truthResult.issues,
+        ...truthResult.warnings,
+      ];
     }
   }
   fs.mkdirSync(path.dirname(deckPath), { recursive: true });
@@ -642,6 +644,8 @@ function main() {
     patched_slides: patchedSlides,
     normalization_changes: normalizationChanges,
     truth_guard_changes: truthGuard.changes,
+    truth_guard_warnings: truthGuard.warnings,
+    truth_warning_count: truthGuard.warnings.length,
     truth_mode: validation.normalized.truth_contract
       ? validation.normalized.truth_contract.mode
       : null,

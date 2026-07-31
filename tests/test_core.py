@@ -2804,6 +2804,167 @@ async def test_web_search_site_query_filters_nested_web_results_payload():
     assert "irrelevant.example.com" not in result.content
 
 
+def test_web_search_reranks_entity_matches_and_marks_direct_read_candidates():
+    from box_agent.core import _dedupe_web_search_content
+
+    query = "Example Corp Product One official launch"
+    content = json.dumps(
+        {
+            "Query": query,
+            "Results": [
+                {
+                    "Title": "Generic product launch roundup",
+                    "Url": "https://news.example.net/roundup",
+                    "Snippet": "Several unrelated products launched this year.",
+                },
+                {
+                    "Title": "Example Corp officially launches Product One",
+                    "Url": "https://example.com/news/product-one",
+                    "Snippet": "Example Corp introduced Product One to customers.",
+                    "SourceType": "official",
+                },
+            ],
+        }
+    )
+
+    reranked, new_count, duplicate_count, _, inspected = (
+        _dedupe_web_search_content(content, set(), {"query": query})
+    )
+
+    payload = json.loads(reranked)
+    assert inspected is True
+    assert new_count == 2
+    assert duplicate_count == 0
+    assert payload["Results"][0]["Url"] == "https://example.com/news/product-one"
+    assert payload["SearchStatus"] == "ok"
+    assert payload["SearchResultRanking"][0]["entity_match_score"] > (
+        payload["SearchResultRanking"][1]["entity_match_score"]
+    )
+    assert payload["SearchResultRanking"][0]["first_party_level"] == 2
+    assert payload["DirectReadCandidates"] == [
+        "https://example.com/news/product-one"
+    ]
+
+
+def test_web_search_site_query_reports_provider_empty_state():
+    from box_agent.core import _dedupe_web_search_content
+
+    content = json.dumps({"Query": "site:example.com Product One", "Results": []})
+
+    normalized, new_count, duplicate_count, _, inspected = (
+        _dedupe_web_search_content(
+            content,
+            set(),
+            {"query": "site:example.com Product One"},
+        )
+    )
+
+    payload = json.loads(normalized)
+    assert inspected is True
+    assert new_count == 0
+    assert duplicate_count == 0
+    assert payload["SearchStatus"] == "site_no_results"
+    assert payload["RequestedSiteDomain"] == "example.com"
+    assert payload["SiteFilterMatchedCount"] == 0
+    assert "No results were returned for site:example.com" in payload["SiteFilterNotice"]
+
+
+def test_web_search_logs_ranked_top_results_sent_to_model(caplog):
+    from box_agent.core import (
+        _dedupe_web_search_content,
+        _log_web_search_model_results,
+        _tool_message_content_for_model,
+    )
+    from box_agent.tools.base import ToolResult
+
+    query = "Example Corp Product One"
+    normalized, *_ = _dedupe_web_search_content(
+        json.dumps(
+            {
+                "Results": [
+                    {
+                        "Title": "Unrelated item",
+                        "Url": "https://unrelated.example/item",
+                        "Snippet": "No entity match.",
+                    },
+                    {
+                        "Title": "Example Corp Product One",
+                        "Url": "https://example.com/product-one",
+                        "Snippet": "Example Corp product information.",
+                    },
+                ]
+            }
+        ),
+        set(),
+        {"query": query},
+    )
+    model_content = _tool_message_content_for_model(
+        tool_name="web_search",
+        arguments={"query": query},
+        result=ToolResult(success=True, content=normalized),
+        visible_content=normalized,
+        visible_error=None,
+    )
+
+    with caplog.at_level("INFO", logger="box_agent.core"):
+        _log_web_search_model_results({"query": query}, normalized, model_content)
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if "web_search/model_results" in record.getMessage()
+    )
+    assert "Example Corp Product One" in message
+    assert message.index("https://example.com/product-one") < message.index(
+        "https://unrelated.example/item"
+    )
+
+
+def test_large_web_search_compaction_uses_reranked_top_results():
+    from box_agent.core import (
+        _dedupe_web_search_content,
+        _tool_message_content_for_model,
+    )
+    from box_agent.tools.base import ToolResult
+
+    query = "Example Corp Product One"
+    results = [
+        {
+            "Title": f"Generic result {index}",
+            "Url": f"https://generic.example/result-{index}",
+            "Snippet": "Unrelated roundup " + ("x" * 2_000),
+        }
+        for index in range(1, 9)
+    ]
+    results.append(
+        {
+            "Title": "Example Corp Product One official page",
+            "Url": "https://example.com/product-one",
+            "Snippet": "Example Corp Product One details " + ("y" * 2_000),
+            "SourceType": "official",
+        }
+    )
+    normalized, *_ = _dedupe_web_search_content(
+        json.dumps({"Results": results}),
+        set(),
+        {"query": query},
+    )
+
+    model_content = _tool_message_content_for_model(
+        tool_name="web_search",
+        arguments={"query": query},
+        result=ToolResult(success=True, content=normalized),
+        visible_content=normalized,
+        visible_error=None,
+    )
+
+    assert "Large web_search result bounded for model history" in model_content
+    assert "https://example.com/product-one" in model_content
+    assert model_content.index("https://example.com/product-one") < model_content.index(
+        "https://generic.example/result-1"
+    )
+
+
 @pytest.mark.asyncio
 async def test_web_search_tool_result_is_compacted_for_the_next_model_step():
     tool_call = ToolCall(

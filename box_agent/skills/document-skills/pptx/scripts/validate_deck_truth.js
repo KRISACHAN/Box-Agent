@@ -247,6 +247,39 @@ function isResearchBacked(text, researchFacts) {
   return researchFacts.some(fact => isResearchSemanticParaphrase(text, fact));
 }
 
+const CANONICAL_RESEARCH_SOURCE_TYPES = new Set([
+  "first_party",
+  "government",
+  "regulator",
+  "filing",
+  "standards_body",
+  "academic",
+  "reputable_media",
+  "secondary",
+  "user_input",
+]);
+
+function parseCanonicalResearchFact(value) {
+  const raw = String(value || "").trim();
+  const parts = raw.split(/\s+\|\s+/u);
+  if (parts.length !== 4) return null;
+  const [entity, claim, sourceType, sourceUrl] = parts.map(part => part.trim());
+  if (
+    !entity
+    || !claim
+    || !CANONICAL_RESEARCH_SOURCE_TYPES.has(sourceType)
+    || !/^https?:\/\/\S+$/i.test(sourceUrl)
+  ) return null;
+  return {
+    raw,
+    entity,
+    entityKey: normalizeText(entity),
+    claim,
+    sourceType,
+    sourceUrl,
+  };
+}
+
 function researchSemanticTokens(text) {
   const claim = String(text || "")
     .split(/\s+\|\s+/u, 1)[0]
@@ -1211,25 +1244,32 @@ function validateSourceBoundDeck(deck) {
   }
   const sourceFacts = Array.isArray(truth.source_facts) ? truth.source_facts : [];
   const sourceBinding = validateSourceFactsAgainstRuntime(sourceFacts);
-  issues.push(...sourceBinding.issues);
+  warnings.push(...sourceBinding.issues);
   const researchFacts = Array.isArray(truth.research_facts) ? truth.research_facts : [];
   const researchBinding = validateResearchFactsAgainstRuntime(researchFacts);
-  issues.push(...researchBinding.issues);
+  warnings.push(...researchBinding.issues);
+  const parsedResearchFacts = researchFacts.map(parseCanonicalResearchFact);
+  const entityBoundResearch = parsedResearchFacts.some(Boolean);
+  if (entityBoundResearch) {
+    parsedResearchFacts.forEach((parsed, index) => {
+      if (!parsed) {
+        warnings.push(
+          `truth_contract.research_facts.${index}: research evidence must use ` +
+          "entity | claim | source_type | source_url so entity-specific facts cannot " +
+          "be matched across targets"
+        );
+      }
+    });
+  }
   const assumptions = Array.isArray(truth.assumptions) ? truth.assumptions : [];
   const assumptionBinding = validateAssumptionsAgainstRuntime(assumptions);
-  issues.push(...assumptionBinding.issues);
+  warnings.push(...assumptionBinding.issues);
   if (!sourceFacts.length && !researchFacts.length) {
-    issues.push(
+    warnings.push(
       "truth_contract has no source_facts or research_facts; capture user-provided facts " +
       "or researched facts before authoring claims"
     );
   }
-  const claimFacts = [...sourceFacts, ...researchFacts];
-  const normalizedFacts = claimFacts.map(normalizeText).filter(Boolean);
-  const normalizedSources = [
-    ...normalizedFacts,
-    normalizeText(sourceBinding.source_text),
-  ].filter(Boolean);
   const strictSourceOnly = sourceBinding.strict && sourceFacts.length > 0;
   const hasAuthorizedAssumptions = Boolean(
     sourceBinding.available
@@ -1241,6 +1281,27 @@ function validateSourceBoundDeck(deck) {
     const basePath = slidePropsPath(slide, index);
     const entries = collectTextEntries(slide.props, basePath);
     const combined = entries.map(entry => entry.text).join(" ");
+    const combinedNormalized = normalizeText(combined);
+    const visibleResearchEntities = entityBoundResearch
+      ? new Set(
+        parsedResearchFacts
+          .filter(parsed =>
+            parsed && parsed.entityKey && combinedNormalized.includes(parsed.entityKey)
+          )
+          .map(parsed => parsed.entityKey)
+      )
+      : new Set();
+    const slideResearchFacts = visibleResearchEntities.size
+      ? parsedResearchFacts
+        .filter(parsed => parsed && visibleResearchEntities.has(parsed.entityKey))
+        .map(parsed => parsed.raw)
+      : researchFacts;
+    const claimFacts = [...sourceFacts, ...slideResearchFacts];
+    const normalizedFacts = claimFacts.map(normalizeText).filter(Boolean);
+    const normalizedSources = [
+      ...normalizedFacts,
+      normalizeText(sourceBinding.source_text),
+    ].filter(Boolean);
     const disclosesAssumptions = slideDisclosesAssumptions(slide);
     const hasDisclosedAuthorizedAssumptions = (
       hasAuthorizedAssumptions && disclosesAssumptions
@@ -1279,7 +1340,7 @@ function validateSourceBoundDeck(deck) {
             expectedEyebrowOrdinal(deck.slides, index)
           )
         ) {
-          issues.push(
+          warnings.push(
             `${entry.path}: numeric claim ${JSON.stringify(token)} is not present in ` +
             "truth_contract.source_facts/research_facts or in user-authorized " +
             "truth_contract.assumptions " +
@@ -1288,7 +1349,9 @@ function validateSourceBoundDeck(deck) {
         }
       });
       if (TEAM_SIZE_RE.test(entry.text) && !isSourceBacked(entry.text, normalizedSources)) {
-        issues.push(`${entry.path}: team-size claim is not source-backed; use 待补充 or omit it`);
+        warnings.push(
+          `${entry.path}: team-size claim is not source-backed; use 待补充 or omit it`
+        );
       }
       const shortConceptBacked = /\.(?:label|title|eyebrow)$/.test(entry.path)
         && isShortSourceConceptBacked(entry.text, sourceBinding.source_text);
@@ -1299,12 +1362,12 @@ function validateSourceBoundDeck(deck) {
       if (
         requiresPerformanceBacking(entry.text)
         && !isSourceBacked(entry.text, normalizedSources)
-        && !isResearchBacked(entry.text, researchFacts)
+        && !isResearchBacked(entry.text, slideResearchFacts)
         && !shortConceptBacked
         && !semanticSourceBackedPerformance
         && !assumptionBackedPerformance
       ) {
-        issues.push(
+        warnings.push(
           `${entry.path}: performance/award/publication claim is not source-backed; ` +
           "use 待补充, omit it, or record user-authorized assumptions and visibly disclose them"
         );
@@ -1320,7 +1383,7 @@ function validateSourceBoundDeck(deck) {
       && !isGenericProjectTitle(title)
       && !isSourceBacked(title, normalizedSources)
     ) {
-      issues.push(
+      warnings.push(
         `${basePath}.title: project name is not source-backed; use a neutral title containing 待补充`
       );
     }
@@ -1340,13 +1403,13 @@ function validateSourceBoundDeck(deck) {
           `${basePath}.title`,
           sectionKind,
           normalizedSources,
-          issues
+          warnings
         );
         requireStrictSourceBacked(
           slide.props.subtitle,
           `${basePath}.subtitle`,
           normalizedSources,
-          issues
+          warnings
         );
       }
       namedItemTitles.forEach(entry => {
@@ -1363,7 +1426,7 @@ function validateSourceBoundDeck(deck) {
           && !PLACEHOLDER_RE.test(entry.text)
           && !sourceBacked
         ) {
-          issues.push(
+          warnings.push(
             `${entry.path}: ${sectionKind} name is not source-backed; use 待补充 or omit it`
           );
         }
@@ -1375,7 +1438,7 @@ function validateSourceBoundDeck(deck) {
         slide,
         basePath,
         normalizedSources,
-        issues,
+        warnings,
         sourceBinding.source_text
       );
     }
@@ -1385,6 +1448,7 @@ function validateSourceBoundDeck(deck) {
     warnings,
     sourceFactCount: sourceFacts.length,
     researchFactCount: researchFacts.length,
+    entityBoundResearchFactCount: parsedResearchFacts.filter(Boolean).length,
     assumptionCount: assumptions.length,
     sourceBinding,
   };
@@ -1415,10 +1479,12 @@ function main() {
   ) {
     const sourceBinding = runtimeSourceBinding();
     const illustrativeAllowed = !sourceBinding.available || sourceBinding.allows_assumptions;
+    const permissionWarning = (
+      "truth_contract.mode is illustrative but the user has not explicitly permitted " +
+      "invented or illustrative content"
+    );
     result = {
-      issues: !illustrativeAllowed
-        ? ["truth_contract.mode is illustrative but the user has not explicitly permitted invented or illustrative content"]
-        : [],
+      issues: !illustrativeAllowed ? [permissionWarning] : [],
       warnings: [
         "truth_contract.mode is illustrative; use this only when the user explicitly permits fictional or illustrative copy",
       ],
@@ -1426,6 +1492,7 @@ function main() {
       researchFactCount: Array.isArray(structural.normalized.truth_contract.research_facts)
         ? structural.normalized.truth_contract.research_facts.length
         : 0,
+      entityBoundResearchFactCount: 0,
       assumptionCount: structural.normalized.truth_contract.assumptions.length,
       sourceBinding: { ...sourceBinding, verified_fact_count: 0, issues: [] },
     };
@@ -1434,12 +1501,14 @@ function main() {
   }
   const report = {
     ok: result.issues.length === 0,
+    advisory: true,
     deck: deckPath,
     mode: structural.normalized && structural.normalized.truth_contract
       ? structural.normalized.truth_contract.mode
       : null,
     sourceFactCount: result.sourceFactCount,
     researchFactCount: result.researchFactCount || 0,
+    entityBoundResearchFactCount: result.entityBoundResearchFactCount || 0,
     assumptionCount: result.assumptionCount || 0,
     sourceBinding: result.sourceBinding
       ? {
@@ -1459,7 +1528,7 @@ function main() {
     `Deck truth validation: ${report.ok ? "PASS" : "FAIL"} ` +
     `(${report.sourceFactCount} source facts, ${report.researchFactCount} research facts, ` +
     `${report.assumptionCount} assumptions, ` +
-    `${report.issues.length} issues)`
+    `${report.issues.length} issues, ${report.warnings.length} warnings)`
   );
   if (!report.ok) process.exit(1);
 }

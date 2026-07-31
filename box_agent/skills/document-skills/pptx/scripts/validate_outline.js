@@ -9,7 +9,8 @@ const {
 function usage() {
   console.error(
     "Usage: validate_outline.js outline.json [--min-slides N] " +
-    "[--max-slides N] [--report qa/outline_check.json]"
+    "[--max-slides N] [--research-report research/qa/topic_research_check.json] " +
+    "[--report qa/outline_check.json]"
   );
   process.exit(2);
 }
@@ -20,6 +21,7 @@ function parseArgs(argv) {
     outlinePath: argv[0],
     minSlides: 3,
     maxSlides: 40,
+    researchReport: null,
     report: null,
   };
   for (let i = 1; i < argv.length; i += 1) {
@@ -33,6 +35,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--report" && value) {
       opts.report = value;
+      i += 1;
+    } else if (arg === "--research-report" && value) {
+      opts.researchReport = value;
       i += 1;
     } else {
       usage();
@@ -53,6 +58,44 @@ function readOutline(outlinePath) {
   } catch (error) {
     throw new Error(`Invalid JSON in ${resolved}: ${error.message}`);
   }
+}
+
+function readVerifiedResearchEvidence(reportPath) {
+  if (!reportPath) return null;
+  const resolved = resolveArtifactPath(reportPath);
+  let report;
+  try {
+    report = JSON.parse(fs.readFileSync(resolved, "utf8"));
+  } catch (error) {
+    throw new Error(`Invalid research QA report ${resolved}: ${error.message}`);
+  }
+  if (
+    !report
+    || report.ok !== true
+    || report.validator !== "research-synthesis"
+    || report.evidence_schema_version !== 1
+    || !Array.isArray(report.verified_evidence)
+    || report.verified_evidence.length < 1
+  ) {
+    throw new Error(
+      "Research QA report is not a successful entity-bound evidence handoff"
+    );
+  }
+  const verified = new Map();
+  report.verified_evidence.forEach((item, index) => {
+    if (
+      !item
+      || item.status !== "verified"
+      || !text(item.entity)
+      || !text(item.claim)
+      || !text(item.source_url)
+      || !text(item.canonical)
+    ) {
+      throw new Error(`Research QA verified_evidence.${index} is invalid`);
+    }
+    verified.set(text(item.canonical), item);
+  });
+  return { resolved, verified };
 }
 
 function text(value) {
@@ -121,6 +164,7 @@ function validate(outline, opts) {
   const issues = [];
   const warnings = [];
   const publicResearch = isPublicResearchOutline(outline);
+  const verifiedResearch = opts.verifiedResearch;
 
   for (const field of ["deck_goal", "source_mode"]) {
     if (!text(outline[field])) issues.push(`Missing top-level field: ${field}`);
@@ -269,8 +313,13 @@ function validate(outline, opts) {
             `${label}: public-research page has no evidence because it explicitly ` +
             "marks a required fact as unavailable"
           );
-        } else {
+        } else if (verifiedResearch) {
           issues.push(
+            `${label}: entity-bound research handoff requires at least one exact ` +
+            "verified_evidence canonical item unless a required fact is explicitly unavailable"
+          );
+        } else {
+          warnings.push(
             `${label}: public-authoritative research requires at least one ` +
             "claim | source | http(s) URL evidence item on every slide unless the " +
             "page explicitly marks a required fact as unavailable"
@@ -280,6 +329,29 @@ function validate(outline, opts) {
       slide.evidence.forEach((item, evidenceIndex) => {
         const key = normalize(item);
         if (!key) return;
+        const verifiedItem = verifiedResearch
+          ? verifiedResearch.verified.get(text(item))
+          : null;
+        if (verifiedResearch && !verifiedItem) {
+          issues.push(
+            `${label}: evidence.${evidenceIndex} is not an exact canonical item from ` +
+            "the successful research QA report"
+          );
+        }
+        if (verifiedItem) {
+          const slideNarrative = [
+            slide.title,
+            slide.message,
+            ...(Array.isArray(slide.bullets) ? slide.bullets : []),
+          ].map(text).join(" ");
+          if (!normalize(slideNarrative).includes(normalize(verifiedItem.entity))) {
+            issues.push(
+              `${label}: evidence.${evidenceIndex} is bound to entity ` +
+              `${JSON.stringify(verifiedItem.entity)}, but the slide narrative does not ` +
+              "name that entity"
+            );
+          }
+        }
         if (wordLikeLength(item) > TRUTH_TEXT_MAX_CHARACTERS) {
           issues.push(
             `${label}: evidence.${evidenceIndex} exceeds ` +
@@ -292,7 +364,7 @@ function validate(outline, opts) {
         labels.push(label);
         evidenceUsage.set(key, labels);
         if (publicResearch && !hasHttpUrl(item)) {
-          issues.push(
+          warnings.push(
             `${label}: evidence.${evidenceIndex} must include the actual http(s) ` +
             "source URL used for this public-research claim; do not relabel an " +
             "unbound search snippet as official/authoritative evidence"
@@ -303,7 +375,7 @@ function validate(outline, opts) {
           && PRIVATE_IDENTITY_FACT_RE.test(String(item || ""))
           && !UNAVAILABLE_FACT_PLACEHOLDER_RE.test(String(item || ""))
         ) {
-          issues.push(
+          warnings.push(
             `${label}: evidence.${evidenceIndex} assumes a private identity fact ` +
             "(such as a company/project name, financing round, founding/team/client " +
             "fact, award, or ranking). Assumptions are allowed only for visibly " +
@@ -327,7 +399,7 @@ function validate(outline, opts) {
         claimEntries.forEach(entry => {
           numberTokens(entry.value).forEach(token => {
             if (!evidenceNumbers.has(token)) {
-              issues.push(
+              warnings.push(
                 `${label}: ${entry.path} numeric literal ${JSON.stringify(token)} ` +
                 "is not present in this page's evidence; add an exact evidence fact " +
                 "or remove the unsupported/decorative number"
@@ -413,9 +485,14 @@ function validate(outline, opts) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
+  opts.verifiedResearch = readVerifiedResearchEvidence(opts.researchReport);
   const { outline, resolved } = readOutline(opts.outlinePath);
   const result = validate(outline, opts);
-  const output = { ...result, outline: resolved };
+  const output = {
+    ...result,
+    outline: resolved,
+    researchReport: opts.verifiedResearch ? opts.verifiedResearch.resolved : null,
+  };
   const outputText = JSON.stringify(output, null, 2);
   if (opts.report) {
     const reportPath = resolveArtifactPath(opts.report);

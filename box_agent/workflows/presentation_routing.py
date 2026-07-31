@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Final
 
 from ..artifacts import OUTPUT_SUBDIR
-from ..delivery import has_deliverable_intent, strip_negated_format_clauses
+from ..delivery import (
+    has_deliverable_intent,
+    is_meta_prompt_rewrite_request,
+    strip_negated_format_clauses,
+)
 from ..loop_guards import (
     DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
@@ -74,6 +78,15 @@ _RESEARCH_SOURCE_FIRST_RE: Final[re.Pattern[str]] = re.compile(
     r"use\s+only\s+(?:the\s+)?(?:provided|attached))",
     re.IGNORECASE,
 )
+_RESEARCH_SEARCH_FORBIDDEN_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"不要(?:联网|搜索)|不(?:要|用)搜索|"
+    r"仅(?:根据|基于)|只(?:根据|基于)|"
+    r"no\s+(?:web|search)|without\s+(?:web|search)|"
+    r"use\s+only\s+(?:the\s+)?(?:provided|attached)"
+    r")",
+    re.IGNORECASE,
+)
 _RESEARCH_CREATIVE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:创意(?:视觉|插画|海报)?|插画|海报|氛围感|想象式|艺术化|视觉故事|"
     r"image[- ]rich|illustration|poster|purely\s+visual|atmospheric)",
@@ -94,6 +107,17 @@ _EXTERNAL_EVIDENCE_RE: Final[re.Pattern[str]] = re.compile(
     r"market\s+(?:size|analysis|research|trend)|industry\s+(?:analysis|research|trend)|"
     r"competitive\s+(?:analysis|landscape)|business\s+value|investment\s+case|"
     r"market\s+share|growth\s+rate|policy|regulation|citation|sources?|evidence)",
+    re.IGNORECASE,
+)
+_EXPLICIT_EXTERNAL_RESEARCH_ACTION_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"搜索|检索|查找|调研|核实|验证|查证|"
+    r"(?:使用|采用|优先使用|优先采用)?(?:官方|权威)(?:来源|资料|网站|数据)?|"
+    r"补充(?:外部)?资料|补充来源|引用来源|引用资料|"
+    r"\b(?:search|research|investigate|verify|fact[- ]?check|look\s+up)\b|"
+    r"\b(?:use|prefer|cite)\s+(?:official|authoritative|primary)\s+sources?\b|"
+    r"\b(?:add|include|provide)\s+(?:citations?|sources?|references?)\b"
+    r")",
     re.IGNORECASE,
 )
 _PAGE_PLAN_RE: Final[re.Pattern[str]] = re.compile(
@@ -117,7 +141,6 @@ _SUCCESS_REPORT_GLOBS: Final[tuple[str, ...]] = (
     f"{OUTPUT_SUBDIR}/**/qa/outline_check.json",
     f"{OUTPUT_SUBDIR}/**/qa/deck_contract.json",
     f"{OUTPUT_SUBDIR}/**/qa/deck_spec.json",
-    f"{OUTPUT_SUBDIR}/**/qa/truth_check.json",
     f"{OUTPUT_SUBDIR}/**/qa/image_manifest.json",
     f"{OUTPUT_SUBDIR}/**/qa/html_self_check.json",
     f"{OUTPUT_SUBDIR}/**/qa/runtime_probe.json",
@@ -133,6 +156,14 @@ _PRESENTATION_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
 
 def _research_mode(user_text: str) -> str:
     text = user_text.strip()
+    if _RESEARCH_SEARCH_FORBIDDEN_RE.search(text):
+        return "source_first"
+    # An explicit request to acquire or verify external evidence outranks the
+    # amount of material already present in the prompt. Long references and a
+    # detailed page plan can guide the deck, but they do not satisfy a request
+    # to search, fact-check, or use authoritative sources.
+    if _EXPLICIT_EXTERNAL_RESEARCH_ACTION_RE.search(text):
+        return "deep"
     if _RESEARCH_SOURCE_FIRST_RE.search(text):
         return "source_first"
     if _RESEARCH_CREATIVE_RE.search(text):
@@ -179,6 +210,8 @@ def build_presentation_completion_gate(
     workspace_dir: str | Path,
 ) -> CompletionGate | None:
     """Build the presentation workflow gate, or return None for another router."""
+    if is_meta_prompt_rewrite_request(user_text):
+        return None
     if not has_deliverable_intent(user_text):
         return None
     text = user_text.strip().lower()

@@ -33,6 +33,7 @@ RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
     DIRECT_RESEARCH_READ_TOOLS | frozenset({"web_search"})
 )
 RESEARCH_READ_BATCH_SIZE: Final[int] = 2
+RESEARCH_ROUND_LIMIT: Final[int] = 3
 
 _log = logging.getLogger(__name__)
 
@@ -61,15 +62,13 @@ _REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"write_file", "append_file"}
 )
 _REPAIR_STAGES: Final[frozenset[str]] = frozenset(
-    {"outline_repair", "deck_spec_repair", "truth_repair"}
+    {"outline_repair", "deck_spec_repair"}
 )
 _REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: REPAIR_INPUT in the latest "
-    "checkpoint already contains the fresh issues, affected current props, outline "
-    "evidence, and authorized fact buckets. Write the minimal deck.patch.json now, "
-    "using an explicit placeholder for any required unavailable fact or omitting an "
-    "unsupported optional claim; do not ask for missing facts, reread stale inputs, "
-    "or run another command first."
+    "checkpoint already contains the fresh hard deck-spec issues, affected current "
+    "props, and outline context. Write the minimal deck.patch.json now; do not reread "
+    "stale inputs or run another command first."
 )
 _OUTLINE_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_OUTLINE_REPAIR_INPUT_READY: REPAIR_INPUT in the "
@@ -86,9 +85,10 @@ _FINALIZE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_FINALIZE_REQUIRED: run the single deterministic "
     "finalizer now with bash using the absolute finalize_controlled_deck.js path "
     "from the latest checkpoint, followed by deck.json --out "
-    "index.html. It validates spec/truth/media, compiles HTML, runs self-check, "
-    "and probes the editor in dependency order. Do not split that chain into "
-    "separate validator/render commands or add another shell command."
+    "index.html. It enforces hard spec/media checks, records advisory truth warnings, "
+    "compiles HTML, runs self-check, and probes the editor in dependency order. Do "
+    "not split that chain into separate validator/render commands or add another "
+    "shell command."
 )
 _APPLY_PATCH_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_APPLY_PATCH_REQUIRED: run the single deterministic "
@@ -836,46 +836,21 @@ def _stage(checkpoint_text: str) -> str | None:
     return stage or None
 
 
-def _unverified_outline_evidence_error(
-    tool_name: str,
-    arguments: dict[str, Any],
-    verified_urls: set[str],
-) -> str | None:
-    if tool_name != "write_file":
-        return None
-    path_value = arguments.get("path")
-    if not isinstance(path_value, str) or Path(path_value).name != "outline.json":
-        return None
-    content = arguments.get("content")
-    if not isinstance(content, str):
-        return None
-    try:
-        outline = json.loads(content)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(outline, dict) or outline.get("source_mode") != "public_authoritative_research":
-        return None
-    slides = outline.get("slides")
-    if not isinstance(slides, list):
-        return None
-    evidence_urls: set[str] = set()
-    for slide in slides:
-        if isinstance(slide, dict):
-            evidence_urls.update(extract_http_urls(slide.get("evidence")))
-    unverified = sorted(evidence_urls - verified_urls)
-    if not unverified:
-        return None
-    preview = ", ".join(unverified[:3])
-    suffix = "" if len(unverified) <= 3 else f" (+{len(unverified) - 3} more)"
-    return (
-        "CONTROLLED_PRESENTATION_UNVERIFIED_EVIDENCE_URL: public-research outline "
-        "URLs must come from a successful web_search result, a URL supplied by the "
-        "user, or a successful direct browser read in this turn. Unverified URL(s): "
-        f"{preview}{suffix}. Do not invent or relabel a URL. If no authoritative "
-        "source was retrieved within the bounded research budget, remove the "
-        "unsupported optional claim or use 暂无可验证公开数据 for a required field, "
-        "then rewrite the outline without asking the user."
-    )
+def _research_result_is_empty(result: ToolResult) -> bool:
+    """Return whether a successful research tool call yielded no usable payload."""
+    if not result.success:
+        return False
+    content = (result.model_context or result.content or "").strip()
+    if not content:
+        return True
+    return content.casefold() in {
+        "[]",
+        "{}",
+        "null",
+        "no results",
+        "no search results",
+        "no results found",
+    }
 
 
 @dataclass(slots=True)
@@ -899,6 +874,12 @@ class ControlledPresentationPolicy:
     _step_failure_counts: dict[str, int] = field(default_factory=dict)
     _repair_failure_stage: str | None = None
     _repair_failure_streak: int = 0
+    _research_tool_attempts: int = 0
+    _research_successful_attempts: int = 0
+    _research_failed_attempts: int = 0
+    _research_empty_attempts: int = 0
+    _research_calls_since_checkpoint: int = 0
+    _research_rounds_without_handoff: int = 0
 
     kind: ClassVar[str] = WORKFLOW_KIND
     checkpoint_injection_id: ClassVar[str] = CHECKPOINT_MARKER
@@ -906,7 +887,86 @@ class ControlledPresentationPolicy:
 
     def build_checkpoint(self) -> str | None:
         """Derive the current presentation stage from persisted artifacts."""
-        return build_checkpoint_text(self.workspace_dir, self.research_mode)
+        if self._research_calls_since_checkpoint:
+            self._research_rounds_without_handoff += 1
+            self._research_calls_since_checkpoint = 0
+        fallback_allowed = (
+            self._research_rounds_without_handoff >= RESEARCH_ROUND_LIMIT
+        )
+        attempt_summary = {
+            "rounds": self._research_rounds_without_handoff,
+            "calls": self._research_tool_attempts,
+            "successful": self._research_successful_attempts,
+            "failed": self._research_failed_attempts,
+            "empty": self._research_empty_attempts,
+        }
+        fallback_reason = None
+        if fallback_allowed:
+            unavailable = (
+                self._research_failed_attempts + self._research_empty_attempts
+            )
+            fallback_reason = (
+                "research_sources_unavailable"
+                if self._research_tool_attempts > 0
+                and unavailable == self._research_tool_attempts
+                else "research_round_limit_reached_without_validated_report"
+            )
+        checkpoint_text = build_checkpoint_text(
+            self.workspace_dir,
+            self.research_mode,
+            research_fallback_allowed=fallback_allowed,
+            research_fallback_reason=fallback_reason,
+            research_attempt_summary=attempt_summary,
+        )
+        research_input = (
+            _checkpoint_json(checkpoint_text, "RESEARCH_INPUT")
+            if checkpoint_text is not None
+            else None
+        )
+        if research_input and research_input.get("fallback") is True:
+            self._persist_research_fallback_status(research_input)
+        return checkpoint_text
+
+    def _persist_research_fallback_status(
+        self,
+        research_input: dict[str, Any],
+    ) -> None:
+        """Persist why PPT generation continued without a validated report."""
+        root = artifact_scan_root(self.workspace_dir, self.artifact_root_dir)
+        if root is None:
+            return
+        status_path = root / "research" / "qa" / "research_status.json"
+        payload = {
+            "schema_version": 1,
+            "workflow": WORKFLOW_KIND,
+            "research_mode": self.research_mode,
+            "status": "fallback",
+            "report_available": False,
+            "generation_continues": True,
+            "continued_to": "outline",
+            "reason": research_input.get("fallback_reason"),
+            "message": research_input.get("fallback_message"),
+            "attempt_summary": research_input.get("attempt_summary", {}),
+        }
+        serialized = json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
+        try:
+            if status_path.is_file():
+                if status_path.read_text(encoding="utf-8") == serialized:
+                    return
+            status_path.parent.mkdir(parents=True, exist_ok=True)
+            status_path.write_text(serialized, encoding="utf-8")
+        except OSError as exc:
+            _log.warning(
+                "controlled_presentation/research_status_write_failed "
+                "path=%s error=%s",
+                status_path,
+                exc,
+            )
 
     def update_checkpoint(
         self,
@@ -976,19 +1036,6 @@ class ControlledPresentationPolicy:
             return _REPAIR_STALLED_TOOL_ERROR
         if handoff_error is not None:
             return handoff_error
-        if self.stage in {
-            "outline",
-            "outline_qa",
-            "outline_repair",
-            "outline_backfill",
-        }:
-            evidence_error = _unverified_outline_evidence_error(
-                tool_name,
-                arguments,
-                verified_evidence_urls,
-            )
-            if evidence_error is not None:
-                return evidence_error
         if (
             self.stage == "content_patch"
             and self.has_patch_input
@@ -1019,7 +1066,7 @@ class ControlledPresentationPolicy:
         ):
             return _OUTLINE_REPAIR_TOOL_ERROR
         if (
-            self.stage in {"deck_spec_repair", "truth_repair"}
+            self.stage == "deck_spec_repair"
             and self.has_repair_input
             and tool_name not in _REPAIR_ALLOWED_TOOLS
         ):
@@ -1046,6 +1093,16 @@ class ControlledPresentationPolicy:
         result: ToolResult,
     ) -> None:
         """Update deterministic-repair state after one tool result."""
+        if self.stage == "research" and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS:
+            self._research_tool_attempts += 1
+            self._research_calls_since_checkpoint += 1
+            if not result.success:
+                self._research_failed_attempts += 1
+            elif _research_result_is_empty(result):
+                self._research_empty_attempts += 1
+            else:
+                self._research_successful_attempts += 1
+
         if self.stage in _REPAIR_STAGES:
             if result.success:
                 self._repair_failure_streak = 0
@@ -1149,7 +1206,7 @@ class ControlledPresentationPolicy:
         return tool_name in DIRECT_RESEARCH_READ_TOOLS
 
     def allows_completion_continuation(self) -> bool:
-        return self.stage != "repair_stalled"
+        return self.stage not in {"complete", "repair_stalled"}
 
     def suppresses_generic_final_summary(self) -> bool:
         return self.stage not in {None, "complete", "repair_stalled"}

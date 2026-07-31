@@ -116,6 +116,12 @@ const THEME_KEYWORD_RULES = Object.freeze([
     weight: 18,
   }),
   Object.freeze({
+    theme_id: "mat",
+    signal: "keyword rule: wine and vineyard",
+    pattern: /(?:葡萄酒|红酒|酒庄|葡萄园|酒款|酿酒|\b(?:wine|winery|wineries|vineyard|vineyards|winemaking|viticulture|oenology)\b)/i,
+    weight: 18,
+  }),
+  Object.freeze({
     theme_id: "product-console",
     signal: "keyword rule: SaaS and product interface",
     pattern: /(?:SaaS|软件产品|AI\s*产品|产品介绍|产品发布|产品演示|核心功能|功能演示|使用流程|产品价值|产品界面|控制台|工作台|客户端界面|开发者平台|product\s+introduction|product\s+launch|product\s+demo|core\s+features?|feature\s+demo|usage\s+flow|product\s+value|product\s+interface|software\s+product|AI\s+product|developer\s+platform|app\s+console)/i,

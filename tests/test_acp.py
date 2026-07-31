@@ -2036,6 +2036,10 @@ def test_pending_completion_gate_resume_detection_is_session_scoped():
         "取消，不用继续",
         waiting_for_user_input=True,
     )
+    assert not should_resume_pending_completion_gate(
+        "优化这个“继续制作 PPT 并输出 HTML”的提示词",
+        waiting_for_user_input=True,
+    )
 
 
 def test_recover_controlled_presentation_gate_from_deep_research_checkpoint(tmp_path):

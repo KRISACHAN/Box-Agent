@@ -14,7 +14,7 @@
     "role": "role_marketing",
     "scene": "scene_work_report",
     "audience": "audience_internal",
-    "page_count": "page_count_5_10",
+    "page_count": "page_count_auto",
     "mode": "normal"
   },
   "fields": [
@@ -210,6 +210,11 @@
       "allow_custom": false,
       "boundary_policy": "prefer_range_ending_at_count",
       "options": [
+        {
+          "id": "page_count_auto",
+          "label": "根据内容",
+          "aliases": ["根据内容", "智能推荐", "自动", "auto", "content-driven"]
+        },
         {
           "id": "page_count_1_4",
           "label": "1-4页",

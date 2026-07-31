@@ -15,11 +15,24 @@ prompt already contains a page-by-page breakdown with titles, content, and
 order, preserve it as a direct traceability mapping rather than expanding or
 reordering it.
 
-When the host includes a `<presentation_config>` block, treat those values as
-confirmed framing. Use its audience and page-count choice in `outline.json`,
-adapt tone/storyline to its role and scene, and activate `creative_image_mode`
-only when its mode is `creative`. Do not ask for a choice already present in
-that block.
+When the host includes a `<presentation_config>` block, use each field's
+`source` to determine its strength. An `explicit` value from the user's
+original request or an actively changed card choice is a hard constraint;
+`recommended` and `default` values are soft framing and do not override the
+source material or original prompt. `confirmed_by=user` alone does not upgrade
+unchanged soft defaults. Use its audience to shape the outline, adapt
+tone/storyline to its role and scene, and activate `creative_image_mode` only
+when its mode is `creative`. Do not ask for a choice already present in that
+block.
+
+For page count, first identify the independent narrative beats and the amount
+of content each beat can carry clearly, then create one slide per beat (or map
+the user's supplied page structure directly). `page_count_auto`, or a range
+whose source is `recommended` or `default`, is only a soft planning hint. Do
+not aim for the midpoint of `5-10`, treat eight slides as a default, pad thin
+material, or merge distinct conclusions just to hit a suggested range. Only a
+concrete page count or range explicitly stated by the user, including an
+actively selected range in the card, is a hard constraint.
 
 Typical cases that benefit from an outline:
 
@@ -79,23 +92,23 @@ research**. Pick the branch that fits:
    support the slide plan, while a concise proposal brief stays in branch 2. After
    the route is complete, run its bundled artifact validator with
    `--report research/qa/{topic}_research_check.json`; even a reduced sequential
-   run must preserve at least three distinct dimensions. Continue only after a
-   fresh successful report, then omit or mark nonessential gaps instead of
-   repeating the same queries. Pass resulting factual statements to the
-   scaffold with repeated `--research-fact`; reserve `--fact` for verbatim
-   user/source text. Treat `AuthLevel` as a ranking hint, not proof that a result
-   is authoritative. When a first-party domain is known, prefer a `site:`-
-   constrained query; discard SEO-looking, mirror, or unrelated results. Every
-   public-research page must have at least one evidence item unless the page
-   explicitly marks a required fact as unavailable; every non-empty evidence
-   item must contain the actual http(s) URL used for that claim, preferably as
-   `claim | source | URL`. Never label a source FIFA/IOC/official unless that
-   returned URL belongs to the named institution. The runtime rejects evidence
-   URLs that were not returned by successful search, supplied by the user, or
-   read successfully through a direct browser tool in this turn. If a `site:`
-   query returns no matching host, never invent the expected URL; successfully
-   read a known exact first-party URL, omit the optional claim, or use
-   `暂无可验证公开数据` when the field itself is required.
+   run should preserve distinct dimensions. Use a fresh successful report when
+   available, then omit or mark nonessential gaps instead of repeating the same
+   queries. If bounded research or its validator is unavailable or incomplete,
+   continue with supported findings, omit optional claims, and use explicit
+   placeholders for required facts; never delay `index.html`. Pass resulting
+   factual statements to the scaffold with repeated `--research-fact`; reserve
+   `--fact` for verbatim user/source text. Treat `AuthLevel` as a ranking hint,
+   not proof that a result is authoritative. When a first-party domain is known,
+   prefer a `site:`-constrained query; discard SEO-looking, mirror, or unrelated
+   results. Prefer at least one `claim | source | URL` evidence item on a
+   public-research page when a verified source is available. Missing evidence,
+   URL, or numeric traceability is a post-generation advisory, never an outline
+   or HTML blocker. Never label a source FIFA/IOC/official unless that returned
+   URL belongs to the named institution, and never treat an unverified URL as
+   verified evidence. If a `site:` query returns no matching host, never invent
+   the expected URL; successfully read a known exact first-party URL, omit the
+   optional claim, or use `暂无可验证公开数据` when the field itself is required.
    A normal factual-deck request already permits research
    from public authoritative sources; do not pause later to ask for permission
    to use those sources. Respect a strict/private source boundary, use an
@@ -183,14 +196,15 @@ does not get trapped in a repair loop.
      recommendations.
 3. Draft one slide per narrative beat, or map directly from the user's supplied
    page list. Each slide must have exactly one core `message`.
-4. Bind evidence to every analytical, chart, market, traction, or financial
-   slide. If the user authorized assumed or illustrative evidence, say so in
-   `evidence` or `notes` and plan a visible `假设`/`示意` disclosure on that slide;
-   do not imply fabricated data is sourced. Assumptions may fill disclosed
-   illustrative metrics or scenarios, but never private identity facts such as
-   a company/project name, financing round or stage, founding date, team
-   member/history/size, client, award, or ranking. For a required missing
-   private fact, use `待补充` or `待客户确认` and continue; otherwise omit it.
+4. When available, bind evidence to analytical, chart, market, traction, or
+   financial slides. If the user authorized assumed or illustrative evidence,
+   say so in `evidence` or `notes` and plan a visible `假设`/`示意` disclosure on
+   that slide; do not imply fabricated data is sourced. Assumptions may fill
+   disclosed illustrative metrics or scenarios, but never private identity
+   facts such as a company/project name, financing round or stage, founding
+   date, team member/history/size, client, award, or ranking. For a required
+   missing private fact, use `待补充` or `待客户确认` and continue; otherwise omit
+   it.
 5. Choose the intended `layout` and `visual` for each slide before selecting
    controlled layout ids and filling `deck.json`.
    These are executable semantic requirements, not disposable prompting hints:
@@ -245,11 +259,11 @@ Run:
 ${BOX_AGENT_NODE:-node} scripts/validate_outline.js outline.json --report qa/outline_check.json
 ```
 
-The validator checks structure, required fields, page numbering, obvious
-duplicates, overlong titles/messages, missing evidence on data-heavy slides,
-page-level numeric traceability, public-research source URLs, and basic
-storyline completeness. It is a hard-rule gate, not a substitute for
-human/model narrative judgment.
+The validator treats structure, required fields, page numbering, and the basic
+storyline contract as the hard gate. Missing evidence on data-heavy slides,
+page-level numeric traceability, public-research source URLs, and similar source
+findings are advisory warnings: they never prevent scaffolding or `index.html`.
+It is not a substitute for human/model narrative judgment.
 
 After validation passes, pass it directly to the scaffold with
 `--outline outline.json`. The scaffold writes `source_outline_page` onto every

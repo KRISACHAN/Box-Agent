@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from box_agent.completion import build_auto_completion_gate
+from box_agent.completion import (
+    build_auto_completion_gate,
+    should_resume_pending_completion_gate,
+)
+from box_agent.delivery import is_meta_prompt_rewrite_request
 from box_agent.runtime import run_agent_loop
 from box_agent.loop_guards import (
     CompletionGate,
@@ -26,11 +30,16 @@ from box_agent.workflows.presentation_checkpoint import (
     _outline_repair_input,
     completion_gate_progress_text,
 )
+from box_agent.workflows.controlled_presentation import (
+    RESEARCH_ROUND_LIMIT,
+    ControlledPresentationPolicy,
+)
 from box_agent.events import DoneEvent, InjectedMessageEvent, StopReason, ToolCallResult
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.execution_result_tool import ReportExecutionResultTool
 from box_agent.tools.request_user_input_tool import RequestUserInputTool
+from box_agent.tools.skill_preload import document_preload_skill_names
 
 
 FINALIZER_SCRIPT = (
@@ -45,6 +54,83 @@ FINALIZER_SCRIPT = (
 INSPECTOR_SCRIPT = FINALIZER_SCRIPT.parent / "inspect_deck_contract.js"
 APPLY_PATCH_SCRIPT = FINALIZER_SCRIPT.parent / "apply_deck_patch.js"
 VALIDATE_OUTLINE_SCRIPT = FINALIZER_SCRIPT.parent / "validate_outline.js"
+
+
+def _write_valid_research_report(
+    research_dir: Path,
+    *,
+    topic: str,
+    route: str = "B",
+    dimensions: int = 3,
+) -> Path:
+    evidence_path = research_dir / f"{topic}_evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": topic,
+                "target_entities": [
+                    {
+                        "entity": "Example Entity",
+                        "aliases": ["Example"],
+                        "official_domains": ["example.com"],
+                    }
+                ],
+                "evidence": [
+                    {
+                        "entity": "Example Entity",
+                        "claim": "Example Entity published verified information in 2026.",
+                        "source_url": "https://example.com/official",
+                        "source_type": "first_party",
+                        "evidence_excerpt": (
+                            "Example Entity published verified information in 2026."
+                        ),
+                        "confidence": "high",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_dir = research_dir / "qa"
+    report_dir.mkdir(exist_ok=True)
+    report_path = report_dir / f"{topic}_research_check.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "validator": "research-synthesis",
+                "route": route,
+                "topic": topic,
+                "min_dimensions": dimensions,
+                "dimension_count": dimensions,
+                "evidence_schema_version": 1,
+                "evidence_file": str(evidence_path.resolve()),
+                "verified_evidence_count": 1,
+                "verified_evidence": [
+                    {
+                        "entity": "Example Entity",
+                        "claim": "Example Entity published verified information in 2026.",
+                        "source_url": "https://example.com/official",
+                        "source_type": "first_party",
+                        "evidence_excerpt": (
+                            "Example Entity published verified information in 2026."
+                        ),
+                        "confidence": "high",
+                        "status": "verified",
+                        "canonical": (
+                            "Example Entity | Example Entity published verified "
+                            "information in 2026. | first_party | "
+                            "https://example.com/official"
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return report_path
 
 
 # ── Helpers ─────────────────────────────────────────────────────
@@ -511,7 +597,6 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
         "output/**/qa/outline_check.json",
         "output/**/qa/deck_contract.json",
         "output/**/qa/deck_spec.json",
-        "output/**/qa/truth_check.json",
         "output/**/qa/image_manifest.json",
         "output/**/qa/html_self_check.json",
         "output/**/qa/runtime_probe.json",
@@ -532,6 +617,85 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
         "request_user_input",
     }.issubset(gate.budget_exempt_tools)
     assert gate.workflow_checkpoint_kind == "controlled_presentation"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "帮我优化这个制作 PPT 的 prompt",
+        "把这个制作 PPT 的 prompt 改一下",
+        "把下面这段“生成 PPT”的提示词润色得专业些",
+        "把“重新制作 PPT”这句提示词改自然",
+        "只优化提示词，不要制作 PPT",
+        (
+            "请制作一份介绍四家酒庄的可编辑 PPT，包含公开资料和视觉要求。\n"
+            "优化以上 prompt 的格式"
+        ),
+        "Polish the following prompt: create an HTML report",
+        "Polish this text: create a PPT and editable HTML",
+    ],
+)
+def test_meta_prompt_rewrite_does_not_create_artifact_gate(tmp_path, prompt):
+    assert is_meta_prompt_rewrite_request(prompt) is True
+    assert build_auto_completion_gate(prompt, tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "优化上面的提示词后，再按优化结果制作 PPT",
+        "优化这个 prompt，并制作 PPT",
+        "重新制作 PPT 并优化文字",
+        "重新制作 PPT 并优化这个文字",
+        "重新制作 PPT 并优化这个 prompt",
+        "Remake the presentation and polish this text",
+        "Remake the presentation and polish this prompt",
+        "帮我制作一份 PPT，并优化每页文字",
+        "根据以下提示词制作改革开放主题 PPT",
+        "根据以下 prompt 制作 PPT，并优化布局",
+        "根据以下提示词制作流程优化主题 PPT",
+        "制作一个用于优化提示词的 PPT",
+        "制作一个提示词优化工具的 HTML 页面",
+        "Use this prompt to create a PPT in PowerPoint format",
+        "Use this prompt to create a PowerPoint and polish the layout",
+        "Polish the prompt, then create the presentation",
+        "Polish this prompt and create the presentation",
+    ],
+)
+def test_explicit_artifact_execution_overrides_meta_rewrite(tmp_path, prompt):
+    assert is_meta_prompt_rewrite_request(prompt) is False
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is not None
+    assert gate.required_changed_artifact_globs
+
+
+def test_meta_prompt_rewrite_keeps_only_host_execution_receipt(tmp_path):
+    gate = build_auto_completion_gate(
+        """
+        帮我优化这个“生成 PPT”的提示词。
+        <host_execution_contract acceptance_criteria_count="2">
+        Before ending, call report_execution_result with criterion evidence.
+        </host_execution_contract>
+        """,
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.required_tools == frozenset({"report_execution_result"})
+    assert gate.execution_result_criteria_count == 2
+    assert gate.required_changed_artifact_globs == ()
+    assert gate.workflow_checkpoint_kind is None
+
+
+def test_meta_prompt_rewrite_does_not_resume_waiting_artifact_gate():
+    assert (
+        should_resume_pending_completion_gate(
+            "优化这个文字",
+            waiting_for_user_input=True,
+        )
+        is False
+    )
 
 
 def test_build_auto_completion_gate_requires_host_execution_receipt(tmp_path):
@@ -661,7 +825,10 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     assert "research-synthesis" in checkpoint
     assert "coarse-to-fine searches" in checkpoint
     assert "ad-hoc four-query" in checkpoint
-    assert 'RESEARCH_INPUT={"mode":"deep","ready":false,"files":[]}' in checkpoint
+    assert (
+        'RESEARCH_INPUT={"mode":"deep","ready":false,"files":[],'
+        '"verified_evidence":[]}'
+    ) in checkpoint
 
     output = tmp_path / "output"
     output.mkdir()
@@ -680,24 +847,13 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
     assert '"ready":false' in checkpoint
+    assert '"fallback":true' in checkpoint
+    assert "Bounded research work is complete without a successful QA report" in checkpoint
+    assert "outline.json so HTML delivery can continue" in checkpoint
 
-    research_qa = research / "qa"
-    research_qa.mkdir()
-    (research_qa / "worldcup_research_check.json").write_text(
-        json.dumps(
-            {
-                "ok": True,
-                "validator": "research-synthesis",
-                "route": "B",
-                "topic": "worldcup",
-                "min_dimensions": 3,
-                "dimension_count": 3,
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_valid_research_report(research, topic="worldcup")
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
@@ -705,9 +861,238 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     assert '"ready":true' in checkpoint
     assert '"research/worldcup_dim01.md"' in checkpoint
     assert '"research/qa/worldcup_research_check.json"' in checkpoint
+    assert '"verified_evidence":["Example Entity | Example Entity published verified' in checkpoint
     assert "Research QA is complete" in checkpoint
+    assert "--research-report" in checkpoint
     assert "your very next tool call must write outline.json" in checkpoint
     assert "do not reread the research QA report or outline.md" in checkpoint
+
+
+def test_explicit_research_action_overrides_large_reference_content(tmp_path):
+    gate = build_auto_completion_gate(
+        """
+        搜索以下对象资料并制作可编辑 PPT：
+        - 星海科技：用户提供的长篇公司背景、产品沿革、团队介绍与业务说明。
+        - 云岭系统：用户提供的长篇市场判断、客户案例、技术方案与竞争分析。
+        - 北辰平台：用户提供的长篇发展历程、产品矩阵、合作伙伴与规划。
+
+        请基于以上用户参考内容，并使用官方/权威来源核实上述资料，
+        补充资料并引用来源。
+        """,
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.workflow_options["research_mode"] == "deep"
+    assert gate.max_tool_calls == 80
+    assert gate.web_search_total_limit == 36
+    assert document_preload_skill_names((), gate) == [
+        "pptx",
+        "research-synthesis",
+    ]
+
+
+@pytest.mark.parametrize(
+    "research_action",
+    [
+        "搜索并制作 PPT",
+        "检索并制作 PPT",
+        "查找资料并制作 PPT",
+        "调研后制作 PPT",
+        "核实资料并制作 PPT",
+        "验证这些信息并制作 PPT",
+        "查证后制作 PPT",
+        "使用官方来源制作 PPT",
+        "使用权威来源制作 PPT",
+        "补充资料并制作 PPT",
+        "引用来源并制作 PPT",
+    ],
+)
+def test_explicit_research_actions_route_to_deep(tmp_path, research_action):
+    gate = build_auto_completion_gate(
+        f"{research_action}\n- 已有参考一\n- 已有参考二\n- 已有参考三",
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.workflow_options["research_mode"] == "deep"
+
+
+def test_deep_research_checkpoint_falls_back_after_bounded_failed_searches(
+    tmp_path,
+):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for _ in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": "unavailable topic"},
+            ToolResult(success=False, error="no search results"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert '"ready":false' in checkpoint
+    assert '"fallback":true' in checkpoint
+    assert '"fallback_reason":"research_sources_unavailable"' in checkpoint
+    assert (
+        '"attempt_summary":{"rounds":3,"calls":3,"successful":0,'
+        '"failed":3,"empty":0}'
+    ) in checkpoint
+    assert '"files":[]' in checkpoint
+    assert "outline.json so HTML delivery can continue" in checkpoint
+    status = json.loads(
+        (
+            tmp_path
+            / "output"
+            / "research"
+            / "qa"
+            / "research_status.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert status["report_available"] is False
+    assert status["generation_continues"] is True
+    assert status["reason"] == "research_sources_unavailable"
+    assert status["attempt_summary"]["rounds"] == RESEARCH_ROUND_LIMIT
+
+
+def test_parallel_research_queries_count_as_one_round(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(4):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"entity {index} official source"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    assert '"fallback":true' not in checkpoint
+    assert (
+        '"attempt_summary":{"rounds":1,"calls":4,"successful":4,'
+        '"failed":0,"empty":0}'
+    ) in checkpoint
+    assert not (
+        tmp_path
+        / "output"
+        / "research"
+        / "qa"
+        / "research_status.json"
+    ).exists()
+
+
+def test_deep_research_records_missing_report_after_bounded_rounds(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"entity {index} official source"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert (
+        '"fallback_reason":'
+        '"research_round_limit_reached_without_validated_report"'
+    ) in checkpoint
+    status = json.loads(
+        (
+            tmp_path
+            / "output"
+            / "research"
+            / "qa"
+            / "research_status.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert status["reason"] == (
+        "research_round_limit_reached_without_validated_report"
+    )
+    assert status["attempt_summary"] == {
+        "rounds": RESEARCH_ROUND_LIMIT,
+        "calls": RESEARCH_ROUND_LIMIT,
+        "successful": RESEARCH_ROUND_LIMIT,
+        "failed": 0,
+        "empty": 0,
+    }
+
+
+def test_deep_research_checkpoint_does_not_fail_open_without_progress(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    for _ in range(RESEARCH_ROUND_LIMIT + 2):
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+        assert '"fallback":true' not in checkpoint
+        policy.update_checkpoint(checkpoint)
+
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    assert '"fallback":true' not in checkpoint
+
+
+def test_deep_research_does_not_override_existing_outline(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "deck_goal": "Explain the topic",
+                "audience": "Reviewers",
+                "source_mode": "public_authoritative_research",
+                "storyline": "Evidence to decision",
+                "slides": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gate = CompletionGate(
+        workflow_checkpoint_kind="controlled_presentation",
+        workflow_options={"research_mode": "deep"},
+    )
+
+    checkpoint = completion_gate_progress_text(gate, str(tmp_path))
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline_qa" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" not in checkpoint
 
 
 def test_short_solution_design_brief_skips_research_synthesis(tmp_path):
@@ -746,21 +1131,7 @@ def test_deep_research_checkpoint_accepts_legacy_root_handoff(tmp_path):
         encoding="utf-8",
     )
     (research / "worldcup_insight.md").write_text("synthesis", encoding="utf-8")
-    research_qa = research / "qa"
-    research_qa.mkdir()
-    (research_qa / "worldcup_research_check.json").write_text(
-        json.dumps(
-            {
-                "ok": True,
-                "validator": "research-synthesis",
-                "route": "B",
-                "topic": "worldcup",
-                "min_dimensions": 3,
-                "dimension_count": 3,
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_valid_research_report(research, topic="worldcup")
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
 
@@ -834,8 +1205,10 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert "goal, slide_no, layout_intent, or visual_intent" in checkpoint
     assert "at least one evidence item unless it explicitly marks" in checkpoint
     assert "a required fact as unavailable" in checkpoint
-    assert "Runtime provenance binding rejects URLs" in checkpoint
-    assert "do not invent the expected URL" in checkpoint
+    assert "copy every evidence item exactly from that canonical list" in checkpoint
+    assert "entity binding is a hard outline failure" in checkpoint
+    assert "continue to HTML delivery" in checkpoint
+    assert "Do not invent the expected URL" in checkpoint
     assert "do not read outline.md again" in checkpoint
     assert "inspect/list themes or layouts" in checkpoint
     assert "every Arabic-number literal" in checkpoint
@@ -991,13 +1364,9 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     )
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}truth_repair" in checkpoint
-    assert "REPAIR_INPUT=" in checkpoint
-    assert "Do not reread the report or deck" in checkpoint
-    assert "exact named slides.slide-XX.props" in checkpoint
-    assert "those reports may not exist" in checkpoint
-    assert "INTERNAL_MODEL_HISTORY_PLACEHOLDER" in checkpoint
-    (qa / "truth_check.json").unlink()
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
+    assert "REPAIR_INPUT=" not in checkpoint
+    assert "qa_warnings=1" in checkpoint
 
     (output / "index.html").write_text("<html></html>", encoding="utf-8")
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
@@ -1023,6 +1392,81 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}complete" in checkpoint
     assert "qa_warnings=2" in checkpoint
     assert "pass-with-warnings" in checkpoint
+
+
+def test_controlled_checkpoint_completes_with_current_failed_truth_report(tmp_path):
+    output = tmp_path / "output"
+    qa = output / "qa"
+    qa.mkdir(parents=True)
+    (output / "outline.json").write_text('{"slides":[]}', encoding="utf-8")
+    (output / "deck.json").write_text('{"slides":[]}', encoding="utf-8")
+    (output / "index.html").write_text("<html></html>", encoding="utf-8")
+    for report_name in (
+        "outline_check.json",
+        "deck_contract.json",
+        "deck_spec.json",
+        "image_manifest.json",
+        "html_self_check.json",
+        "runtime_probe.json",
+    ):
+        (qa / report_name).write_text('{"ok": true}', encoding="utf-8")
+    (qa / "truth_check.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "issues": ["unverified ranking", "unsupported number"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    update = policy.update_checkpoint(checkpoint)
+
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}complete" in update.text
+    assert "qa_warnings=2" in update.text
+    assert "pass-with-warnings" in update.text
+    assert policy.allows_completion_continuation() is False
+
+
+@pytest.mark.parametrize("truth_state", ["missing", "stale"])
+def test_controlled_checkpoint_refreshes_missing_or_stale_truth_report(
+    tmp_path,
+    truth_state,
+):
+    output = tmp_path / "output"
+    qa = output / "qa"
+    qa.mkdir(parents=True)
+    outline = output / "outline.json"
+    outline.write_text('{"slides":[]}', encoding="utf-8")
+    deck = output / "deck.json"
+    deck.write_text('{"slides":[]}', encoding="utf-8")
+    truth = qa / "truth_check.json"
+    if truth_state == "stale":
+        truth.write_text('{"ok": true}', encoding="utf-8")
+        newer = max(deck.stat().st_mtime_ns, truth.stat().st_mtime_ns) + 10_000_000
+        os.utime(deck, ns=(newer, newer))
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    deck_spec = qa / "deck_spec.json"
+    deck_spec.write_text('{"ok": true}', encoding="utf-8")
+    if truth_state == "stale":
+        newer = max(deck.stat().st_mtime_ns, deck_spec.stat().st_mtime_ns) + 10_000_000
+        os.utime(deck_spec, ns=(newer, newer))
+
+    checkpoint = completion_gate_progress_text(
+        CompletionGate(workflow_checkpoint_kind="controlled_presentation"),
+        str(tmp_path),
+    )
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
+    assert "missing or stale advisory truth report" in checkpoint
+    assert "REPAIR_INPUT=" not in checkpoint
 
 
 def test_controlled_content_patch_checkpoint_embeds_complete_compact_input(tmp_path):
@@ -1579,7 +2023,7 @@ async def test_controlled_content_patch_blocks_reinspection_when_patch_input_rea
 
 
 @pytest.mark.asyncio
-async def test_controlled_outline_blocks_unverified_evidence_urls(tmp_path):
+async def test_controlled_outline_allows_unverified_evidence_urls(tmp_path):
     (tmp_path / "output").mkdir()
     outline = {
         "deck_goal": "梳理巴西足球历史",
@@ -1639,16 +2083,13 @@ async def test_controlled_outline_blocks_unverified_evidence_urls(tmp_path):
         )
     )
 
-    assert write_tool.calls == 0
-    blocked = next(
+    assert write_tool.calls == 1
+    written = next(
         event
         for event in events
         if isinstance(event, ToolCallResult) and event.tool_call_id == "write-outline"
     )
-    assert blocked.success is False
-    assert blocked.user_visible is False
-    assert "CONTROLLED_PRESENTATION_UNVERIFIED_EVIDENCE_URL" in (blocked.error or "")
-    assert "Do not invent or relabel a URL" in (blocked.error or "")
+    assert written.success is True
 
 
 @pytest.mark.asyncio
@@ -1670,21 +2111,7 @@ async def test_controlled_outline_accepts_urls_from_validated_research_handoff(t
         f"insight\n\n[^source]: FIFA. {source_url}\n",
         encoding="utf-8",
     )
-    research_qa = research / "qa"
-    research_qa.mkdir()
-    (research_qa / "worldcup_research_check.json").write_text(
-        json.dumps(
-            {
-                "ok": True,
-                "validator": "research-synthesis",
-                "route": "B",
-                "topic": "worldcup",
-                "min_dimensions": 3,
-                "dimension_count": 3,
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_valid_research_report(research, topic="worldcup")
     outline = {
         "deck_goal": "梳理巴西足球历史",
         "audience": "普通观众",
@@ -1765,21 +2192,7 @@ async def test_validated_research_handoff_blocks_backward_discovery(tmp_path):
         encoding="utf-8",
     )
     (research / "topic_insight.md").write_text("insight", encoding="utf-8")
-    research_qa = research / "qa"
-    research_qa.mkdir()
-    (research_qa / "topic_research_check.json").write_text(
-        json.dumps(
-            {
-                "ok": True,
-                "validator": "research-synthesis",
-                "route": "B",
-                "topic": "topic",
-                "min_dimensions": 3,
-                "dimension_count": 3,
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_valid_research_report(research, topic="topic")
     todo = NamedEchoTool("todo_write")
     llm = MockLLM(
         [
@@ -1828,7 +2241,7 @@ async def test_validated_research_handoff_blocks_backward_discovery(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_controlled_outline_repair_blocks_new_unverified_evidence_urls(tmp_path):
+async def test_controlled_outline_repair_allows_unverified_evidence_urls(tmp_path):
     output = tmp_path / "output"
     qa = output / "qa"
     qa.mkdir(parents=True)
@@ -1910,17 +2323,14 @@ async def test_controlled_outline_repair_blocks_new_unverified_evidence_urls(tmp
         )
     )
 
-    assert write_tool.calls == 0
-    blocked = next(
+    assert write_tool.calls == 1
+    written = next(
         event
         for event in events
         if isinstance(event, ToolCallResult)
         and event.tool_call_id == "repair-outline"
     )
-    assert blocked.success is False
-    assert "CONTROLLED_PRESENTATION_UNVERIFIED_EVIDENCE_URL" in (
-        blocked.error or ""
-    )
+    assert written.success is True
 
 
 @pytest.mark.asyncio
@@ -2993,7 +3403,7 @@ async def test_controlled_apply_patch_blocks_edit_of_unrelated_reported_field(tm
     )
 
 
-def _write_truth_repair_fixture(tmp_path):
+def _write_deck_spec_repair_fixture(tmp_path):
     output = tmp_path / "output"
     output.mkdir()
     (output / "outline.json").write_text(
@@ -3039,19 +3449,19 @@ def _write_truth_repair_fixture(tmp_path):
         encoding="utf-8",
     )
     deck_spec = qa / "deck_spec.json"
-    deck_spec.write_text('{"ok": true}', encoding="utf-8")
-    truth = qa / "truth_check.json"
-    truth.write_text(
+    deck_spec.write_text(
         json.dumps(
             {
                 "ok": False,
                 "issues": [
-                    'slides.slide-01.props.body: numeric claim "24" is not source-backed'
+                    "slides.slide-01.props.body: required structural field is invalid"
                 ],
             }
         ),
         encoding="utf-8",
     )
+    truth = qa / "truth_check.json"
+    truth.write_text('{"ok": true}', encoding="utf-8")
     fresh = max(
         deck.stat().st_mtime_ns,
         deck_spec.stat().st_mtime_ns,
@@ -3060,34 +3470,34 @@ def _write_truth_repair_fixture(tmp_path):
     os.utime(deck_spec, ns=(fresh, fresh))
     fresh += 10_000_000
     os.utime(truth, ns=(fresh, fresh))
-    return output, deck, truth
+    return output, deck, deck_spec
 
 
 @pytest.mark.asyncio
 async def test_controlled_repair_input_blocks_fresh_report_reread(tmp_path):
-    _, _, _ = _write_truth_repair_fixture(tmp_path)
+    _, _, _ = _write_deck_spec_repair_fixture(tmp_path)
     checkpoint = completion_gate_progress_text(
         CompletionGate(workflow_checkpoint_kind="controlled_presentation"),
         str(tmp_path),
     )
     assert checkpoint is not None
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}truth_repair" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}deck_spec_repair" in checkpoint
     assert "REPAIR_INPUT=" in checkpoint
     assert '"current_props":{"title":"Exact title","body":"unsupported 24"}' in checkpoint
     assert '"protected_title_prop_path":"title"' in checkpoint
-    assert "never replace it with or append 待补充" in checkpoint
+    assert "minimal deck.patch.json" in checkpoint
 
     llm = MockLLM(
         [
             LLMResponse(
-                content="read truth again",
+                content="read deck spec again",
                 tool_calls=[
                     ToolCall(
                         id="read-truth",
                         type="function",
                         function=FunctionCall(
                             name="read_file",
-                            arguments={"path": "qa/truth_check.json"},
+                            arguments={"path": "qa/deck_spec.json"},
                         ),
                     )
                 ],
@@ -3123,18 +3533,18 @@ async def test_controlled_repair_input_blocks_fresh_report_reread(tmp_path):
 
 @pytest.mark.asyncio
 async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path):
-    _write_truth_repair_fixture(tmp_path)
+    _write_deck_spec_repair_fixture(tmp_path)
     llm = MockLLM(
         [
             LLMResponse(
-                content=f"read truth again {attempt}",
+                content=f"read deck spec again {attempt}",
                 tool_calls=[
                     ToolCall(
                         id=f"read-truth-{attempt}",
                         type="function",
                         function=FunctionCall(
                             name="read_file",
-                            arguments={"path": "qa/truth_check.json"},
+                            arguments={"path": "qa/deck_spec.json"},
                         ),
                     )
                 ],
@@ -3276,7 +3686,7 @@ async def test_controlled_outline_repair_input_blocks_repeated_report_reads(tmp_
 
 @pytest.mark.asyncio
 async def test_controlled_repair_rejects_missing_fact_pause(tmp_path):
-    _write_truth_repair_fixture(tmp_path)
+    _write_deck_spec_repair_fixture(tmp_path)
     llm = MockLLM(
         [
             LLMResponse(
@@ -3324,7 +3734,7 @@ async def test_controlled_repair_rejects_missing_fact_pause(tmp_path):
     )
     assert result.success is False
     assert "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY" in (result.error or "")
-    assert "do not ask for missing facts" in (result.error or "")
+    assert "fresh hard deck-spec issues" in (result.error or "")
     assert any(
         isinstance(event, DoneEvent)
         and event.final_content == "已改用明确占位继续修复。"
@@ -3333,9 +3743,9 @@ async def test_controlled_repair_rejects_missing_fact_pause(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_controlled_stale_truth_report_requires_single_finalizer(tmp_path):
-    _, deck, truth = _write_truth_repair_fixture(tmp_path)
-    newer = max(deck.stat().st_mtime_ns, truth.stat().st_mtime_ns) + 10_000_000
+async def test_controlled_stale_deck_spec_report_requires_single_finalizer(tmp_path):
+    _, deck, deck_spec = _write_deck_spec_repair_fixture(tmp_path)
+    newer = max(deck.stat().st_mtime_ns, deck_spec.stat().st_mtime_ns) + 10_000_000
     os.utime(deck, ns=(newer, newer))
 
     checkpoint = completion_gate_progress_text(
@@ -3351,14 +3761,14 @@ async def test_controlled_stale_truth_report_requires_single_finalizer(tmp_path)
     llm = MockLLM(
         [
             LLMResponse(
-                content="read stale truth",
+                content="read stale deck spec",
                 tool_calls=[
                     ToolCall(
-                        id="read-stale-truth",
+                            id="read-stale-deck-spec",
                         type="function",
                         function=FunctionCall(
                             name="read_file",
-                            arguments={"path": "qa/truth_check.json"},
+                            arguments={"path": "qa/deck_spec.json"},
                         ),
                     )
                 ],
@@ -3395,8 +3805,8 @@ async def test_controlled_stale_truth_report_requires_single_finalizer(tmp_path)
 
 @pytest.mark.asyncio
 async def test_controlled_finalize_blocks_split_validator_command(tmp_path):
-    _, deck, truth = _write_truth_repair_fixture(tmp_path)
-    newer = max(deck.stat().st_mtime_ns, truth.stat().st_mtime_ns) + 10_000_000
+    _, deck, deck_spec = _write_deck_spec_repair_fixture(tmp_path)
+    newer = max(deck.stat().st_mtime_ns, deck_spec.stat().st_mtime_ns) + 10_000_000
     os.utime(deck, ns=(newer, newer))
     llm = MockLLM(
         [
@@ -3410,8 +3820,8 @@ async def test_controlled_finalize_blocks_split_validator_command(tmp_path):
                             name="bash",
                             arguments={
                                 "command": (
-                                    "node /runtime/scripts/validate_deck_truth.js "
-                                    "deck.json --report qa/truth_check.json"
+                                    "node /runtime/scripts/validate_deck_spec.js "
+                                    "deck.json --report qa/deck_spec.json"
                                 )
                             },
                         ),
@@ -3450,8 +3860,8 @@ async def test_controlled_finalize_blocks_split_validator_command(tmp_path):
 
 @pytest.mark.asyncio
 async def test_controlled_finalize_allows_exact_single_command(tmp_path):
-    _, deck, truth = _write_truth_repair_fixture(tmp_path)
-    newer = max(deck.stat().st_mtime_ns, truth.stat().st_mtime_ns) + 10_000_000
+    _, deck, deck_spec = _write_deck_spec_repair_fixture(tmp_path)
+    newer = max(deck.stat().st_mtime_ns, deck_spec.stat().st_mtime_ns) + 10_000_000
     os.utime(deck, ns=(newer, newer))
     llm = MockLLM(
         [
@@ -3504,8 +3914,8 @@ async def test_controlled_finalize_allows_exact_single_command(tmp_path):
 
 @pytest.mark.asyncio
 async def test_controlled_finalize_stops_repeated_identical_repair_failure(tmp_path):
-    output, deck, truth = _write_truth_repair_fixture(tmp_path)
-    newer = max(deck.stat().st_mtime_ns, truth.stat().st_mtime_ns) + 10_000_000
+    output, deck, deck_spec = _write_deck_spec_repair_fixture(tmp_path)
+    newer = max(deck.stat().st_mtime_ns, deck_spec.stat().st_mtime_ns) + 10_000_000
     os.utime(deck, ns=(newer, newer))
     finalizer_command = (
         "cd output && node "
@@ -3860,8 +4270,8 @@ async def test_controlled_presentation_rejects_outline_only_execution_plan(
 
 @pytest.mark.asyncio
 async def test_controlled_finalize_blocks_relative_helper_path(tmp_path):
-    _, deck, truth = _write_truth_repair_fixture(tmp_path)
-    newer = max(deck.stat().st_mtime_ns, truth.stat().st_mtime_ns) + 10_000_000
+    _, deck, deck_spec = _write_deck_spec_repair_fixture(tmp_path)
+    newer = max(deck.stat().st_mtime_ns, deck_spec.stat().st_mtime_ns) + 10_000_000
     os.utime(deck, ns=(newer, newer))
     llm = MockLLM(
         [
@@ -4306,7 +4716,12 @@ def test_ppt_completion_gate_accepts_default_html_delivery(tmp_path):
         "html_self_check.json",
         "runtime_probe.json",
     ):
-        (output / "qa" / report_name).write_text('{"ok": true}', encoding="utf-8")
+        payload = (
+            '{"ok": false, "issues": ["advisory source gap"]}'
+            if report_name == "truth_check.json"
+            else '{"ok": true}'
+        )
+        (output / "qa" / report_name).write_text(payload, encoding="utf-8")
 
     assert completion_gate_gaps(gate, set(), str(tmp_path)) == []
 

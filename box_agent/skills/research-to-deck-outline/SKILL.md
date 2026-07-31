@@ -56,7 +56,9 @@ Keep the same slide order and slide intent across all depths. Guided and scripte
    - Adapt the path; do not force every deck into a template.
 
 6. **Build the slide sequence**
-   - Default to 8-12 slides for a normal deck unless the user asks otherwise.
+   - Derive the slide count from the independent narrative beats and how much content each beat can carry clearly. Do not stretch thin material or merge distinct conclusions to hit a preset count.
+   - Treat 8-12 slides as a common outcome for a normal amount of material, not as a default, minimum, or maximum. Short focused material may need fewer slides; complex material may need more.
+   - A concrete page count or range explicitly stated by the user is a hard constraint.
    - Each slide must have one main idea. If a slide contains two independent conclusions, split it.
    - Titles should be message-like when possible, not generic labels.
    - Page content should stay short enough to become a slide: usually 3-5 bullets.

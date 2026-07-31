@@ -1437,7 +1437,32 @@ _SEARCH_QUERY_TERM_RE: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _SEARCH_QUERY_STOPWORDS: Final[frozenset[str]] = frozenset(
-    {"a", "all", "and", "for", "in", "of", "on", "the", "to"}
+    {
+        "a",
+        "all",
+        "and",
+        "for",
+        "in",
+        "of",
+        "official",
+        "on",
+        "search",
+        "source",
+        "sources",
+        "the",
+        "to",
+        "verify",
+        "查找",
+        "搜索",
+        "来源",
+        "核实",
+        "检索",
+        "官方",
+        "权威",
+        "查证",
+        "验证",
+        "调研",
+    }
 )
 def _normalize_web_search_query(arguments: dict[str, Any]) -> str:
     query = _first_present(
@@ -1583,6 +1608,230 @@ def _candidate_search_items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _search_result_list_found(payload: Any) -> bool:
+    """Return whether a structured result-list field exists, even when empty."""
+    if isinstance(payload, list):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    for key in _WEB_SEARCH_RESULT_KEYS:
+        if isinstance(payload.get(key), list):
+            return True
+    return any(
+        _search_result_list_found(value)
+        for value in payload.values()
+        if isinstance(value, dict)
+    )
+
+
+def _search_item_title(item: dict[str, Any]) -> str:
+    return str(_first_present(item, ("title", "Title", "name", "Name")) or "").strip()
+
+
+def _search_item_snippet(item: dict[str, Any]) -> str:
+    return str(
+        _first_present(
+            item,
+            (
+                "snippet",
+                "Snippet",
+                "summary",
+                "Summary",
+                "description",
+                "Description",
+                "content",
+                "Content",
+            ),
+        )
+        or ""
+    ).strip()
+
+
+def _web_search_match_terms(query: str) -> tuple[str, ...]:
+    """Extract stable entity/topic terms for result relevance scoring."""
+    without_site = _SITE_QUERY_TOKEN_RE.sub(" ", query)
+    terms: list[str] = []
+    for raw in _SEARCH_QUERY_TERM_RE.findall(without_site):
+        term = raw.casefold()
+        if term in _SEARCH_QUERY_STOPWORDS:
+            continue
+        candidates = [term]
+        if re.fullmatch(r"[\u3400-\u9fff]+", term) and len(term) > 2:
+            candidates.extend(term[index : index + 2] for index in range(len(term) - 1))
+        for candidate in candidates:
+            if candidate and candidate not in terms:
+                terms.append(candidate)
+    return tuple(terms[:24])
+
+
+def _web_search_item_rank(
+    item: dict[str, Any],
+    *,
+    query_terms: tuple[str, ...],
+    requested_site: str,
+) -> tuple[int, int, int, int]:
+    """Return relevance, domain, first-party, and coverage scores."""
+    title = _normalize_search_title(_search_item_title(item))
+    snippet = _normalize_search_title(_search_item_snippet(item))
+    url = _search_item_url(item)
+    host = ""
+    try:
+        host = (urlsplit(url).hostname or "").casefold().strip(".")
+    except ValueError:
+        pass
+    entity_score = 0
+    matched_terms = 0
+    for term in query_terms:
+        matched = False
+        if term in title:
+            entity_score += 6
+            matched = True
+        if term in snippet:
+            entity_score += 2
+            matched = True
+        if term in host or term in url.casefold():
+            entity_score += 3
+            matched = True
+        if matched:
+            matched_terms += 1
+    coverage_score = (
+        round((matched_terms / len(query_terms)) * 20) if query_terms else 0
+    )
+    domain_score = 50 if requested_site and _url_matches_domain(url, requested_site) else 0
+    explicit_source_type = str(
+        _first_present(
+            item,
+            ("source_type", "SourceType", "sourceType", "authority", "Authority"),
+        )
+        or ""
+    ).casefold()
+    first_party_score = 0
+    if domain_score:
+        first_party_score = 3
+    elif explicit_source_type in {"first_party", "official", "primary"}:
+        first_party_score = 2
+    elif "official" in title or "官网" in title or "官方" in title:
+        first_party_score = 1
+    return entity_score, domain_score, first_party_score, coverage_score
+
+
+def _rank_web_search_items(
+    items: list[dict[str, Any]],
+    arguments: dict[str, Any],
+) -> list[dict[str, Any]]:
+    query = _normalize_web_search_query(arguments)
+    query_terms = _web_search_match_terms(query)
+    requested_site = _requested_site_domain(arguments)
+    ranked = [
+        (
+            item,
+            _web_search_item_rank(
+                item,
+                query_terms=query_terms,
+                requested_site=requested_site,
+            ),
+            index,
+        )
+        for index, item in enumerate(items)
+    ]
+    ranked.sort(
+        key=lambda entry: (
+            -entry[1][1],
+            -entry[1][0],
+            -entry[1][2],
+            -entry[1][3],
+            entry[2],
+        )
+    )
+    return [item for item, _, _ in ranked]
+
+
+def _web_search_result_metadata(
+    items: list[dict[str, Any]],
+    arguments: dict[str, Any],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    query = _normalize_web_search_query(arguments)
+    query_terms = _web_search_match_terms(query)
+    requested_site = _requested_site_domain(arguments)
+    ranking = []
+    direct_read_candidates = []
+    for item in items[:_WEB_SEARCH_COMPACT_MAX_ITEMS]:
+        url = _search_item_url(item)
+        entity_score, domain_score, first_party_score, coverage_score = (
+            _web_search_item_rank(
+                item,
+                query_terms=query_terms,
+                requested_site=requested_site,
+            )
+        )
+        ranking.append(
+            {
+                "title": _short_tool_text(_search_item_title(item), 120),
+                "url": _short_tool_text(url, 180),
+                "entity_match_score": entity_score,
+                "domain_match_score": domain_score,
+                "first_party_level": first_party_score,
+                "query_coverage_score": coverage_score,
+            }
+        )
+        if url and (domain_score > 0 or first_party_score >= 2):
+            direct_read_candidates.append(url)
+    return {
+        "SearchStatus": status,
+        "NormalizedResultCount": len(items),
+        "SearchResultRanking": ranking,
+        "DirectReadCandidates": list(dict.fromkeys(direct_read_candidates))[:5],
+        "DirectReadNotice": (
+            "When an exact first-party URL is known, read that page with an available "
+            "direct browser/page tool before using it as evidence."
+        ),
+    }
+
+
+def _with_web_search_metadata(
+    payload: Any,
+    metadata: dict[str, Any],
+) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    return {**payload, **metadata}
+
+
+def _log_web_search_model_results(
+    arguments: dict[str, Any],
+    visible_content: str,
+    model_content: str,
+) -> None:
+    """Log the ranked rows that were actually eligible for model context."""
+    try:
+        payload = json.loads(visible_content)
+    except json.JSONDecodeError:
+        _log.info(
+            "web_search/model_results query=%r structured=false model_chars=%d",
+            _normalize_web_search_query(arguments),
+            len(model_content),
+        )
+        return
+    items = _candidate_search_items(payload)
+    status = payload.get("SearchStatus") if isinstance(payload, dict) else None
+    top = [
+        {
+            "title": _short_tool_text(_search_item_title(item), 120),
+            "url": _short_tool_text(_search_item_url(item), 180),
+        }
+        for item in items[:5]
+    ]
+    _log.info(
+        "web_search/model_results query=%r status=%s model_chars=%d top=%s",
+        _normalize_web_search_query(arguments),
+        status or "unknown",
+        len(model_content),
+        json.dumps(top, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
 def _web_search_urls(content: str) -> set[str]:
     try:
         payload = json.loads(content)
@@ -1616,15 +1865,39 @@ def _dedupe_web_search_content(
         return content, 0, 0, [], False
 
     items = _candidate_search_items(payload)
+    structured_result_list = _search_result_list_found(payload)
     if not items:
-        return content, 0, 0, [], False
+        if not structured_result_list:
+            return content, 0, 0, [], False
+        requested_site = _requested_site_domain(arguments or {})
+        status = "site_no_results" if requested_site else "no_results"
+        updated_payload = _with_web_search_metadata(
+            payload,
+            _web_search_result_metadata([], arguments or {}, status=status),
+        )
+        if isinstance(updated_payload, dict) and requested_site:
+            updated_payload = {
+                **updated_payload,
+                "RequestedSiteDomain": requested_site,
+                "SiteFilterDroppedCount": 0,
+                "SiteFilterMatchedCount": 0,
+                "SiteFilterNotice": (
+                    f"No results were returned for site:{requested_site}. "
+                    "Do not treat this as proof that no official page exists, do not "
+                    "invent a URL, and use a known exact URL with a direct page-read "
+                    "tool when available."
+                ),
+            }
+        return json.dumps(updated_payload, ensure_ascii=False), 0, 0, [], True
 
     requested_site = _requested_site_domain(arguments or {})
     site_filtered_count = 0
+    site_matched_count = len(items) if requested_site else 0
     if requested_site:
         matched_items = [
             item for item in items if _url_matches_domain(_search_item_url(item), requested_site)
         ]
+        site_matched_count = len(matched_items)
         site_filtered_count = len(items) - len(matched_items)
         if site_filtered_count:
             payload = _with_filtered_search_items(payload, matched_items)
@@ -1641,7 +1914,20 @@ def _dedupe_web_search_content(
                 }
             items = matched_items
             if not items:
+                payload = _with_web_search_metadata(
+                    payload,
+                    _web_search_result_metadata(
+                        [],
+                        arguments or {},
+                        status="site_no_results",
+                    ),
+                )
+                if isinstance(payload, dict):
+                    payload["SearchEmptyReason"] = "all_provider_results_were_off_domain"
                 return json.dumps(payload, ensure_ascii=False), 0, 0, [], True
+
+    items = _rank_web_search_items(items, arguments or {})
+    payload = _with_filtered_search_items(payload, items)
 
     filtered_items: list[dict[str, Any]] = []
     new_labels: list[str] = []
@@ -1660,16 +1946,25 @@ def _dedupe_web_search_content(
         if label:
             new_labels.append(_short_tool_text(label, 100))
 
-    if duplicate_count == 0 and site_filtered_count == 0:
-        return content, len(filtered_items), 0, new_labels, True
-
     updated_payload = _with_filtered_search_items(payload, filtered_items)
     if isinstance(updated_payload, dict):
         updated_payload = {
             **updated_payload,
             "DedupedDuplicateCount": duplicate_count,
             "DedupedNewCount": len(filtered_items),
+            **_web_search_result_metadata(
+                filtered_items,
+                arguments or {},
+                status="ok" if filtered_items else "no_new_results",
+            ),
         }
+        if requested_site:
+            updated_payload = {
+                **updated_payload,
+                "RequestedSiteDomain": requested_site,
+                "SiteFilterDroppedCount": site_filtered_count,
+                "SiteFilterMatchedCount": site_matched_count,
+            }
     return json.dumps(updated_payload, ensure_ascii=False), len(filtered_items), duplicate_count, new_labels, True
 
 
@@ -3777,6 +4072,8 @@ async def run_agent_loop(
                 visible_content=tc_content,
                 visible_error=tc_error,
             )
+            if result.success and fn_name == WEB_SEARCH_TOOL_NAME:
+                _log_web_search_model_results(fn_args, tc_content, msg_content)
             tool_msg = Message(
                 role="tool",
                 content=msg_content,
@@ -4243,6 +4540,12 @@ async def run_agent_loop(
                     visible_content=par_content,
                     visible_error=par_error,
                 )
+                if result.success and fn_name == WEB_SEARCH_TOOL_NAME:
+                    _log_web_search_model_results(
+                        par_fn_args,
+                        par_content,
+                        msg_content,
+                    )
                 tool_msg = Message(
                     role="tool",
                     content=msg_content,

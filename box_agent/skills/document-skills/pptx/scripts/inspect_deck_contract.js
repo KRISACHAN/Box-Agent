@@ -39,10 +39,10 @@ const {
 const { inferTheme } = require("./theme_selection_core.js");
 
 const AUTO_COVER_IMAGE_BRIEF_RE = /(?:融资|路演|投资人|\bvc\b|fundrais|investor|pitch\s*deck|发布会|产品发布|品牌提案|高端|premium)/i;
-const AUTO_COVER_VISUAL_STORY_RE = /(?:传奇|故事|人物|传记|体育|足球|球员|运动员|赛事|旅行|城市|历史|biograph|profile|sports?|football|athlete|legend|story|travel|history)/i;
+const AUTO_COVER_VISUAL_STORY_RE = /(?:传奇|故事|人物|传记|纪实|biograph|profile|legend|story|documentary)/i;
 const AUTO_COVER_PRODUCT_VISUAL_RE = /(?:UI\s*截图|产品界面|客户端界面|主界面|工作台|编辑器界面|浏览器窗口|设备样机|产品主视觉|产品演示|功能演示|产品流程|UI\s*screenshot|product\s+interface|client\s+interface|browser\s+window|device\s+mockup|product\s+demo|feature\s+demo|product\s+flow)/i;
 const AUTO_COVER_TECH_VISUAL_RE = /(?:代码窗口|代码片段|协作节点|节点连接|系统架构|技术架构|架构图|运行时|编译链|code\s+window|code\s+snippet|collaboration\s+nodes?|system\s+architecture|technical\s+architecture|runtime|compiler)/i;
-const AUTO_OPTIONAL_IMAGE_INTENT_RE = /(?:主视觉|实景|照片|插画|概念图|效果图|界面|截图|样机|hero\s+image|photo|illustration|concept\s+art|visual|interface|screenshot|mockup)/i;
+const AUTO_GENERATIVE_VISUAL_MEDIUM_RE = /(?:主视觉|实景|照片|插画|概念图|效果图|界面|截图|样机|地图|地理分布|空间分布|场景|实物|特写|肖像|包装视觉|hero\s+image|photo|illustration|concept\s+art|interface|screenshot|mockup|map|geographic\s+distribution|scene|product\s+shot|object\s+study|close[- ]?up|portrait|packaging\s+visual)/i;
 const AUTO_DATA_VISUAL_RE = /(?:图表|表格|数据看板|KPI|指标|chart|table|dashboard|metrics?)/i;
 const AUTO_COVER_IMAGE_OPTOUT_RE = /(?:不要|无需|不需要|禁止)(?:生成|使用|添加)?(?:图片|生图|视觉图)|(?:纯文字|仅文字)|\b(?:no\s+(?:generated\s+)?images?|text[- ]only)\b/i;
 const STRUCTURED_NEXT_STEPS_MATRIX_RE = /(?:表格|矩阵|table|matrix)|(?:(?:执行)?角色|负责人|责任人|owners?|assignees?|responsibilit(?:y|ies))[^\n。；;]{0,48}(?:姓名|成员|人员|names?|members?)/i;
@@ -709,6 +709,11 @@ function buildImagePlanEntry(
       : ["generate", "skip"];
   const briefText = String(context.briefText || "");
   const slideText = String(context.slideText || briefText);
+  const slideVisualText = String(
+    context.slide && context.slide.visual
+      ? context.slide.visual
+      : slideText
+  );
   const creativeCover = imageMode === "creative_image_mode" && index === 0;
   const investorCoverBrief = AUTO_COVER_IMAGE_BRIEF_RE.test(briefText);
   // Cover-specific visual intent lives on the bound outline page. Looking only
@@ -717,13 +722,19 @@ function buildImagePlanEntry(
   const visualStoryBrief = AUTO_COVER_VISUAL_STORY_RE.test(slideText);
   const productVisualBrief = AUTO_COVER_PRODUCT_VISUAL_RE.test(slideText);
   const technicalVisualBrief = AUTO_COVER_TECH_VISUAL_RE.test(slideText);
-  const explicitOptionalVisual = Boolean(slot)
-    && AUTO_OPTIONAL_IMAGE_INTENT_RE.test(slideText)
-    && !AUTO_DATA_VISUAL_RE.test(slideText);
+  const explicitGenerativeVisual = AUTO_GENERATIVE_VISUAL_MEDIUM_RE.test(slideVisualText)
+    && !AUTO_DATA_VISUAL_RE.test(slideVisualText);
+  const explicitOptionalVisual = Boolean(slot) && explicitGenerativeVisual;
   const autoCover = imageMode === "auto"
     && index === 0
     && !AUTO_COVER_IMAGE_OPTOUT_RE.test(briefText)
-    && (investorCoverBrief || visualStoryBrief || productVisualBrief || technicalVisualBrief)
+    && (
+      investorCoverBrief
+      || visualStoryBrief
+      || productVisualBrief
+      || technicalVisualBrief
+      || explicitGenerativeVisual
+    )
     && strategies.includes("generate");
   const autoOptional = imageMode === "auto"
     && index > 0
@@ -753,11 +764,13 @@ function buildImagePlanEntry(
       decisionReason = "the brief or outline explicitly calls for a code or technical-system cover visual";
     } else if (investorCoverBrief) {
       decisionReason = "investor/pitch/launch brief benefits from a generated cover visual";
+    } else if (explicitGenerativeVisual) {
+      decisionReason = "the outline explicitly requests a generative visual medium such as a map, scene, photograph, or object study";
     } else {
       decisionReason = "visual story brief benefits from a generated cover visual";
     }
   } else if (autoOptional) {
-    decisionReason = "the page visual intent names a concrete hero, screenshot, mockup, or illustration job";
+    decisionReason = "the page visual intent explicitly requests a generative visual medium";
   } else if (index === 0) {
     decisionReason = "the outline supports a typography-led cover and does not request a concrete bitmap visual";
   }
@@ -965,9 +978,7 @@ function main() {
     opts.assumptions.map(value => value.trim()).filter(Boolean)
   )];
   const assumptionBinding = validateAssumptionsAgainstRuntime(assumptions);
-  if (assumptionBinding.issues.length) {
-    throw new Error(`Assumption binding failed:\n${assumptionBinding.issues.join("\n")}`);
-  }
+  const truthAdvisories = [...assumptionBinding.issues];
   const layoutPolicy = {
     allowIllustrativeQuantitative: (
       opts.truthMode === "illustrative"
@@ -1093,17 +1104,13 @@ function main() {
   const sourceBinding = validateSourceFactsAgainstRuntime(
     skeleton ? skeleton.truth_contract.source_facts : []
   );
-  if (sourceBinding.issues.length) {
-    throw new Error(`Source fact binding failed:\n${sourceBinding.issues.join("\n")}`);
-  }
+  truthAdvisories.push(...sourceBinding.issues);
   const researchBinding = validateResearchFactsAgainstRuntime(
     skeleton && Array.isArray(skeleton.truth_contract.research_facts)
       ? skeleton.truth_contract.research_facts
       : []
   );
-  if (researchBinding.issues.length) {
-    throw new Error(`Research fact binding failed:\n${researchBinding.issues.join("\n")}`);
-  }
+  truthAdvisories.push(...researchBinding.issues);
   let deckFile = null;
   let contractReport = null;
   let imageManifest = null;
@@ -1248,11 +1255,14 @@ function main() {
       required_fields: normalizedRequiredFields,
       required_field_normalizations: requiredFieldNormalizations,
       required_field_relaxations: requiredFieldRelaxations,
-      warnings: requiredFieldRelaxations.map(item => (
-        `Slide ${item.slide} ignored decorative --require-field ${item.field} because ` +
-        `${item.effective_layout_id} does not expose it and the outline does not ` +
-        "require semantic tag content"
-      )),
+      warnings: [
+        ...requiredFieldRelaxations.map(item => (
+          `Slide ${item.slide} ignored decorative --require-field ${item.field} because ` +
+          `${item.effective_layout_id} does not expose it and the outline does not ` +
+          "require semantic tag content"
+        )),
+        ...truthAdvisories,
+      ],
       outline_binding: outlineBinding
         ? {
           outline_file: outlineBinding.file,
@@ -1321,7 +1331,7 @@ function main() {
         research_contract_path: "truth_contract.research_facts",
         assumption_contract_path: "truth_contract.assumptions",
         validation_command: "node scripts/validate_deck_truth.js deck.json --report qa/truth_check.json",
-        rule: "Use --fact only for verbatim user/source text. After actual external research, use --research-fact for the resulting factual statements; public_authoritative_research outline evidence is imported automatically. Strict source-only requests reject research_facts. For public research, omit nonessential unsupported claims or replace the page with evidence-backed content; visible 待补充 is reserved for required unavailable user/private fields. Only explicit user permission allows --assumption, with visible 假设/示意 disclosure.",
+        rule: "Prefer verbatim --fact values and researched --research-fact values. Missing or mismatched provenance is advisory: continue to HTML, use a placeholder or omit an unavailable optional fact, and report the limitation after generation.",
         source_binding: {
           available: sourceBinding.available,
           strict: sourceBinding.strict,
@@ -1330,6 +1340,7 @@ function main() {
           verified_fact_count: sourceBinding.verified_fact_count,
         },
         label_normalizations: sourceFactNormalization.changes,
+        advisories: truthAdvisories,
       },
       outline_policy: outlineBinding
         ? {

@@ -8,7 +8,11 @@ import re
 from pathlib import Path
 from typing import Any, Final
 
-from ..delivery import has_deliverable_intent, strip_negated_format_clauses
+from ..delivery import (
+    has_deliverable_intent,
+    is_meta_prompt_rewrite_request,
+    strip_negated_format_clauses,
+)
 from .presentation_routing import PRESENTATION_DELIVERY_KEYWORDS
 
 
@@ -37,6 +41,14 @@ _EXPORT_ONLY_RE: Final[re.Pattern[str]] = re.compile(
 _CREATE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:做一份|做一个|做个|做份|制作|生成|创建|新建|另出|另做|重新做|"
     r"create|generate|make|build|produce|draft|remake)",
+    re.IGNORECASE,
+)
+_CREATE_PRESENTATION_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:做一份|做一个|做个|做份|制作|生成|创建|新建|另出|另做|重新做|"
+    r"create|generate|make|build|produce|draft|remake)"
+    r"(?!\s*的)"
+    r"[^，。；;.!?\n]{0,48}"
+    r"(?:pptx?|powerpoint|演示文稿|幻灯片|slide\s+deck|slides?|presentation)",
     re.IGNORECASE,
 )
 _REQUEST_NEW_RE: Final[re.Pattern[str]] = re.compile(
@@ -181,8 +193,13 @@ def is_new_presentation_request(
     text = user_text.strip()
     if not text:
         return False
+    if is_meta_prompt_rewrite_request(text):
+        return False
     positive_text = strip_negated_format_clauses(text).casefold()
     has_create_action = _CREATE_RE.search(positive_text) is not None
+    has_create_delivery = (
+        _CREATE_PRESENTATION_RE.search(positive_text) is not None
+    )
     has_new_request = _REQUEST_NEW_RE.search(positive_text) is not None
     if (
         not has_deliverable_intent(positive_text)
@@ -199,9 +216,18 @@ def is_new_presentation_request(
     if _INSPECT_EXISTING_RE.search(positive_text) and not has_create_action:
         return False
     editing_existing = _EDIT_EXISTING_RE.search(positive_text) is not None
-    if editing_existing and not _NEW_VERSION_RE.search(positive_text):
+    if (
+        editing_existing
+        and not _NEW_VERSION_RE.search(positive_text)
+        and not has_create_delivery
+    ):
         return False
-    if has_existing_presentation and editing_existing:
+    if (
+        has_existing_presentation
+        and editing_existing
+        and not _NEW_VERSION_RE.search(positive_text)
+        and not has_create_delivery
+    ):
         return False
     return has_create_action or has_new_request
 
@@ -282,6 +308,16 @@ def _parse_page_token(token: str) -> int | None:
 
 
 def _extract_page_count_value(normalized_text: str, field: dict[str, Any]) -> str | None:
+    for option in field["options"]:
+        if isinstance(option.get("min"), int):
+            continue
+        aliases = option.get("aliases")
+        if isinstance(aliases, list) and any(
+            isinstance(alias, str) and _alias_matches(normalized_text, alias)
+            for alias in aliases
+        ):
+            return option["id"]
+
     range_match = _PAGE_RANGE_RE.search(normalized_text)
     if range_match:
         end_count = _parse_page_token(range_match.group(2))
@@ -376,19 +412,22 @@ def build_presentation_recommendation_prompt(
     missing_fields: list[str],
 ) -> str:
     """Build the compact, tool-free recommendation prompt."""
+    recommendation_fields = [
+        field_id for field_id in missing_fields if field_id != "page_count"
+    ]
     allowed = {
         field["id"]: [
             {"id": option["id"], "label": option.get("label", option["id"])}
             for option in field["options"]
         ]
         for field in config["fields"]
-        if field["id"] in missing_fields or field["id"] == "mode"
+        if field["id"] in recommendation_fields or field["id"] == "mode"
     }
     return (
         "根据用户的演示文稿需求，从允许值中为缺失配置选择最合适的一项。"
         "不要补写事实，不要解释，只输出一个 JSON 对象；键只能来自允许值中的字段，"
         "值必须是对应 id。\n"
-        f"缺失字段：{json.dumps(missing_fields, ensure_ascii=False)}\n"
+        f"缺失字段：{json.dumps(recommendation_fields, ensure_ascii=False)}\n"
         f"允许值：{json.dumps(allowed, ensure_ascii=False)}\n"
         f"用户需求：{user_text}"
     )
@@ -470,6 +509,8 @@ def build_presentation_preflight_result(
         if field_id not in explicit_values
     ]
     recommendations = parse_presentation_recommendations(model_text, config)
+    if "page_count" in missing_fields:
+        recommendations.pop("page_count", None)
     values = dict(config["defaults"])
     values.update(recommendations)
     values.update(explicit_values)

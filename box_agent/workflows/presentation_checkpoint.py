@@ -52,6 +52,7 @@ _CONTROLLED_PRESENTATION_REPORTS: Final[tuple[str, ...]] = (
     "html_self_check.json",
     "runtime_probe.json",
 )
+_RESEARCH_FALLBACK_MIN_MARKDOWN_FILES: Final = 3
 
 
 def _newest_file(paths: list[Path]) -> Path | None:
@@ -122,6 +123,37 @@ def _report_warning_count(report_path: Path) -> int:
     return 0
 
 
+def _advisory_report_warning_count(report_path: Path) -> int:
+    """Count warnings plus legacy hard issues from one advisory report."""
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    count = _report_warning_count(report_path)
+    raw_issues = payload.get("issues")
+    if not isinstance(raw_issues, list):
+        raw_issues = payload.get("errors")
+    count += len([issue for issue in raw_issues or [] if isinstance(issue, str)])
+    # A current legacy ``ok:false`` truth report is itself advisory evidence,
+    # even when the old writer omitted its issue payload.
+    return max(1, count)
+
+
+def _research_fallback_available(research_files: tuple[Path, ...]) -> bool:
+    """Return whether bounded research work is enough to continue safely."""
+    markdown_count = sum(path.suffix.casefold() == ".md" for path in research_files)
+    report_attempted = any(
+        path.name.endswith("_research_check.json")
+        for path in research_files
+    )
+    return (
+        report_attempted
+        or markdown_count >= _RESEARCH_FALLBACK_MIN_MARKDOWN_FILES
+    )
+
+
 def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, tuple[Path, ...]]:
     """Return whether a fresh validated deep-research handoff is complete."""
     workspace_root = Path(workspace_dir)
@@ -150,7 +182,12 @@ def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, t
                 continue
         return sorted(found)
 
-    observed = non_empty(research_root.rglob("*.md"))
+    observed = non_empty(
+        [
+            *research_root.rglob("*.md"),
+            *research_root.glob("*_evidence.json"),
+        ]
+    )
     report_paths = non_empty(research_root.rglob("*_research_check.json"))
     for report_path in sorted(
         report_paths,
@@ -169,6 +206,10 @@ def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, t
         topic = payload.get("topic")
         min_dimensions = payload.get("min_dimensions")
         dimension_count = payload.get("dimension_count")
+        evidence_schema_version = payload.get("evidence_schema_version")
+        evidence_file_value = payload.get("evidence_file")
+        verified_evidence_count = payload.get("verified_evidence_count")
+        verified_evidence = payload.get("verified_evidence")
         if (
             route not in {"A", "B"}
             or not isinstance(topic, str)
@@ -177,7 +218,37 @@ def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, t
             or min_dimensions < 3
             or not isinstance(dimension_count, int)
             or dimension_count < min_dimensions
+            or evidence_schema_version != 1
+            or not isinstance(evidence_file_value, str)
+            or not isinstance(verified_evidence_count, int)
+            or verified_evidence_count < 1
+            or not isinstance(verified_evidence, list)
+            or len(verified_evidence) != verified_evidence_count
         ):
+            continue
+        if any(
+            not isinstance(item, dict)
+            or item.get("status") != "verified"
+            or not isinstance(item.get("entity"), str)
+            or not item["entity"].strip()
+            or not isinstance(item.get("claim"), str)
+            or not item["claim"].strip()
+            or not isinstance(item.get("source_url"), str)
+            or not item["source_url"].startswith(("http://", "https://"))
+            or not isinstance(item.get("canonical"), str)
+            or not item["canonical"].strip()
+            for item in verified_evidence
+        ):
+            continue
+        evidence_file = research_root / f"{topic}_evidence.json"
+        try:
+            reported_evidence_file = Path(evidence_file_value).resolve()
+            if (
+                not evidence_file.is_file()
+                or reported_evidence_file != evidence_file.resolve()
+            ):
+                continue
+        except OSError:
             continue
         dimensions = non_empty(research_root.glob(f"{topic}_dim*.md"))
         wide = non_empty(research_root.glob(f"{topic}_wide*.md"))
@@ -194,7 +265,14 @@ def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, t
             continue
         handoff_files = tuple(
             dict.fromkeys(
-                [*wide, *dimensions, *cross_verification, *insights, report_path]
+                [
+                    *wide,
+                    *dimensions,
+                    *cross_verification,
+                    *insights,
+                    evidence_file,
+                    report_path,
+                ]
             )
         )
         try:
@@ -205,6 +283,35 @@ def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, t
             continue
         return (True, handoff_files)
     return (False, tuple(dict.fromkeys([*observed, *report_paths])))
+
+
+def _verified_research_evidence(research_files: tuple[Path, ...]) -> list[str]:
+    """Return only validator-approved canonical facts for outline binding."""
+    report_path = next(
+        (
+            path
+            for path in research_files
+            if path.name.endswith("_research_check.json")
+        ),
+        None,
+    )
+    if report_path is None:
+        return []
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    evidence = payload.get("verified_evidence") if isinstance(payload, dict) else None
+    if not isinstance(evidence, list):
+        return []
+    return [
+        item["canonical"].strip()
+        for item in evidence
+        if isinstance(item, dict)
+        and item.get("status") == "verified"
+        and isinstance(item.get("canonical"), str)
+        and item["canonical"].strip()
+    ]
 
 
 def _manifest_generation_progress(
@@ -797,6 +904,10 @@ def _outline_repair_input(
 def build_checkpoint_text(
     workspace_dir: str | None,
     research_mode: str | None,
+    *,
+    research_fallback_allowed: bool = False,
+    research_fallback_reason: str | None = None,
+    research_attempt_summary: dict[str, int] | None = None,
 ) -> str | None:
     """Return an authoritative next-stage checkpoint for controlled decks.
 
@@ -811,6 +922,46 @@ def build_checkpoint_text(
     output_root = Path(workspace_dir) / OUTPUT_SUBDIR
     research_required = research_mode == "deep"
     research_ready, research_files = _presentation_research_artifacts(workspace_dir)
+    verified_research_evidence = (
+        _verified_research_evidence(research_files) if research_ready else []
+    )
+    research_fallback = (
+        research_required
+        and not research_ready
+        and (
+            research_fallback_allowed
+            or _research_fallback_available(research_files)
+        )
+    )
+    fallback_reason = (
+        research_fallback_reason
+        if research_fallback
+        else None
+    )
+    if research_fallback and fallback_reason is None:
+        fallback_reason = "research_artifacts_incomplete_or_validation_failed"
+    fallback_messages = {
+        "research_sources_unavailable": (
+            "Search or direct-read rounds returned only failures or empty results, "
+            "so no research report could be validated."
+        ),
+        "research_round_limit_reached_without_validated_report": (
+            "The bounded research rounds completed without producing a validated "
+            "research report."
+        ),
+        "research_artifacts_incomplete_or_validation_failed": (
+            "Research artifacts were attempted, but the required handoff or its "
+            "validation report was incomplete or unsuccessful."
+        ),
+    }
+    fallback_message = (
+        fallback_messages.get(
+            fallback_reason,
+            "No validated research report was available when the workflow continued.",
+        )
+        if research_fallback
+        else None
+    )
     outline_path = _newest_file(list(output_root.rglob("outline.json")))
     deck_path = _newest_file(list(output_root.rglob("deck.json")))
     html_path = _newest_file(
@@ -844,9 +995,26 @@ def build_checkpoint_text(
         artifact_root,
     )
     report_dir = artifact_root / "qa"
+    research_report_path = next(
+        (
+            path
+            for path in research_files
+            if research_ready and path.name.endswith("_research_check.json")
+        ),
+        None,
+    )
+    research_report_argument = (
+        f" --research-report {shlex.quote(str(research_report_path))}"
+        if research_report_path is not None
+        else ""
+    )
     validate_outline_command = _controlled_pptx_command(
         "validate_outline.js",
-        "outline.json --report qa/outline_check.json",
+        (
+            "outline.json"
+            f"{research_report_argument}"
+            " --report qa/outline_check.json"
+        ),
     )
     apply_patch_command = _controlled_pptx_command(
         "apply_deck_patch.js",
@@ -894,12 +1062,22 @@ def build_checkpoint_text(
         )
         for name in _CONTROLLED_PRESENTATION_REPORTS
     }
+    truth_report_advisory = report_states["truth_check.json"] == "failed"
+    if truth_report_advisory:
+        # Source/truth QA is advisory. Missing, invalid, and stale reports still
+        # need the finalizer to refresh them, but a current legacy ``ok:false``
+        # report must not send the model into a content-repair loop.
+        report_states["truth_check.json"] = "ok"
     report_status = {
         name: state == "ok" for name, state in report_states.items()
     }
     qa_ready = sum(report_status.values())
     qa_warnings = sum(
-        _report_warning_count(report_dir / name)
+        (
+            _advisory_report_warning_count(report_dir / name)
+            if name == "truth_check.json" and truth_report_advisory
+            else _report_warning_count(report_dir / name)
+        )
         for name in _CONTROLLED_PRESENTATION_REPORTS
     )
 
@@ -917,6 +1095,8 @@ def build_checkpoint_text(
     if (
         research_required
         and not research_ready
+        and not research_fallback
+        and outline_path is None
         and deck_path is None
         and html_path is None
     ):
@@ -966,9 +1146,10 @@ def build_checkpoint_text(
             "issues require. Use canonical top-level keys deck_goal, audience, "
             "source_mode, storyline, slides and canonical per-slide keys page, title, "
             "message, bullets, layout, visual, evidence. Do not recreate or rewrite "
-            "the existing deck or HTML. For public research, evidence may use only "
-            "allowed_research_urls from REPAIR_INPUT; remove or replace every listed "
-            "unsupported_evidence_url without searching again. The refreshed "
+            "the existing deck or HTML. Treat unsupported_evidence_urls in "
+            "REPAIR_INPUT as advisory provenance gaps. Do not invent or relabel a "
+            "source, but do not block outline repair: omit an optional unsupported "
+            "claim or use 暂无可验证公开数据 for a required fact. The refreshed "
             "filesystem checkpoint will "
             "validate the repaired outline next."
         )
@@ -1009,12 +1190,26 @@ def build_checkpoint_text(
                     "Research QA is complete. Do not call web_search or any browser "
                     "tool again, do not reread the research QA report or outline.md, "
                     "and do not list/check the filesystem. If the handoff contents "
-                    "are not already present in the current model context, read only "
-                    "the completed Markdown handoff files named in RESEARCH_INPUT in "
-                    "one parallel batch; otherwise skip reading. Then your very next "
-                    "tool call must write outline.json. "
+                    "are not already present in the current model context, read the "
+                    "completed Markdown handoff files named in RESEARCH_INPUT in one "
+                    "parallel batch for narrative context; otherwise skip reading. "
+                    "For factual evidence, copy only the canonical strings in "
+                    "RESEARCH_INPUT.verified_evidence. Never promote conflicting or "
+                    "unverified prose from a Markdown file. Then your very next tool "
+                    "call must write outline.json. "
                     if research_required and research_ready
-                    else ""
+                    else (
+                        "Bounded research work is complete without a successful QA "
+                        "report. Do not keep searching or retry research validation. "
+                        "No research artifact has passed the entity/evidence gate, so "
+                        "RESEARCH_INPUT contains no handoff files or verified evidence. "
+                        "Do not use claims from unvalidated research files. Omit "
+                        "optional unsupported claims and use 暂无可验证公开数据 for required "
+                        "unavailable facts. Your very next tool call must write "
+                        "outline.json so HTML delivery can continue. "
+                        if research_required and research_fallback
+                        else ""
+                    )
                 )
                 + "Create exactly one concise outline.json before theme/layout "
                 "selection using the canonical keys. Top level: deck_goal, "
@@ -1039,13 +1234,12 @@ def build_checkpoint_text(
                 "a first-party domain is known, use a site:-constrained query, "
                 "discard SEO-looking/mirror/unrelated results, and never label a "
                 "source FIFA/IOC/official unless the returned URL belongs to that "
-                "institution. Runtime provenance binding rejects URLs not returned "
-                "by successful search, supplied by the user, read successfully "
-                "through a direct browser tool, or preserved in the fresh validated "
-                "RESEARCH_INPUT handoff. If a site: query yields "
-                "no matching host, do not invent the expected URL: successfully read "
-                "a known exact first-party URL, omit the unsupported optional claim, "
-                "or use 暂无可验证公开数据 for a required field. This "
+                "institution. When RESEARCH_INPUT.verified_evidence is non-empty, "
+                "copy every evidence item exactly from that canonical list; another "
+                "URL, claim, source type, or entity binding is a hard outline failure. "
+                "Without a validated handoff. Do not invent the expected URL: omit "
+                "the unsupported optional claim or use 暂无可验证公开数据 for a required "
+                "field, then continue to HTML delivery. This "
                 "schema is complete: do not read outline.md "
                 "again, inspect/list themes or layouts, load a visual-template "
                 "skill, or list the empty output directory until outline_check is "
@@ -1069,9 +1263,10 @@ def build_checkpoint_text(
                 "changing only what the issues require. Use canonical top-level keys "
                 "deck_goal, audience, source_mode, storyline, slides and canonical "
                 "per-slide keys page, title, message, bullets, layout, visual, "
-                "evidence. For public research, evidence may use only "
-                "allowed_research_urls from REPAIR_INPUT; remove or replace every "
-                "listed unsupported_evidence_url without searching again. The "
+                "evidence. Treat unsupported_evidence_urls in REPAIR_INPUT as "
+                "advisory provenance gaps. Do not invent or relabel a source, but do "
+                "not block outline repair: omit an optional unsupported claim or use "
+                "暂无可验证公开数据 for a required fact. The "
                 "refreshed filesystem checkpoint will validate it next; "
                 "do not select layouts or scaffold deck.json yet."
             )
@@ -1207,9 +1402,10 @@ def build_checkpoint_text(
         elif patch_needs_apply:
             stage = "apply_patch"
             next_action = (
-                f"Run `{apply_patch_command}` now. Its compiler normalizes aliases and strict "
-                "source facts. Do not reread/rewrite either file first; revise the "
-                "patch only if that command returns an actionable error."
+                f"Run `{apply_patch_command}` now. Its compiler normalizes aliases and "
+                "preserves advisory truth diagnostics. Do not reread/rewrite either "
+                "file first; revise the patch only if that command returns an "
+                "actionable structural error."
             )
         elif has_placeholders and not patch_exists:
             stage = "content_patch"
@@ -1265,38 +1461,17 @@ def build_checkpoint_text(
                 f"Run exactly one bash tool call: `{finalize_command}`. "
                 "The deterministic helper refreshes stale/missing checks in order, "
                 "stops at the first actionable failure, compiles HTML only after "
-                "spec/truth/media pass, and then runs self-check plus runtime probe. "
+                "hard spec/media checks while retaining advisory truth warnings, and "
+                "then runs self-check plus runtime probe. "
                 "Do not split it into individual validators or add another command."
-            )
-        elif report_states["truth_check.json"] == "failed":
-            stage = "truth_repair"
-            next_action = (
-                "REPAIR_INPUT below contains the fresh truth issues, current affected "
-                "props, outline evidence, and authorized fact buckets. Do not reread "
-                "the report or deck. Write the smallest possible "
-                "deck.patch.json keyed by the exact named slides.slide-XX.props "
-                "paths. The filesystem checkpoint will apply it and invoke the "
-                "single deterministic finalizer; do not run a validator yourself. "
-                "Do not read or run deck_spec, image, HTML, "
-                "or runtime reports until truth passes; those reports may not exist. "
-                "The exact outline title at protected_title_prop_path is immutable; "
-                "never replace it with or append 待补充 to satisfy truth. If that "
-                "protected title is the only reported issue, treat it as a contract "
-                "conflict and do not ask for the missing fact or oscillate between "
-                "truth and deck_spec; source-safe titles must be neutralized during "
-                "outline authoring, with placeholders kept in supporting fields. "
-                "For public research, omit an unsupported optional claim instead of "
-                "writing visible 待补充. "
-                "Never rewrite the full patch/deck from model history and never "
-                "write INTERNAL_MODEL_HISTORY_PLACEHOLDER or an omitted-tool-argument "
-                "marker into a file."
             )
         elif report_states["truth_check.json"] != "ok":
             stage = "finalize"
             next_action = (
                 f"Run exactly one bash tool call: `{finalize_command}`. "
-                "It refreshes the ordered dependency chain and stops at the first "
-                "actionable failure. Do not run a validator separately."
+                "It refreshes the missing or stale advisory truth report, then "
+                "continues through the hard media/render/runtime checks. Do not run "
+                "a validator separately."
             )
         elif report_states["image_manifest.json"] == "failed":
             stage = "image_qa_repair"
@@ -1312,8 +1487,9 @@ def build_checkpoint_text(
             next_action = (
                 f"Run exactly one bash tool call: `{finalize_command}`. "
                 "This is the only authorized finalization command: it validates "
-                "spec, truth, and media in dependency order, renders editable HTML, "
-                "then runs self-check and the 1440x900 runtime probe. It stops at "
+                "hard spec and media requirements, records advisory truth warnings, "
+                "renders editable HTML, then runs self-check and the 1440x900 runtime "
+                "probe. It stops at "
                 "the first actionable failure and suppresses large successful "
                 "validator payloads. Do not split the chain, rerun discovery, or "
                 "scaffold deck.json."
@@ -1343,13 +1519,9 @@ def build_checkpoint_text(
         outline_repair_input
         if stage == "outline_repair"
         else (
-            _qa_repair_input(report_dir / "truth_check.json", deck_path, outline_path)
-            if stage == "truth_repair" and deck_path is not None
-            else (
-                _qa_repair_input(report_dir / "deck_spec.json", deck_path, outline_path)
-                if stage == "deck_spec_repair" and deck_path is not None
-                else None
-            )
+            _qa_repair_input(report_dir / "deck_spec.json", deck_path, outline_path)
+            if stage == "deck_spec_repair" and deck_path is not None
+            else None
         )
     )
     outline_label = str(outline_path.relative_to(Path(workspace_dir))) if outline_path else "missing"
@@ -1361,14 +1533,31 @@ def build_checkpoint_text(
             {
                 "mode": research_mode,
                 "ready": research_ready,
+                **({"fallback": True} if research_fallback else {}),
+                **(
+                    {
+                        "fallback_reason": fallback_reason,
+                        "fallback_message": fallback_message,
+                    }
+                    if research_fallback
+                    else {}
+                ),
+                **(
+                    {"attempt_summary": research_attempt_summary}
+                    if research_attempt_summary is not None
+                    else {}
+                ),
                 "files": [
                     str(
                         path.relative_to(output_root)
                         if path.is_relative_to(output_root)
                         else path.relative_to(Path(workspace_dir))
                     )
-                    for path in research_files
+                    for path in (research_files if not research_fallback else ())
                 ],
+                "verified_evidence": (
+                    verified_research_evidence if not research_fallback else []
+                ),
             },
             ensure_ascii=False,
             separators=(",", ":"),

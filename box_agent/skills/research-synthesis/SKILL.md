@@ -93,6 +93,23 @@ simple factual lookup, one-source Q&A, or ordinary code changes.
   the read-only browser gateway: do not request `source_preference: playwright`
   on the gateway as a substitute; use the standalone tools, or gateway `auto` /
   `browser_connector` for real-browser reads.
+- Treat search results as discovery, not evidence. Open the source page before
+  marking a claim verified, and capture a short excerpt that actually supports
+  the claim and names the target entity. Never transfer a search-result snippet
+  directly into the verified evidence ledger.
+- Maintain `research/{topic}_evidence.json` while researching. Every downstream
+  factual claim must be bound to one target entity, source URL, source type,
+  page excerpt, confidence, and `verified` / `conflicting` / `unverified`
+  status. Use the exact schema in
+  [output_contract.md](references/output_contract.md).
+- Record known official domains for target entities and obtain at least one
+  verified first-party source for each entity that has an official domain.
+  `first_party` is a claim about URL ownership, not a synonym for a high search
+  authority score.
+- When user-provided material conflicts with a source, preserve the user claim,
+  mark `user_input_alignment=conflicting`, explain the conflict, and exclude
+  that record from downstream synthesis until resolved. Never silently prefer
+  or merge one side.
 - Use standard Markdown footnotes in research artifacts: `[^id]` inline plus
   `[^id]: Title. Date. URL` definitions.
 
@@ -162,6 +179,7 @@ All files live under `research/`, relative to the current working/artifact root.
 | `{topic}_validationNN.md` | Optional | Conflict-specific validation output before merge |
 | `{topic}_cross_verification.md` | A, B, C, D | Confidence tiers and conflict zones |
 | `{topic}_insight.md` | A, B, C, D | Cross-dimension insights |
+| `{topic}_evidence.json` | A, B, C, D | Entity-bound evidence ledger and verified handoff |
 | `{topic}_final.md` | Optional | Final Markdown report when no writing skill is available |
 
 Before final handoff, run:
@@ -185,14 +203,19 @@ Adjust `--route` for the selected route. Add `--min-dimensions N` when the
 dimension count differs from the default. For a sequential reduced-budget run,
 keep at least three distinct dimensions and record the actual budget in the
 cross-verification file; the downstream presentation checkpoint requires this
-fresh successful JSON report before outline authoring.
+fresh successful JSON report before outline authoring. The report embeds only
+the `verified_evidence` rows that passed entity, excerpt, source, first-party,
+and conflict checks. `conflicting` and `unverified` rows remain available for
+limitations, but must not be copied into an outline or final factual claim.
 
 ## Final Handoff
 
 If a report-writing, paper-writing, document, or presentation skill is available
 and the user requested that output type, hand off explicit file paths and state
-that research is complete. Otherwise, produce `{topic}_final.md` from the
-verified research artifacts.
+that research is complete. For a presentation, hand off only canonical evidence
+strings from the validator report's `verified_evidence[].canonical`; prose
+artifacts are context, not an independent fact source. Otherwise, produce
+`{topic}_final.md` from the verified research artifacts.
 
 For technical product or codebase research tasks:
 

@@ -946,6 +946,92 @@ def test_theme_inference_does_not_treat_negated_playful_style_as_positive(
     assert "friendly lively signature" not in signals
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        (
+            "为西班牙精品酒庄制作葡萄酒大师班，"
+            "讲清葡萄园风土、酿造逻辑与代表酒款。"
+        ),
+        (
+            "Create a winery portfolio deck about vineyard terroir, "
+            "winemaking, and a curated wine tasting."
+        ),
+    ],
+)
+def test_winery_brief_selects_mat_theme_without_fallback(
+    tmp_path: Path,
+    prompt: str,
+) -> None:
+    deck_path = tmp_path / "winery" / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "auto",
+        "--title",
+        prompt,
+        "--fact",
+        prompt,
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    report = json.loads(
+        (deck_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+
+    assert deck["theme_id"] == "mat"
+    assert report["theme_selection"]["theme_id"] == "mat"
+    assert report["theme_selection"]["source"] == "content_inference"
+    assert report["theme_selection"]["confidence"] == "high"
+    signals = {
+        item["signal"] for item in report["theme_selection"]["matched_signals"]
+    }
+    assert "keyword rule: wine and vineyard" in signals
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "为精品酒店制作品牌战略汇报，介绍客房、餐饮和宾客体验。",
+        "复盘门店酒水销售表现，包含销量、渠道和下一步动作。",
+    ],
+)
+def test_wine_keyword_rule_does_not_match_broad_alcohol_terms(
+    tmp_path: Path,
+    prompt: str,
+) -> None:
+    deck_path = tmp_path / "not-wine" / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "closing-next-steps-v1",
+        "--theme",
+        "auto",
+        "--title",
+        prompt,
+        "--fact",
+        prompt,
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    report = json.loads(
+        (deck_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+    signals = {
+        item["signal"] for item in report["theme_selection"]["matched_signals"]
+    }
+    assert "keyword rule: wine and vineyard" not in signals
+
+
 def test_comic_brief_auto_selects_comic_panel_theme(tmp_path: Path) -> None:
     outline_path = tmp_path / "outline.json"
     outline = _write_outline(
@@ -2172,7 +2258,7 @@ def test_market_size_chart_scaffold_respects_illustrative_authorization(
     )
 
 
-def test_market_size_chart_rejects_unauthorized_assumption(
+def test_market_size_chart_warns_for_unauthorized_assumption(
     tmp_path: Path,
 ) -> None:
     outline_path = tmp_path / "outline.json"
@@ -2212,9 +2298,13 @@ def test_market_size_chart_rejects_unauthorized_assumption(
         env=env,
     )
 
-    assert result.returncode == 1
-    assert "Assumption binding failed" in result.stderr
-    assert not deck_path.exists()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert deck_path.is_file()
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert any(
+        "requires explicit user permission" in warning
+        for warning in report["warnings"]
+    )
 
 
 def test_scaffold_recovers_architecture_integration_and_qualitative_dashboard(
@@ -2502,10 +2592,152 @@ def test_truth_validator_ignores_diagram_structural_ids_but_checks_labels(
         json.dumps(deck, ensure_ascii=False),
         encoding="utf-8",
     )
-    rejected = _run("validate_deck_truth.js", str(deck_path))
-    assert rejected.returncode == 1
-    payload = json.loads(rejected.stdout.split("\nDeck truth validation:", 1)[0])
-    assert any("numeric claim \"99%\"" in issue for issue in payload["issues"])
+    warned = _run("validate_deck_truth.js", str(deck_path))
+    assert warned.returncode == 0, warned.stdout + warned.stderr
+    payload = json.loads(warned.stdout.split("\nDeck truth validation:", 1)[0])
+    assert any("numeric claim \"99%\"" in warning for warning in payload["warnings"])
+
+
+def test_truth_validator_does_not_bind_one_entitys_number_to_another(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    example_fact = (
+        "Example Corp | Example Corp revenue reached 10 million in 2026. | "
+        "first_party | https://example.com/results"
+    )
+    another_fact = (
+        "Another Corp | Another Corp revenue reached 99 million in 2026. | "
+        "first_party | https://another.example/results"
+    )
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "kpi-grid-v1",
+        "--research-fact",
+        example_fact,
+        "--research-fact",
+        another_fact,
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "eyebrow": "2026 RESULTS",
+            "title": "Example Corp performance",
+            "subtitle": "Entity-bound evidence",
+                "items": [
+                    {
+                        "label": "REVENUE",
+                        "value": "99",
+                        "detail": "million",
+                        "delta": "",
+                    },
+                    {
+                        "label": "CUSTOMERS",
+                        "value": "待补充",
+                        "detail": "not researched",
+                        "delta": "",
+                    },
+                    {
+                        "label": "GROWTH",
+                        "value": "待补充",
+                        "detail": "not researched",
+                        "delta": "",
+                    },
+                ],
+        }
+    )
+    deck_path.write_text(
+        json.dumps(deck, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = _run("validate_deck_truth.js", str(deck_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout.split("\nDeck truth validation:", 1)[0])
+    assert payload["entityBoundResearchFactCount"] == 2
+    assert any(
+        'numeric claim "99"' in warning for warning in payload["warnings"]
+    )
+
+
+def test_batch_patch_keeps_ranking_source_warning_non_blocking(
+    tmp_path: Path,
+) -> None:
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "请制作一页系统集成说明。".encode("utf-8")
+    ).decode("ascii")
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "technical-diagram-v1",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "title": "信息反馈回路",
+                            "diagram_kind": "integration",
+                            "nodes": [
+                                {
+                                    "id": "input",
+                                    "label": "信息输入",
+                                    "detail": "通知、排名、评价不断刷新",
+                                    "kind": "client",
+                                },
+                                {
+                                    "id": "review",
+                                    "label": "反馈处理",
+                                    "detail": "形成行动建议",
+                                    "kind": "hub",
+                                },
+                            ],
+                            "edges": [
+                                {
+                                    "id": "e1",
+                                    "source": "input",
+                                    "target": "review",
+                                    "label": "进入",
+                                }
+                            ],
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    applied = _run(
+        "apply_deck_patch.js",
+        str(deck_path),
+        str(patch_path),
+        env=env,
+    )
+
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    payload = json.loads(applied.stdout)
+    assert payload["truth_warning_count"] > 0
+    assert any(
+        "performance/award/publication claim is not source-backed" in warning
+        for warning in payload["truth_guard_warnings"]
+    )
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["props"]["nodes"][0]["detail"] == (
+        "通知、排名、评价不断刷新"
+    )
 
 
 def test_dense_integration_diagram_keeps_edge_labels_clear(
@@ -4096,6 +4328,98 @@ def test_auto_image_mode_promotes_visual_story_cover_to_generation(
     assert "visual story" in cover["decision_reason"]
 
 
+@pytest.mark.parametrize(
+    "visual",
+    [
+        "西班牙地图感背景与四个产区锚点",
+        "精酿啤酒瓶与酒厂场景",
+        "咖啡产区地图与海拔层次",
+    ],
+)
+def test_auto_image_mode_uses_visual_medium_not_domain_keywords(
+    tmp_path: Path,
+    visual: str,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "对象概览",
+            "layout": "cover",
+            "visual": visual,
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "--outline",
+        str(outline_path),
+        "--image-mode",
+        "auto",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads(
+        (tmp_path / "assets" / "generated" / "manifest.json").read_text()
+    )
+    cover = manifest["image_plan"][0]
+    assert cover["required"] is True
+    assert cover["decision"] == "generate"
+    assert "generative visual medium" in cover["decision_reason"]
+
+
+def test_auto_image_mode_keeps_structured_visuals_editable(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "决策框架",
+            "layout": "cover",
+            "visual": "可编辑四象限矩阵与流程箭头",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "--outline",
+        str(outline_path),
+        "--image-mode",
+        "auto",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads(
+        (tmp_path / "assets" / "generated" / "manifest.json").read_text()
+    )
+    cover = manifest["image_plan"][0]
+    assert cover["required"] is False
+    assert cover["decision"] == "skip"
+
+
 def test_auto_image_mode_respects_explicit_image_opt_out(tmp_path: Path) -> None:
     deck_path = tmp_path / "deck.json"
 
@@ -4451,7 +4775,7 @@ def test_deck_contract_keeps_explicit_tag_content_as_a_hard_requirement(
     )
 
 
-def test_strict_source_binding_rejects_derived_or_paraphrased_facts(
+def test_strict_source_binding_warns_for_derived_or_paraphrased_facts(
     tmp_path: Path,
 ) -> None:
     source_text = (
@@ -4463,9 +4787,9 @@ def test_strict_source_binding_rejects_derived_or_paraphrased_facts(
     env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
         source_text.encode("utf-8")
     ).decode("ascii")
-    rejected_path = tmp_path / "rejected.json"
+    advisory_path = tmp_path / "advisory" / "deck.json"
 
-    rejected = _run(
+    advisory = _run(
         "inspect_deck_contract.js",
         "cover-hero-v1",
         "--fact",
@@ -4473,17 +4797,21 @@ def test_strict_source_binding_rejects_derived_or_paraphrased_facts(
         "--fact",
         "业务方向：品牌视觉 + 数字产品设计",
         "--out",
-        str(rejected_path),
+        str(advisory_path),
         env=env,
     )
 
-    assert rejected.returncode == 1
-    assert "Source fact binding failed" in rejected.stderr
-    assert "成立于 2024 年" in rejected.stderr
-    assert "contiguous phrase" in rejected.stderr
-    assert not rejected_path.exists()
+    assert advisory.returncode == 0, advisory.stdout + advisory.stderr
+    assert advisory_path.is_file()
+    advisory_report = json.loads(
+        (advisory_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+    assert any(
+        "成立于 2024 年" in warning and "contiguous phrase" in warning
+        for warning in advisory_report["warnings"]
+    )
 
-    accepted_path = tmp_path / "accepted.json"
+    accepted_path = tmp_path / "accepted" / "deck.json"
     accepted = _run(
         "inspect_deck_contract.js",
         "cover-hero-v1",
@@ -4501,7 +4829,7 @@ def test_strict_source_binding_rejects_derived_or_paraphrased_facts(
     )
 
     assert accepted.returncode == 0, accepted.stderr
-    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    report = json.loads((accepted_path.parent / "qa" / "deck_contract.json").read_text())
     assert report["source_binding"]["strict"] is True
     assert report["source_binding"]["verified_fact_count"] == 4
 
@@ -4543,7 +4871,7 @@ def test_strict_source_binding_restores_exact_source_after_safe_copy_drift(
         }
     ]
 
-    unrelated_path = tmp_path / "unrelated.json"
+    unrelated_path = tmp_path / "unrelated" / "deck.json"
     unrelated = _run(
         "inspect_deck_contract.js",
         "chart-data-v1",
@@ -4553,9 +4881,15 @@ def test_strict_source_binding_restores_exact_source_after_safe_copy_drift(
         str(unrelated_path),
         env=env,
     )
-    assert unrelated.returncode == 1
-    assert "Source fact binding failed" in unrelated.stderr
-    assert not unrelated_path.exists()
+    assert unrelated.returncode == 0, unrelated.stdout + unrelated.stderr
+    assert unrelated_path.is_file()
+    unrelated_report = json.loads(
+        (unrelated_path.parent / "qa" / "deck_contract.json").read_text()
+    )
+    assert any(
+        "这是业内最领先的客服体系" in warning
+        for warning in unrelated_report["warnings"]
+    )
 
 
 def test_researched_facts_are_scaffolded_separately_from_user_source(
@@ -4955,7 +5289,7 @@ def test_apply_patch_flattens_nested_background_image_object(tmp_path: Path) -> 
     }
 
 
-def test_strict_source_request_rejects_researched_facts(tmp_path: Path) -> None:
+def test_strict_source_request_warns_for_researched_facts(tmp_path: Path) -> None:
     source_text = "只使用我提供的事实，禁止虚构：内马尔。"
     env = os.environ.copy()
     env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
@@ -4974,9 +5308,9 @@ def test_strict_source_request_rejects_researched_facts(tmp_path: Path) -> None:
         env=env,
     )
 
-    assert result.returncode == 1
-    assert "Research fact binding failed" in result.stderr
-    assert "strict source-only request" in result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert any("strict source-only request" in warning for warning in report["warnings"])
 
 
 def test_source_fact_binding_ignores_editorial_whitespace(tmp_path: Path) -> None:
@@ -5100,11 +5434,14 @@ def test_authorized_assumptions_support_disclosed_percent_chart_data(
     deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
     rejected = _run("validate_deck_truth.js", str(deck_path), env=env)
 
-    assert rejected.returncode == 1
+    assert rejected.returncode == 0, rejected.stdout + rejected.stderr
     rejected_payload = json.loads(
         rejected.stdout.split("\nDeck truth validation:", 1)[0]
     )
-    assert any("visible 假设/示意 disclosure" in issue for issue in rejected_payload["issues"])
+    assert any(
+        "visible 假设/示意 disclosure" in warning
+        for warning in rejected_payload["warnings"]
+    )
 
 
 def test_truth_validator_accepts_only_matching_zero_padded_structure_ordinals(
@@ -5173,12 +5510,12 @@ def test_truth_validator_accepts_only_matching_zero_padded_structure_ordinals(
     deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
     rejected = _run("validate_deck_truth.js", str(deck_path), env=env)
 
-    assert rejected.returncode == 1
-    issues = "\n".join(
-        json.loads(rejected.stdout.split("\nDeck truth validation:", 1)[0])["issues"]
+    assert rejected.returncode == 0, rejected.stdout + rejected.stderr
+    warnings = "\n".join(
+        json.loads(rejected.stdout.split("\nDeck truth validation:", 1)[0])["warnings"]
     )
-    assert "slides.slide-02.props.eyebrow" in issues
-    assert "slides.slide-03.props.items.0.value" in issues
+    assert "slides.slide-02.props.eyebrow" in warnings
+    assert "slides.slide-03.props.items.0.value" in warnings
 
 
 def test_truth_validator_accepts_disclosed_unenumerated_chart_assumptions(
@@ -5298,25 +5635,27 @@ def test_truth_validator_keeps_unenumerated_assumption_guardrails(
 
     without_disclosure = _run("validate_deck_truth.js", str(deck_path), env=env)
 
-    assert without_disclosure.returncode == 1
-    issues = "\n".join(
+    assert without_disclosure.returncode == 0, (
+        without_disclosure.stdout + without_disclosure.stderr
+    )
+    warnings = "\n".join(
         json.loads(
             without_disclosure.stdout.split("\nDeck truth validation:", 1)[0]
-        )["issues"]
+        )["warnings"]
     )
-    assert "slides.slide-01.props.categories.0" in issues
-    assert "slides.slide-02.props.statement" in issues
+    assert "slides.slide-01.props.categories.0" in warnings
+    assert "slides.slide-02.props.statement" in warnings
 
     deck["slides"][0]["props"]["source"] = "示意 / 假设数据"
     deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
     authorized = _run("validate_deck_truth.js", str(deck_path), env=env)
-    authorized_issues = "\n".join(
-        json.loads(authorized.stdout.split("\nDeck truth validation:", 1)[0])["issues"]
+    authorized_warnings = "\n".join(
+        json.loads(authorized.stdout.split("\nDeck truth validation:", 1)[0])["warnings"]
     )
 
-    assert authorized.returncode == 1
-    assert "slides.slide-01.props.categories.0" not in authorized_issues
-    assert "slides.slide-02.props.statement" in authorized_issues
+    assert authorized.returncode == 0, authorized.stdout + authorized.stderr
+    assert "slides.slide-01.props.categories.0" not in authorized_warnings
+    assert "slides.slide-02.props.statement" in authorized_warnings
 
     unauthorized_env = os.environ.copy()
     unauthorized_env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
@@ -5327,13 +5666,16 @@ def test_truth_validator_keeps_unenumerated_assumption_guardrails(
         str(deck_path),
         env=unauthorized_env,
     )
-    unauthorized_issues = "\n".join(
-        json.loads(unauthorized.stdout.split("\nDeck truth validation:", 1)[0])["issues"]
+    unauthorized_warnings = "\n".join(
+        json.loads(unauthorized.stdout.split("\nDeck truth validation:", 1)[0])["warnings"]
     )
 
-    assert unauthorized.returncode == 1
-    assert "truth_contract.assumptions requires explicit user permission" in unauthorized_issues
-    assert "slides.slide-01.props.categories.0" in unauthorized_issues
+    assert unauthorized.returncode == 0, unauthorized.stdout + unauthorized.stderr
+    assert (
+        "truth_contract.assumptions requires explicit user permission"
+        in unauthorized_warnings
+    )
+    assert "slides.slide-01.props.categories.0" in unauthorized_warnings
 
 
 @pytest.mark.parametrize(
@@ -5344,7 +5686,7 @@ def test_truth_validator_keeps_unenumerated_assumption_guardrails(
         "公司名为 ACME。只使用我提供的事实，禁止虚构。可以使用假设数据。",
     ],
 )
-def test_assumptions_require_unambiguous_user_permission(
+def test_assumptions_without_unambiguous_user_permission_are_advisory(
     tmp_path: Path,
     source_text: str,
 ) -> None:
@@ -5365,13 +5707,15 @@ def test_assumptions_require_unambiguous_user_permission(
         env=env,
     )
 
-    assert result.returncode == 1
-    assert "Assumption binding failed" in result.stderr
-    assert "explicit placeholders without pausing" in result.stderr
-    assert "request_user_input" not in result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert any(
+        "requires explicit user permission" in warning
+        for warning in report["warnings"]
+    )
 
 
-def test_authorized_assumptions_cannot_be_smuggled_into_source_facts(
+def test_derived_assumption_in_source_facts_is_advisory(
     tmp_path: Path,
 ) -> None:
     source_text = "公司名为 ACME。请使用合理假设数据并标明为示意。"
@@ -5390,9 +5734,9 @@ def test_authorized_assumptions_cannot_be_smuggled_into_source_facts(
         env=env,
     )
 
-    assert result.returncode == 1
-    assert "Source fact binding failed" in result.stderr
-    assert "contiguous phrase" in result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert any("contiguous phrase" in warning for warning in report["warnings"])
 
 
 def test_batch_patch_can_add_only_authorized_assumptions(
@@ -5476,13 +5820,13 @@ def test_truth_validator_rechecks_strict_source_fact_provenance(tmp_path: Path) 
 
     result = _run("validate_deck_truth.js", str(deck_path), env=env)
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout.split("\nDeck truth validation:", 1)[0])
     assert payload["sourceBinding"]["strict"] is True
-    assert any("成立于 2024 年" in issue for issue in payload["issues"])
+    assert any("成立于 2024 年" in warning for warning in payload["warnings"])
 
 
-def test_strict_truth_validator_rejects_invented_narrative_and_unlabeled_concept_media(
+def test_strict_truth_validator_warns_for_invented_narrative_and_unlabeled_concept_media(
     tmp_path: Path,
 ) -> None:
     source_text = (
@@ -5565,14 +5909,14 @@ def test_strict_truth_validator_rejects_invented_narrative_and_unlabeled_concept
 
     result = _run("validate_deck_truth.js", str(deck_path), env=env)
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout.split("\nDeck truth validation:", 1)[0])
-    issues = "\n".join(payload["issues"])
-    assert "strict source-only field is not source-backed" in issues
-    assert "generated project media must declare origin" in issues
-    assert "generated project media must be labeled as AI concept/placeholder" in issues
-    assert "slides.slide-04.props.steps.0.title" in issues
-    assert "team-member name is not source-backed" in issues
+    warnings = "\n".join(payload["warnings"])
+    assert "strict source-only field is not source-backed" in warnings
+    assert "generated project media must declare origin" in warnings
+    assert "generated project media must be labeled as AI concept/placeholder" in warnings
+    assert "slides.slide-04.props.steps.0.title" in warnings
+    assert "team-member name is not source-backed" in warnings
 
 
 def test_strict_truth_validator_accepts_exact_copy_placeholders_and_labeled_concept_media(
@@ -6281,18 +6625,20 @@ def test_strict_batch_patch_normalizes_observed_model_drift_in_one_pass(
     deck["slides"][5]["props"]["subtitle"] = "每个项目都经历三个阶段"
     deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
     rejected_truth = _run("validate_deck_truth.js", str(deck_path), env=env)
-    assert rejected_truth.returncode == 1
+    assert rejected_truth.returncode == 0, (
+        rejected_truth.stdout + rejected_truth.stderr
+    )
     rejected_payload = json.loads(
         rejected_truth.stdout.split("\nDeck truth validation:", 1)[0]
     )
-    rejected_issues = "\n".join(rejected_payload["issues"])
-    assert "slides.slide-05.props.title" in rejected_issues
-    assert "slides.slide-05.props.subtitle" in rejected_issues
-    assert "slides.slide-06.props.title" in rejected_issues
-    assert "slides.slide-06.props.subtitle" in rejected_issues
+    rejected_warnings = "\n".join(rejected_payload["warnings"])
+    assert "slides.slide-05.props.title" in rejected_warnings
+    assert "slides.slide-05.props.subtitle" in rejected_warnings
+    assert "slides.slide-06.props.title" in rejected_warnings
+    assert "slides.slide-06.props.subtitle" in rejected_warnings
 
 
-def test_truth_validator_rejects_observed_unsourced_claims(tmp_path: Path) -> None:
+def test_truth_validator_warns_for_observed_unsourced_claims(tmp_path: Path) -> None:
     deck_path = tmp_path / "deck.json"
     scaffold = _run(
         "inspect_deck_contract.js",
@@ -6323,12 +6669,12 @@ def test_truth_validator_rejects_observed_unsourced_claims(tmp_path: Path) -> No
 
     result = _run("validate_deck_truth.js", str(deck_path))
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout.split("\nDeck truth validation:", 1)[0])
-    issues = "\n".join(payload["issues"])
-    assert 'numeric claim "2024"' in issues
-    assert "performance/award/publication claim is not source-backed" in issues
-    assert "team-size claim is not source-backed" in issues
+    warnings = "\n".join(payload["warnings"])
+    assert 'numeric claim "2024"' in warnings
+    assert "performance/award/publication claim is not source-backed" in warnings
+    assert "team-size claim is not source-backed" in warnings
 
 
 def test_truth_validator_allows_qualitative_problem_and_expected_value_copy(
@@ -6458,7 +6804,7 @@ def test_truth_validator_accepts_user_backed_case_coverage_paraphrase(
     assert truth.returncode == 0, truth.stdout + truth.stderr
 
 
-def test_truth_validator_rejects_extra_observed_result_in_coverage_paraphrase(
+def test_truth_validator_warns_for_extra_observed_result_in_coverage_paraphrase(
     tmp_path: Path,
 ) -> None:
     source_fact = "已有案例覆盖：电商、零售、教育。"
@@ -6480,11 +6826,42 @@ def test_truth_validator_rejects_extra_observed_result_in_coverage_paraphrase(
 
     result = _run("validate_deck_truth.js", str(deck_path))
 
-    assert result.returncode == 1
-    issues = json.loads(
+    assert result.returncode == 0, result.stdout + result.stderr
+    warnings = json.loads(
         result.stdout.split("\nDeck truth validation:", 1)[0]
-    )["issues"]
-    assert any("performance/award/publication claim" in issue for issue in issues)
+    )["warnings"]
+    assert any("performance/award/publication claim" in warning for warning in warnings)
+
+
+def test_truth_validator_warns_but_allows_generic_ranking_wording(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "statement-focus-v1",
+        "--research-fact",
+        "信息噪音持续增加，用户需要更稳定的节奏感。",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"].update(
+        {
+            "statement": "通知、排名、评价不断刷新",
+            "support": "信息流持续叠加，注意力被频繁打断。",
+            "proofs": [],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    result = _run("validate_deck_truth.js", str(deck_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout.split("\nDeck truth validation:", 1)[0])
+    assert payload["ok"] is True
 
 
 def test_truth_validator_accepts_dotted_date_and_transition_wording(
@@ -6739,7 +7116,7 @@ def test_truth_validator_allows_non_project_story_in_case_study_visual_layout(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_truth_validator_still_rejects_unbacked_real_project_name(
+def test_truth_validator_warns_for_unbacked_real_project_name(
     tmp_path: Path,
 ) -> None:
     deck_path = tmp_path / "deck.json"
@@ -6769,9 +7146,12 @@ def test_truth_validator_still_rejects_unbacked_real_project_name(
 
     result = _run("validate_deck_truth.js", str(deck_path))
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout.split("\nDeck truth validation:", 1)[0])
-    assert any("project name is not source-backed" in issue for issue in payload["issues"])
+    assert any(
+        "project name is not source-backed" in warning
+        for warning in payload["warnings"]
+    )
 
 
 def test_truth_validator_accepts_chinese_quantity_and_section_marker_number(
@@ -6936,6 +7316,9 @@ def test_pptx_theme_selection_has_no_hard_html_templates_dependency() -> None:
     assert "apply_deck_patch.js" in text
     assert "${BOX_AGENT_NODE:-node} scripts/apply_deck_patch.js" in text
     assert "validate_deck_truth.js" in text
+    assert "validate_outline.js --research-report" in text
+    assert "verified_evidence[].canonical" in text
+    assert "Conflicting, unverified, cross-entity" in text
     assert "`comic-panel`" in text
     assert "`8-bit-orbit`" in text
     assert "DiagramSpec SVG clean and professional" in text
@@ -6961,7 +7344,7 @@ def test_pptx_missing_facts_use_placeholders_without_pausing() -> None:
     assert "are never pre-delivery blockers" in text
     assert "`暂无可验证公开数据`" in text
     assert "The user's next reply resumes this same deck" in text
-    assert "Never pause a truth/spec repair for missing facts" in text
+    assert "Source/URL/private-fact findings never trigger an automatic repair loop" in text
 
 
 def test_outline_validator_writes_report_and_flags_reused_evidence(
@@ -7012,6 +7395,148 @@ def test_outline_validator_writes_report_and_flags_reused_evidence(
     assert any("evidence is reused across 3 slides" in item for item in report["warnings"])
 
 
+def test_outline_research_handoff_accepts_only_verified_canonical_evidence(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    canonical = (
+        "Example Corp | Example Corp launched Product One in 2026. | "
+        "first_party | https://example.com/news/product-one"
+    )
+    outline = _write_outline(outline_path, page_count=1)
+    outline["slides"][0].update(
+        {
+            "title": "Example Corp 产品进展",
+            "message": "Example Corp 在 2026 年推出 Product One。",
+            "bullets": ["产品发布得到官方页面支持", "结论绑定第一方来源"],
+            "evidence": [canonical],
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    research_report = tmp_path / "research_check.json"
+    research_report.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "validator": "research-synthesis",
+                "evidence_schema_version": 1,
+                "verified_evidence": [
+                    {
+                        "entity": "Example Corp",
+                        "claim": "Example Corp launched Product One in 2026.",
+                        "source_url": "https://example.com/news/product-one",
+                        "source_type": "first_party",
+                        "status": "verified",
+                        "canonical": canonical,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    accepted = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--min-slides",
+        "1",
+        "--max-slides",
+        "1",
+        "--research-report",
+        str(research_report),
+    )
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+    outline["slides"][0]["evidence"] = [
+        "Example Corp | Unverified claim | secondary | https://other.example/item"
+    ]
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    rejected = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--min-slides",
+        "1",
+        "--max-slides",
+        "1",
+        "--research-report",
+        str(research_report),
+    )
+
+    assert rejected.returncode == 1
+    payload = json.loads(rejected.stdout)
+    assert any(
+        "is not an exact canonical item" in issue for issue in payload["issues"]
+    )
+
+
+def test_outline_research_handoff_rejects_cross_entity_binding(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    canonical = (
+        "Example Corp | Example Corp launched Product One in 2026. | "
+        "first_party | https://example.com/news/product-one"
+    )
+    outline = _write_outline(outline_path, page_count=1)
+    outline["slides"][0].update(
+        {
+            "title": "Another Company 产品进展",
+            "message": "Another Company 在 2026 年推出 Product One。",
+            "bullets": ["产品发布得到页面支持", "结论绑定来源"],
+            "evidence": [canonical],
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    research_report = tmp_path / "research_check.json"
+    research_report.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "validator": "research-synthesis",
+                "evidence_schema_version": 1,
+                "verified_evidence": [
+                    {
+                        "entity": "Example Corp",
+                        "claim": "Example Corp launched Product One in 2026.",
+                        "source_url": "https://example.com/news/product-one",
+                        "source_type": "first_party",
+                        "status": "verified",
+                        "canonical": canonical,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--min-slides",
+        "1",
+        "--max-slides",
+        "1",
+        "--research-report",
+        str(research_report),
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert any(
+        "slide narrative does not name that entity" in issue
+        for issue in payload["issues"]
+    )
+
+
 def test_outline_array_audience_and_storyline_pass_validation_and_scaffold(
     tmp_path: Path,
 ) -> None:
@@ -7058,7 +7583,7 @@ def test_outline_array_audience_and_storyline_pass_validation_and_scaffold(
     assert (tmp_path / "assets" / "generated" / "manifest.json").is_file()
 
 
-def test_public_research_outline_requires_numeric_claims_in_page_evidence(
+def test_public_research_outline_warns_for_numeric_claims_missing_from_evidence(
     tmp_path: Path,
 ) -> None:
     outline_path = tmp_path / "outline.json"
@@ -7098,16 +7623,16 @@ def test_public_research_outline_requires_numeric_claims_in_page_evidence(
         "1",
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert any(
         'title numeric literal "1930" is not present in this page\'s evidence'
-        in issue
-        for issue in payload["issues"]
+        in warning
+        for warning in payload["warnings"]
     )
 
 
-def test_public_research_outline_requires_actual_source_url(
+def test_public_research_outline_warns_when_actual_source_url_is_missing(
     tmp_path: Path,
 ) -> None:
     outline_path = tmp_path / "outline.json"
@@ -7129,11 +7654,11 @@ def test_public_research_outline_requires_actual_source_url(
         "1",
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert any(
-        "must include the actual http(s) source URL" in issue
-        for issue in payload["issues"]
+        "must include the actual http(s) source URL" in warning
+        for warning in payload["warnings"]
     )
 
 
@@ -7168,7 +7693,7 @@ def test_outline_rejects_evidence_too_long_for_deck_truth_contract(
     )
 
 
-def test_public_research_outline_requires_evidence_on_every_slide(
+def test_public_research_outline_warns_when_slide_has_no_evidence(
     tmp_path: Path,
 ) -> None:
     outline_path = tmp_path / "outline.json"
@@ -7188,12 +7713,12 @@ def test_public_research_outline_requires_evidence_on_every_slide(
         "1",
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert any(
         "requires at least one claim | source | http(s) URL evidence item"
-        in issue
-        for issue in payload["issues"]
+        in warning
+        for warning in payload["warnings"]
     )
 
 
@@ -7233,7 +7758,7 @@ def test_public_research_outline_allows_required_unavailable_fact_placeholder(
     )
 
 
-def test_outline_rejects_assumed_private_financing_stage(tmp_path: Path) -> None:
+def test_outline_warns_for_assumed_private_financing_stage(tmp_path: Path) -> None:
     outline_path = tmp_path / "outline.json"
     outline = _write_outline(
         outline_path,
@@ -7251,12 +7776,12 @@ def test_outline_rejects_assumed_private_financing_stage(tmp_path: Path) -> None
 
     result = _run("validate_outline.js", str(outline_path))
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert any(
-        "assumes a private identity fact" in issue
-        and "financing round" in issue
-        for issue in payload["issues"]
+        "assumes a private identity fact" in warning
+        and "financing round" in warning
+        for warning in payload["warnings"]
     )
 
 
@@ -7358,13 +7883,33 @@ def test_controlled_finalizer_stops_at_first_failed_dependency(
     assert not (tmp_path / "index.html").exists()
 
 
+def test_truth_validator_keeps_invalid_deck_structure_blocking(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    deck_path.write_text('{"slides": []}', encoding="utf-8")
+    report_path = tmp_path / "qa" / "truth_check.json"
+
+    result = _run(
+        "validate_deck_truth.js",
+        str(deck_path),
+        "--report",
+        str(report_path),
+    )
+
+    assert result.returncode == 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    assert any(issue.startswith("deck-spec:") for issue in report["issues"])
+
+
 def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> None:
     deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     deck["truth_contract"] = {
-        "mode": "illustrative",
+        "mode": "source_bound",
         "source_facts": [],
         "research_facts": [],
-        "assumptions": ["示例画廊内容仅用于编译器回归测试。"],
+        "assumptions": [],
     }
     deck_path = tmp_path / "deck.json"
     deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
@@ -7399,7 +7944,13 @@ def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.count("FINALIZE_PASS stage=") == 6
+    assert result.stdout.count("FINALIZE_PASS stage=") == 5
+    assert "FINALIZE_ADVISORY stage=truth" in result.stdout
+    assert (
+        result.stdout.index("FINALIZE_PASS stage=html_self_check")
+        < result.stdout.index("FINALIZE_ADVISORY stage=truth")
+        < result.stdout.index("FINALIZE_PASS stage=runtime_probe")
+    )
     assert '"ok":true' in result.stdout
     assert (tmp_path / "index.html").is_file()
     for report_name in (
@@ -7411,6 +7962,37 @@ def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> Non
     ):
         report = json.loads((tmp_path / "qa" / report_name).read_text())
         assert report["ok"] is True
+    truth_report = json.loads((tmp_path / "qa" / "truth_check.json").read_text())
+    assert truth_report["advisory"] is True
+    assert truth_report["warnings"]
+
+
+def test_truth_validator_keeps_unapproved_illustrative_mode_blocking(
+    tmp_path: Path,
+) -> None:
+    deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    deck["truth_contract"] = {
+        "mode": "illustrative",
+        "source_facts": [],
+        "research_facts": [],
+        "assumptions": [],
+    }
+    deck_path = tmp_path / "deck.json"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "只使用我提供的事实，禁止虚构或使用示意内容。".encode("utf-8")
+    ).decode("ascii")
+
+    result = _run("validate_deck_truth.js", str(deck_path), env=env)
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout.split("\nDeck truth validation:", 1)[0])
+    assert report["ok"] is False
+    assert any(
+        "has not explicitly permitted invented or illustrative content" in issue
+        for issue in report["issues"]
+    )
 
 
 def test_example_validates_and_renders_deterministically(tmp_path: Path) -> None:

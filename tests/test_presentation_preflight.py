@@ -9,6 +9,7 @@ from box_agent.acp import BoxACPAgent
 from box_agent.schema import LLMResponse
 from box_agent.workflows.presentation_preflight import (
     build_presentation_preflight_result,
+    build_presentation_recommendation_prompt,
     infer_explicit_presentation_values,
     is_new_presentation_request,
     load_presentation_preflight_config,
@@ -85,11 +86,12 @@ def test_skill_owned_preflight_config_is_valid():
     assert config["version"] == 1
     assert config["required_fields"] == ["role", "scene", "audience", "page_count"]
     assert config["high_impact_fields"] == ["scene", "audience"]
-    assert config["defaults"]["page_count"] == "page_count_5_10"
+    assert config["defaults"]["page_count"] == "page_count_auto"
     page_count = next(
         field for field in config["fields"] if field["id"] == "page_count"
     )
     assert page_count["boundary_policy"] == "prefer_range_ending_at_count"
+    assert page_count["options"][0]["id"] == "page_count_auto"
     assert {field["id"] for field in config["fields"]} == {
         "role",
         "scene",
@@ -110,6 +112,16 @@ def test_skill_owned_preflight_config_is_valid():
         ("将现有 HTML 导出成 PPTX", False),
         ("只需要一份 PPT 大纲，不用生成页面", False),
         ("生成一个普通 HTML 数据看板", False),
+        ("帮我优化这个制作 PPT 的 prompt", False),
+        ("把这个制作 PPT 的 prompt 改一下", False),
+        ("把下面这段“生成 PPT”的提示词润色专业些", False),
+        ("把“重新制作 PPT”这句提示词改自然", False),
+        ("Polish this text: create a PPT and editable HTML", False),
+        (
+            "制作一份介绍四家酒庄的 PPT，使用公开资料。\n"
+            "优化以上 prompt 的格式",
+            False,
+        ),
     ],
 )
 def test_non_new_deck_requests_skip_preflight(text: str, has_existing: bool):
@@ -134,6 +146,20 @@ def test_non_new_deck_requests_skip_preflight(text: str, has_existing: bool):
         "出个产品介绍 PPT",
         "生成一个面向客户的 HTML 演示文稿",
         "参考附件重新做一版产品发布 presentation",
+        "优化上面的提示词后，再按优化结果制作 PPT",
+        "优化这个 prompt，并制作 PPT",
+        "重新制作 PPT 并优化这个文字",
+        "重新制作 PPT 并优化这个 prompt",
+        "Remake the presentation and polish this text",
+        "Remake the presentation and polish this prompt",
+        "帮我制作一份 PPT，并优化每页文字",
+        "根据以下提示词制作改革开放主题 PPT",
+        "根据以下 prompt 制作 PPT，并优化布局",
+        "根据以下提示词制作流程优化主题 PPT",
+        "制作一个用于优化提示词的 PPT",
+        "Use this prompt to create a PPT in PowerPoint format",
+        "Use this prompt to create a PowerPoint and polish the layout",
+        "Polish this prompt and create the presentation",
     ],
 )
 def test_new_deck_requests_enter_preflight(text: str):
@@ -299,6 +325,21 @@ def test_chinese_and_range_page_count_extraction(
     assert values["page_count"] == expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "制作一份 PPT，页数根据内容安排",
+        "Create a presentation with a content-driven slide count",
+    ],
+)
+def test_content_driven_page_count_is_explicit(text: str):
+    config = load_presentation_preflight_config()
+
+    values = infer_explicit_presentation_values(text, config)
+
+    assert values["page_count"] == "page_count_auto"
+
+
 def test_model_recommendations_are_constrained_to_skill_options():
     config = load_presentation_preflight_config()
 
@@ -320,6 +361,27 @@ def test_model_recommendations_are_constrained_to_skill_options():
         "scene": "scene_training",
         "audience": "audience_students",
     }
+
+
+def test_missing_page_count_is_not_recommended_as_a_fixed_range():
+    config = load_presentation_preflight_config()
+    prompt = build_presentation_recommendation_prompt(
+        "制作一份面向客户的产品介绍 PPT",
+        config,
+        ["role", "scene", "audience", "page_count"],
+    )
+    result = build_presentation_preflight_result(
+        "制作一份面向客户的产品介绍 PPT",
+        model_text=(
+            '{"role":"role_marketing","scene":"scene_business_proposal",'
+            '"audience":"audience_external_clients",'
+            '"page_count":"page_count_5_10","mode":"normal"}'
+        ),
+    )
+
+    assert '"page_count"' not in prompt
+    assert result["values"]["page_count"] == "page_count_auto"
+    assert result["sources"]["page_count"] == "default"
 
 
 def test_result_preserves_explicit_values_and_recommends_missing_fields():
@@ -458,6 +520,8 @@ async def test_acp_preflight_uses_lightweight_model_without_session():
     assert result["matched"] is True
     assert result["shouldShow"] is True
     assert result["values"]["role"] == "role_teacher"
+    assert result["values"]["page_count"] == "page_count_auto"
+    assert result["sources"]["page_count"] == "default"
     assert len(llm.calls) == 1
     assert not hasattr(agent, "_sessions")
 

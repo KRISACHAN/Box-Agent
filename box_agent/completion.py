@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Final
 
 from .artifacts import OUTPUT_SUBDIR
-from .delivery import has_deliverable_intent, strip_negated_format_clauses
+from .delivery import (
+    has_deliverable_intent,
+    is_meta_prompt_rewrite_request,
+    strip_negated_format_clauses,
+)
 from .loop_guards import CompletionGate, artifact_signatures_for_globs
 from .turn_policy import text_is_short_acknowledgement
 from .workflows.presentation_routing import build_presentation_completion_gate
@@ -173,7 +177,11 @@ def should_resume_pending_completion_gate(
 ) -> bool:
     """Recognize an answer or terse continuation of a retained deliverable."""
     normalized = " ".join(user_text.casefold().split()).strip()
-    if not normalized or cancels_pending_completion_gate(normalized):
+    if (
+        not normalized
+        or cancels_pending_completion_gate(normalized)
+        or is_meta_prompt_rewrite_request(user_text)
+    ):
         return False
     if waiting_for_user_input:
         return True
@@ -199,6 +207,15 @@ def build_auto_completion_gate(
     requires_host_receipt, execution_result_criteria_count = (
         _host_execution_contract(user_text)
     )
+    if is_meta_prompt_rewrite_request(user_text):
+        if not requires_host_receipt:
+            return None
+        return CompletionGate(
+            required_tools=frozenset({"report_execution_result"}),
+            execution_result_criteria_count=execution_result_criteria_count,
+            max_continuations=3,
+            deadline_seconds=900.0,
+        )
     if not has_deliverable_intent(user_text) and not requires_host_receipt:
         return None
 

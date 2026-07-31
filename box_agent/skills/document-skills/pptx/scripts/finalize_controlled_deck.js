@@ -39,6 +39,11 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function writeJson(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
 function reportSummary(reportPath) {
   try {
     const report = readJson(reportPath);
@@ -95,6 +100,55 @@ function runStage(stage, scriptName, args, reportPath = null) {
   );
 }
 
+function runAdvisoryStage(stage, scriptName, args, reportPath) {
+  let previousMtime = null;
+  try {
+    previousMtime = fs.statSync(reportPath).mtimeMs;
+  } catch (_error) {
+    // The advisory may be running for the first time.
+  }
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, scriptName), ...args],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    }
+  );
+  let report = null;
+  let reportIsFresh = false;
+  try {
+    report = readJson(reportPath);
+    reportIsFresh = previousMtime === null || fs.statSync(reportPath).mtimeMs !== previousMtime;
+  } catch (_error) {
+    report = null;
+  }
+  const summary = reportIsFresh ? reportSummary(reportPath) : null;
+  const diagnostic = tail(
+    result.error
+      ? result.error.message
+      : `${result.stdout || ""}\n${result.stderr || ""}`
+  );
+  const warnings = [
+    ...(summary ? summary.warnings : []),
+    ...(summary ? summary.issues : []),
+  ];
+  if ((result.error || result.status !== 0 || !summary) && diagnostic) {
+    warnings.push(`Truth advisory could not complete cleanly: ${diagnostic}`);
+  }
+  const normalized = {
+    ...(report && typeof report === "object" && !Array.isArray(report) ? report : {}),
+    ok: true,
+    advisory: true,
+    issues: [],
+    warnings: [...new Set(warnings)],
+  };
+  writeJson(reportPath, normalized);
+  console.log(`FINALIZE_ADVISORY stage=${stage} warnings=${normalized.warnings.length}`);
+}
+
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const deckPath = resolveArtifactPath(opts.deck);
@@ -119,13 +173,6 @@ function main() {
     [deckPath, "--report", reports.spec],
     reports.spec
   );
-  runStage(
-    "truth",
-    "validate_deck_truth.js",
-    [deckPath, "--report", reports.truth],
-    reports.truth
-  );
-
   let manifestMode = "auto";
   try {
     const manifest = readJson(manifestPath);
@@ -157,6 +204,12 @@ function main() {
       reports.html,
     ],
     reports.html
+  );
+  runAdvisoryStage(
+    "truth",
+    "validate_deck_truth.js",
+    [deckPath, "--report", reports.truth],
+    reports.truth
   );
   runStage(
     "runtime_probe",

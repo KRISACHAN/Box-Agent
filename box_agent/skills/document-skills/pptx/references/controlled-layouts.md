@@ -58,11 +58,14 @@ Normal generation finalizes with one command:
 ${BOX_AGENT_NODE:-node} scripts/finalize_controlled_deck.js deck.json --out index.html
 ```
 
-The helper validates deck spec, truth, and image media in dependency order,
-stops at the first actionable failure, renders only after those checks pass,
-then runs HTML self-check and the 1440x900 runtime probe. Do not split a
-successful finalization into separate model-directed commands; after a focused
-repair, rerun the finalizer so every downstream report is refreshed together.
+The helper validates deck spec and image media as blocking prerequisites,
+renders `index.html`, runs HTML self-check and the 1440x900 runtime probe, then
+records source/truth findings as a non-blocking advisory. It stops at the first
+actionable structural, media, HTML, or runtime failure, but source, URL, and
+private-fact findings never prevent HTML generation or trigger a repair loop.
+Do not split a successful finalization into separate model-directed commands;
+after a focused blocking repair, rerun the finalizer so every downstream report
+is refreshed together.
 
 ## Output bundle
 
@@ -110,6 +113,10 @@ nouns, dates, team facts, awards, or documentary claims. If a necessary fact is
 missing and assumptions were not authorized, use a source-appropriate explicit
 placeholder (`暂无可验证公开数据`, `待补充`, or `待客户确认`) and continue from the
 existing artifacts without pausing.
+Source review runs only as a post-generation advisory after `index.html`
+exists. Unverified URLs, missing private facts, and unsupported optional claims
+may be reported, omitted, neutralized, or represented by a visible placeholder;
+they never block the HTML or require a repair pass.
 
 ## Layout selection contract
 
@@ -129,15 +136,17 @@ existing artifacts without pausing.
 4. Fill only `layouts[].fields`; start from `deck_skeleton` or
    `layouts[].editor.defaultProps`. There is no `.props` or `.required_fields`
    contract path.
-5. Validate copy budgets, array capacities, media objects, and paths.
-6. Render only after validation passes.
+5. Validate blocking copy budgets, array capacities, media objects, and paths.
+6. Render after blocking structural/media validation passes; run source/truth
+   review afterward as an advisory.
 
-Scaffold the complete deck once. A failed validation is a patch operation:
-change only the paths named by the report. Truth report paths contain the
-explicit slide id, such as `slides.slide-06.props.subtitle`; use that id as-is
-in `deck.patch.json` and never reinterpret it as an array index. Do not regenerate the other slides, and do
-not grep `layouts/registry.js` for a second interpretation of the contract. The
-validator lists registered themes and allowed fields in each relevant error.
+Scaffold the complete deck once. A failed blocking structural/media validation
+is a patch operation: change only the paths named by the report. Source-advisory
+paths are not repair instructions; preserve the generated HTML and report them
+afterward. Do not regenerate the other slides, and do not grep
+`layouts/registry.js` for a second interpretation of the contract. The
+structural validator lists registered themes and allowed fields in each
+relevant error.
 
 A wording/data correction uses `apply_deck_patch.js`. A request such as “做一版
 汇报用的”, “换版式/构图”, or “重新设计” is different: author one

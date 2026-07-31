@@ -10,19 +10,22 @@ image inside the current canonical delivery root selected by the runtime. Do
 not add another `output/` prefix, and do not write to `/tmp`, `/var/tmp`, or an
 unrelated absolute temp path.
 
-For the default controlled HTML route, validate the semantic source before any
-optional PPTX checks: `qa/outline_check.json`, `qa/deck_contract.json`,
-`qa/deck_spec.json`, `qa/truth_check.json`, `qa/image_manifest.json`,
-`qa/html_self_check.json`, and `qa/runtime_probe.json` must exist and pass. Run
-self-check against `index.html`.
+For the default controlled HTML route, the blocking checks are
+`qa/outline_check.json`, `qa/deck_contract.json`, `qa/deck_spec.json`,
+`qa/image_manifest.json`, `qa/html_self_check.json`, and
+`qa/runtime_probe.json`; they must exist and pass. Run self-check against
+`index.html`. Generate `qa/truth_check.json` afterward as a source advisory.
+Its missing sources, unverified URLs, private-fact gaps, or `"ok": false` result
+must not block, invalidate, or reopen an otherwise usable `index.html`.
 `deck_spec` also verifies bound `outline_intent`: every contract-v2 page keeps
 the exact outline title/message/layout/visual metadata, uses a compatible
 registered layout, and honors explicit visual counts such as three stages,
 four tags, four milestones, or four quadrants. A schema-valid deck that fails
 this semantic check is not complete.
-If a truth/spec issue class repeats twice, stop automatic repair and follow the
-missing-fact/authorized-assumption rules in `SKILL.md`; never rewrite
-scaffolded `source_facts`/`research_facts` or bypass the failed report.
+If a spec issue class repeats twice, stop automatic repair and follow the
+structural repair rules in `SKILL.md`. Never start a repair loop for a
+source/truth advisory; keep scaffolded `source_facts`/`research_facts` and
+summarize the advisory under `Source` or `Limitations`.
 
 For HTML-first decks exported with `scripts/html_to_editable_pptx.js` and
 `dom-to-pptx`, inspect both the source HTML preview PNGs and the rendered PPTX
@@ -64,8 +67,10 @@ previews alone are not enough.
 3. Placeholder scan:
    - Check for `lorem`, `ipsum`, `todo`, `placeholder`, `xxxx`, and template instructions.
    - Treat hits in notes, masters, and layouts as warnings unless the user asked to edit them.
-   - Reject empty or failed QA files. A 0-byte JSON/TXT/MD report is not a pass;
-     rerun the check, replace it with a real report, or mark that check `BLOCKED`.
+   - Reject empty or failed files for required blocking QA. A 0-byte
+     JSON/TXT/MD report is not a pass; rerun the check, replace it with a real
+     report, or mark that blocking check `BLOCKED`. A missing/empty source
+     advisory is a limitation, not an HTML blocker.
 
 4. Render:
    - Run `${BOX_AGENT_PYTHON:-python3} scripts/render_pptx.py output.pptx --out rendered`.
@@ -145,4 +150,5 @@ between progress blocks; do not concatenate all QA steps into one paragraph.
 2. `Source`: generator script and asset paths.
 3. `QA`: package validation, text extraction, placeholder scan, rendering.
 4. `Fixes`: issues found and corrected.
-5. `Limitations`: blocked renderers, Quick Look-only checks, missing fonts, or unsupported objects.
+5. `Limitations`: blocked renderers, Quick Look-only checks, missing fonts,
+   unsupported objects, or post-generation source/URL/private-fact advisories.
