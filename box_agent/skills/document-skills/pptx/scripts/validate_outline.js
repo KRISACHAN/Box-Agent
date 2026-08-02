@@ -4,7 +4,64 @@ const path = require("path");
 const {
   TRUTH_TEXT_MAX_CHARACTERS,
   resolveArtifactPath,
+  runtimeSourceBinding,
 } = require("./deck_spec_core.js");
+const { slideContract } = require("./design_contract_core.js");
+
+const PAGE_TOKEN_SOURCE = "(?:\\d{1,2}|[一二两三四五六七八九]?十[一二三四五六七八九]?|[一二两三四五六七八九])";
+const PAGE_RANGE_RE = new RegExp(
+  `(?<!第)(${PAGE_TOKEN_SOURCE})\\s*(?:-|~|～|—|–|至|到)\\s*(${PAGE_TOKEN_SOURCE})\\s*(?:页|pages?|slides?)`,
+  "i"
+);
+const PAGE_COUNT_RE = new RegExp(
+  `(?<!第)(${PAGE_TOKEN_SOURCE})\\s*(?:页|pages?|slides?)`,
+  "i"
+);
+
+function parsePageToken(value) {
+  const token = String(value || "").trim();
+  if (/^\d{1,2}$/.test(token)) return Number(token);
+  const digits = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (token === "十") return 10;
+  if (token === "二十") return 20;
+  if (token.startsWith("十") && token.length === 2) return 10 + (digits[token[1]] || 0);
+  if (token.endsWith("十") && token.length === 2) return (digits[token[0]] || 0) * 10 || null;
+  if (token.length === 3 && token[1] === "十") {
+    const tens = digits[token[0]];
+    const ones = digits[token[2]];
+    return tens && ones ? tens * 10 + ones : null;
+  }
+  return digits[token] || null;
+}
+
+function explicitPageCountContract(sourceText) {
+  const normalized = String(sourceText || "").normalize("NFKC");
+  const range = normalized.match(PAGE_RANGE_RE);
+  if (range) {
+    const minimum = parsePageToken(range[1]);
+    const maximum = parsePageToken(range[2]);
+    if (minimum && maximum && minimum <= maximum) return { minimum, maximum };
+  }
+  const exact = normalized.match(PAGE_COUNT_RE);
+  const count = exact ? parsePageToken(exact[1]) : null;
+  return count ? { minimum: count, maximum: count } : null;
+}
+
+function outlineBulletCount(slide) {
+  const bullets = Array.isArray(slide && slide.bullets) ? slide.bullets : [];
+  const contract = slideContract(slide);
+  if (
+    contract
+    && contract.visual_kind === "numbered-actions"
+    && Number.isInteger(contract.item_count)
+  ) {
+    const numberedItems = bullets.filter(item =>
+      /^\s*(?:\d{1,2}|[一二三四五六七八九十]+)[.)、．:：-]\s*/u.test(String(item || ""))
+    );
+    if (numberedItems.length === contract.item_count) return numberedItems.length;
+  }
+  return bullets.length;
+}
 
 function usage() {
   console.error(
@@ -21,6 +78,8 @@ function parseArgs(argv) {
     outlinePath: argv[0],
     minSlides: 3,
     maxSlides: 40,
+    minSlidesExplicit: false,
+    maxSlidesExplicit: false,
     researchReport: null,
     report: null,
   };
@@ -29,9 +88,11 @@ function parseArgs(argv) {
     const value = argv[i + 1];
     if (arg === "--min-slides" && value) {
       opts.minSlides = Number(value);
+      opts.minSlidesExplicit = true;
       i += 1;
     } else if (arg === "--max-slides" && value) {
       opts.maxSlides = Number(value);
+      opts.maxSlidesExplicit = true;
       i += 1;
     } else if (arg === "--report" && value) {
       opts.report = value;
@@ -292,10 +353,10 @@ function validate(outline, opts) {
 
     if (!Array.isArray(slide.bullets)) {
       issues.push(`${label}: bullets must be an array with 2-5 supporting points`);
-    } else if (slide.bullets.length < 2) {
+    } else if (outlineBulletCount(slide) < 2) {
       warnings.push(`${label}: bullets has fewer than 2 items; add more substance`);
-    } else if (slide.bullets.length > 5) {
-      warnings.push(`${label}: bullets has ${slide.bullets.length} items; trim to 5 or fewer`);
+    } else if (outlineBulletCount(slide) > 5) {
+      warnings.push(`${label}: bullets has ${outlineBulletCount(slide)} items; trim to 5 or fewer`);
     }
 
     if (!Array.isArray(slide.evidence)) {
@@ -485,6 +546,14 @@ function validate(outline, opts) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
+  const sourceBinding = runtimeSourceBinding();
+  const pageCountContract = sourceBinding.available
+    ? explicitPageCountContract(sourceBinding.source_text)
+    : null;
+  if (pageCountContract) {
+    if (!opts.minSlidesExplicit) opts.minSlides = pageCountContract.minimum;
+    if (!opts.maxSlidesExplicit) opts.maxSlides = pageCountContract.maximum;
+  }
   opts.verifiedResearch = readVerifiedResearchEvidence(opts.researchReport);
   const { outline, resolved } = readOutline(opts.outlinePath);
   const result = validate(outline, opts);
@@ -492,6 +561,7 @@ function main() {
     ...result,
     outline: resolved,
     researchReport: opts.verifiedResearch ? opts.verifiedResearch.resolved : null,
+    pageCountContract,
   };
   const outputText = JSON.stringify(output, null, 2);
   if (opts.report) {

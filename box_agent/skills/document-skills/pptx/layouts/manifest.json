@@ -1479,6 +1479,166 @@
       }
     },
     {
+      "id": "capital-ledger",
+      "name": "Capital Ledger",
+      "description": "A disciplined investment ledger with warm paper, concentric valuation geometry, hairline rules, and tabular evidence for capital decisions.",
+      "source_reference": "beautiful-html-templates/cartesian",
+      "selection": {
+        "visual_dna_ids": [
+          "capital-ledger"
+        ],
+        "mood_keywords": [
+          "disciplined",
+          "financial",
+          "quiet confidence",
+          "evidence-led",
+          "ledger",
+          "克制",
+          "资本",
+          "投资",
+          "账簿感"
+        ],
+        "industry_fit": [
+          "investment",
+          "capital markets",
+          "investor relations",
+          "valuation",
+          "earnings",
+          "corporate finance",
+          "投资分析",
+          "财报",
+          "资本配置",
+          "估值",
+          "投资者关系"
+        ],
+        "density": "high",
+        "scheme": "light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F1EEE5",
+        "surface": "#FBF9F2",
+        "surface_strong": "#E4DED0",
+        "primary": "#173B2C",
+        "primary_soft": "#D9E4DB",
+        "text": "#171916",
+        "muted": "#66665F",
+        "border": "#B9B3A7",
+        "inverse": "#FBF9F2",
+        "alt_background": "#172019",
+        "alt_surface": "#223027",
+        "alt_text": "#F5F1E8",
+        "alt_muted": "#BFC7BD",
+        "alt_border": "#536157",
+        "alt_primary": "#BBD2BF",
+        "chart": [
+          "#173B2C",
+          "#6E8064",
+          "#B08A4B",
+          "#7A3F35"
+        ]
+      },
+      "typography": {
+        "display": "Playfair Display, Georgia, Songti SC, serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 0,
+        "radius_medium": 0,
+        "radius_large": 0,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "grid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "editorial",
+        "label": "mono",
+        "accent": "line",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "analytical-exhibit",
+        "direction": "structured-systems",
+        "variants": [
+          "exhibit-grid",
+          "evidence-rail",
+          "decision-board"
+        ],
+        "default_family": "analytical-exhibit",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "analytical-exhibit",
+          "institutional-grid",
+          "literary-minimal"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "literary-minimal"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "literary-minimal",
+            "selection_signals": [
+              "长文本",
+              "观点文章",
+              "安静研究报告"
+            ],
+            "variants": [
+              "margin-note",
+              "quiet-center",
+              "asymmetric-column"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "capsule",
       "name": "Capsule",
       "description": "Warm bone, ink-black structure, and a full pastel-pop system built from rounded capsules.",
@@ -1836,6 +1996,340 @@
               "blueprint-canvas",
               "annotated-system",
               "spec-sheet"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "civic-brief",
+      "name": "Civic Brief",
+      "description": "An institutional policy docket with deep navy, official rules, numbered clauses, and a restrained seal-like civic signature.",
+      "source_reference": "beautiful-html-templates/signal",
+      "selection": {
+        "visual_dna_ids": [
+          "civic-brief"
+        ],
+        "mood_keywords": [
+          "institutional",
+          "authoritative",
+          "public",
+          "policy",
+          "docket",
+          "政务",
+          "政策",
+          "庄重",
+          "公共治理"
+        ],
+        "industry_fit": [
+          "government",
+          "public policy",
+          "municipal services",
+          "regulation",
+          "public administration",
+          "政务汇报",
+          "公共政策",
+          "城市治理",
+          "监管",
+          "民生服务"
+        ],
+        "density": "medium-high",
+        "scheme": "dark",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#17233A",
+        "surface": "#202F4B",
+        "surface_strong": "#293B5D",
+        "primary": "#D2B36F",
+        "primary_soft": "#4A463F",
+        "text": "#F4F0E7",
+        "muted": "#B8C0CD",
+        "border": "#53617A",
+        "inverse": "#17233A",
+        "alt_background": "#F3EEE3",
+        "alt_surface": "#FFFDF7",
+        "alt_text": "#17233A",
+        "alt_muted": "#657083",
+        "alt_border": "#BBB5AA",
+        "alt_primary": "#9D2F2D",
+        "chart": [
+          "#D2B36F",
+          "#9D2F2D",
+          "#6883A8",
+          "#7D8F71"
+        ]
+      },
+      "typography": {
+        "display": "Source Serif 4, Noto Serif SC, Songti SC, serif",
+        "body": "DM Sans, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 0,
+        "radius_medium": 0,
+        "radius_large": 0,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "solid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "editorial",
+        "label": "mono",
+        "accent": "underline",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "institutional-grid",
+        "direction": "structured-systems",
+        "variants": [
+          "balanced-grid",
+          "rail-grid",
+          "ledger-grid"
+        ],
+        "default_family": "institutional-grid",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "institutional-grid",
+          "analytical-exhibit",
+          "editorial-spread"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "editorial-spread"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "editorial-spread",
+            "selection_signals": [
+              "研究叙事",
+              "杂志跨页",
+              "图文长内容"
+            ],
+            "variants": [
+              "split-spread",
+              "feature-spread",
+              "banded-spread"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "clinical-atlas",
+      "name": "Clinical Atlas",
+      "description": "A clinical evidence atlas combining graph paper, specimen labels, medical signal motifs, and precise teal-cobalt hierarchy.",
+      "source_reference": "beautiful-html-templates/cobalt-grid",
+      "selection": {
+        "visual_dna_ids": [
+          "clinical-atlas"
+        ],
+        "mood_keywords": [
+          "clinical",
+          "precise",
+          "evidence-based",
+          "sterile",
+          "technical",
+          "临床",
+          "医学",
+          "循证",
+          "严谨"
+        ],
+        "industry_fit": [
+          "healthcare",
+          "clinical trials",
+          "medical education",
+          "pharma",
+          "patient care",
+          "hospital",
+          "医疗",
+          "临床试验",
+          "诊疗",
+          "患者路径",
+          "医药"
+        ],
+        "density": "high",
+        "scheme": "light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F5F7F2",
+        "surface": "#FFFFFF",
+        "surface_strong": "#DCEDEA",
+        "primary": "#087F78",
+        "primary_soft": "#D5EEEA",
+        "text": "#162827",
+        "muted": "#58706E",
+        "border": "#A9C4C0",
+        "inverse": "#FFFFFF",
+        "alt_background": "#102E33",
+        "alt_surface": "#173D43",
+        "alt_text": "#F3FAF8",
+        "alt_muted": "#B7D4D0",
+        "alt_border": "#477078",
+        "alt_primary": "#68D3C8",
+        "chart": [
+          "#087F78",
+          "#253FD0",
+          "#D34B46",
+          "#7F9C56"
+        ]
+      },
+      "typography": {
+        "display": "Newsreader, Georgia, Songti SC, serif",
+        "body": "Hanken Grotesk, Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "DM Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 2,
+        "radius_medium": 6,
+        "radius_large": 10,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "grid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "editorial",
+        "label": "mono",
+        "accent": "line",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "technical-schematic",
+        "direction": "structured-systems",
+        "variants": [
+          "blueprint-canvas",
+          "annotated-system",
+          "spec-sheet"
+        ],
+        "default_family": "technical-schematic",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "technical-schematic",
+          "analytical-exhibit",
+          "institutional-grid",
+          "editorial-spread"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "editorial-spread"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "editorial-spread",
+            "selection_signals": [
+              "研究叙事",
+              "杂志跨页",
+              "图文长内容"
+            ],
+            "variants": [
+              "split-spread",
+              "feature-spread",
+              "banded-spread"
             ]
           }
         ]
@@ -2206,6 +2700,182 @@
               "blueprint-canvas",
               "annotated-system",
               "spec-sheet"
+            ]
+          },
+          {
+            "family": "playful-collage",
+            "selection_signals": [
+              "教育与社区",
+              "工作坊",
+              "轻松表达"
+            ],
+            "variants": [
+              "mosaic",
+              "staggered",
+              "capsule"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "commerce-pulse",
+      "name": "Commerce Pulse",
+      "description": "A retail operating system built from barcode rails, price tickets, SKU labels, receipt perforations, promotion blocks, and conversion rhythm.",
+      "source_reference": "beautiful-html-templates/sakura-chroma",
+      "selection": {
+        "visual_dna_ids": [
+          "commerce-pulse"
+        ],
+        "mood_keywords": [
+          "retail",
+          "commercial",
+          "energetic",
+          "modular",
+          "conversion",
+          "零售",
+          "电商",
+          "商品",
+          "促销",
+          "转化"
+        ],
+        "industry_fit": [
+          "retail",
+          "ecommerce",
+          "DTC",
+          "merchandising",
+          "omnichannel",
+          "零售运营",
+          "电子商务",
+          "商品运营",
+          "全渠道",
+          "品牌电商"
+        ],
+        "density": "high",
+        "scheme": "bright-light",
+        "formality": "medium-high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F7F3E8",
+        "surface": "#FFFDF8",
+        "surface_strong": "#ECE7DA",
+        "primary": "#2147C7",
+        "primary_soft": "#DDE5FF",
+        "text": "#151515",
+        "muted": "#5E5A54",
+        "border": "#1E1E1E",
+        "inverse": "#FFFFFF",
+        "chart": [
+          "#2147C7",
+          "#E6462E",
+          "#F3C936",
+          "#168A73"
+        ]
+      },
+      "typography": {
+        "display": "Barlow Condensed, Arial Narrow, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 2,
+        "radius_medium": 6,
+        "radius_large": 10,
+        "border_width": 2
+      },
+      "style": {
+        "canvas": "solid",
+        "surface": "soft",
+        "shadow": "hard",
+        "heading": "condensed",
+        "label": "pill",
+        "accent": "line",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "product-showcase",
+        "direction": "interface-modules",
+        "variants": [
+          "device-stage",
+          "browser-story",
+          "annotated-flow"
+        ],
+        "default_family": "product-showcase",
+        "default_direction": "interface-modules",
+        "allowed_families": [
+          "product-showcase",
+          "analytical-exhibit",
+          "brutalist-frame",
+          "playful-collage"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "interface-modules",
+          "expressive-objects"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "analytical-exhibit"
+            ]
+          },
+          {
+            "id": "interface-modules",
+            "label": "产品与界面",
+            "families": [
+              "product-showcase"
+            ]
+          },
+          {
+            "id": "expressive-objects",
+            "label": "表达性构件",
+            "families": [
+              "playful-collage",
+              "brutalist-frame"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "product-showcase",
+            "selection_signals": [
+              "UI 截图",
+              "功能演示",
+              "产品流程"
+            ],
+            "variants": [
+              "device-stage",
+              "browser-story",
+              "annotated-flow"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "brutalist-frame",
+            "selection_signals": [
+              "强态度",
+              "密集模块",
+              "硬边视觉"
+            ],
+            "variants": [
+              "block-grid",
+              "offset-frame",
+              "ledger-frame"
             ]
           },
           {
@@ -3286,6 +3956,175 @@
       }
     },
     {
+      "id": "factory-floor",
+      "name": "Factory Floor",
+      "description": "A production-floor control system with safety yellow, machine blue, station rails, inspection marks, tolerance labels, and operational discipline.",
+      "source_reference": "beautiful-html-templates/technical-blueprint",
+      "selection": {
+        "visual_dna_ids": [
+          "factory-floor"
+        ],
+        "mood_keywords": [
+          "industrial",
+          "precise",
+          "operational",
+          "safety",
+          "engineering",
+          "制造",
+          "工业",
+          "精益",
+          "质量",
+          "车间"
+        ],
+        "industry_fit": [
+          "manufacturing",
+          "factory operations",
+          "industrial engineering",
+          "quality management",
+          "lean production",
+          "制造业",
+          "工厂运营",
+          "生产管理",
+          "质量管理",
+          "精益生产"
+        ],
+        "density": "high",
+        "scheme": "industrial-light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#EEF1F2",
+        "surface": "#FAFBF8",
+        "surface_strong": "#DCE3E6",
+        "primary": "#173F5F",
+        "primary_soft": "#D7E2E9",
+        "text": "#101820",
+        "muted": "#53636D",
+        "border": "#81939D",
+        "inverse": "#FFFFFF",
+        "chart": [
+          "#173F5F",
+          "#F2C94C",
+          "#27896F",
+          "#D55E3B"
+        ]
+      },
+      "typography": {
+        "display": "Barlow Condensed, Arial Narrow, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 0,
+        "radius_medium": 2,
+        "radius_large": 4,
+        "border_width": 2
+      },
+      "style": {
+        "canvas": "grid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "condensed",
+        "label": "mono",
+        "accent": "bracket",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "technical-schematic",
+        "direction": "structured-systems",
+        "variants": [
+          "blueprint-canvas",
+          "annotated-system",
+          "spec-sheet"
+        ],
+        "default_family": "technical-schematic",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "technical-schematic",
+          "analytical-exhibit",
+          "institutional-grid",
+          "brutalist-frame"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "expressive-objects"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "expressive-objects",
+            "label": "表达性构件",
+            "families": [
+              "brutalist-frame"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "brutalist-frame",
+            "selection_signals": [
+              "强态度",
+              "密集模块",
+              "硬边视觉"
+            ],
+            "variants": [
+              "block-grid",
+              "offset-frame",
+              "ledger-frame"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "grove",
       "name": "Grove",
       "description": "Deep forest green, warm bone, and restrained rust-red with literary calm.",
@@ -3472,6 +4311,344 @@
               "blueprint-canvas",
               "annotated-system",
               "spec-sheet"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "legal-docket",
+      "name": "Legal Docket",
+      "description": "A disciplined legal dossier with ivory paper, oxblood evidence marks, docket numbers, exhibit tabs, clause rhythm, and restrained case authority.",
+      "source_reference": "beautiful-html-templates/monochrome",
+      "selection": {
+        "visual_dna_ids": [
+          "legal-docket"
+        ],
+        "mood_keywords": [
+          "legal",
+          "authoritative",
+          "archival",
+          "evidence",
+          "formal",
+          "法律",
+          "合规",
+          "证据",
+          "严肃",
+          "权威"
+        ],
+        "industry_fit": [
+          "legal services",
+          "litigation",
+          "compliance",
+          "regulatory",
+          "corporate counsel",
+          "法律服务",
+          "诉讼",
+          "合规管理",
+          "监管",
+          "公司法务"
+        ],
+        "density": "high",
+        "scheme": "warm-light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F3EFE5",
+        "surface": "#FFFCF5",
+        "surface_strong": "#E8E0D2",
+        "primary": "#7A2432",
+        "primary_soft": "#E8D7D8",
+        "text": "#171717",
+        "muted": "#625D56",
+        "border": "#91887C",
+        "inverse": "#FFFDF8",
+        "chart": [
+          "#7A2432",
+          "#171717",
+          "#9B7B45",
+          "#6D7580"
+        ]
+      },
+      "typography": {
+        "display": "Source Serif 4, Noto Serif SC, Songti SC, serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 0,
+        "radius_medium": 0,
+        "radius_large": 0,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "paper",
+        "surface": "paper",
+        "shadow": "none",
+        "heading": "editorial",
+        "label": "mono",
+        "accent": "underline",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "institutional-grid",
+        "direction": "structured-systems",
+        "variants": [
+          "balanced-grid",
+          "rail-grid",
+          "ledger-grid"
+        ],
+        "default_family": "institutional-grid",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "institutional-grid",
+          "literary-minimal",
+          "analytical-exhibit",
+          "editorial-spread"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "editorial-spread",
+              "literary-minimal"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "literary-minimal",
+            "selection_signals": [
+              "长文本",
+              "观点文章",
+              "安静研究报告"
+            ],
+            "variants": [
+              "margin-note",
+              "quiet-center",
+              "asymmetric-column"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "editorial-spread",
+            "selection_signals": [
+              "研究叙事",
+              "杂志跨页",
+              "图文长内容"
+            ],
+            "variants": [
+              "split-spread",
+              "feature-spread",
+              "banded-spread"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "logistics-control-tower",
+      "name": "Logistics Control Tower",
+      "description": "A supply-network control tower with container IDs, route coordinates, transit rails, shipment states, ETA markers, and port-orange alerts.",
+      "source_reference": "beautiful-html-templates/product-console",
+      "selection": {
+        "visual_dna_ids": [
+          "logistics-control-tower"
+        ],
+        "mood_keywords": [
+          "logistics",
+          "connected",
+          "operational",
+          "traceable",
+          "global",
+          "物流",
+          "供应链",
+          "履约",
+          "追踪",
+          "网络"
+        ],
+        "industry_fit": [
+          "supply chain",
+          "logistics",
+          "procurement operations",
+          "warehousing",
+          "transportation",
+          "供应链管理",
+          "物流运营",
+          "采购运营",
+          "仓储",
+          "运输"
+        ],
+        "density": "high",
+        "scheme": "control-light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#EDF2F3",
+        "surface": "#FFFFFF",
+        "surface_strong": "#DCE8E8",
+        "primary": "#143C52",
+        "primary_soft": "#D8E4EA",
+        "text": "#11252C",
+        "muted": "#53666C",
+        "border": "#89A1A6",
+        "inverse": "#FFFFFF",
+        "chart": [
+          "#143C52",
+          "#E66A2C",
+          "#168A83",
+          "#D4A72C"
+        ]
+      },
+      "typography": {
+        "display": "Space Grotesk, Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 4,
+        "radius_medium": 8,
+        "radius_large": 12,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "grid",
+        "surface": "outline",
+        "shadow": "soft",
+        "heading": "standard",
+        "label": "mono",
+        "accent": "line",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "product-showcase",
+        "direction": "interface-modules",
+        "variants": [
+          "device-stage",
+          "browser-story",
+          "annotated-flow"
+        ],
+        "default_family": "product-showcase",
+        "default_direction": "interface-modules",
+        "allowed_families": [
+          "product-showcase",
+          "technical-schematic",
+          "analytical-exhibit",
+          "institutional-grid"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "interface-modules"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "interface-modules",
+            "label": "产品与界面",
+            "families": [
+              "product-showcase"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "product-showcase",
+            "selection_signals": [
+              "UI 截图",
+              "功能演示",
+              "产品流程"
+            ],
+            "variants": [
+              "device-stage",
+              "browser-story",
+              "annotated-flow"
+            ]
+          },
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
             ]
           }
         ]
@@ -4182,6 +5359,186 @@
               "offset-hero",
               "stacked-poster",
               "split-poster"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "people-handbook",
+      "name": "People Handbook",
+      "description": "A warm, tactile employee handbook system with pinned paper, badge-like labels, human annotations, and an unmistakable people-operations voice.",
+      "source_reference": "beautiful-html-templates/pin-and-paper",
+      "selection": {
+        "visual_dna_ids": [
+          "people-handbook"
+        ],
+        "mood_keywords": [
+          "human",
+          "welcoming",
+          "tactile",
+          "handbook",
+          "warm",
+          "员工友好",
+          "入职",
+          "手册感",
+          "有温度"
+        ],
+        "industry_fit": [
+          "human resources",
+          "people operations",
+          "employee onboarding",
+          "talent development",
+          "employer branding",
+          "人力资源",
+          "员工入职",
+          "企业文化",
+          "人才发展"
+        ],
+        "density": "medium",
+        "scheme": "light",
+        "formality": "medium",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F6F0DE",
+        "surface": "#FFFDF5",
+        "surface_strong": "#EFE56A",
+        "primary": "#1F3A8A",
+        "primary_soft": "#DCE5F7",
+        "text": "#20232B",
+        "muted": "#67675F",
+        "border": "#BDB69F",
+        "inverse": "#FFFDF5",
+        "alt_background": "#1F3A8A",
+        "alt_surface": "#29489B",
+        "alt_text": "#FFFDF5",
+        "alt_muted": "#DDE4F2",
+        "alt_border": "#6F84BC",
+        "alt_primary": "#EFE56A",
+        "chart": [
+          "#1F3A8A",
+          "#C4513A",
+          "#D7C936",
+          "#4F745D"
+        ]
+      },
+      "typography": {
+        "display": "Space Grotesk, Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "DM Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 4,
+        "radius_medium": 10,
+        "radius_large": 16,
+        "border_width": 2
+      },
+      "style": {
+        "canvas": "paper",
+        "surface": "note",
+        "shadow": "hard",
+        "heading": "condensed",
+        "label": "tape",
+        "accent": "dot",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "editorial-spread",
+        "direction": "narrative-pages",
+        "variants": [
+          "split-spread",
+          "feature-spread",
+          "banded-spread"
+        ],
+        "default_family": "editorial-spread",
+        "default_direction": "narrative-pages",
+        "allowed_families": [
+          "editorial-spread",
+          "institutional-grid",
+          "playful-collage",
+          "literary-minimal"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages",
+          "expressive-objects"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "editorial-spread",
+              "literary-minimal"
+            ]
+          },
+          {
+            "id": "expressive-objects",
+            "label": "表达性构件",
+            "families": [
+              "playful-collage"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "editorial-spread",
+            "selection_signals": [
+              "研究叙事",
+              "杂志跨页",
+              "图文长内容"
+            ],
+            "variants": [
+              "split-spread",
+              "feature-spread",
+              "banded-spread"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "playful-collage",
+            "selection_signals": [
+              "教育与社区",
+              "工作坊",
+              "轻松表达"
+            ],
+            "variants": [
+              "mosaic",
+              "staggered",
+              "capsule"
+            ]
+          },
+          {
+            "family": "literary-minimal",
+            "selection_signals": [
+              "长文本",
+              "观点文章",
+              "安静研究报告"
+            ],
+            "variants": [
+              "margin-note",
+              "quiet-center",
+              "asymmetric-column"
             ]
           }
         ]
@@ -5109,6 +6466,175 @@
       }
     },
     {
+      "id": "property-atlas",
+      "name": "Property Atlas",
+      "description": "An architectural property atlas with cadastral grids, plot lines, north marks, address plaques, area annotations, and development facts.",
+      "source_reference": "beautiful-html-templates/cobalt-grid",
+      "selection": {
+        "visual_dna_ids": [
+          "property-atlas"
+        ],
+        "mood_keywords": [
+          "architectural",
+          "spatial",
+          "precise",
+          "premium",
+          "planned",
+          "建筑",
+          "空间",
+          "规划",
+          "资产",
+          "开发"
+        ],
+        "industry_fit": [
+          "real estate",
+          "property development",
+          "asset management",
+          "urban renewal",
+          "commercial property",
+          "房地产",
+          "地产开发",
+          "资产管理",
+          "城市更新",
+          "商业地产"
+        ],
+        "density": "medium-high",
+        "scheme": "architectural-light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#F4F1E8",
+        "surface": "#FFFDF7",
+        "surface_strong": "#E4E8E2",
+        "primary": "#1E5A67",
+        "primary_soft": "#D8E6E5",
+        "text": "#202B2D",
+        "muted": "#657071",
+        "border": "#93A5A4",
+        "inverse": "#FFFFFF",
+        "chart": [
+          "#1E5A67",
+          "#C96B45",
+          "#537F9C",
+          "#9B8A5F"
+        ]
+      },
+      "typography": {
+        "display": "Source Serif 4, Noto Serif SC, Songti SC, serif",
+        "body": "Inter, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 0,
+        "radius_medium": 2,
+        "radius_large": 4,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "grid",
+        "surface": "outline",
+        "shadow": "none",
+        "heading": "editorial",
+        "label": "mono",
+        "accent": "line",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "institutional-grid",
+        "direction": "structured-systems",
+        "variants": [
+          "balanced-grid",
+          "rail-grid",
+          "ledger-grid"
+        ],
+        "default_family": "institutional-grid",
+        "default_direction": "structured-systems",
+        "allowed_families": [
+          "institutional-grid",
+          "technical-schematic",
+          "analytical-exhibit",
+          "editorial-spread"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit",
+              "technical-schematic"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "editorial-spread"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
+            ]
+          },
+          {
+            "family": "technical-schematic",
+            "selection_signals": [
+              "系统架构",
+              "流程节点",
+              "接口与规格说明"
+            ],
+            "variants": [
+              "blueprint-canvas",
+              "annotated-system",
+              "spec-sheet"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "editorial-spread",
+            "selection_signals": [
+              "研究叙事",
+              "杂志跨页",
+              "图文长内容"
+            ],
+            "variants": [
+              "split-spread",
+              "feature-spread",
+              "banded-spread"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "raw-grid",
       "name": "Raw Grid",
       "description": "White paper, system-black structure, and flat pink and sage blocks with offset shadows.",
@@ -5295,6 +6821,181 @@
               "offset-hero",
               "stacked-poster",
               "split-poster"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "research-notebook",
+      "name": "Research Notebook",
+      "description": "A monograph-like academic notebook with abstract labels, footnote rhythm, section marks, and restrained black-ivory evidence framing.",
+      "source_reference": "beautiful-html-templates/monochrome",
+      "selection": {
+        "visual_dna_ids": [
+          "research-notebook"
+        ],
+        "mood_keywords": [
+          "academic",
+          "scholarly",
+          "monograph",
+          "methodical",
+          "quiet",
+          "学术",
+          "论文",
+          "研究",
+          "文献",
+          "严谨"
+        ],
+        "industry_fit": [
+          "academic research",
+          "thesis defense",
+          "literature review",
+          "research methodology",
+          "conference",
+          "学术研究",
+          "论文答辩",
+          "开题报告",
+          "文献综述",
+          "研究方法"
+        ],
+        "density": "medium-high",
+        "scheme": "light",
+        "formality": "high",
+        "fallback": false
+      },
+      "palette": {
+        "background": "#FAF9EC",
+        "surface": "#FFFDF4",
+        "surface_strong": "#ECE9D8",
+        "primary": "#741F2A",
+        "primary_soft": "#EBDADD",
+        "text": "#171715",
+        "muted": "#66635B",
+        "border": "#BEB9AA",
+        "inverse": "#FFFDF4",
+        "alt_background": "#191917",
+        "alt_surface": "#262622",
+        "alt_text": "#FAF9EC",
+        "alt_muted": "#C4C0B3",
+        "alt_border": "#55534C",
+        "alt_primary": "#E0AAB2",
+        "chart": [
+          "#171715",
+          "#741F2A",
+          "#777269",
+          "#B6AE92"
+        ]
+      },
+      "typography": {
+        "display": "Lora, Noto Serif SC, Songti SC, serif",
+        "body": "Jost, PingFang SC, Microsoft YaHei, sans-serif",
+        "label": "JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace"
+      },
+      "shape": {
+        "radius_small": 0,
+        "radius_medium": 0,
+        "radius_large": 0,
+        "border_width": 1
+      },
+      "style": {
+        "canvas": "paper",
+        "surface": "paper",
+        "shadow": "none",
+        "heading": "editorial",
+        "label": "mono",
+        "accent": "underline",
+        "alternation": "section"
+      },
+      "composition": {
+        "family": "literary-minimal",
+        "direction": "narrative-pages",
+        "variants": [
+          "margin-note",
+          "quiet-center",
+          "asymmetric-column"
+        ],
+        "default_family": "literary-minimal",
+        "default_direction": "narrative-pages",
+        "allowed_families": [
+          "literary-minimal",
+          "editorial-spread",
+          "analytical-exhibit",
+          "institutional-grid"
+        ],
+        "allowed_directions": [
+          "structured-systems",
+          "narrative-pages"
+        ],
+        "directions": [
+          {
+            "id": "structured-systems",
+            "label": "结构与证据",
+            "families": [
+              "institutional-grid",
+              "analytical-exhibit"
+            ]
+          },
+          {
+            "id": "narrative-pages",
+            "label": "编辑与叙事",
+            "families": [
+              "editorial-spread",
+              "literary-minimal"
+            ]
+          }
+        ],
+        "families": [
+          {
+            "family": "literary-minimal",
+            "selection_signals": [
+              "长文本",
+              "观点文章",
+              "安静研究报告"
+            ],
+            "variants": [
+              "margin-note",
+              "quiet-center",
+              "asymmetric-column"
+            ]
+          },
+          {
+            "family": "editorial-spread",
+            "selection_signals": [
+              "研究叙事",
+              "杂志跨页",
+              "图文长内容"
+            ],
+            "variants": [
+              "split-spread",
+              "feature-spread",
+              "banded-spread"
+            ]
+          },
+          {
+            "family": "analytical-exhibit",
+            "selection_signals": [
+              "KPI 与图表",
+              "证据对照",
+              "决策看板"
+            ],
+            "variants": [
+              "exhibit-grid",
+              "evidence-rail",
+              "decision-board"
+            ]
+          },
+          {
+            "family": "institutional-grid",
+            "selection_signals": [
+              "常规商业汇报",
+              "组织治理",
+              "稳健信息秩序"
+            ],
+            "variants": [
+              "balanced-grid",
+              "rail-grid",
+              "ledger-grid"
             ]
           }
         ]
@@ -7759,6 +9460,20 @@
         "cards",
         "list"
       ],
+      "visualKinds": [
+        "cards",
+        "numbered-actions",
+        "quadrant",
+        "process"
+      ],
+      "relationships": [
+        "parallel",
+        "ordered"
+      ],
+      "directions": [
+        "left-to-right",
+        "top-down"
+      ],
       "mediaSlots": {
         "min": 0,
         "max": 0,
@@ -7873,6 +9588,378 @@
       "defaultProps": {
         "subtitle": "",
         "variant": "balanced"
+      }
+    },
+    {
+      "id": "quadrant-matrix-v1",
+      "label": "Editable two-by-two priority matrix",
+      "editor": {
+        "label": "优先级四象限",
+        "description": "按横纵两个维度放置四类可编辑事项",
+        "controls": {},
+        "defaultProps": {
+          "eyebrow": "决策矩阵",
+          "title": "输入需要排序的问题",
+          "subtitle": "横轴与纵轴共同决定处理顺序",
+          "x_axis_label": "紧急程度：低 → 高",
+          "y_axis_label": "影响程度：低 → 高",
+          "items": [
+            {
+              "kicker": "高影响 · 高紧急",
+              "title": "立即处理",
+              "body": "最优先解决的事项。"
+            },
+            {
+              "kicker": "高影响 · 低紧急",
+              "title": "规划推进",
+              "body": "纳入近期计划持续推动。"
+            },
+            {
+              "kicker": "低影响 · 高紧急",
+              "title": "快速治理",
+              "body": "用轻量动作及时消除扰动。"
+            },
+            {
+              "kicker": "低影响 · 低紧急",
+              "title": "持续观察",
+              "body": "保留跟踪并控制投入。"
+            }
+          ]
+        }
+      },
+      "roles": [
+        "quadrant",
+        "priority-matrix",
+        "impact-urgency",
+        "decision-matrix"
+      ],
+      "density": "medium",
+      "contentShape": [
+        "quadrant",
+        "matrix",
+        "four-categories"
+      ],
+      "visualKinds": [
+        "quadrant"
+      ],
+      "relationships": [
+        "matrix"
+      ],
+      "directions": [
+        "x-y"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable quadrant is the primary visual; skip generated media."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "matrix",
+        "quadrant"
+      ],
+      "variants": [
+        "impact-urgency"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 72,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "x_axis_label": {
+          "type": "text",
+          "maxChars": 36,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "y_axis_label": {
+          "type": "text",
+          "maxChars": 36,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "items": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 4,
+          "maxItems": 4,
+          "itemShape": {
+            "kicker": {
+              "type": "text",
+              "maxChars": 28,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "body": {
+              "type": "text",
+              "maxChars": 100,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        }
+      },
+      "defaultProps": {
+        "subtitle": ""
+      }
+    },
+    {
+      "id": "pyramid-hierarchy-v1",
+      "label": "Top-down pyramid hierarchy",
+      "editor": {
+        "label": "金字塔层级",
+        "description": "一个顶层结论统领二到五个下层支撑",
+        "controls": {
+          "enums": {
+            "variant": {
+              "label": "层级样式",
+              "options": {
+                "one-to-many": "一统多",
+                "layered": "分层"
+              }
+            }
+          },
+          "collections": {
+            "items": {
+              "label": "层级节点",
+              "itemDefault": {
+                "kicker": "支撑",
+                "title": "新增节点",
+                "body": "补充支撑说明。"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "核心原则",
+          "title": "输入金字塔标题",
+          "subtitle": "顶层结论统领下层支撑，保持一层一个逻辑角色。",
+          "items": [
+            {
+              "kicker": "顶层",
+              "title": "核心结论",
+              "body": "先给出最重要的判断。"
+            },
+            {
+              "kicker": "支撑 01",
+              "title": "第一支撑",
+              "body": "解释第一条依据。"
+            },
+            {
+              "kicker": "支撑 02",
+              "title": "第二支撑",
+              "body": "解释第二条依据。"
+            },
+            {
+              "kicker": "支撑 03",
+              "title": "第三支撑",
+              "body": "解释第三条依据。"
+            }
+          ],
+          "variant": "one-to-many"
+        }
+      },
+      "roles": [
+        "hierarchy",
+        "pyramid",
+        "principles",
+        "framework"
+      ],
+      "density": "medium-high",
+      "contentShape": [
+        "pyramid",
+        "hierarchy",
+        "one-to-many"
+      ],
+      "visualKinds": [
+        "pyramid"
+      ],
+      "relationships": [
+        "one-to-many"
+      ],
+      "directions": [
+        "top-down"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "Choose generate, use_existing, or skip from the narrative job; do not add decorative filler."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "hierarchy"
+      ],
+      "variants": [
+        "one-to-many",
+        "layered"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "items": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 6,
+          "itemShape": {
+            "kicker": {
+              "type": "text",
+              "maxChars": 24,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "body": {
+              "type": "text",
+              "maxChars": 90,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "one-to-many",
+            "layered"
+          ],
+          "default": "one-to-many",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "variant": "one-to-many"
       }
     },
     {
@@ -8132,6 +10219,15 @@
       "contentShape": [
         "comparison",
         "two-column"
+      ],
+      "visualKinds": [
+        "comparison"
+      ],
+      "relationships": [
+        "contrast"
+      ],
+      "directions": [
+        "left-to-right"
       ],
       "mediaSlots": {
         "min": 0,
@@ -9056,6 +11152,20 @@
         "edges",
         "architecture",
         "pipeline"
+      ],
+      "visualKinds": [
+        "architecture",
+        "integration",
+        "pipeline",
+        "process"
+      ],
+      "relationships": [
+        "network",
+        "ordered"
+      ],
+      "directions": [
+        "left-to-right",
+        "top-down"
       ],
       "mediaSlots": {
         "min": 0,
@@ -10571,6 +12681,16 @@
         "sequence",
         "steps"
       ],
+      "visualKinds": [
+        "timeline",
+        "process"
+      ],
+      "relationships": [
+        "ordered"
+      ],
+      "directions": [
+        "left-to-right"
+      ],
       "mediaSlots": {
         "min": 0,
         "max": 0,
@@ -10687,6 +12807,1059 @@
       "defaultProps": {
         "subtitle": "",
         "variant": "horizontal"
+      }
+    },
+    {
+      "id": "factory-process-line-v1",
+      "label": "Manufacturing process line with station metrics",
+      "editor": {
+        "label": "制造产线",
+        "description": "三到六个工位、质量状态与关键指标",
+        "controls": {
+          "collections": {
+            "stations": {
+              "label": "工位",
+              "itemDefault": {
+                "code": "ST-01",
+                "title": "新工位",
+                "metric": "待补充",
+                "status": "RUN"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "SHOP FLOOR / PROCESS",
+          "title": "关键产线与质量控制点",
+          "subtitle": "用工位顺序呈现节拍、良率与异常状态",
+          "stations": [
+            {
+              "code": "ST-01",
+              "title": "原料上线",
+              "metric": "99.2%",
+              "status": "PASS"
+            },
+            {
+              "code": "ST-02",
+              "title": "核心加工",
+              "metric": "42s",
+              "status": "RUN"
+            },
+            {
+              "code": "QC-03",
+              "title": "在线质检",
+              "metric": "98.7%",
+              "status": "WATCH"
+            },
+            {
+              "code": "PK-04",
+              "title": "包装入库",
+              "metric": "1.8h",
+              "status": "PASS"
+            }
+          ],
+          "note": "黄色标记用于安全、瓶颈与待处置事项，不作为大面积装饰。"
+        }
+      },
+      "roles": [
+        "manufacturing",
+        "process",
+        "quality",
+        "operations"
+      ],
+      "density": "medium",
+      "contentShape": [
+        "production-line",
+        "stations",
+        "quality-metrics"
+      ],
+      "visualKinds": [
+        "process-line",
+        "factory-flow"
+      ],
+      "relationships": [
+        "ordered",
+        "handoff"
+      ],
+      "directions": [
+        "left-to-right"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "Choose generate, use_existing, or skip from the narrative job; do not add decorative filler."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "domain-specific"
+      ],
+      "variants": [
+        "process-line"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "stations": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 6,
+          "itemShape": {
+            "code": {
+              "type": "text",
+              "maxChars": 12,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 32,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "metric": {
+              "type": "text",
+              "maxChars": 20,
+              "required": true,
+              "editor": true,
+              "role": "metric"
+            },
+            "status": {
+              "type": "text",
+              "maxChars": 20,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            }
+          }
+        },
+        "note": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "note": ""
+      }
+    },
+    {
+      "id": "legal-case-logic-v1",
+      "label": "Legal case logic using an IRAC evidence structure",
+      "editor": {
+        "label": "法律论证",
+        "description": "按争点、规则、分析、结论组织案件或合规判断",
+        "controls": {},
+        "defaultProps": {
+          "eyebrow": "LEGAL ANALYSIS",
+          "title": "核心法律争点与判断路径",
+          "subtitle": "把事实、规则与推理拆开，保留可复核的证据链",
+          "matter_no": "MATTER 26-014",
+          "sections": [
+            {
+              "label": "ISSUE",
+              "title": "需要判断的争点",
+              "body": "明确请求、主体、时间与待解决的法律问题。"
+            },
+            {
+              "label": "RULE",
+              "title": "适用规则",
+              "body": "列出法律依据、合同条款、监管口径与例外。"
+            },
+            {
+              "label": "ANALYSIS",
+              "title": "事实与规则匹配",
+              "body": "逐项说明证据如何支持或削弱每个构成要件。"
+            },
+            {
+              "label": "CONCLUSION",
+              "title": "结论与风险",
+              "body": "给出判断、置信边界和下一步证据动作。"
+            }
+          ],
+          "conclusion": "初步结论：风险可控，但需在决策前补齐关键书面证据。"
+        }
+      },
+      "roles": [
+        "legal",
+        "case-analysis",
+        "compliance",
+        "argument"
+      ],
+      "density": "high",
+      "contentShape": [
+        "IRAC",
+        "evidence-chain",
+        "reasoning"
+      ],
+      "visualKinds": [
+        "legal-logic",
+        "argument-grid"
+      ],
+      "relationships": [
+        "evidence-to-conclusion",
+        "ordered"
+      ],
+      "directions": [
+        "left-to-right"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "Choose generate, use_existing, or skip from the narrative job; do not add decorative filler."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "domain-specific"
+      ],
+      "variants": [
+        "irac"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "matter_no": {
+          "type": "text",
+          "maxChars": 24,
+          "required": false,
+          "editor": true,
+          "role": "label"
+        },
+        "sections": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 4,
+          "maxItems": 4,
+          "itemShape": {
+            "label": {
+              "type": "text",
+              "maxChars": 16,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "body": {
+              "type": "text",
+              "maxChars": 140,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "conclusion": {
+          "type": "text",
+          "maxChars": 160,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "matter_no": "",
+        "conclusion": ""
+      }
+    },
+    {
+      "id": "property-factsheet-v1",
+      "label": "Real estate asset and site factsheet",
+      "editor": {
+        "label": "地产底卡",
+        "description": "地块分区、地址信息与核心资产指标",
+        "controls": {
+          "collections": {
+            "zones": {
+              "label": "地块分区",
+              "itemDefault": {
+                "code": "A1",
+                "title": "新分区",
+                "detail": "补充业态或开发条件。"
+              }
+            },
+            "metrics": {
+              "label": "资产指标",
+              "itemDefault": {
+                "label": "新指标",
+                "value": "待补充"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "SITE / ASSET FACTS",
+          "title": "项目核心条件一页读懂",
+          "subtitle": "用地块关系和数字底卡快速建立共同事实",
+          "address": "示例地址 · 城市核心区",
+          "zones": [
+            {
+              "code": "A1",
+              "title": "住宅组团",
+              "detail": "主力户型与首开区"
+            },
+            {
+              "code": "B2",
+              "title": "商业界面",
+              "detail": "沿街商业与社区配套"
+            },
+            {
+              "code": "C3",
+              "title": "公共空间",
+              "detail": "景观轴与公共服务"
+            }
+          ],
+          "metrics": [
+            {
+              "label": "总用地",
+              "value": "86,400㎡"
+            },
+            {
+              "label": "容积率",
+              "value": "2.6"
+            },
+            {
+              "label": "计容建面",
+              "value": "224,640㎡"
+            },
+            {
+              "label": "目标货值",
+              "value": "¥42亿"
+            }
+          ],
+          "note": "面积、货值和开发节奏应以最新规划条件及测算口径为准。"
+        }
+      },
+      "roles": [
+        "real-estate",
+        "asset",
+        "site-analysis",
+        "investment"
+      ],
+      "density": "high",
+      "contentShape": [
+        "site-plan",
+        "asset-metrics",
+        "factsheet"
+      ],
+      "visualKinds": [
+        "site-plan",
+        "factsheet"
+      ],
+      "relationships": [
+        "spatial",
+        "part-to-whole"
+      ],
+      "directions": [
+        "spatial"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "Choose generate, use_existing, or skip from the narrative job; do not add decorative filler."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "domain-specific"
+      ],
+      "variants": [
+        "site-plan"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "address": {
+          "type": "text",
+          "maxChars": 64,
+          "required": false,
+          "editor": true,
+          "role": "label"
+        },
+        "zones": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 5,
+          "itemShape": {
+            "code": {
+              "type": "text",
+              "maxChars": 12,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 32,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "detail": {
+              "type": "text",
+              "maxChars": 90,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "metrics": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 6,
+          "itemShape": {
+            "label": {
+              "type": "text",
+              "maxChars": 28,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "value": {
+              "type": "text",
+              "maxChars": 24,
+              "required": true,
+              "editor": true,
+              "role": "metric"
+            }
+          }
+        },
+        "note": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "address": "",
+        "note": ""
+      }
+    },
+    {
+      "id": "commerce-funnel-v1",
+      "label": "Retail ecommerce conversion funnel",
+      "editor": {
+        "label": "零售漏斗",
+        "description": "四到五个经营阶段与转化率、客群或商品动作",
+        "controls": {
+          "collections": {
+            "stages": {
+              "label": "漏斗阶段",
+              "itemDefault": {
+                "label": "新阶段",
+                "value": "待补充",
+                "rate": "—",
+                "detail": "补充经营动作。"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "COMMERCE / FUNNEL",
+          "title": "从流量到复购的经营漏斗",
+          "subtitle": "同时观察规模、转化效率和下一步商品动作",
+          "stages": [
+            {
+              "label": "触达",
+              "value": "1.28M",
+              "rate": "100%",
+              "detail": "站内推荐与内容种草"
+            },
+            {
+              "label": "到店",
+              "value": "386K",
+              "rate": "30.2%",
+              "detail": "首屏承接与活动入口"
+            },
+            {
+              "label": "加购",
+              "value": "96K",
+              "rate": "24.9%",
+              "detail": "主推 SKU 与价格力"
+            },
+            {
+              "label": "成交",
+              "value": "42K",
+              "rate": "43.8%",
+              "detail": "支付体验与权益组合"
+            },
+            {
+              "label": "复购",
+              "value": "12K",
+              "rate": "28.6%",
+              "detail": "会员触达与补货周期"
+            }
+          ],
+          "insight": "最大机会位于到店后的商品承接：优先优化主推 SKU、价格锚点和加购理由。"
+        }
+      },
+      "roles": [
+        "retail",
+        "ecommerce",
+        "funnel",
+        "merchandising"
+      ],
+      "density": "medium-high",
+      "contentShape": [
+        "conversion-funnel",
+        "stage-metrics",
+        "commercial-actions"
+      ],
+      "visualKinds": [
+        "funnel",
+        "conversion-flow"
+      ],
+      "relationships": [
+        "ordered",
+        "conversion"
+      ],
+      "directions": [
+        "left-to-right"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "Choose generate, use_existing, or skip from the narrative job; do not add decorative filler."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "domain-specific"
+      ],
+      "variants": [
+        "conversion"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "stages": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 4,
+          "maxItems": 6,
+          "itemShape": {
+            "label": {
+              "type": "text",
+              "maxChars": 28,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "value": {
+              "type": "text",
+              "maxChars": 20,
+              "required": true,
+              "editor": true,
+              "role": "metric"
+            },
+            "rate": {
+              "type": "text",
+              "maxChars": 18,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            },
+            "detail": {
+              "type": "text",
+              "maxChars": 70,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "insight": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "insight": ""
+      }
+    },
+    {
+      "id": "supply-network-v1",
+      "label": "Supply chain control-tower network",
+      "editor": {
+        "label": "供应链网络",
+        "description": "四到七个节点、在途状态与履约指标",
+        "controls": {
+          "collections": {
+            "nodes": {
+              "label": "网络节点",
+              "itemDefault": {
+                "code": "NODE-01",
+                "title": "新节点",
+                "status": "ON TIME",
+                "detail": "补充位置与动作。"
+              }
+            },
+            "metrics": {
+              "label": "履约指标",
+              "itemDefault": {
+                "label": "新指标",
+                "value": "待补充"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "CONTROL TOWER / NETWORK",
+          "title": "端到端供应网络与履约状态",
+          "subtitle": "从供应、干线、仓配到交付定位异常与缓冲",
+          "nodes": [
+            {
+              "code": "SUP-01",
+              "title": "核心供应商",
+              "status": "READY",
+              "detail": "原料齐套 · T-2"
+            },
+            {
+              "code": "HUB-SH",
+              "title": "华东集散",
+              "status": "IN TRANSIT",
+              "detail": "干线到达 · ETA 18:40"
+            },
+            {
+              "code": "DC-07",
+              "title": "区域仓",
+              "status": "WATCH",
+              "detail": "波次拣选 · 负荷 87%"
+            },
+            {
+              "code": "LM-12",
+              "title": "末端交付",
+              "status": "ON TIME",
+              "detail": "当日达覆盖 · 92%"
+            }
+          ],
+          "metrics": [
+            {
+              "label": "OTIF",
+              "value": "94.6%"
+            },
+            {
+              "label": "库存周转",
+              "value": "31天"
+            },
+            {
+              "label": "订单周期",
+              "value": "18.4h"
+            }
+          ],
+          "note": "橙色仅表示异常、在途变化或需要调度的节点。"
+        }
+      },
+      "roles": [
+        "supply-chain",
+        "logistics",
+        "fulfillment",
+        "network"
+      ],
+      "density": "high",
+      "contentShape": [
+        "supply-network",
+        "status-nodes",
+        "fulfillment-metrics"
+      ],
+      "visualKinds": [
+        "network",
+        "route-map",
+        "control-tower"
+      ],
+      "relationships": [
+        "flow",
+        "handoff",
+        "status"
+      ],
+      "directions": [
+        "left-to-right"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "Choose generate, use_existing, or skip from the narrative job; do not add decorative filler."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "domain-specific"
+      ],
+      "variants": [
+        "control-tower"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 64,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "nodes": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 4,
+          "maxItems": 7,
+          "itemShape": {
+            "code": {
+              "type": "text",
+              "maxChars": 18,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 30,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "status": {
+              "type": "text",
+              "maxChars": 20,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            },
+            "detail": {
+              "type": "text",
+              "maxChars": 64,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "metrics": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 4,
+          "itemShape": {
+            "label": {
+              "type": "text",
+              "maxChars": 28,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "value": {
+              "type": "text",
+              "maxChars": 20,
+              "required": true,
+              "editor": true,
+              "role": "metric"
+            }
+          }
+        },
+        "note": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "note": ""
       }
     },
     {
@@ -11129,6 +14302,16 @@
         "closing-statement",
         "actions",
         "contact"
+      ],
+      "visualKinds": [
+        "closing",
+        "numbered-actions"
+      ],
+      "relationships": [
+        "ordered"
+      ],
+      "directions": [
+        "top-down"
       ],
       "mediaSlots": {
         "min": 0,

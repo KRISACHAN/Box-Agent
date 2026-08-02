@@ -6,6 +6,7 @@ This module provides a unified interface for different LLM providers
 
 import logging
 from collections.abc import AsyncIterator
+from copy import copy
 
 from ..retry import RetryConfig
 from ..schema import LLMProvider, LLMResponse, Message, StreamEvent
@@ -94,6 +95,28 @@ class LLMClient:
 
         logger.info("Initialized LLM client with provider: %s, api_base: %s", provider, api_base)
 
+    def for_model(self, model: str) -> "LLMClient":
+        """Return a client with the same endpoint/auth settings for ``model``.
+
+        ACP conversation sessions use this to bind an app-owned session to a
+        hosted catalog model without mutating the process-wide default client.
+        """
+        normalized_model = model.strip()
+        if not normalized_model:
+            raise ValueError("model must not be empty")
+
+        # The provider wrapper owns per-request mutable state (for example a
+        # one-shot max-token override), while the underlying SDK transport is
+        # safe to share. Shallow-copy both wrappers so sessions stay isolated
+        # without creating an unbounded set of HTTP connection pools.
+        client = copy(self)
+        client._client = copy(self._client)
+        client.model = normalized_model
+        client._client.model = normalized_model
+        if hasattr(client._client, "_ephemeral_max_output_tokens"):
+            client._client._ephemeral_max_output_tokens = None
+        return client
+
     @property
     def retry_callback(self):
         """Get retry callback."""
@@ -180,4 +203,58 @@ class LLMClient:
         async for event in unwrap_think_tags(upstream):
             if event.type == "finish":
                 record_usage(event.usage)
+            yield event
+
+
+class SessionBoundLLM:
+    """Stable per-session LLM reference with an atomically replaceable delegate."""
+
+    def __init__(self, client: LLMClient):
+        self._delegate = client
+
+    def bind(self, client: LLMClient) -> None:
+        self._delegate = client
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
+
+    async def generate(
+        self,
+        messages: list[Message],
+        tools: list | None = None,
+        *,
+        thinking_enabled: bool = False,
+        session_id: str = "",
+        turn_id: str = "",
+        title: str = "Box-Agent",
+    ) -> LLMResponse:
+        client = self._delegate
+        return await client.generate(
+            messages,
+            tools,
+            thinking_enabled=thinking_enabled,
+            session_id=session_id,
+            turn_id=turn_id,
+            title=title,
+        )
+
+    async def generate_stream(
+        self,
+        messages: list[Message],
+        tools: list | None = None,
+        *,
+        thinking_enabled: bool = False,
+        session_id: str = "",
+        turn_id: str = "",
+        title: str = "Box-Agent",
+    ) -> AsyncIterator[StreamEvent]:
+        client = self._delegate
+        async for event in client.generate_stream(
+            messages,
+            tools,
+            thinking_enabled=thinking_enabled,
+            session_id=session_id,
+            turn_id=turn_id,
+            title=title,
+        ):
             yield event

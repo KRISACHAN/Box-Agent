@@ -37,14 +37,15 @@ const {
   outlineIntentRecord,
 } = require("./outline_layout_contract.js");
 const { inferTheme } = require("./theme_selection_core.js");
+const { inferDesignContract } = require("./design_contract_core.js");
 
 const AUTO_COVER_IMAGE_BRIEF_RE = /(?:融资|路演|投资人|\bvc\b|fundrais|investor|pitch\s*deck|发布会|产品发布|品牌提案|高端|premium)/i;
 const AUTO_COVER_VISUAL_STORY_RE = /(?:传奇|故事|人物|传记|纪实|biograph|profile|legend|story|documentary)/i;
 const AUTO_COVER_PRODUCT_VISUAL_RE = /(?:UI\s*截图|产品界面|客户端界面|主界面|工作台|编辑器界面|浏览器窗口|设备样机|产品主视觉|产品演示|功能演示|产品流程|UI\s*screenshot|product\s+interface|client\s+interface|browser\s+window|device\s+mockup|product\s+demo|feature\s+demo|product\s+flow)/i;
 const AUTO_COVER_TECH_VISUAL_RE = /(?:代码窗口|代码片段|协作节点|节点连接|系统架构|技术架构|架构图|运行时|编译链|code\s+window|code\s+snippet|collaboration\s+nodes?|system\s+architecture|technical\s+architecture|runtime|compiler)/i;
-const AUTO_GENERATIVE_VISUAL_MEDIUM_RE = /(?:主视觉|实景|照片|插画|概念图|效果图|界面|截图|样机|地图|地理分布|空间分布|场景|实物|特写|肖像|包装视觉|hero\s+image|photo|illustration|concept\s+art|interface|screenshot|mockup|map|geographic\s+distribution|scene|product\s+shot|object\s+study|close[- ]?up|portrait|packaging\s+visual)/i;
+const AUTO_GENERATIVE_VISUAL_MEDIUM_RE = /(?:主视觉|实景|照片|插画|卡通(?:形象|插画|插图)?|儿童插画|儿童插图|概念图|效果图|界面|截图|样机|地图|地理分布|空间分布|场景|实物|特写|肖像|包装视觉|hero\s+image|photo|illustration|cartoon(?:\s+illustration)?|concept\s+art|interface|screenshot|mockup|map|geographic\s+distribution|scene|product\s+shot|object\s+study|close[- ]?up|portrait|packaging\s+visual)/i;
 const AUTO_DATA_VISUAL_RE = /(?:图表|表格|数据看板|KPI|指标|chart|table|dashboard|metrics?)/i;
-const AUTO_COVER_IMAGE_OPTOUT_RE = /(?:不要|无需|不需要|禁止)(?:生成|使用|添加)?(?:图片|生图|视觉图)|(?:纯文字|仅文字)|\b(?:no\s+(?:generated\s+)?images?|text[- ]only)\b/i;
+const AUTO_COVER_IMAGE_OPTOUT_RE = /(?:不要|无需|不需要|不得|禁止|不)(?:生成|使用|添加)?(?:图片|生图|视觉图)|(?:纯文字|仅文字)|\b(?:no\s+(?:generated\s+)?images?|without\s+images?|text[- ]only)\b/i;
 const STRUCTURED_NEXT_STEPS_MATRIX_RE = /(?:表格|矩阵|table|matrix)|(?:(?:执行)?角色|负责人|责任人|owners?|assignees?|responsibilit(?:y|ies))[^\n。；;]{0,48}(?:姓名|成员|人员|names?|members?)/i;
 const THEME_ID_ALIASES = Object.freeze({
   carnival: "bold-poster",
@@ -61,6 +62,11 @@ const REQUIRED_FIELD_ALIASES = Object.freeze({
   "chart-bar-v1": Object.freeze({ chart: "items", data: "items" }),
   "chart-data-v1": Object.freeze({ chart: "series", data: "series" }),
   "table-data-v1": Object.freeze({ items: "rows", matrix: "rows", table: "rows" }),
+  "factory-process-line-v1": Object.freeze({ items: "stations", steps: "stations" }),
+  "legal-case-logic-v1": Object.freeze({ items: "sections", steps: "sections" }),
+  "property-factsheet-v1": Object.freeze({ items: "zones", sections: "zones" }),
+  "commerce-funnel-v1": Object.freeze({ items: "stages", steps: "stages" }),
+  "supply-network-v1": Object.freeze({ items: "nodes", steps: "nodes" }),
 });
 const RELAXABLE_DECORATIVE_FIELDS = new Set(["tags"]);
 const EXPLICIT_TAG_CONTENT_RE = /(?:标签|关键词|主线卡|\btags?\b|\bchips?\b)/i;
@@ -385,6 +391,17 @@ function parseArgs(argv) {
 function buildSlide(layoutId, index, outlineSlide = null) {
   const props = createEditorProps(layoutId);
   const semantic = outlineSlide ? analyzeOutlineLayoutIntent(outlineSlide) : null;
+  const outlineVisual = [
+    outlineSlide && outlineSlide.layout,
+    outlineSlide && outlineSlide.visual,
+  ].filter(Boolean).join("\n");
+  if (
+    layoutId === "cards-grid-v1"
+    && expectedVisualItemCount(outlineSlide)
+    && /(?:流程|路径|阶段|节点|时间轴|路线图|里程碑|process|journey|timeline|roadmap)/i.test(outlineVisual)
+  ) {
+    props.variant = "numbered";
+  }
   if (layoutId === "table-data-v1" && semantic && semantic.kind === "gantt") {
     props.variant = "gantt";
   }
@@ -412,11 +429,28 @@ function buildSlide(layoutId, index, outlineSlide = null) {
 
 const VISUAL_COLLECTION_FIELDS = Object.freeze({
   "cover-editorial-v1": "tags",
+  "statement-focus-v1": "proofs",
   "cards-grid-v1": "items",
+  "quadrant-matrix-v1": "items",
+  "pyramid-hierarchy-v1": "items",
   "timeline-horizontal-v1": "steps",
+  "factory-process-line-v1": "stations",
+  "legal-case-logic-v1": "sections",
+  "property-factsheet-v1": "zones",
+  "commerce-funnel-v1": "stages",
+  "supply-network-v1": "nodes",
   "table-data-v1": "rows",
   "closing-next-steps-v1": "actions",
 });
+
+function visualCollectionLimit(layoutId) {
+  const field = VISUAL_COLLECTION_FIELDS[layoutId];
+  const layout = getLayout(layoutId);
+  const contract = layout && layout.fields ? layout.fields[field] : null;
+  return contract && Number.isInteger(contract.maxItems)
+    ? contract.maxItems
+    : null;
+}
 
 function alignScaffoldVisualCardinality(layoutId, props, outlineSlide) {
   const expected = expectedVisualItemCount(outlineSlide);
@@ -539,6 +573,7 @@ function readOutlineBinding(outlineInput, expectedSlideCount) {
       audience: narrativeText(outline.audience),
       storyline: narrativeText(outline.storyline),
       tone: outline.tone || "",
+      design_requirements: outline.design_requirements || null,
       slides,
     },
     slides,
@@ -575,6 +610,44 @@ function normalizeOutlineDrivenLayoutIds(
       return "table-data-v1";
     }
     const explicitVisualItemCount = expectedVisualItemCount(slide);
+    const timelineMaxItems = visualCollectionLimit("timeline-horizontal-v1");
+    const cardsMaxItems = visualCollectionLimit("cards-grid-v1");
+    if (
+      layoutId === "timeline-horizontal-v1"
+      && Number.isInteger(timelineMaxItems)
+      && Number.isInteger(cardsMaxItems)
+      && explicitVisualItemCount > timelineMaxItems
+      && explicitVisualItemCount <= cardsMaxItems
+    ) {
+      normalizations.push({
+        slide: index + 1,
+        from: layoutId,
+        to: "cards-grid-v1",
+        reason: (
+          `outline requests ${explicitVisualItemCount} ordered visual items, ` +
+          `which exceeds the timeline layout capacity of ${timelineMaxItems}`
+        ),
+      });
+      return "cards-grid-v1";
+    }
+    const selectedMaxItems = visualCollectionLimit(layoutId);
+    if (
+      layoutId === "statement-focus-v1"
+      && Number.isInteger(selectedMaxItems)
+      && explicitVisualItemCount > selectedMaxItems
+      && explicitVisualItemCount <= cardsMaxItems
+    ) {
+      normalizations.push({
+        slide: index + 1,
+        from: layoutId,
+        to: "cards-grid-v1",
+        reason: (
+          `outline requests ${explicitVisualItemCount} parallel summary items, ` +
+          `which exceeds the statement layout capacity of ${selectedMaxItems}`
+        ),
+      });
+      return "cards-grid-v1";
+    }
     if (
       layoutId === "closing-next-steps-v1"
       && explicitVisualItemCount > 4
@@ -714,7 +787,12 @@ function buildImagePlanEntry(
       ? context.slide.visual
       : slideText
   );
-  const creativeCover = imageMode === "creative_image_mode" && index === 0;
+  const generationForbidden = AUTO_COVER_IMAGE_OPTOUT_RE.test(
+    `${briefText}\n${slideText}`
+  );
+  const creativeCover = !generationForbidden
+    && imageMode === "creative_image_mode"
+    && index === 0;
   const investorCoverBrief = AUTO_COVER_IMAGE_BRIEF_RE.test(briefText);
   // Cover-specific visual intent lives on the bound outline page. Looking only
   // at the deck-level goal misses concrete subjects such as a named athlete
@@ -727,7 +805,7 @@ function buildImagePlanEntry(
   const explicitOptionalVisual = Boolean(slot) && explicitGenerativeVisual;
   const autoCover = imageMode === "auto"
     && index === 0
-    && !AUTO_COVER_IMAGE_OPTOUT_RE.test(briefText)
+    && !generationForbidden
     && (
       investorCoverBrief
       || visualStoryBrief
@@ -738,21 +816,25 @@ function buildImagePlanEntry(
     && strategies.includes("generate");
   const autoOptional = imageMode === "auto"
     && index > 0
-    && !AUTO_COVER_IMAGE_OPTOUT_RE.test(briefText)
+    && !generationForbidden
     && explicitOptionalVisual
     && strategies.includes("generate");
   const useExisting = Boolean(existingAsset)
     && !creativeCover
     && strategies.includes("use_existing");
-  const generate = !useExisting && Boolean(
+  const generate = !generationForbidden && !useExisting && Boolean(
     (slot && slot.required) || creativeCover || autoCover || autoOptional
   );
-  const required = Boolean((slot && slot.required) || creativeCover || autoCover || autoOptional);
+  const required = !generationForbidden && Boolean(
+    (slot && slot.required) || creativeCover || autoCover || autoOptional
+  );
   const decision = useExisting ? "use_existing" : generate ? "generate" : "skip";
   const status = useExisting ? "ready" : generate ? "pending" : "skipped";
   let decisionReason = "editable text, data, or shapes communicate this page more clearly than bitmap media";
   if (useExisting) {
     decisionReason = "a user-provided source asset is available for this declared media slot";
+  } else if (generationForbidden) {
+    decisionReason = "the user explicitly forbids generated images for this presentation";
   } else if (creativeCover) {
     decisionReason = "creative_image_mode requires a generated cover visual";
   } else if (slot && slot.required) {
@@ -994,12 +1076,17 @@ function main() {
   const orderedLayouts = effectiveLayoutIds.map(layoutId => getLayout(layoutId));
   validateOutlineLayoutFit(orderedLayouts, outlineBinding, layoutPolicy);
   const runtimeBinding = runtimeSourceBinding();
-  const themeResolution = selectTheme(opts, {
+  const designContext = {
     title: opts.title,
     source_facts: opts.sourceFacts,
     source_text: runtimeBinding.source_text,
     outline: outlineBinding ? outlineBinding.content : null,
-  });
+  };
+  const themeResolution = selectTheme(opts, designContext);
+  const designContract = inferDesignContract(
+    designContext,
+    outlineBinding ? outlineBinding.slides : []
+  );
   const theme = themeResolution.theme;
   if (!theme) {
     throw new Error(
@@ -1069,17 +1156,32 @@ function main() {
     }
     return [{ slide: requirement.slide, field }];
   });
-  const sourceFactNormalization = canonicalizeSourceFacts(opts.sourceFacts);
   const researchFacts = [...new Set([
     ...opts.researchFacts.map(value => value.trim()).filter(Boolean),
     ...(outlineBinding ? outlineBinding.importedResearchFacts : []),
   ])];
+  // A short source-bound brief is itself the only user-provided provenance.
+  // Models should still pass --fact explicitly when they extract multiple
+  // claims, but never let an omitted flag produce an empty truth contract when
+  // the ACP runtime has bound the exact current user request. Research evidence
+  // remains in its separate bucket and suppresses this fallback.
+  const defaultedSourceFacts = Boolean(
+    opts.truthMode === "source_bound"
+    && opts.sourceFacts.length === 0
+    && researchFacts.length === 0
+    && runtimeBinding.available
+    && runtimeBinding.source_text.trim()
+  );
+  const sourceFactNormalization = canonicalizeSourceFacts(
+    defaultedSourceFacts ? [runtimeBinding.source_text] : opts.sourceFacts
+  );
   const skeleton = orderedLayouts.length
     ? {
       schema_version: 1,
       title: opts.title,
       theme_id: theme.id,
       design,
+      ...(designContract ? { design_contract: designContract } : {}),
       truth_contract: {
         mode: opts.truthMode,
         source_facts: sourceFactNormalization.facts,
@@ -1153,7 +1255,7 @@ function main() {
 
     const globalBriefText = [
       opts.title,
-      outlineBinding ? "" : runtimeBinding.source_text,
+      runtimeBinding.source_text,
       outlineBinding && outlineBinding.content
         ? outlineBinding.content.deck_goal
         : "",
@@ -1161,13 +1263,26 @@ function main() {
         ? outlineBinding.content.storyline
         : "",
     ].filter(Boolean).join("\n");
+    const generationForbidden = AUTO_COVER_IMAGE_OPTOUT_RE.test(globalBriefText)
+      || Boolean(
+        outlineBinding
+        && outlineBinding.slides.some(slide => AUTO_COVER_IMAGE_OPTOUT_RE.test([
+          slide.title,
+          slide.message,
+          slide.layout,
+          slide.visual,
+          ...(Array.isArray(slide.bullets) ? slide.bullets : []),
+        ].filter(Boolean).join("\n")))
+      );
     const imageManifestPayload = {
       schema_version: 1,
       mode: opts.imageMode,
+      generation_forbidden: generationForbidden,
       deck: {
         title: skeleton.title,
         theme_id: skeleton.theme_id,
         design: skeleton.design,
+        ...(skeleton.design_contract ? { design_contract: skeleton.design_contract } : {}),
       },
       image_plan: orderedLayouts.map((layout, index) => (
         buildImagePlanEntry(
@@ -1203,6 +1318,7 @@ function main() {
       theme: themeManifestRecord(theme),
       design: skeleton.design,
       design_selection: designSelection,
+      design_contract: skeleton.design_contract || null,
       layouts: selectedLayouts.map(manifestRecord),
       layout_plan: effectiveLayoutIds,
       layout_plan_requested: opts.layoutIds,
@@ -1230,6 +1346,7 @@ function main() {
       image_manifest: imageManifest,
       theme_id: theme.id,
       design: skeleton.design,
+      design_contract: skeleton.design_contract || null,
       design_selection: designSelection,
       theme_selection: themeSelection,
       theme_id_normalization: themeResolution.normalization,
@@ -1248,6 +1365,7 @@ function main() {
         verified_fact_count: sourceBinding.verified_fact_count,
       },
       source_fact_normalizations: sourceFactNormalization.changes,
+      source_fact_defaulted_from_runtime: defaultedSourceFacts,
       slide_count: skeleton.slides.length,
       layout_plan: effectiveLayoutIds,
       layout_plan_requested: opts.layoutIds,
@@ -1359,6 +1477,16 @@ function main() {
           })),
         }
         : null,
+      ...(skeleton.design_contract
+        ? {
+          design_contract_policy: {
+            contract_path: "design_contract",
+            rule: "Explicit palette, visual kind, relationship, direction, and item-count requirements are hard constraints. Resolve them exactly or stop before delivery; theme and composition matching remain soft after hard constraints are satisfied.",
+            palette_override: skeleton.design_contract.palette || null,
+            slides: skeleton.design_contract.slides || {},
+          },
+        }
+        : {}),
       content_requirements: {
         command: "Use --require-field SLIDE:FIELD only for explicit semantic content (for example 4:metrics), never decoration.",
         enforced: normalizedRequiredFields,

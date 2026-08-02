@@ -188,13 +188,23 @@ def test_layout_manifest_is_generated_from_registry() -> None:
         for dna_id in theme["selection"]["visual_dna_ids"]
     }
     assert len(visual_dna_ids) == 32
-    assert len(theme_ids) == 38
+    assert len(theme_ids) == 48
     assert visual_dna_ids <= theme_ids
     assert covered_dna_ids == visual_dna_ids | {
         "comic-panel",
         "technical-blueprint",
         "product-console",
         "data-intelligence",
+        "people-handbook",
+        "capital-ledger",
+        "clinical-atlas",
+        "civic-brief",
+        "research-notebook",
+        "factory-floor",
+        "legal-docket",
+        "property-atlas",
+        "commerce-pulse",
+        "logistics-control-tower",
     }
     assert {
         direction["id"]: direction["family_ids"]
@@ -309,7 +319,7 @@ def test_layout_manifest_is_generated_from_registry() -> None:
         "data-intelligence"
     ]
     assert data_intelligence["composition"]["family"] == "analytical-exhibit"
-    assert len(manifest["layouts"]) == 20
+    assert len(manifest["layouts"]) == 27
     assert {layout["id"] for layout in manifest["layouts"]} >= {
         "cover-hero-v1",
         "cover-editorial-v1",
@@ -1200,6 +1210,30 @@ def test_pixel_brief_auto_selects_8_bit_orbit_theme(tmp_path: Path) -> None:
     ("prompt", "expected_theme", "expected_family", "expected_signals"),
     [
         (
+            "做一个介绍《哈利·波特》魔法世界的PPT",
+            "vellum",
+            "literary-minimal",
+            {"subject rule: fantasy and wizarding worlds"},
+        ),
+        (
+            "做一个介绍《我的世界》创造与冒险的PPT",
+            "8-bit-orbit",
+            "retro-interface",
+            {"subject rule: sandbox and voxel games"},
+        ),
+        (
+            "做一个介绍故宫与紫禁城文化遗产的PPT",
+            "biennale-yellow",
+            "editorial-spread",
+            {"subject rule: museums and cultural heritage"},
+        ),
+        (
+            "做一个介绍特斯拉电动汽车与未来出行的PPT",
+            "neo-grid-bold",
+            "brutalist-frame",
+            {"subject rule: electric mobility and future vehicles"},
+        ),
+        (
             "介绍多云 AI 平台的技术架构和数据流",
             "technical-blueprint",
             "technical-schematic",
@@ -1254,6 +1288,150 @@ def test_pixel_brief_auto_selects_8_bit_orbit_theme(tmp_path: Path) -> None:
             {"keyword rule: qualitative user research"},
         ),
         (
+            "做一个3页小学生认识太阳系的PPT，不要搜索",
+            "daisy-days",
+            "playful-collage",
+            {"audience rule: children and primary education"},
+        ),
+        (
+            "做一个3页介绍恐龙时代的PPT，不要搜索",
+            "stencil-tablet",
+            "brutalist-frame",
+            {"subject rule: archaeology and ancient civilizations"},
+        ),
+        (
+            "做一个3页垃圾分类课堂教学PPT，不要搜索",
+            "pin-and-paper",
+            "literary-minimal",
+            {"user intent rule: classroom teaching and school workshop"},
+        ),
+        (
+            "做一个3页季度经营复盘PPT，不要搜索",
+            "data-intelligence",
+            "analytical-exhibit",
+            {"user intent rule: operating and performance review"},
+        ),
+        (
+            "做一个3页企业数据中台投标方案PPT，不要搜索",
+            "consulting-navy",
+            "institutional-grid",
+            {"user intent rule: formal proposal and procurement review"},
+        ),
+        (
+            "做一个3页咖啡店融资路演PPT，不要搜索",
+            "long-table",
+            "editorial-spread",
+            {"subject rule: food hospitality and social dining"},
+        ),
+        (
+            "做一个3页小红书春季美妆新品发布PPT，不要搜索",
+            "capsule",
+            "playful-collage",
+            {"subject rule: youthful beauty and lifestyle launch"},
+        ),
+        (
+            "做一个3页敦煌壁画艺术介绍PPT，不要搜索",
+            "stencil-tablet",
+            "brutalist-frame",
+            {"subject rule: archaeology and ancient civilizations"},
+        ),
+        (
+            "做一个3页宫崎骏动画世界PPT，不要搜索",
+            "soft-editorial",
+            "literary-minimal",
+            {"subject rule: gentle animation travel and wedding stories"},
+        ),
+        (
+            "做一个3页介绍NBA篮球文化PPT，不要搜索",
+            "bold-poster",
+            "poster-asymmetric",
+            {"subject rule: sports culture and high-energy competition"},
+        ),
+        (
+            "做一个3页个人作品集PPT，不要搜索",
+            "block-frame",
+            "brutalist-frame",
+            {"user intent rule: personal and creative portfolio"},
+        ),
+        (
+            "做一个3页流浪动物领养公益活动PPT，不要搜索",
+            "peoples-platform",
+            "poster-asymmetric",
+            {"user intent rule: public-interest and community campaign"},
+        ),
+        (
+            "做一个3页气候变化研究摘要PPT，不要搜索",
+            "grove",
+            "literary-minimal",
+            {"subject rule: climate nature and sustainability research"},
+        ),
+        (
+            "做一个3页独立乐队新专辑发布PPT，不要搜索",
+            "retro-zine",
+            "retro-interface",
+            {"subject rule: independent music and DIY culture"},
+        ),
+        (
+            "做一个3页新员工入职与企业文化培训PPT，不要搜索",
+            "people-handbook",
+            "editorial-spread",
+            {"user intent rule: employee onboarding and people programs"},
+        ),
+        (
+            "做一个3页上市公司年度财报解读与资本配置PPT，不要搜索",
+            "capital-ledger",
+            "analytical-exhibit",
+            {"subject rule: finance investment and capital strategy"},
+        ),
+        (
+            "做一个3页临床试验结果与患者诊疗路径PPT，不要搜索",
+            "clinical-atlas",
+            "technical-schematic",
+            {"subject rule: clinical medicine and patient care"},
+        ),
+        (
+            "做一个3页城市公共服务与社会治理工作汇报PPT，不要搜索",
+            "civic-brief",
+            "institutional-grid",
+            {"subject rule: government policy and public governance"},
+        ),
+        (
+            "做一个3页硕士论文开题答辩PPT，包含文献综述和研究方法，不要搜索",
+            "research-notebook",
+            "literary-minimal",
+            {"user intent rule: thesis and academic research"},
+        ),
+        (
+            "做一个3页智能制造生产线与质量改善PPT，不要搜索",
+            "factory-floor",
+            "technical-schematic",
+            {"subject rule: manufacturing operations and production quality"},
+        ),
+        (
+            "做一个3页企业合规审查与法律风险PPT，不要搜索",
+            "legal-docket",
+            "institutional-grid",
+            {"subject rule: legal matters evidence and compliance"},
+        ),
+        (
+            "做一个3页房地产项目投拓与土地研判PPT，不要搜索",
+            "property-atlas",
+            "institutional-grid",
+            {"subject rule: real estate development and asset facts"},
+        ),
+        (
+            "做一个3页零售电商经营复盘与转化漏斗PPT，不要搜索",
+            "commerce-pulse",
+            "product-showcase",
+            {"subject rule: retail ecommerce and merchandising performance"},
+        ),
+        (
+            "做一个3页供应链物流网络与订单履约PPT，不要搜索",
+            "logistics-control-tower",
+            "product-showcase",
+            {"subject rule: supply chain logistics and fulfillment"},
+        ),
+        (
             "做一份系统化、精密、严谨的说明材料",
             "technical-blueprint",
             "institutional-grid",
@@ -1296,6 +1474,86 @@ def test_natural_briefs_use_keyword_industry_and_mood_theme_selection(
         item["signal"] for item in report["theme_selection"]["matched_signals"]
     }
     assert expected_signals <= signals
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_background", "expected_primary", "expected_accent"),
+    [
+        (
+            "做一个介绍《我的世界》创造与冒险的PPT",
+            "#101A11",
+            "#EEF5E9",
+            "#65B741",
+        ),
+        (
+            "做一个介绍故宫与紫禁城文化遗产的PPT",
+            "#F4E8D1",
+            "#7A1D16",
+            "#C9A227",
+        ),
+        (
+            "做一个介绍特斯拉电动汽车与未来出行的PPT",
+            "#FFFFFF",
+            "#111111",
+            "#E82127",
+        ),
+    ],
+)
+def test_named_subjects_infer_semantic_palette_without_overriding_theme_geometry(
+    tmp_path: Path,
+    prompt: str,
+    expected_background: str,
+    expected_primary: str,
+    expected_accent: str,
+) -> None:
+    deck_path = tmp_path / expected_accent.removeprefix("#") / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "--theme",
+        "auto",
+        "--title",
+        prompt,
+        "--fact",
+        prompt,
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    palette = deck["design_contract"]["palette"]
+    assert palette["source"] == "inferred"
+    assert palette["background"]["value"] == expected_background
+    assert palette["primary"]["value"] == expected_primary
+    assert palette["accent"]["value"] == expected_accent
+    assert palette["accent_usage"] == "sparse"
+
+
+def test_explicit_palette_outranks_named_subject_palette(tmp_path: Path) -> None:
+    prompt = "做一个特斯拉PPT，配色使用深蓝、米白和少量橙色点缀"
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "cards-grid-v1",
+        "--theme",
+        "auto",
+        "--title",
+        prompt,
+        "--fact",
+        prompt,
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    palette = json.loads(deck_path.read_text(encoding="utf-8"))["design_contract"]["palette"]
+    assert palette["source"] == "explicit"
+    assert palette["background"]["value"] == "#F4EFE4"
+    assert palette["primary"]["value"] == "#173B63"
+    assert palette["accent"]["value"] == "#D97706"
 
 
 def test_software_product_does_not_match_soft_style_by_substring(
@@ -1768,10 +2026,10 @@ console.log(JSON.stringify({ layouts: slides.length, migrations, enumControls, c
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "layouts": 20,
-        "migrations": 400,
-        "enumControls": 27,
-        "collectionControls": 19,
+        "layouts": 27,
+        "migrations": 729,
+        "enumControls": 28,
+        "collectionControls": 26,
     }
 
 
@@ -1804,7 +2062,7 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
     layout_payload = json.loads(layouts.stdout)
     theme_ids = [item["id"] for item in theme_payload["themes"]]
     assert theme_payload["composition_directions"] == list(COMPOSITION_DIRECTIONS)
-    assert len(theme_ids) == 38
+    assert len(theme_ids) == 48
     assert theme_ids == sorted(theme_ids)
     assert {
         "signal",
@@ -1814,8 +2072,18 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
         "technical-blueprint",
         "product-console",
         "data-intelligence",
+        "people-handbook",
+        "capital-ledger",
+        "clinical-atlas",
+        "civic-brief",
+        "research-notebook",
+        "factory-floor",
+        "legal-docket",
+        "property-atlas",
+        "commerce-pulse",
+        "logistics-control-tower",
     } <= set(theme_ids)
-    assert layout_payload["count"] == 20
+    assert layout_payload["count"] == 27
     assert {item["id"] for item in layout_payload["layouts"]} >= {
         "architecture-layered-v1",
         "system-integration-v1",
@@ -1827,7 +2095,7 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
         "chart-data-v1",
         "table-data-v1",
     }
-    assert len(themes.stdout) + len(layouts.stdout) < 27_500
+    assert len(themes.stdout) + len(layouts.stdout) < 40_000
 
 
 def test_scaffold_normalizes_known_semantic_theme_alias(tmp_path: Path) -> None:
@@ -3057,7 +3325,7 @@ def test_scaffold_persists_visual_intent_and_normalizes_strong_layout_mismatches
         "cover-editorial-v1",
         "cards-grid-v1",
         "table-data-v1",
-        "cards-grid-v1",
+        "quadrant-matrix-v1",
     ]
     assert [item["slide"] for item in payload["layout_normalizations"]] == [1, 3, 4]
     assert len(deck["slides"][3]["props"]["items"]) == 4
@@ -3968,6 +4236,213 @@ def test_scaffold_normalizes_five_item_closing_summary_to_cards(
     ]
 
 
+def test_scaffold_normalizes_six_step_timeline_to_numbered_cards(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "结构化思维的完整路径",
+            "message": "从明确问题到组织表达，形成完整的结构化思考闭环。",
+            "bullets": [
+                "明确问题",
+                "收集信息",
+                "拆分问题",
+                "分类归纳",
+                "提炼结论",
+                "组织表达",
+            ],
+            "layout": "横向流程图",
+            "visual": (
+                "六节点横向流程图，依次呈现明确问题、收集信息、拆分问题、"
+                "分类归纳、提炼结论、组织表达。"
+            ),
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "timeline-horizontal-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    slide = deck["slides"][0]
+    assert slide["layout_id"] == "cards-grid-v1"
+    assert slide["props"]["variant"] == "numbered"
+    assert len(slide["props"]["items"]) == 6
+    report = json.loads(
+        (tmp_path / "qa" / "deck_contract.json").read_text(encoding="utf-8")
+    )
+    assert report["layout_normalizations"] == [
+        {
+            "slide": 1,
+            "from": "timeline-horizontal-v1",
+            "to": "cards-grid-v1",
+            "reason": (
+                "outline requests 6 ordered visual items, "
+                "which exceeds the timeline layout capacity of 5"
+            ),
+        }
+    ]
+
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "title": outline["slides"][0]["title"],
+                            "subtitle": outline["slides"][0]["message"],
+                            "items": [
+                                {
+                                    "kicker": f"{index:02d}",
+                                    "title": title,
+                                    "body": "结构化思维步骤",
+                                }
+                                for index, title in enumerate(
+                                    outline["slides"][0]["bullets"],
+                                    start=1,
+                                )
+                            ],
+                            "variant": "numbered",
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    applied = _run(
+        "apply_deck_patch.js",
+        str(deck_path),
+        str(patch_path),
+    )
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    authored = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert len(authored["slides"][0]["props"]["items"]) == 6
+
+    validation = _run("validate_deck_spec.js", str(deck_path))
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+
+
+def test_scaffold_keeps_five_step_timeline(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "五步工作路径",
+            "message": "用五个连续阶段说明工作路径。",
+            "layout": "横向流程图",
+            "visual": "五节点横向流程图，依次呈现定义、分析、归纳、结论、表达。",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "timeline-horizontal-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    slide = deck["slides"][0]
+    assert slide["layout_id"] == "timeline-horizontal-v1"
+    assert len(slide["props"]["steps"]) == 5
+    report = json.loads(
+        (tmp_path / "qa" / "deck_contract.json").read_text(encoding="utf-8")
+    )
+    assert report["layout_normalizations"] == []
+
+
+def test_patch_rejects_bound_visual_count_above_layout_capacity(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "timeline-horizontal-v1",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["outline_intent"] = {
+        "title": "结构化思维的完整路径",
+        "message": "从明确问题到组织表达。",
+        "layout": "横向流程图",
+        "visual": "六节点横向流程图",
+    }
+    deck_path.write_text(
+        json.dumps(deck, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "steps": [
+                                {
+                                    "phase": f"阶段 {index}",
+                                    "title": f"步骤 {index}",
+                                    "body": "说明",
+                                }
+                                for index in range(1, 7)
+                            ]
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    applied = _run(
+        "apply_deck_patch.js",
+        str(deck_path),
+        str(patch_path),
+    )
+
+    assert applied.returncode == 1
+    assert "layout capacity mismatch" in applied.stderr
+    assert "bound outline requires 6 visual items" in applied.stderr
+    assert "timeline-horizontal-v1 supports at most 5" in applied.stderr
+
+
 def test_strict_source_closing_sanitizer_removes_unsupported_action_expansion(
     tmp_path: Path,
 ) -> None:
@@ -4334,6 +4809,7 @@ def test_auto_image_mode_promotes_visual_story_cover_to_generation(
         "西班牙地图感背景与四个产区锚点",
         "精酿啤酒瓶与酒厂场景",
         "咖啡产区地图与海拔层次",
+        "卡通太阳与环绕轨道",
     ],
 )
 def test_auto_image_mode_uses_visual_medium_not_domain_keywords(
@@ -4934,6 +5410,38 @@ def test_researched_facts_are_scaffolded_separately_from_user_source(
     assert validated.returncode == 0, validated.stdout + validated.stderr
     truth_report = json.loads(validated.stdout.split("\nDeck truth validation:", 1)[0])
     assert truth_report["researchFactCount"] == 2
+
+
+def test_short_source_bound_brief_defaults_runtime_request_into_truth_contract(
+    tmp_path: Path,
+) -> None:
+    source_text = "做一个3页介绍《哈利·波特》魔法世界的PPT，不要搜索"
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        source_text.encode("utf-8")
+    ).decode("ascii")
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "technical-diagram-v1",
+        "statement-focus-v1",
+        "--theme",
+        "auto",
+        "--title",
+        "哈利·波特魔法世界",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["truth_contract"]["source_facts"] == [source_text]
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert report["source_fact_defaulted_from_runtime"] is True
+    assert report["source_binding"]["verified_fact_count"] == 1
 
 
 def test_number_backing_keeps_cjk_comma_separated_date_and_year_tokens() -> None:
@@ -7785,6 +8293,39 @@ def test_outline_warns_for_assumed_private_financing_stage(tmp_path: Path) -> No
     )
 
 
+def test_outline_numbered_action_directive_is_not_counted_as_a_sixth_item(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=3, source_mode="user_provided")
+    outline["slides"][2].update(
+        {
+            "title": "五步行动清单",
+            "message": "用五步完成结构化表达。",
+            "layout": "horizontal process",
+            "visual": "可编辑横向行动清单，5 个等权步骤从左到右排列。",
+            "bullets": [
+                "从左到右完整展示 5 项，不得删减或压缩。",
+                "1.先写结论。",
+                "2.拆分问题。",
+                "3.检查MECE。",
+                "4.组织汇报。",
+                "5.每周复盘。",
+            ],
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = _run("validate_outline.js", str(outline_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert not any("trim to 5 or fewer" in warning for warning in payload["warnings"])
+
+
 def test_outline_data_visual_detection_accepts_cover_and_named_charts(
     tmp_path: Path,
 ) -> None:
@@ -8733,6 +9274,17 @@ def test_priority_and_high_frequency_themes_own_dedicated_css() -> None:
         "data-intelligence": 14,
         "signal": 12,
         "soft-editorial": 18,
+        "daisy-days": 16,
+        "people-handbook": 14,
+        "capital-ledger": 13,
+        "clinical-atlas": 14,
+        "civic-brief": 14,
+        "research-notebook": 15,
+        "factory-floor": 11,
+        "legal-docket": 11,
+        "property-atlas": 10,
+        "commerce-pulse": 11,
+        "logistics-control-tower": 11,
     }
     for theme_id, minimum in minimum_selector_counts.items():
         selector = f'body[data-deck-theme="{theme_id}"]'
@@ -8747,6 +9299,213 @@ def test_priority_and_high_frequency_themes_own_dedicated_css() -> None:
         'body[data-deck-theme="soft-editorial"] .text-section-body::first-letter'
         in css
     )
+    assert 'body[data-deck-theme="daisy-days"] .layout-cover-editorial::before' in css
+    assert 'body[data-deck-theme="daisy-days"] .editorial-cover-copy h1' in css
+    assert 'content: "PEOPLE / HANDBOOK"' in css
+    assert 'content: "CAPITAL / EVIDENCE / DECISION"' in css
+    assert 'content: "CLINICAL ATLAS / EVIDENCE PATHWAY"' in css
+    assert 'content: "POLICY DOCKET / PUBLIC VALUE"' in css
+    assert 'content: "ABSTRACT / METHOD / FINDINGS"' in css
+    assert 'content: "SHOP FLOOR / QUALITY / FLOW"' in css
+    assert 'content: "MATTER / EVIDENCE / DECISION"' in css
+    assert 'content: "SITE / ASSET / VALUE"' in css
+    assert 'content: "SKU / CONVERSION / RETENTION"' in css
+    assert 'content: "ORIGIN / TRANSIT / DELIVERY"' in css
+
+
+@pytest.mark.parametrize(
+    ("theme_id", "family", "signature", "layout_id"),
+    [
+        ("people-handbook", "editorial-spread", "PEOPLE / HANDBOOK", "cards-grid-v1"),
+        ("capital-ledger", "analytical-exhibit", "CAPITAL / EVIDENCE / DECISION", "cards-grid-v1"),
+        ("clinical-atlas", "technical-schematic", "CLINICAL ATLAS / EVIDENCE PATHWAY", "cards-grid-v1"),
+        ("civic-brief", "institutional-grid", "POLICY DOCKET / PUBLIC VALUE", "cards-grid-v1"),
+        ("research-notebook", "literary-minimal", "ABSTRACT / METHOD / FINDINGS", "cards-grid-v1"),
+        ("factory-floor", "technical-schematic", "SHOP FLOOR / QUALITY / FLOW", "factory-process-line-v1"),
+        ("legal-docket", "institutional-grid", "MATTER / EVIDENCE / DECISION", "legal-case-logic-v1"),
+        ("property-atlas", "institutional-grid", "SITE / ASSET / VALUE", "property-factsheet-v1"),
+        ("commerce-pulse", "product-showcase", "SKU / CONVERSION / RETENTION", "commerce-funnel-v1"),
+        ("logistics-control-tower", "product-showcase", "ORIGIN / TRANSIT / DELIVERY", "supply-network-v1"),
+    ],
+)
+def test_professional_signature_themes_render_editable_layouts_without_bounds_issues(
+    tmp_path: Path,
+    theme_id: str,
+    family: str,
+    signature: str,
+    layout_id: str,
+) -> None:
+    deck_path = tmp_path / theme_id / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        layout_id,
+        "table-data-v1",
+        "--theme",
+        theme_id,
+        "--lock-theme",
+        "--family",
+        family,
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    html_path = deck_path.parent / "index.html"
+    report_path = deck_path.parent / "qa" / "html_self_check.json"
+
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--report",
+        str(report_path),
+    )
+
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    assert json.loads(report_path.read_text(encoding="utf-8"))["issues"] == []
+    html = html_path.read_text(encoding="utf-8")
+    assert f'data-deck-theme="{theme_id}"' in html
+    assert f'content: "{signature}"' in html
+
+
+def test_daisy_days_decorations_preserve_dense_card_layout_bounds(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-hero-v1",
+        "timeline-horizontal-v1",
+        "cards-grid-v1",
+        "--theme",
+        "daisy-days",
+        "--family",
+        "playful-collage",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["design"].update(
+        {"seed": "daisy_staggered_2", "variant": "staggered"}
+    )
+    deck["slides"][2]["props"].update(
+        {
+            "eyebrow": "课堂活动",
+            "title": "一起记住太阳系",
+            "subtitle": "通过观察、比较和动手活动，可以把太阳系知识记得更牢。",
+            "variant": "balanced",
+            "items": [
+                {
+                    "kicker": "看一看",
+                    "title": "观察外观",
+                    "body": "看颜色和大小：不同星球有不同外观特点。",
+                },
+                {
+                    "kicker": "排一排",
+                    "title": "记住顺序",
+                    "body": "找位置关系：注意谁离太阳近、谁离太阳远。",
+                },
+                {
+                    "kicker": "玩一玩",
+                    "title": "课堂小游戏",
+                    "body": "用卡片给行星排队，或画出自己的太阳系图。",
+                },
+                {
+                    "kicker": "想一想",
+                    "title": "课后思考",
+                    "body": "如果去一颗行星旅行，你最想去哪里，为什么？",
+                },
+            ],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    report_path = tmp_path / "html_self_check.json"
+
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--report",
+        str(report_path),
+    )
+
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    assert json.loads(report_path.read_text(encoding="utf-8"))["issues"] == []
+    html = html_path.read_text(encoding="utf-8")
+    assert 'body[data-deck-theme="daisy-days"] :is(' in html
+    assert "box-shadow: inset -6px -6px 0" in html
+
+
+def test_brutalist_ledger_three_card_layout_preserves_slide_bounds(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "cards-grid-v1",
+        "table-data-v1",
+        "--theme",
+        "stencil-tablet",
+        "--family",
+        "brutalist-frame",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["design"].update(
+        {"seed": "ledger_bounds_0", "variant": "ledger-frame"}
+    )
+    deck["slides"][1]["props"].update(
+        {
+            "eyebrow": "艺术语言",
+            "title": "艺术语言：线条、色彩与叙事",
+            "subtitle": "线描、设色与连续叙事共同构成敦煌壁画的独特艺术语言。",
+            "variant": "balanced",
+            "items": [
+                {
+                    "kicker": "线描",
+                    "title": "线条塑造神采",
+                    "body": "衣纹、姿态与神情依靠线条组织，形成富有节奏的视觉引导。",
+                },
+                {
+                    "kicker": "设色",
+                    "title": "色彩形成气韵",
+                    "body": "矿物色与强对比营造装饰张力，时间沉淀后更显古雅。",
+                },
+                {
+                    "kicker": "叙事",
+                    "title": "墙面展开故事",
+                    "body": "连续画面引导观众移动视线，像阅读墙面上的图像史诗。",
+                },
+            ],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    report_path = tmp_path / "html_self_check.json"
+
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--report",
+        str(report_path),
+    )
+
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    assert json.loads(report_path.read_text(encoding="utf-8"))["issues"] == []
+    html = html_path.read_text(encoding="utf-8")
+    assert "grid-auto-rows: minmax(0, 1fr)" in html
 
 
 def test_comic_panel_theme_renders_story_panels_and_clean_diagrams(
@@ -8863,6 +9622,7 @@ def test_8_bit_orbit_theme_renders_pixel_arcade_ui_and_clean_diagrams(
         "cards-grid-v1",
         "technical-diagram-v1",
         "closing-next-steps-v1",
+        "statement-focus-v1",
         "--theme",
         "8-bit-orbit",
         "--lock-theme",
@@ -8904,6 +9664,19 @@ def test_8_bit_orbit_theme_renders_pixel_arcade_ui_and_clean_diagrams(
             "eyebrow": "STAGE CLEAR",
             "title": "进入下一关",
             "subtitle": "用街机状态字收束，同时保留行动信息层级。",
+        }
+    )
+    deck["slides"][4]["props"].update(
+        {
+            "eyebrow": "FINAL SCORE",
+            "statement": "每个玩家都能写出自己的世界故事",
+            "support": "创造让想象拥有形状，冒险让旅程拥有回忆。",
+            "proofs": [
+                {"value": "自由建造", "label": "把想象变成可进入的空间"},
+                {"value": "探索未知", "label": "让旅程留下个人化的回忆"},
+            ],
+            "proof_style": "points",
+            "emphasis": "poster",
         }
     )
     deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
@@ -8955,6 +9728,7 @@ def test_8_bit_orbit_theme_renders_pixel_arcade_ui_and_clean_diagrams(
     assert runtime["editor"]["diagram"]["state"] == "ready"
     assert runtime["editor"]["diagram"]["svgRoots"] == 1
     assert runtime["editor"]["diagrams"][0]["strategy"] == "layered-architecture"
+    assert runtime["editor"]["statement"]["contrast"] >= 4.5
 
 
 def test_mono_blue_block_frame_reuses_visual_dna_with_restrained_palette(
@@ -9079,6 +9853,42 @@ def test_statement_auto_uses_wrapping_points_for_sentence_values(tmp_path: Path)
     html = html_path.read_text(encoding="utf-8")
     assert 'class="statement-main has-proofs proofs-points"' in html
     assert "不预设未发生赛果" in html
+
+
+def test_statement_point_labels_keep_powerpoint_wrap_slack(tmp_path: Path) -> None:
+    deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    statement = deck["slides"][2]["props"]
+    statement.update(
+        {
+            "proofs": [
+                {"label": "原则层", "value": "用结论先行统一表达方向。"},
+                {"label": "结构层", "value": "通过层级、分组和递进降低沟通成本。"},
+                {"label": "行动层", "value": "用五步清单把方法嵌入日常工作。"},
+            ],
+            "proof_style": "points",
+        }
+    )
+    deck_path = tmp_path / "statement-points.json"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "statement-points.html"
+    report_path = tmp_path / "html_self_check.json"
+
+    render = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    self_check = _run(
+        "html_self_check.js",
+        str(html_path),
+        "--dom-to-pptx",
+        "--allow-local-images",
+        "--report",
+        str(report_path),
+    )
+
+    assert render.returncode == 0, render.stdout + render.stderr
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert not any(
+        "PowerPoint wrap slack" in warning for warning in report["warnings"]
+    )
 
 
 @pytest.mark.parametrize("family", ["analytical-exhibit", "technical-schematic"])
@@ -9433,3 +10243,401 @@ def test_deck_validation_rejects_unsafe_or_out_of_contract_props(
 
     assert result.returncode == 1
     assert expected_error in result.stdout
+
+
+def test_explicit_palette_and_geometry_become_hard_design_contract(
+    tmp_path: Path,
+) -> None:
+    outline = {
+        "deck_goal": "解释结构化思维并给出行动计划",
+        "audience": "公司内部团队",
+        "source_mode": "user_provided",
+        "tone": "专业、克制、浅色商务",
+        "storyline": "原则到行动",
+        "design_requirements": {
+            "palette": "配色以深蓝、米白和少量橙色为主",
+        },
+        "slides": [
+            {
+                "page": 1,
+                "title": "四个基本原则",
+                "message": "顶层结论统领下层支撑。",
+                "bullets": ["结论先行", "以上统下", "归类分组", "逻辑递进"],
+                "layout": "pyramid",
+                "visual": "可编辑金字塔结构：上方深蓝顶层块写‘结论先行’，下方三个并列支撑块依次写‘以上统下’‘归类分组’‘逻辑递进’。",
+                "evidence": [],
+            },
+            {
+                "page": 2,
+                "title": "五步行动清单",
+                "message": "把方法落实到每周工作。",
+                "bullets": ["先写结论", "拆分问题", "检查 MECE", "组织汇报", "每周复盘"],
+                "layout": "横向五步流程页，适合按顺序展示行动清单。",
+                "visual": "五个可编辑流程卡片从左到右排列，用深蓝连接线串联，橙色用于编号强调。",
+                "evidence": [],
+            },
+        ],
+    }
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "制作两页PPT，配色以深蓝、米白和少量橙色为主。".encode()
+    ).decode()
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "technical-diagram-v1",
+        "timeline-horizontal-v1",
+        "--theme",
+        "auto",
+        "--title",
+        "结构化思维",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert [slide["layout_id"] for slide in deck["slides"]] == [
+        "pyramid-hierarchy-v1",
+        "cards-grid-v1",
+    ]
+    assert len(deck["slides"][0]["props"]["items"]) == 4
+    assert len(deck["slides"][1]["props"]["items"]) == 5
+    palette = deck["design_contract"]["palette"]
+    assert palette["background"]["value"] == "#F4EFE4"
+    assert palette["primary"]["value"] == "#173B63"
+    assert palette["accent"]["value"] == "#D97706"
+    assert palette["accent_usage"] == "sparse"
+    assert deck["design_contract"]["slides"]["slide-01"] == {
+        "visual_kind": "pyramid",
+        "source": "explicit",
+        "item_count": 4,
+        "direction": "top-down",
+        "relationship": "one-to-many",
+        "hierarchy_depth": 2,
+    }
+    assert deck["design_contract"]["slides"]["slide-02"] == {
+        "visual_kind": "numbered-actions",
+        "source": "explicit",
+        "item_count": 5,
+        "direction": "left-to-right",
+        "relationship": "ordered",
+    }
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert "--deck-bg: #F4EFE4" in html
+    assert "--deck-primary: #173B63" in html
+    assert "--deck-accent-color: #D97706" in html
+    assert 'data-deck-palette-accent-usage="sparse"' in html
+    assert 'data-layout-id="pyramid-hierarchy-v1"' in html
+
+
+def test_explicit_design_contract_blocks_approximate_layout(
+    tmp_path: Path,
+) -> None:
+    deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    first = deck["slides"][0]
+    deck["design_contract"] = {
+        "version": 1,
+        "slides": {
+            first["id"]: {
+                "visual_kind": "pyramid",
+                "source": "explicit",
+            }
+        },
+    }
+    deck_path = tmp_path / "invalid-design.json"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    result = _run("validate_deck_spec.js", str(deck_path))
+
+    assert result.returncode == 1
+    assert "pyramid" in result.stdout
+    assert "is not supported by" in result.stdout
+
+
+def test_original_exact_hex_palette_wins_over_outline_color_paraphrases(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["design_requirements"] = {
+        "palette": "深色背景、白色正文、少量红色点缀",
+    }
+    outline["slides"][0].update(
+        {
+            "title": "经营决策会",
+            "layout": "cover",
+            "visual": "纯文字封面，红色仅用于强调",
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        (
+            "制作一页纯文字 PPT，不使用图片。精确配色依次为 "
+            "#111827 / #F9FAFB / #EF4444，不得近似替换。"
+        ).encode()
+    ).decode()
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    palette = deck["design_contract"]["palette"]
+    assert palette["background"]["value"] == "#111827"
+    assert palette["primary"]["value"] == "#F9FAFB"
+    assert palette["accent"]["value"] == "#EF4444"
+    assert palette["requested"] == ["#111827", "#F9FAFB", "#EF4444"]
+
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    assert "--deck-bg: #111827" in html
+    assert "--deck-primary: #F9FAFB" in html
+    assert "--deck-text: #F9FAFB" in html
+    assert "--deck-alt-bg: #111827" in html
+    assert "--deck-alt-text: #F9FAFB" in html
+    assert "--deck-accent-color: #EF4444" in html
+
+
+def test_exact_one_page_request_overrides_default_outline_minimum(
+    tmp_path: Path,
+) -> None:
+    one_page_path = tmp_path / "one-page.json"
+    _write_outline(one_page_path, page_count=1, source_mode="user_provided")
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "制作1页《AI治理白皮书》演示文稿；第1页为纯文字封面。".encode()
+    ).decode()
+
+    accepted = _run("validate_outline.js", str(one_page_path), env=env)
+
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    report = json.loads(accepted.stdout)
+    assert report["slideCount"] == 1
+    assert report["pageCountContract"] == {"minimum": 1, "maximum": 1}
+
+    three_page_path = tmp_path / "three-page.json"
+    _write_outline(three_page_path, page_count=3, source_mode="user_provided")
+    rejected = _run("validate_outline.js", str(three_page_path), env=env)
+
+    assert rejected.returncode == 1
+    assert "Too many slides: 3; expected at most 1" in rejected.stdout
+
+
+def test_no_image_instruction_blocks_technical_cover_generation_and_is_qa_enforced(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["deck_goal"] = "解释企业 AI 助手技术架构"
+    outline["slides"][0].update(
+        {
+            "title": "企业 AI 助手技术架构",
+            "layout": "cover",
+            "visual": "技术架构线框封面，不使用图片，全部采用可编辑形状",
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "制作技术架构 PPT，不要生成图片，全部使用可编辑形状。".encode()
+    ).decode()
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--outline",
+        str(outline_path),
+        "--image-mode",
+        "auto",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    manifest_path = tmp_path / "assets" / "generated" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["generation_forbidden"] is True
+    assert manifest["image_plan"][0]["decision"] == "skip"
+    assert manifest["image_plan"][0]["required"] is False
+
+    valid = _run(
+        "validate_image_manifest.js",
+        str(manifest_path),
+        "--deck",
+        str(deck_path),
+    )
+    assert valid.returncode == 0, valid.stdout + valid.stderr
+
+    generated = tmp_path / "assets" / "generated" / "forbidden.png"
+    generated.write_bytes(b"not-a-real-image")
+    manifest["image_plan"][0].update(
+        {
+            "decision": "generate",
+            "status": "generated",
+            "output_path": "assets/generated/forbidden.png",
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rejected = _run("validate_image_manifest.js", str(manifest_path))
+    assert rejected.returncode == 1
+    assert "generation_forbidden" in rejected.stdout
+
+
+def test_scaffold_normalizes_2x2_priority_matrix_to_editable_quadrant_layout(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "问题优先级矩阵",
+            "message": "按影响和紧急程度划分四类问题。",
+            "bullets": ["支付失败", "新手激活", "消息延迟", "视觉微调"],
+            "layout": "priority_matrix_2x2",
+            "visual": (
+                "2×2 可编辑矩阵：高影响高紧急=支付失败，高影响低紧急=新手激活，"
+                "低影响高紧急=消息延迟，低影响低紧急=视觉微调。"
+            ),
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "table-data-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    slide = deck["slides"][0]
+    assert slide["layout_id"] == "quadrant-matrix-v1"
+    assert len(slide["props"]["items"]) == 4
+    assert deck["design_contract"]["slides"]["slide-01"] == {
+        "visual_kind": "quadrant",
+        "source": "explicit",
+        "item_count": 4,
+        "direction": "x-y",
+        "relationship": "matrix",
+    }
+    slide["props"].update(
+        {
+            "title": outline["slides"][0]["title"],
+            "subtitle": outline["slides"][0]["message"],
+            "items": [
+                {"kicker": "象限", "title": item, "body": "优先级判断"}
+                for item in outline["slides"][0]["bullets"]
+            ],
+        }
+    )
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    rendered = _run(
+        "render_deck_html.js",
+        str(deck_path),
+        "--out",
+        str(tmp_path / "index.html"),
+    )
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert 'data-layout-id="quadrant-matrix-v1"' in html
+    assert "quadrant-grid" in html
+    validation = _run("validate_deck_spec.js", str(deck_path))
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+    self_check = _run(
+        "html_self_check.js",
+        str(tmp_path / "index.html"),
+        "--dom-to-pptx",
+        "--allow-local-images",
+        "--report",
+        str(tmp_path / "qa" / "html_self_check.json"),
+    )
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+
+
+def test_scaffold_normalizes_four_point_statement_summary_to_cards(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "总结",
+            "message": "四条管理原则形成年度运营闭环。",
+            "bullets": ["目标牵引", "节奏推进", "项目聚焦", "生命周期闭环"],
+            "layout": "summary_actions",
+            "visual": "总结页：四条管理原则加底部行动提示，全部采用可编辑文本框。",
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "statement-focus-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "cards-grid-v1"
+    assert len(deck["slides"][0]["props"]["items"]) == 4
+
+
+def test_typography_cover_role_wins_over_roadmap_words_in_deck_title(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "客户成功年度运营路线图",
+            "message": "建立贯穿全年的运营节奏。",
+            "layout": "cover_text_only",
+            "visual": "纯文字封面：大标题、副标题、年度路线图定位说明。",
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "cover-editorial-v1"

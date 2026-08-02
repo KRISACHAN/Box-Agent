@@ -847,11 +847,10 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
     assert '"ready":false' in checkpoint
-    assert '"fallback":true' in checkpoint
-    assert "Bounded research work is complete without a successful QA report" in checkpoint
-    assert "outline.json so HTML delivery can continue" in checkpoint
+    assert '"fallback":true' not in checkpoint
+    assert "research-synthesis workflow before outline authoring" in checkpoint
 
     _write_valid_research_report(research, topic="worldcup")
 
@@ -1001,7 +1000,9 @@ def test_parallel_research_queries_count_as_one_round(tmp_path):
     ).exists()
 
 
-def test_deep_research_records_missing_report_after_bounded_rounds(tmp_path):
+def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
+    tmp_path,
+):
     policy = ControlledPresentationPolicy(
         workspace_dir=str(tmp_path),
         artifact_root_dir=None,
@@ -1021,30 +1022,145 @@ def test_deep_research_records_missing_report_after_bounded_rounds(tmp_path):
         assert checkpoint is not None
         policy.update_checkpoint(checkpoint)
 
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    assert '"fallback":true' not in checkpoint
+    assert "bounded search rounds already returned usable evidence" in checkpoint
+    assert not (
+        tmp_path
+        / "output"
+        / "research"
+        / "qa"
+        / "research_status.json"
+    ).exists()
     assert (
-        '"fallback_reason":'
-        '"research_round_limit_reached_without_validated_report"'
-    ) in checkpoint
-    status = json.loads(
-        (
-            tmp_path
-            / "output"
-            / "research"
-            / "qa"
-            / "research_status.json"
-        ).read_text(encoding="utf-8")
+        policy.tool_call_error(
+            "web_search",
+            {"query": "one more query"},
+            verified_evidence_urls=set(),
+            parallel=True,
+        )
+        == "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research "
+        "searches already returned usable evidence. Do not call web_search or a "
+        "browser read tool again. Complete the cross-verification, insight, evidence "
+        "ledger, and validation report from the evidence already in context."
     )
-    assert status["reason"] == (
-        "research_round_limit_reached_without_validated_report"
+
+
+def test_deep_research_recovers_only_from_explicit_persisted_fallback(tmp_path):
+    research = tmp_path / "output" / "research"
+    qa = research / "qa"
+    qa.mkdir(parents=True)
+    for index in range(1, 4):
+        (research / f"topic_dim{index:02d}.md").write_text(
+            f"dimension {index}",
+            encoding="utf-8",
+        )
+
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
     )
-    assert status["attempt_summary"] == {
-        "rounds": RESEARCH_ROUND_LIMIT,
-        "calls": RESEARCH_ROUND_LIMIT,
-        "successful": RESEARCH_ROUND_LIMIT,
-        "failed": 0,
-        "empty": 0,
-    }
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+
+    (qa / "research_status.json").write_text(
+        json.dumps(
+            {
+                "status": "fallback",
+                "report_available": False,
+                "generation_continues": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert '"fallback":true' in checkpoint
+
+
+def test_deep_research_checkpoint_accepts_validated_user_input_evidence(tmp_path):
+    research = tmp_path / "output" / "research"
+    research.mkdir(parents=True)
+    for index in range(1, 4):
+        (research / f"topic_dim{index:02d}.md").write_text(
+            f"dimension {index}",
+            encoding="utf-8",
+        )
+    (research / "topic_cross_verification.md").write_text(
+        "cross verification",
+        encoding="utf-8",
+    )
+    (research / "topic_insight.md").write_text("insight", encoding="utf-8")
+    report_path = _write_valid_research_report(research, topic="topic")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["verified_evidence"].append(
+        {
+            "entity": "User project brief",
+            "claim": "The user supplied the required project capabilities.",
+            "source_url": "user-input:project-brief",
+            "source_type": "user_input",
+            "evidence_excerpt": "The user supplied the required project capabilities.",
+            "confidence": "high",
+            "status": "verified",
+            "canonical": (
+                "User project brief | The user supplied the required project "
+                "capabilities. | user_input | user-input:project-brief"
+            ),
+        }
+    )
+    report["verified_evidence_count"] = len(report["verified_evidence"])
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert "user-input:project-brief" in checkpoint
+
+
+def test_controlled_images_stop_after_http_401(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+        stage="images",
+    )
+
+    policy.record_tool_result(
+        "generate_image",
+        {"output_path": "assets/generated/cover.png", "watermark": False},
+        ToolResult(
+            success=False,
+            error="Image generation failed: HTTP 401 Unauthorized",
+        ),
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_auth_blocked" in checkpoint
+    assert policy.allows_completion_continuation() is False
+    assert (
+        policy.tool_call_error(
+            "generate_image",
+            {"output_path": "assets/generated/cover.png", "watermark": False},
+            verified_evidence_urls=set(),
+            parallel=True,
+        )
+        == "CONTROLLED_PRESENTATION_IMAGE_AUTH_BLOCKED: the image service returned "
+        "HTTP 401 for this presentation. Do not call generate_image or any other "
+        "tool again in this turn. End the turn and report that image generation is "
+        "blocked until the service authorization is refreshed."
+    )
 
 
 def test_deep_research_checkpoint_does_not_fail_open_without_progress(tmp_path):

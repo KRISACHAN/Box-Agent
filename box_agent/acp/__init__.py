@@ -105,7 +105,7 @@ from box_agent.events import (
     ToolCallStart as ToolCallStartEvent,
     WebSearchEvent,
 )
-from box_agent.llm import LLMClient
+from box_agent.llm import LLMClient, SessionBoundLLM
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.completion import (
     build_auto_completion_gate,
@@ -356,6 +356,25 @@ def _meta_string(meta: Any, *keys: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _normalize_llm_binding(meta: Any) -> dict[str, str] | None:
+    """Parse the host-owned, session-scoped LLM binding extension."""
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("llm_binding") or meta.get("llmBinding")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("llm_binding must be an object")
+
+    source = str(raw.get("source") or "").strip()
+    model = str(raw.get("model") or "").strip()
+    if source != "builtin":
+        raise ValueError(f"unsupported llm_binding source: {source or '<empty>'}")
+    if not model or len(model) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in model):
+        raise ValueError("llm_binding.model is invalid")
+    return {"source": source, "model": model}
 
 
 def _plan_approval_from_meta(meta: Any) -> dict[str, Any] | None:
@@ -677,10 +696,12 @@ def _tool_result_raw_output(
 @dataclass
 class SessionState:
     agent: Agent
+    session_llm: SessionBoundLLM | None = None
     cancelled: bool = False
     output_dir: str | None = None  # ``{workspace}/output/`` — the canonical artifact root
     artifact_mode: str = "output"
     session_mode: str | None = None  # e.g. "data_analysis" for /analysis pages
+    llm_binding: dict[str, str] | None = None  # host-owned model binding for this ACP session
     permission_engine: PermissionEngine | None = None
     grant_store: GrantStore | None = None  # in-band permission grants
     memory_extractor: Any | None = None  # per-session instance to avoid cross-session state leaks
@@ -780,6 +801,14 @@ class BoxACPAgent:
         # ACP always defers).
         self._skill_task = skill_task
         self._skills_loaded = skill_task is None
+
+    def _llm_for_binding(self, binding: dict[str, str] | None) -> LLMClient:
+        if binding is None:
+            return self._llm
+        clone_for_model = getattr(self._llm, "for_model", None)
+        if not callable(clone_for_model):
+            raise ValueError("configured LLM client does not support session model binding")
+        return clone_for_model(binding["model"])
 
     def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
         """Update all live holders of the current system prompt."""
@@ -1059,6 +1088,9 @@ class BoxACPAgent:
                 or _DEFAULT_AGENT_TITLE
             )
 
+        llm_binding = _normalize_llm_binding(meta)
+        session_llm = SessionBoundLLM(self._llm_for_binding(llm_binding))
+
         # Canonical artifact directory is only part of output mode. Existing
         # project workspaces are edited in place and must not get an implicit
         # output/ directory. Hosts may supply a per-session artifact root so
@@ -1078,6 +1110,8 @@ class BoxACPAgent:
                 f"artifact_mode={artifact_mode}, deep_think={deep_think}, "
                 f"force_plan_start={force_plan_start}, "
                 f"require_plan_approval={require_plan_approval}, "
+                f"llm_source={llm_binding['source'] if llm_binding else 'default'}, "
+                f"llm_model={getattr(session_llm, 'model', '')}, "
                 f"artifact_root={output_dir}, "
                 f"expert={expert_context.to_metadata() if expert_context else None}"
             ),
@@ -1220,7 +1254,7 @@ class BoxACPAgent:
                 allow_full_access=self._config.tools.allow_full_access,
                 non_interactive=True,  # ACP cannot do interactive terminal prompts
                 output=lambda msg: sys.stderr.write(msg + "\n"),
-                llm=self._llm,
+                llm=session_llm,
                 permission_engine=perm_engine,
                 skill_runtime_context=skill_runtime_context,
                 skill_loader=session_skill_loader,
@@ -1234,7 +1268,7 @@ class BoxACPAgent:
                 f"{build_image_generation_prompt(self._config)}"
             )
         agent = Agent(
-            llm_client=self._llm,
+            llm_client=session_llm,
             system_prompt=system_prompt,
             tools=tools,
             max_steps=self._config.agent.max_steps,
@@ -1273,7 +1307,7 @@ class BoxACPAgent:
         if self._memory and self._config.agent.enable_memory_extraction and not utility:
             from box_agent.memory import MemoryExtractor
             session_extractor = MemoryExtractor(
-                llm=self._llm,
+                llm=session_llm,
                 memory_manager=self._memory,
                 session_id=upstream_session_id,
                 cooldown=self._config.agent.memory_extraction_cooldown,
@@ -1281,7 +1315,9 @@ class BoxACPAgent:
             )
 
         self._sessions[session_id] = SessionState(
-            agent=agent, output_dir=output_dir, session_mode=session_mode,
+            agent=agent, session_llm=session_llm,
+            output_dir=output_dir, session_mode=session_mode,
+            llm_binding=llm_binding,
             artifact_mode=artifact_mode,
             permission_engine=perm_engine, grant_store=grant_store,
             memory_extractor=session_extractor,
@@ -1512,6 +1548,20 @@ class BoxACPAgent:
         )
         _bind_user_source_text(state, source_binding_text)
         prompt_meta = getattr(params, "field_meta", None) or {}
+        requested_llm_binding = _normalize_llm_binding(prompt_meta)
+        if requested_llm_binding is not None and requested_llm_binding != state.llm_binding:
+            if state.turn_active:
+                raise ValueError("cannot switch llm_binding while a turn is active")
+            if state.session_llm is None:
+                raise ValueError("session LLM binding is unavailable")
+            state.session_llm.bind(self._llm_for_binding(requested_llm_binding))
+            state.llm_binding = requested_llm_binding
+            log.info(
+                "session/model_binding",
+                session_id=session_id,
+                source=requested_llm_binding["source"],
+                model=requested_llm_binding["model"],
+            )
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")
         turn_id = provided_turn_id or f"{session_id}-turn-{state.turn_counter}"

@@ -204,6 +204,36 @@ class TestFilesystemRead:
         )
         assert decision.allowed is True
 
+    def test_bash_read_builtin_skill_dir_allowed(
+        self, engine: PermissionEngine, tmp_path: Path
+    ):
+        """Bash may run trusted scripts shipped inside the Box-Agent package."""
+        skills_dir = tmp_path / "packaged-runtime" / "box_agent" / "skills"
+        script = skills_dir / "document-skills" / "pptx" / "scripts" / "validate_outline.js"
+        script.parent.mkdir(parents=True)
+        script.touch()
+        engine._builtin_skills_dir = skills_dir.resolve()
+        engine._home_dir = (tmp_path / "fake-home").resolve()
+
+        decision = engine.check(
+            FILESYSTEM_READ,
+            {"path": str(script)},
+            tool_name="bash",
+        )
+
+        assert decision.allowed is True
+
+    def test_bash_read_unrelated_application_dir_still_denied(
+        self, engine: PermissionEngine
+    ):
+        """The Bash exception stays narrower than the generic application roots."""
+        decision = engine.check(
+            FILESYSTEM_READ,
+            {"path": "/Applications/LibreOffice.app/Contents/MacOS/soffice"},
+            tool_name="bash",
+        )
+        assert decision.allowed is False
+
 
 # ── PermissionEngine: filesystem.write ───────────────────────
 
@@ -246,6 +276,26 @@ class TestFilesystemWrite:
             FILESYSTEM_WRITE,
             {"path": "/Applications/LibreOffice.app/Contents/MacOS/soffice"},
         )
+        assert decision.allowed is False
+        assert decision.permission_request is None
+
+    def test_bash_write_builtin_skill_dir_denied(
+        self, engine: PermissionEngine, tmp_path: Path
+    ):
+        """Trusted packaged skills are read-only even when invoked by Bash."""
+        skills_dir = tmp_path / "packaged-runtime" / "box_agent" / "skills"
+        script = skills_dir / "document-skills" / "pptx" / "scripts" / "validate_outline.js"
+        script.parent.mkdir(parents=True)
+        script.touch()
+        engine._builtin_skills_dir = skills_dir.resolve()
+        engine._home_dir = (tmp_path / "fake-home").resolve()
+
+        decision = engine.check(
+            FILESYSTEM_WRITE,
+            {"path": str(script)},
+            tool_name="bash",
+        )
+
         assert decision.allowed is False
         assert decision.permission_request is None
 
@@ -828,6 +878,42 @@ class TestBashPermissionPhase1:
         eng = self._make_engine(workspace)
         result = await self._run_bash("echo test 2>/dev/null", eng)
         assert result.success is True
+
+    async def test_fd_redirect_does_not_upgrade_builtin_skill_read_to_write(
+        self, workspace: Path, tmp_path: Path
+    ):
+        """A diagnostic 2>&1 keeps a packaged script path read-only."""
+        skills_dir = tmp_path / "packaged-runtime" / "box_agent" / "skills"
+        script = skills_dir / "document-skills" / "pptx" / "scripts" / "inspect_deck_contract.js"
+        script.parent.mkdir(parents=True)
+        script.write_text("packaged-script", encoding="utf-8")
+        eng = self._make_engine(workspace)
+        eng._builtin_skills_dir = skills_dir.resolve()
+        eng._home_dir = (tmp_path / "fake-home").resolve()
+
+        result = await self._run_bash(f"cat {script} 2>&1", eng)
+
+        assert result.success is True
+        assert result.stdout.strip() == "packaged-script"
+
+    async def test_redirect_write_does_not_upgrade_other_paths(
+        self, workspace: Path, tmp_path: Path
+    ):
+        """Only the redirect target needs write access; the packaged script stays read."""
+        skills_dir = tmp_path / "packaged-runtime" / "box_agent" / "skills"
+        script = skills_dir / "document-skills" / "pptx" / "scripts" / "inspect_deck_contract.js"
+        script.parent.mkdir(parents=True)
+        script.write_text("packaged-script", encoding="utf-8")
+        denied_target = tmp_path / "outside" / "result.txt"
+        denied_target.parent.mkdir()
+        eng = self._make_engine(workspace)
+        eng._builtin_skills_dir = skills_dir.resolve()
+        eng._home_dir = (tmp_path / "fake-home").resolve()
+
+        result = await self._run_bash(f"cat {script} > {denied_target}", eng)
+
+        assert result.success is False
+        assert f"write to {denied_target}" in (result.error or "")
 
     async def test_dev_null_plus_outside_binary_still_denied(self, workspace: Path):
         """Absolute binary path + 2>/dev/null: /dev/null is safe but /bin/echo is not.

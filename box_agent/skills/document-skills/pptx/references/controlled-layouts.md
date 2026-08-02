@@ -14,11 +14,15 @@ edited HTML artifact; the editor does not silently rewrite a sibling
 content capacity, and PPTX-safe behavior; the model only chooses a registered
 `layout_id` and fills its declared `props`.
 
-The visual system has three independent layers:
+The visual system has four independently resolved layers:
 
 - `layout_id` is the semantic contract: which fields exist and remain editable.
 - `design.family + design.variant` changes how those fields are composed.
-- `theme_id` supplies color, typography, shape, and surface grammar.
+- `theme_id` supplies a preset for typography, shape, surface grammar, and a
+  fallback palette.
+- `design_contract.palette` is an optional semantic color-token overlay for
+  explicit user colors; it overrides theme color tokens without changing the
+  theme's typography or page grammar.
 
 Five composition directions sit above those layers as a discovery and routing
 view, not as a fourth persisted visual layer. A direction groups compatible
@@ -27,7 +31,9 @@ decision stored in `design`.
 
 `deck.json` is the document model that binds those layers to content. It stores
 the theme selection, persisted design seed/family/variant, and each slide's
-`layout_id + props + outline_intent`; it is not another visual layer. The
+`layout_id + props + outline_intent`. It also stores `design_contract` when the
+source contains explicit palette, geometry, direction, relationship, or item
+count requirements; it is not another visual layer. The
 persisted intent copies the bound outline page's title, message, layout, and
 visual direction so semantic fit remains testable after patching or editor
 saves. `render_deck_html.js`
@@ -128,7 +134,7 @@ they never block the HTML or require a repair pass.
    deduplicates layout descriptions and returns the bound outline pages; the
    written deck preserves full slide order, `source_outline_page`, and the
    page's immutable `outline_intent`. Strong semantic mismatches are normalized
-   before authoring (matrix→table, quadrant→cards, tagged text cover→editorial
+   before authoring (generic matrix→table, 2×2/quadrant→quadrant matrix, tagged text cover→editorial
    cover), and the report records each normalization.
 3. Keep the scaffolded top-level `design` object unchanged during normal content
    patches. It controls only composition and does not change any layout's field
@@ -139,6 +145,15 @@ they never block the HTML or require a repair pass.
 5. Validate blocking copy budgets, array capacities, media objects, and paths.
 6. Render after blocking structural/media validation passes; run source/truth
    review afterward as an advisory.
+
+High-frequency professional visuals have dedicated editable contracts. Use
+`factory-process-line-v1` for production stations and quality metrics,
+`legal-case-logic-v1` for issue/rule/analysis/conclusion reasoning,
+`property-factsheet-v1` for site zones and asset facts,
+`commerce-funnel-v1` for retail conversion stages, and `supply-network-v1`
+for logistics nodes, statuses, and fulfillment metrics. These layouts express
+domain relationships; do not replace them with generic cards merely to add
+variety.
 
 Scaffold the complete deck once. A failed blocking structural/media validation
 is a patch operation: change only the paths named by the report. Source-advisory
@@ -212,6 +227,11 @@ Use `heatmap-matrix-v1` for a semantic risk or intensity matrix. It supports
 three to six columns and two to eight editable rows; cell values such as low,
 medium, high, critical, or numeric ranges map to five presentation-safe color
 levels while the source text remains editable in HTML and PPTX.
+Use `quadrant-matrix-v1` for a true editable 2×2 priority matrix. Its four
+items are placed against explicit horizontal and vertical axes; item order is
+high-high, high-low, low-high, low-low. Do not substitute `table-data-v1`,
+`heatmap-matrix-v1`, or a generic four-card grid when the outline explicitly
+asks for quadrants, impact-versus-urgency, or a 2×2 matrix.
 Scatter, bubble, combo, sankey, map, and tables beyond these
 capacities still use the data-backed legacy HTML route until a controlled
 native-PPTX mapping is registered. Never flatten recoverable data into a
@@ -238,8 +258,8 @@ sufficient for generation on machines that do not have the separate
 
 `html-templates` is an optional, richer Visual DNA matcher. When present, its
 `template_id` selects the corresponding executable base theme (for example
-`signal` or `block-frame`); an explicit user palette request may select a
-registered variant of that DNA instead. When absent, select directly from the
+`signal` or `block-frame`); an explicit user palette is applied as a semantic
+token overlay instead of forcing an unrelated style preset. When absent, select directly from the
 built-in `selection` metadata. Never copy the whole Visual DNA library into a
 deck and never use an unregistered Visual DNA id as `theme_id`.
 

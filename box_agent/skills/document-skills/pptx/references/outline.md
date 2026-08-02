@@ -153,6 +153,10 @@ not supply it; reserve visible `待补充` for genuinely required missing fields
   "audience": "Who will read or hear it",
   "source_mode": "user_provided | public_authoritative_research | creative_brief",
   "tone": "Visual and narrative tone",
+  "design_requirements": {
+    "palette": "Explicit user palette wording, for example 深蓝、米白、少量橙色点缀",
+    "rule": "Preserve explicit color, geometry, direction, relationship, and count requirements verbatim; omit when none were supplied"
+  },
   "storyline": "One-sentence narrative arc",
   "slides": [
     {
@@ -175,6 +179,12 @@ not supply it; reserve visible `待补充` for genuinely required missing fields
 
 Keep this as a planning artifact. Do not put CSS, HTML, or PowerPoint object
 details into `outline.json`.
+
+`design_requirements` is optional, but when the user explicitly names colors,
+palette roles, a visual geometry such as a pyramid, flow direction, or an exact
+item count, preserve that wording here and on the affected slide. The scaffold
+turns those requirements into a persisted `design_contract`; explicit entries
+are hard constraints and may not be weakened by theme or layout inference.
 
 `audience` and `storyline` may each be either one non-empty string or a
 non-empty array of strings. The validator and scaffold normalize the array form

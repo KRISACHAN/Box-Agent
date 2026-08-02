@@ -143,6 +143,9 @@ const COMPOSITION_FAMILY_META = Object.freeze({
 const COMPOSITION_SELECTION_RULES = Object.freeze({
   "institutional-grid": Object.freeze({
     content: Object.freeze([
+      [/(?:法律意见书|案件分析|诉讼策略|争议解决|证据分析|合规审查|法务汇报|legal\s+opinion|case\s+analysis|litigation\s+strategy|compliance\s+review)/i, 5],
+      [/(?:房地产|地产开发|项目投拓|土地研判|城市更新|商业地产|住宅项目|real\s+estate|property\s+development|land\s+acquisition|urban\s+renewal)/i, 5],
+      [/(?:政务汇报|政府工作|公共政策|城市治理|社会治理|监管政策|公共服务|public\s+policy|government\s+(?:brief|report)|municipal\s+governance|public\s+governance)/i, 5],
       [/(?:商业汇报|经营汇报|年度汇报|组织治理|管理层|董事会|business\s+review|governance|annual\s+review)/i, 3],
       [/(?:内部沟通|内部汇报|常规汇报|业务规划|产品规划|项目规划|项目进展|月度规划|季度规划|工作规划|internal\s+(?:brief|update|review)|project\s+(?:plan|update))/i, 3],
       [/(?:新员工入职|员工入职|入职培训|内部培训|员工培训|迎新|onboarding|employee\s+orientation|internal\s+training)/i, 3],
@@ -154,6 +157,8 @@ const COMPOSITION_SELECTION_RULES = Object.freeze({
   }),
   "analytical-exhibit": Object.freeze({
     content: Object.freeze([
+      [/(?:投资备忘录|投资分析|估值分析|资本配置|财报解读|投资者关系|investment\s+(?:memo|thesis|analysis)|valuation\s+analysis|capital\s+allocation|earnings\s+analysis)/i, 5],
+      [/(?:经营复盘|业绩复盘|销售复盘|季度复盘|月度复盘|季度经营|经营月报|经营季报|performance\s+review|business\s+review|quarterly\s+review|monthly\s+review|sales\s+review)/i, 4],
       [/(?:KPI|指标|数据看板|决策看板|数据分析|量化|benchmark|metrics?|dashboard|evidence\s+board)/i, 3],
       [/(?:图表|热力图|风险矩阵|同比|环比|增长率|收入|成本|chart|heat\s*map|risk\s+matrix|revenue|growth|comparison)/i, 2],
       [/(?:表格|\btable\b)/i, 1],
@@ -166,6 +171,8 @@ const COMPOSITION_SELECTION_RULES = Object.freeze({
   }),
   "technical-schematic": Object.freeze({
     content: Object.freeze([
+      [/(?:智能制造|制造业|生产线|生产车间|工厂运营|精益生产|质量改善|\bOEE\b|manufacturing|factory\s+operations?|production\s+line|shop\s+floor|lean\s+manufacturing)/i, 5],
+      [/(?:临床试验|病例分析|患者路径|诊疗路径|药物研发|clinical\s+trial|patient\s+(?:journey|pathway)|drug\s+development)/i, 5],
       [/(?:系统架构|技术架构|架构图|流程节点|协作节点|节点连接|接口规格|运行时|编译链|agent\s+loop|system\s+architecture|technical\s+architecture|runtime|compiler|API\s+contract)/i, 4],
       [/(?:代码窗口|代码片段|终端|命令行|数据流|接口|code\s+window|code\s+snippet|terminal|data\s+flow|API\s+contract)/i, 3],
     ]),
@@ -173,6 +180,7 @@ const COMPOSITION_SELECTION_RULES = Object.freeze({
   }),
   "editorial-spread": Object.freeze({
     content: Object.freeze([
+      [/(?:新员工入职|员工手册|企业文化培训|人才发展|招聘宣讲|雇主品牌|employee\s+onboarding|employee\s+handbook|people\s+ops|talent\s+development|culture\s+handbook)/i, 5],
       [/(?:编辑跨页|杂志|专题报道|研究叙事|图文长内容|editorial|magazine|feature\s+story|research\s+narrative)/i, 4],
       [/(?:新员工入职|入职培训|员工培训|培训课件|迎新|onboarding|employee\s+orientation|training\s+deck)/i, 4],
       [/(?:采访|报道|章节|长篇|narrative|chapter|essay)/i, 2],
@@ -183,6 +191,7 @@ const COMPOSITION_SELECTION_RULES = Object.freeze({
   }),
   "literary-minimal": Object.freeze({
     content: Object.freeze([
+      [/(?:学术论文|论文答辩|开题报告|文献综述|学术研究方法|博士论文|硕士论文|thesis|dissertation|literature\s+review|research\s+methodology)/i, 5],
       [/(?:文学|诗歌|观点文章|安静研究|极简阅读|literary|poetry|quiet\s+report|long[- ]form)/i, 4],
       [/(?:长文本|文章|随笔|阅读|reflection|essay|memo)/i, 2],
     ]),
@@ -211,6 +220,8 @@ const COMPOSITION_SELECTION_RULES = Object.freeze({
   }),
   "product-showcase": Object.freeze({
     content: Object.freeze([
+      [/(?:零售电商|零售运营|电商运营|商品运营|\bSKU\b|\bGMV\b|动销|客单价|复购率|转化漏斗|retail\s+operations?|e-?commerce\s+operations?|merchandising|conversion\s+funnel)/i, 5],
+      [/(?:供应链|物流运营|物流网络|仓储管理|库存周转|订单履约|\bOTIF\b|supply\s+chain|logistics\s+operations?|warehouse\s+management|order\s+fulfillment)/i, 5],
       [/(?:UI\s*截图|产品界面|客户端界面|主界面|工作台|编辑器界面|浏览器窗口|设备样机|产品主视觉|UI\s*screenshot|product\s+interface|client\s+interface|browser\s+window|device\s+mockup)/i, 5],
       [/(?:产品演示|功能演示|产品流程|功能流程|SaaS|软件产品|应用界面|product\s+demo|feature\s+demo|product\s+flow|user\s+flow)/i, 4],
       [/(?:产品|功能|客户端|软件|平台|product|feature|application|app\b)/i, 1],
@@ -359,21 +370,31 @@ const THEME_COMPOSITION_FAMILY = Object.freeze({
   "comic-panel": "brutalist-frame",
   "creative-mode": "poster-asymmetric",
   "data-intelligence": "analytical-exhibit",
+  "capital-ledger": "analytical-exhibit",
+  "civic-brief": "institutional-grid",
+  "clinical-atlas": "technical-schematic",
+  "commerce-pulse": "product-showcase",
   "daisy-days": "playful-collage",
   "editorial-tri-tone": "editorial-spread",
+  "factory-floor": "technical-schematic",
   grove: "literary-minimal",
   "long-table": "editorial-spread",
+  "legal-docket": "institutional-grid",
+  "logistics-control-tower": "product-showcase",
   mat: "editorial-spread",
   monochrome: "institutional-grid",
   "neo-grid-bold": "brutalist-frame",
   "peoples-platform": "poster-asymmetric",
+  "people-handbook": "editorial-spread",
   "pin-and-paper": "literary-minimal",
   "pink-script": "literary-minimal",
   playful: "playful-collage",
   "product-console": "product-showcase",
+  "property-atlas": "institutional-grid",
   "raw-grid": "brutalist-frame",
   "retro-windows": "retro-interface",
   "retro-zine": "retro-interface",
+  "research-notebook": "literary-minimal",
   "sakura-chroma": "playful-collage",
   scatterbrain: "playful-collage",
   signal: "institutional-grid",

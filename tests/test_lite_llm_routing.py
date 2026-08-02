@@ -1,6 +1,7 @@
 """Lite LLM routing: fallback when unconfigured, separate client when present."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -13,7 +14,8 @@ from box_agent.config import (
     LLMConfig,
     ToolsConfig,
 )
-from box_agent.schema import LLMResponse
+from box_agent.llm import LLMClient
+from box_agent.schema import LLMProvider, LLMResponse, StreamEvent
 
 
 class _DummyLLM:
@@ -35,6 +37,17 @@ class _DummyLLM:
             tool_calls=None,
             finish_reason="stop",
         )
+
+    async def generate_stream(self, messages, tools=None, **kwargs):
+        self.last_messages = messages
+        self.last_kwargs = kwargs
+        yield StreamEvent(type="text", delta=f"reply-from-{self.label}")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+    def for_model(self, model: str):
+        client = _DummyLLM(f"bound-{model}")
+        client.model = model
+        return client
 
 
 class _DummyConn:
@@ -84,6 +97,98 @@ def test_lite_llm_distinct_when_provided(tmp_path):
     assert agent2._llm is main
     assert agent2._lite_llm is other
     assert agent2._lite_llm is not main
+
+
+def test_llm_client_for_model_preserves_endpoint_auth_and_default(tmp_path):
+    auth_file = tmp_path / "auth.json"
+    client = LLMClient(
+        api_key="box-agent-no-auth",
+        provider=LLMProvider.OPENAI,
+        api_base="https://example.com/v1",
+        model="model-main",
+        auth_file=str(auth_file),
+        max_output_tokens=1234,
+        timeout=42,
+    )
+
+    bound = client.for_model("model-session")
+
+    assert bound is not client
+    assert client.model == "model-main"
+    assert bound.model == "model-session"
+    assert bound.api_base == client.api_base
+    assert bound.api_key == client.api_key
+    assert bound.auth_file == client.auth_file
+    assert bound.max_output_tokens == client.max_output_tokens
+    assert bound.timeout == client.timeout
+    assert bound._client is not client._client
+    assert bound._client.client is client._client.client
+    assert client.for_model("model-main") is not client
+
+
+@pytest.mark.asyncio
+async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp_path):
+    agent, main, _lite = _make_agent(tmp_path, lite=True)
+
+    first = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {"source": "builtin", "model": "model-normal"}
+            },
+        )
+    )
+    second = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {"source": "builtin", "model": "model-lite"}
+            },
+        )
+    )
+
+    first_state = agent._sessions[first.sessionId]
+    second_state = agent._sessions[second.sessionId]
+    assert main.model == "model-main"
+    assert first_state.agent.llm.model == "model-normal"
+    assert second_state.agent.llm.model == "model-lite"
+    assert first_state.agent.llm is not second_state.agent.llm
+    assert first_state.llm_binding == {"source": "builtin", "model": "model-normal"}
+    assert second_state.llm_binding == {"source": "builtin", "model": "model-lite"}
+
+
+@pytest.mark.asyncio
+async def test_session_switches_model_between_turns_without_recreating_agent(tmp_path):
+    agent, main, _lite = _make_agent(tmp_path, lite=True)
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {"source": "builtin", "model": "model-normal"}
+            },
+        )
+    )
+    state = agent._sessions[session.sessionId]
+    original_agent = state.agent
+    original_session_llm = state.session_llm
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "hello"}],
+            field_meta={
+                "llm_binding": {"source": "builtin", "model": "model-lite"}
+            },
+        )
+    )
+
+    assert agent._sessions[session.sessionId] is state
+    assert state.agent is original_agent
+    assert state.session_llm is original_session_llm
+    assert state.agent.llm is original_session_llm
+    assert state.agent.llm.model == "model-lite"
+    assert state.llm_binding == {"source": "builtin", "model": "model-lite"}
+    assert main.model == "model-main"
 
 
 @pytest.mark.asyncio

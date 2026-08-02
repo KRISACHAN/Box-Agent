@@ -9,7 +9,7 @@ from .lightweight import (
     LightweightTimeout,
     run_lightweight_prompt,
 )
-from .llm_wrapper import LLMClient
+from .llm_wrapper import LLMClient, SessionBoundLLM
 from .openai_client import OpenAIClient
 
 __all__ = [
@@ -17,10 +17,10 @@ __all__ = [
     "AnthropicClient",
     "OpenAIClient",
     "LLMClient",
+    "SessionBoundLLM",
     "run_lightweight_prompt",
     "LightweightResult",
     "LightweightPromptError",
     "LightweightTimeout",
     "LightweightInvalidArgs",
 ]
-

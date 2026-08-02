@@ -188,6 +188,7 @@ function updateContractReport(deckPath, deck, redesignPath, redesignedSlides) {
   contract.contract_version = Math.max(2, Number(contract.contract_version || 1));
   contract.theme_id = deck.theme_id;
   contract.design = clone(deck.design);
+  contract.design_contract = clone(deck.design_contract || null);
   contract.design_selection = {
     source: "controlled_redesign",
     family: deck.design.family,
@@ -231,6 +232,8 @@ function updateImageManifestDesign(deckPath, deck) {
   if (!isPlainObject(manifest) || !isPlainObject(manifest.deck)) return;
   manifest.deck.theme_id = deck.theme_id;
   manifest.deck.design = clone(deck.design);
+  if (deck.design_contract) manifest.deck.design_contract = clone(deck.design_contract);
+  else delete manifest.deck.design_contract;
   writeJsonAtomic(manifestPath, manifest);
 }
 

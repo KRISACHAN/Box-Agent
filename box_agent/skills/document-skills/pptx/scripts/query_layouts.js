@@ -4,12 +4,15 @@
 const { buildManifest } = require("./deck_spec_core.js");
 
 function parseArgs(argv) {
-  const opts = { role: "", density: "", mediaCount: null, limit: 8, list: false };
+  const opts = { role: "", visualKind: "", density: "", mediaCount: null, limit: 8, list: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const value = argv[index + 1];
     if (arg === "--role" && value) {
       opts.role = value.trim().toLowerCase();
+      index += 1;
+    } else if (arg === "--visual-kind" && value) {
+      opts.visualKind = value.trim().toLowerCase();
       index += 1;
     } else if (arg === "--density" && value) {
       opts.density = value.trim().toLowerCase();
@@ -24,7 +27,7 @@ function parseArgs(argv) {
       opts.list = true;
       opts.limit = 50;
     } else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: query_layouts.js [--list] [--role ROLE] [--density LEVEL] [--media-count N] [--limit N]");
+      console.log("Usage: query_layouts.js [--list] [--role ROLE] [--visual-kind KIND] [--density LEVEL] [--media-count N] [--limit N]");
       process.exit(0);
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -44,6 +47,11 @@ function scoreLayout(layout, opts) {
   if (opts.role) {
     if (!layout.roles.includes(opts.role)) return null;
     score += 100;
+  }
+  if (opts.visualKind) {
+    const kinds = Array.isArray(layout.visualKinds) ? layout.visualKinds : [];
+    if (!kinds.includes(opts.visualKind)) return null;
+    score += 120;
   }
   if (opts.density) {
     if (layout.density === opts.density) score += 20;
@@ -73,6 +81,8 @@ function compactMediaSlots(mediaSlots) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
+  const query = { ...opts };
+  if (!query.visualKind) delete query.visualKind;
   const results = buildManifest().layouts
     .map(layout => ({ layout, score: scoreLayout(layout, opts) }))
     .filter(item => item.score !== null)
@@ -84,11 +94,20 @@ function main() {
       roles: layout.roles,
       density: layout.density,
       content_shape: layout.contentShape,
+      ...(opts.visualKind && Array.isArray(layout.visualKinds) && layout.visualKinds.length
+        ? { visual_kinds: layout.visualKinds }
+        : {}),
+      ...(opts.visualKind && Array.isArray(layout.relationships) && layout.relationships.length
+        ? { relationships: layout.relationships }
+        : {}),
+      ...(opts.visualKind && Array.isArray(layout.directions) && layout.directions.length
+        ? { directions: layout.directions }
+        : {}),
       media_slots: compactMediaSlots(layout.mediaSlots),
       variants: layout.variants,
       score,
     }));
-  console.log(JSON.stringify({ query: opts, count: results.length, layouts: results }));
+  console.log(JSON.stringify({ query, count: results.length, layouts: results }));
 }
 
 try {

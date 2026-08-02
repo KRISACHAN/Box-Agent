@@ -17,6 +17,9 @@ const {
   sanitizeStrictSourceDeck,
   validateSourceBoundDeck,
 } = require("./validate_deck_truth.js");
+const {
+  expectedVisualItemCount,
+} = require("./outline_layout_contract.js");
 
 function usage(exitCode = 2) {
   console.log("Usage: apply_deck_patch.js deck.json deck.patch.json");
@@ -177,7 +180,10 @@ function normalizeArrayItem(layoutId, fieldName, item, changes, fieldPath) {
   }
   if (!isPlainObject(item)) return item;
   const normalized = clone(item);
-  if (layoutId === "cards-grid-v1" && fieldName === "items") {
+  if (
+    ["cards-grid-v1", "quadrant-matrix-v1", "pyramid-hierarchy-v1"].includes(layoutId)
+    && fieldName === "items"
+  ) {
     applyAlias(normalized, "title", ["name", "label"], changes, fieldPath);
     applyAlias(normalized, "body", ["description", "text", "content"], changes, fieldPath);
   } else if (layoutId === "kpi-grid-v1" && fieldName === "items") {
@@ -343,6 +349,20 @@ function normalizePatchProps(slide, supplied, changes) {
     if (!contract) {
       recordChange(changes, `${basePath}.${key}: dropped unknown field for ${slide.layout_id}`);
       return;
+    }
+    const expectedVisualItems = expectedVisualItemCount(slide.outline_intent);
+    if (
+      contract.type === "array"
+      && Array.isArray(value)
+      && Number.isInteger(contract.maxItems)
+      && expectedVisualItems > contract.maxItems
+      && value.length >= expectedVisualItems
+    ) {
+      throw new Error(
+        `${basePath}.${key}: layout capacity mismatch; bound outline requires ` +
+        `${expectedVisualItems} visual items, but ${slide.layout_id} supports at most ` +
+        `${contract.maxItems}. Choose a compatible layout before patching`
+      );
     }
     const normalizedValue = normalizeValueToContract(
       value,

@@ -174,6 +174,20 @@ class PermissionEngine:
         except (OSError, RuntimeError):
             self._box_agent_dir = None
 
+        # Built-in skills are trusted, engine-owned code. Packaged runtimes
+        # place them beside this module (for example under an application
+        # bundle), which is intentionally outside the user's filesystem
+        # scope. Allow Bash to read that exact tree so bundled skill scripts
+        # can run, while keeping writes and unrelated application paths
+        # blocked. Resolving both the root and requested path preserves the
+        # existing symlink-escape protection.
+        try:
+            self._builtin_skills_dir: Path | None = (
+                Path(__file__).resolve().parent.parent / "skills"
+            ).resolve()
+        except (OSError, RuntimeError):
+            self._builtin_skills_dir = None
+
         app_candidates = [
             "/Applications",
             "/System/Applications",
@@ -354,6 +368,15 @@ class PermissionEngine:
 
         # ~/.box-agent is engine-owned data — always allowed.
         if self._box_agent_dir is not None and self._is_inside(resolved, self._box_agent_dir):
+            return True
+
+        # Packaged built-in skills are executable product resources rather
+        # than user data. Bash may read them, but never write them.
+        if (
+            operation == "read"
+            and self._builtin_skills_dir is not None
+            and self._is_inside(resolved, self._builtin_skills_dir)
+        ):
             return True
 
         # Box-Agent scratch files are allowed under OS temp roots without

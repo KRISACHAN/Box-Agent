@@ -1455,6 +1455,14 @@ body[data-deck-composition="playful-collage"][data-deck-composition-variant="sta
   margin-top: 92px;
 }
 
+/* A two-by-two grid has two staggered rows inside the fixed slide height. Keep
+   the offset visible without letting the second row increase the grid's
+   min-content height beyond the canvas. */
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="staggered"] .cards-count-4 .content-card:nth-child(even),
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="staggered"] .kpis-count-4 .kpi-card:nth-child(even) {
+  margin-top: 36px;
+}
+
 body[data-deck-composition="playful-collage"][data-deck-composition-variant="mosaic"] .content-card:first-child,
 body[data-deck-composition="playful-collage"][data-deck-composition-variant="mosaic"] .kpi-card:first-child {
   min-height: 390px;
@@ -1718,6 +1726,17 @@ body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="off
 body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .cards-grid,
 body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .kpi-grid {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* Ledger cards become stacked records. Let three- and four-row ledgers shrink
+   inside the fixed content area instead of preserving auto rows that push the
+   grid beyond the 1080px canvas. */
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] :is(.cards-count-3, .cards-count-4) .cards-grid {
+  min-height: 0;
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+  padding-top: 24px;
+  padding-bottom: 24px;
 }
 
 body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .content-card,

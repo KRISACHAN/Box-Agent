@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 const {
+  getLayout,
   readJson,
   resolveArtifactPath,
   validateAndNormalizeDeck,
@@ -14,6 +15,63 @@ const {
   outlineIntentRecord,
   validateOutlineVisualCardinality,
 } = require("./outline_layout_contract.js");
+
+const DESIGN_COLLECTION_FIELDS = Object.freeze({
+  "statement-focus-v1": "proofs",
+  "cards-grid-v1": "items",
+  "quadrant-matrix-v1": "items",
+  "pyramid-hierarchy-v1": "items",
+  "timeline-horizontal-v1": "steps",
+  "factory-process-line-v1": "stations",
+  "legal-case-logic-v1": "sections",
+  "property-factsheet-v1": "zones",
+  "commerce-funnel-v1": "stages",
+  "supply-network-v1": "nodes",
+  "table-data-v1": "rows",
+  "closing-next-steps-v1": "actions",
+});
+
+function designContractResolution(deck) {
+  const contract = deck && deck.design_contract;
+  if (!contract) return { required: false, ok: true, palette: null, slides: [] };
+  const resolutions = Object.entries(contract.slides || {}).map(([slideId, requirement]) => {
+    const slide = deck.slides.find(item => item.id === slideId);
+    const layout = slide ? getLayout(slide.layout_id) : null;
+    const collectionField = slide ? DESIGN_COLLECTION_FIELDS[slide.layout_id] : null;
+    const collection = collectionField && slide.props ? slide.props[collectionField] : null;
+    const kinds = layout && Array.isArray(layout.visualKinds) ? layout.visualKinds : [];
+    const exact = Boolean(
+      slide
+      && layout
+      && kinds.includes(requirement.visual_kind)
+      && (!Number.isInteger(requirement.item_count)
+        || (Array.isArray(collection) && collection.length === requirement.item_count))
+      && (!requirement.direction
+        || !Array.isArray(layout.directions)
+        || !layout.directions.length
+        || layout.directions.includes(requirement.direction))
+      && (!requirement.relationship
+        || !Array.isArray(layout.relationships)
+        || !layout.relationships.length
+        || layout.relationships.includes(requirement.relationship))
+    );
+    return {
+      slide_id: slideId,
+      requested: requirement,
+      resolved_layout_id: slide ? slide.layout_id : null,
+      resolved_item_count: Array.isArray(collection) ? collection.length : null,
+      status: exact ? "exact" : "unresolved",
+    };
+  });
+  return {
+    required: true,
+    ok: resolutions.every(item => item.status === "exact"),
+    palette: contract.palette
+      ? { requested: contract.palette, status: "exact" }
+      : null,
+    slides: resolutions,
+  };
+}
 
 function parseArgs(argv) {
   if (!argv[0] || argv[0] === "--help" || argv[0] === "-h") {
@@ -252,13 +310,15 @@ function main() {
   const result = validateAndNormalizeDeck(readJson(opts.deck));
   const outlineBinding = validateOutlineBinding(deckPath, result.normalized);
   result.issues.push(...outlineBinding.issues);
+  const designContract = designContractResolution(result.normalized);
   const report = {
-    ok: result.ok && outlineBinding.ok,
+    ok: result.ok && outlineBinding.ok && designContract.ok,
     deck: deckPath,
     slideCount: result.normalized ? result.normalized.slides.length : 0,
     issues: result.issues,
     warnings: result.warnings,
     outlineBinding,
+    designContract,
   };
   if (opts.report) writeJson(opts.report, report);
   if (opts.normalized && report.ok) writeJson(opts.normalized, result.normalized);

@@ -1,0 +1,381 @@
+"use strict";
+
+const NAMED_COLORS = Object.freeze([
+  { id: "deep-navy", value: "#173B63", pattern: /(?:深蓝|海军蓝|藏蓝|deep\s*navy|navy\s*blue)/i },
+  { id: "cream", value: "#F4EFE4", pattern: /(?:米白|暖白|奶油白|象牙白|cream|ivory|warm\s*white|bone)/i },
+  { id: "orange", value: "#D97706", pattern: /(?:橙色|橘色|橙黄|orange|amber)/i },
+  { id: "blue", value: "#2563EB", pattern: /(?:蓝色|blue)/i },
+  { id: "green", value: "#15803D", pattern: /(?:绿色|green)/i },
+  { id: "red", value: "#B91C1C", pattern: /(?:红色|red)/i },
+  { id: "black", value: "#111111", pattern: /(?:黑色|black)/i },
+  { id: "white", value: "#FFFFFF", pattern: /(?:白色|white)/i },
+]);
+
+const PALETTE_REQUEST_RE = /(?:配色|色彩|颜色|色系|主色|背景色|底色|点缀色|palette|color\s*(?:palette|scheme)|accent)/i;
+const SPARSE_ACCENT_RE = /(?:少量|少许|小面积|克制|仅作|只作|点缀|sparse|restrained|limited|small\s+amount)/i;
+const HEX_COLOR_RE = /#[0-9a-f]{6}\b/ig;
+
+const SUBJECT_PALETTE_RULES = Object.freeze([
+  Object.freeze({
+    pattern: /(?:特斯拉|tesla)/i,
+    background: "#FFFFFF",
+    primary: "#111111",
+    accent: "#E82127",
+    requested: "subject palette: Tesla black, white, and red",
+  }),
+  Object.freeze({
+    pattern: /(?:故宫|紫禁城|forbidden\s+city|palace\s+museum)/i,
+    background: "#F4E8D1",
+    primary: "#7A1D16",
+    accent: "#C9A227",
+    requested: "subject palette: Forbidden City vermilion, parchment, and gold",
+  }),
+  Object.freeze({
+    pattern: /(?:我的世界|minecraft)/i,
+    background: "#101A11",
+    primary: "#EEF5E9",
+    accent: "#65B741",
+    requested: "subject palette: Minecraft forest, stone, and grass green",
+  }),
+]);
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function clone(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function collectText(value, output = []) {
+  if (typeof value === "string") output.push(value);
+  else if (Array.isArray(value)) value.forEach(item => collectText(item, output));
+  else if (isPlainObject(value)) Object.values(value).forEach(item => collectText(item, output));
+  return output;
+}
+
+function normalizeHex(value) {
+  const text = String(value || "").trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(text) ? text : null;
+}
+
+function colorRecord(color, requested, source = "explicit") {
+  return { value: color, requested, source };
+}
+
+function namedColorMatches(text) {
+  return NAMED_COLORS.filter(item => item.pattern.test(text));
+}
+
+function labeledHex(text, labels) {
+  const label = labels.join("|");
+  const after = text.match(new RegExp(`(?:${label})[^#\\n]{0,32}(#[0-9a-f]{6})\\b`, "i"));
+  if (after) return normalizeHex(after[1]);
+  const before = text.match(new RegExp(`(#[0-9a-f]{6})\\b[^\\n]{0,24}(?:${label})`, "i"));
+  return before ? normalizeHex(before[1]) : null;
+}
+
+function exactHexPalette(text, hex) {
+  if (hex.length < 2) return null;
+  const background = labeledHex(text, ["背景色", "底色", "background"]);
+  const primary = labeledHex(text, ["主色", "正文色", "primary"]);
+  const accent = labeledHex(text, ["点缀色", "强调色", "accent"]);
+  const takeUnused = used => hex.find(value => !used.has(value)) || null;
+  const used = new Set();
+  const resolvedBackground = background || hex[0];
+  used.add(resolvedBackground);
+  const resolvedPrimary = primary || takeUnused(used) || resolvedBackground;
+  used.add(resolvedPrimary);
+  const resolvedAccent = accent || takeUnused(used);
+  return {
+    source: "explicit",
+    requested: hex,
+    background: colorRecord(resolvedBackground, resolvedBackground),
+    primary: colorRecord(resolvedPrimary, resolvedPrimary),
+    ...(resolvedAccent
+      ? {
+        accent: colorRecord(resolvedAccent, resolvedAccent),
+        accent_usage: SPARSE_ACCENT_RE.test(text) ? "sparse" : "balanced",
+      }
+      : {}),
+  };
+}
+
+function inferPaletteContract(value) {
+  const text = collectText(value).join("\n").normalize("NFKC");
+  if (!PALETTE_REQUEST_RE.test(text)) return null;
+  const named = namedColorMatches(text);
+  const hex = [...new Set((text.match(HEX_COLOR_RE) || []).map(normalizeHex).filter(Boolean))];
+  if (!named.length && !hex.length) return null;
+
+  // Two or more exact values form an explicit palette contract. Do not let
+  // downstream outline paraphrases such as "red" or "cream" replace them.
+  const exact = exactHexPalette(text, hex);
+  if (exact) return exact;
+
+  const byId = new Map(named.map(item => [item.id, item]));
+  const cream = byId.get("cream") || byId.get("white");
+  const navy = byId.get("deep-navy") || byId.get("blue") || byId.get("black");
+  const accent = byId.get("orange") || byId.get("green") || byId.get("red");
+  const values = [...named.map(item => item.value), ...hex];
+  const background = cream || (hex[0] ? { id: hex[0], value: hex[0] } : null);
+  const primary = navy || (hex[1] ? { id: hex[1], value: hex[1] } : null) || background;
+  const accentColor = accent || (hex[2] ? { id: hex[2], value: hex[2] } : null);
+  if (!background || !primary) return null;
+
+  return {
+    source: "explicit",
+    requested: values,
+    background: colorRecord(background.value, background.id),
+    primary: colorRecord(primary.value, primary.id),
+    ...(accentColor
+      ? {
+        accent: colorRecord(accentColor.value, accentColor.id),
+        accent_usage: SPARSE_ACCENT_RE.test(text) ? "sparse" : "balanced",
+      }
+      : {}),
+  };
+}
+
+function inferSubjectPaletteContract(value) {
+  const text = collectText(value).join("\n").normalize("NFKC");
+  const rule = SUBJECT_PALETTE_RULES.find(item => item.pattern.test(text));
+  if (!rule) return null;
+  return {
+    source: "inferred",
+    requested: [rule.requested],
+    background: colorRecord(rule.background, rule.requested, "inferred"),
+    primary: colorRecord(rule.primary, rule.requested, "inferred"),
+    accent: colorRecord(rule.accent, rule.requested, "inferred"),
+    accent_usage: "sparse",
+  };
+}
+
+function visualKind(slide) {
+  const text = [slide && slide.title, slide && slide.layout, slide && slide.visual]
+    .filter(Boolean)
+    .join("\n");
+  if (/(?:金字塔|pyramid)/i.test(text)) return "pyramid";
+  if (/(?:四象限|象限图|2\s*[×xX*]\s*2|二乘二|优先级矩阵|quadrant)/i.test(text)) return "quadrant";
+  if (/(?:行动清单|编号行动|action\s*(?:list|items?))/i.test(text)) return "numbered-actions";
+  if (/(?:时间轴|路线图|里程碑|timeline|roadmap)/i.test(text)) return "timeline";
+  if (/(?:流程|路径|process|journey)/i.test(text)) return "process";
+  if (/(?:双栏对比|前后对比|comparison|before\s*(?:and|\/)?\s*after)/i.test(text)) return "comparison";
+  if (/(?:架构|architecture)/i.test(text)) return "architecture";
+  if (/(?:系统集成|integration)/i.test(text)) return "integration";
+  if (/(?:数据管道|pipeline)/i.test(text)) return "pipeline";
+  if (/(?:卡片|cards?)/i.test(text)) return "cards";
+  return null;
+}
+
+function explicitCount(slide) {
+  const visual = [slide && slide.title, slide && slide.visual]
+    .filter(Boolean)
+    .join("\n");
+  const kind = visualKind(slide);
+  const words = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  const parseCount = value => /^\d+$/.test(value) ? Number(value) : words[value];
+  if (kind === "quadrant") return 4;
+  if (kind === "pyramid") {
+    const lowerLayer = visual.match(
+      /(?:下层|下方|支撑层)[^。；\n]{0,48}?([0-9]{1,2}|[一二三四五六七八九十])\s*(?:条|个|项|类|节点|卡片|支撑)/u
+    );
+    if (lowerLayer) {
+      const parsed = parseCount(lowerLayer[1]);
+      if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 11) return parsed + 1;
+    }
+  }
+  const match = visual.match(/(?:^|[^0-9一二三四五六七八九十])([0-9]{1,2}|[一二三四五六七八九十])\s*(?:条|个|项|类|段(?:式)?|象限|节点|阶段|主线|里程碑|卡片|标签)/u);
+  if (match) {
+    const parsed = parseCount(match[1]);
+    if (Number.isInteger(parsed) && parsed >= 2 && parsed <= 12) return parsed;
+  }
+  const bullets = Array.isArray(slide && slide.bullets)
+    ? slide.bullets.filter(item => String(item || "").trim())
+    : [];
+  return ["pyramid", "numbered-actions"].includes(kind) && bullets.length >= 2
+    ? bullets.length
+    : null;
+}
+
+function slideContract(slide) {
+  const kind = visualKind(slide);
+  if (!["pyramid", "numbered-actions", "quadrant"].includes(kind)) return null;
+  const itemCount = explicitCount(slide);
+  return {
+    visual_kind: kind,
+    source: "explicit",
+    ...(itemCount ? { item_count: itemCount } : {}),
+    ...(kind === "pyramid"
+      ? { direction: "top-down", relationship: "one-to-many", hierarchy_depth: 2 }
+      : {}),
+    ...(kind === "quadrant"
+      ? { direction: "x-y", relationship: "matrix" }
+      : {}),
+    ...(["timeline", "process", "numbered-actions"].includes(kind)
+      ? { direction: "left-to-right", relationship: "ordered" }
+      : {}),
+  };
+}
+
+function inferDesignContract(context, outlineSlides = []) {
+  const mergedPalette = inferPaletteContract(context);
+  const sourcePalette = inferPaletteContract({
+    source_text: context && context.source_text ? context.source_text : "",
+  });
+  const sourceExactCount = sourcePalette && Array.isArray(sourcePalette.requested)
+    ? sourcePalette.requested.filter(value => normalizeHex(value)).length
+    : 0;
+  const palette = sourceExactCount >= 2
+    ? sourcePalette
+    : (mergedPalette || inferSubjectPaletteContract(context));
+  const slides = {};
+  outlineSlides.forEach((slide, index) => {
+    const contract = slideContract(slide);
+    if (contract) slides[`slide-${String(index + 1).padStart(2, "0")}`] = contract;
+  });
+  if (!palette && !Object.keys(slides).length) return null;
+  return {
+    version: 1,
+    ...(palette ? { palette } : {}),
+    ...(Object.keys(slides).length ? { slides } : {}),
+  };
+}
+
+function normalizeColorRecord(value, fieldPath, issues) {
+  if (!isPlainObject(value)) {
+    issues.push(`${fieldPath}: expected color contract object`);
+    return null;
+  }
+  const color = normalizeHex(value.value);
+  if (!color) issues.push(`${fieldPath}.value: expected #RRGGBB color`);
+  const source = ["explicit", "recommended", "inferred"].includes(value.source)
+    ? value.source
+    : null;
+  if (!source) issues.push(`${fieldPath}.source: expected explicit, recommended, or inferred`);
+  return color && source
+    ? { value: color, requested: String(value.requested || color), source }
+    : null;
+}
+
+function validateAndNormalizeDesignContract(value, issues) {
+  if (value === undefined || value === null) return null;
+  if (!isPlainObject(value)) {
+    issues.push("design_contract: expected object");
+    return null;
+  }
+  const unknown = Object.keys(value).filter(key => !["version", "palette", "slides"].includes(key));
+  if (unknown.length) issues.push(`design_contract: unknown field(s): ${unknown.join(", ")}`);
+  if (value.version !== 1) issues.push("design_contract.version: must be 1");
+  const normalized = { version: 1 };
+  if (value.palette !== undefined) {
+    if (!isPlainObject(value.palette)) {
+      issues.push("design_contract.palette: expected object");
+    } else {
+      const palette = { source: value.palette.source === "explicit" ? "explicit" : "inferred" };
+      ["background", "surface", "primary", "accent"].forEach(key => {
+        if (value.palette[key] === undefined) return;
+        const record = normalizeColorRecord(value.palette[key], `design_contract.palette.${key}`, issues);
+        if (record) palette[key] = record;
+      });
+      if (value.palette.accent_usage !== undefined) {
+        if (!["sparse", "balanced", "dominant"].includes(value.palette.accent_usage)) {
+          issues.push("design_contract.palette.accent_usage: expected sparse, balanced, or dominant");
+        } else palette.accent_usage = value.palette.accent_usage;
+      }
+      if (Array.isArray(value.palette.requested)) palette.requested = clone(value.palette.requested);
+      normalized.palette = palette;
+    }
+  }
+  if (value.slides !== undefined) {
+    if (!isPlainObject(value.slides)) {
+      issues.push("design_contract.slides: expected object keyed by slide id");
+    } else {
+      normalized.slides = {};
+      Object.entries(value.slides).forEach(([slideId, contract]) => {
+        if (!isPlainObject(contract) || !String(contract.visual_kind || "").trim()) {
+          issues.push(`design_contract.slides.${slideId}.visual_kind: required`);
+          return;
+        }
+        normalized.slides[slideId] = {
+          visual_kind: String(contract.visual_kind).trim(),
+          source: ["explicit", "recommended", "inferred"].includes(contract.source)
+            ? contract.source
+            : "inferred",
+          ...(Number.isInteger(contract.item_count) ? { item_count: contract.item_count } : {}),
+          ...(contract.direction ? { direction: String(contract.direction) } : {}),
+          ...(contract.relationship ? { relationship: String(contract.relationship) } : {}),
+          ...(Number.isInteger(contract.hierarchy_depth)
+            ? { hierarchy_depth: contract.hierarchy_depth }
+            : {}),
+        };
+      });
+    }
+  }
+  return normalized;
+}
+
+function paletteWithOverrides(themePalette, designContract) {
+  const palette = clone(themePalette || {});
+  const requested = designContract && designContract.palette;
+  if (!requested) return palette;
+  const background = requested.background && requested.background.value;
+  const surface = requested.surface && requested.surface.value;
+  const primary = requested.primary && requested.primary.value;
+  const accent = requested.accent && requested.accent.value;
+  if (background) palette.background = background;
+  if (surface) palette.surface = surface;
+  if (background) {
+    const foreground = primary || palette.text || "#111111";
+    palette.surface = surface || mixHex(background, foreground, 0.06);
+    palette.surface_strong = mixHex(background, foreground, 0.12);
+    palette.border = mixHex(background, foreground, 0.24);
+  }
+  if (primary) {
+    palette.primary = primary;
+    palette.primary_text = primary;
+    palette.text = primary;
+    palette.muted = mixHex(background || palette.background || "#FFFFFF", primary, 0.68);
+    palette.inverse = background || palette.background || "#FFFFFF";
+    palette.primary_soft = mixHex(background || palette.background || "#FFFFFF", primary, 0.14);
+    palette.chart = [primary, accent || primary, ...(Array.isArray(palette.chart) ? palette.chart : [])].slice(0, 4);
+  }
+  if (accent) palette.accent = accent;
+  if (background && primary) {
+    // Explicit palettes are deck-wide contracts. Theme alternation must not
+    // silently restore the template's original foreground/background colors.
+    palette.alt_background = palette.background;
+    palette.alt_surface = palette.surface;
+    palette.alt_text = palette.text;
+    palette.alt_muted = palette.muted;
+    palette.alt_border = palette.border;
+    palette.alt_primary = palette.primary;
+    palette.alt_primary_text = palette.primary_text;
+  }
+  return palette;
+}
+
+function mixHex(base, overlay, overlayWeight) {
+  const left = normalizeHex(base);
+  const right = normalizeHex(overlay);
+  if (!left || !right) return left || right || base;
+  const weight = Math.max(0, Math.min(1, Number(overlayWeight) || 0));
+  const channels = [1, 3, 5].map(index => {
+    const a = parseInt(left.slice(index, index + 2), 16);
+    const b = parseInt(right.slice(index, index + 2), 16);
+    return Math.round(a * (1 - weight) + b * weight)
+      .toString(16)
+      .padStart(2, "0");
+  });
+  return `#${channels.join("")}`.toUpperCase();
+}
+
+module.exports = {
+  explicitCount,
+  inferDesignContract,
+  inferPaletteContract,
+  paletteWithOverrides,
+  slideContract,
+  validateAndNormalizeDesignContract,
+  visualKind,
+};

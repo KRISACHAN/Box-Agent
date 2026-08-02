@@ -13,6 +13,7 @@ const {
   resolveDeckDesign,
   validateAndNormalizeDeck,
 } = require("./deck_spec_core.js");
+const { paletteWithOverrides } = require("./design_contract_core.js");
 
 function parseArgs(argv) {
   if (!argv[0] || argv[0] === "--help" || argv[0] === "-h") {
@@ -43,8 +44,8 @@ function themeColor(palette, key, fallback) {
   return typeof value === "string" && value.trim() ? cssValue(value) : fallback;
 }
 
-function themeVariables(theme) {
-  const palette = theme.palette;
+function themeVariables(theme, designContract = null) {
+  const palette = paletteWithOverrides(theme.palette, designContract);
   const typography = theme.typography;
   const shape = theme.shape;
   const chart = Array.isArray(palette.chart) ? palette.chart : [];
@@ -60,6 +61,7 @@ function themeVariables(theme) {
     `  --deck-primary: ${cssValue(palette.primary)};`,
     `  --deck-primary-text: ${themeColor(palette, "primary_text", cssValue(palette.primary))};`,
     `  --deck-primary-soft: ${cssValue(palette.primary_soft)};`,
+    `  --deck-accent-color: ${themeColor(palette, "accent", cssValue(palette.primary))};`,
     `  --deck-text: ${cssValue(palette.text)};`,
     `  --deck-muted: ${cssValue(palette.muted)};`,
     `  --deck-border: ${cssValue(palette.border)};`,
@@ -281,6 +283,11 @@ function renderDocument(deck, theme) {
     ? theme.selection.visual_dna_ids.filter(value => typeof value === "string" && value.trim())
     : [];
   const visualDnaId = visualDnaIds[0] || theme.id;
+  const paletteAccentUsage = deck.design_contract
+    && deck.design_contract.palette
+    && deck.design_contract.palette.accent_usage
+    ? ` data-deck-palette-accent-usage="${escapeHtml(deck.design_contract.palette.accent_usage)}"`
+    : "";
   return [
     "<!doctype html>",
     '<html lang="zh-CN">',
@@ -292,10 +299,10 @@ function renderDocument(deck, theme) {
     "  <style>",
     runtimeCss,
     compositionCss,
-    themeVariables(theme),
+    themeVariables(theme, deck.design_contract),
     "  </style>",
     "</head>",
-    `<body data-deck-schema-version="1" data-deck-theme="${escapeHtml(visualDnaId)}" data-deck-theme-id="${escapeHtml(theme.id)}" data-deck-composition="${escapeHtml(design.family)}" data-deck-composition-variant="${escapeHtml(design.variant)}" data-deck-design-seed="${escapeHtml(design.seed)}"${themeStyleAttributes(theme)}>`,
+    `<body data-deck-schema-version="1" data-deck-theme="${escapeHtml(visualDnaId)}" data-deck-theme-id="${escapeHtml(theme.id)}" data-deck-composition="${escapeHtml(design.family)}" data-deck-composition-variant="${escapeHtml(design.variant)}" data-deck-design-seed="${escapeHtml(design.seed)}"${paletteAccentUsage}${themeStyleAttributes(theme)}>`,
     '  <main id="deck-root">',
     slideHtml,
     "  </main>",

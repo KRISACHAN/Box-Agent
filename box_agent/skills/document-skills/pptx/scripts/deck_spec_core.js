@@ -17,6 +17,9 @@ const {
   resolveDeckDesign,
   validateAndNormalizeDeckDesign,
 } = require("./composition_core.js");
+const {
+  validateAndNormalizeDesignContract,
+} = require("./design_contract_core.js");
 
 const SKILL_ROOT = path.resolve(__dirname, "..");
 const THEMES_DIR = path.join(SKILL_ROOT, "themes");
@@ -55,8 +58,18 @@ const LAYOUT_ID_ALIASES = Object.freeze({
   "integration-map-v1": "technical-diagram-v1",
   "data-pipeline-v1": "technical-diagram-v1",
   "qualitative-dashboard-v1": "dashboard-overview-v1",
+  "factory-line-v1": "factory-process-line-v1",
+  "legal-irac-v1": "legal-case-logic-v1",
+  "real-estate-factsheet-v1": "property-factsheet-v1",
+  "ecommerce-funnel-v1": "commerce-funnel-v1",
+  "supply-chain-network-v1": "supply-network-v1",
 });
 const LAYOUT_ID_HINTS = Object.freeze([
+  { keywords: ["factory-process", "factory-line", "production-line", "shop-floor"], id: "factory-process-line-v1" },
+  { keywords: ["legal-case", "legal-logic", "legal-irac", "irac"], id: "legal-case-logic-v1" },
+  { keywords: ["property-facts", "property-factsheet", "site-facts", "real-estate"], id: "property-factsheet-v1" },
+  { keywords: ["commerce-funnel", "ecommerce-funnel", "retail-funnel", "conversion-funnel"], id: "commerce-funnel-v1" },
+  { keywords: ["supply-network", "supply-chain-network", "logistics-network", "control-tower"], id: "supply-network-v1" },
   { keywords: ["heatmap", "heat-map", "risk-heatmap", "risk-heat-map"], id: "heatmap-matrix-v1" },
   { keywords: ["architecture", "system-layer", "tech-stack", "integration", "data-flow", "system-map", "data-pipeline", "pipeline"], id: "technical-diagram-v1" },
   { keywords: ["dashboard-overview", "management-dashboard", "operations-dashboard"], id: "dashboard-overview-v1" },
@@ -692,6 +705,7 @@ function validateAndNormalizeDeck(spec) {
     "title",
     "theme_id",
     "design",
+    "design_contract",
     "truth_contract",
     "slides",
   ];
@@ -730,6 +744,10 @@ function validateAndNormalizeDeck(spec) {
   const normalizedDesign = theme
     ? validateAndNormalizeDeckDesign(spec.design, theme, issues, warnings)
     : null;
+  const normalizedDesignContract = validateAndNormalizeDesignContract(
+    spec.design_contract,
+    issues
+  );
   spec.slides.forEach((slide, index) => {
     const slidePath = `slides.${index}`;
     if (!isPlainObject(slide)) {
@@ -808,11 +826,91 @@ function validateAndNormalizeDeck(spec) {
     normalizedSlides.push(normalizedSlide);
   });
 
+  if (normalizedDesignContract && normalizedDesignContract.slides) {
+    const collectionFields = {
+      "statement-focus-v1": "proofs",
+      "cards-grid-v1": "items",
+      "quadrant-matrix-v1": "items",
+      "pyramid-hierarchy-v1": "items",
+      "timeline-horizontal-v1": "steps",
+      "factory-process-line-v1": "stations",
+      "legal-case-logic-v1": "sections",
+      "property-factsheet-v1": "zones",
+      "commerce-funnel-v1": "stages",
+      "supply-network-v1": "nodes",
+      "table-data-v1": "rows",
+      "closing-next-steps-v1": "actions",
+    };
+    Object.entries(normalizedDesignContract.slides).forEach(([slideId, contract]) => {
+      const slide = normalizedSlides.find(item => item.id === slideId);
+      if (!slide) {
+        issues.push(`design_contract.slides.${slideId}: no matching deck slide`);
+        return;
+      }
+      const layout = getLayout(slide.layout_id);
+      const visualKinds = layout && Array.isArray(layout.visualKinds)
+        ? layout.visualKinds
+        : [];
+      if (
+        contract.source === "explicit"
+        && !visualKinds.includes(contract.visual_kind)
+      ) {
+        issues.push(
+          `design_contract.slides.${slideId}.visual_kind: explicit ` +
+          `${JSON.stringify(contract.visual_kind)} is not supported by ${slide.layout_id}; ` +
+          `supported kinds: ${visualKinds.join(", ")}`
+        );
+      }
+      if (
+        contract.source === "explicit"
+        && contract.direction
+        && layout
+        && Array.isArray(layout.directions)
+        && layout.directions.length
+        && !layout.directions.includes(contract.direction)
+      ) {
+        issues.push(
+          `design_contract.slides.${slideId}.direction: ${slide.layout_id} does not support ` +
+          `${JSON.stringify(contract.direction)}`
+        );
+      }
+      if (
+        contract.source === "explicit"
+        && contract.relationship
+        && layout
+        && Array.isArray(layout.relationships)
+        && layout.relationships.length
+        && !layout.relationships.includes(contract.relationship)
+      ) {
+        issues.push(
+          `design_contract.slides.${slideId}.relationship: ${slide.layout_id} does not support ` +
+          `${JSON.stringify(contract.relationship)}`
+        );
+      }
+      const collectionField = collectionFields[slide.layout_id];
+      const collection = collectionField && slide.props
+        ? slide.props[collectionField]
+        : null;
+      if (
+        contract.source === "explicit"
+        && Number.isInteger(contract.item_count)
+        && Array.isArray(collection)
+        && collection.length !== contract.item_count
+      ) {
+        issues.push(
+          `design_contract.slides.${slideId}.item_count: explicit contract requires ` +
+          `${contract.item_count}, got ${collection.length} in props.${collectionField}`
+        );
+      }
+    });
+  }
+
   const normalized = {
     schema_version: 1,
     title: typeof spec.title === "string" ? spec.title.trim() : "",
     theme_id: typeof spec.theme_id === "string" ? spec.theme_id : "",
     ...(normalizedDesign ? { design: normalizedDesign } : {}),
+    ...(normalizedDesignContract ? { design_contract: normalizedDesignContract } : {}),
     ...(normalizedTruthContract ? { truth_contract: normalizedTruthContract } : {}),
     slides: normalizedSlides,
   };

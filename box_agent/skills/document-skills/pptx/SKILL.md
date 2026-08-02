@@ -46,6 +46,22 @@ explicit opt-outs such as “不要拼贴” or
 user explicitly named or selected that exact theme. Do not turn the fallback
 `blue-professional` id into an artificial explicit choice; a strongly
 mismatched fallback is normalized to the high-confidence auto match.
+Explicit palette wording is persisted separately in `design_contract.palette`
+and overrides theme color tokens while retaining the selected theme's
+typography, shape, surface grammar, and allowed composition families. Preserve
+explicit colors and their roles in `outline.design_requirements`; never reduce
+“深蓝、米白、少量橙色点缀” to a generic cool or light theme match.
+When a short brief names a subject with a stable, unmistakable visual identity,
+the contract may add a sparse inferred subject palette after selecting the
+registered theme—for example Tesla black/white/red, Forbidden City
+vermilion/parchment/gold, or Minecraft forest/stone/grass green. This palette is
+a soft semantic default only: any user-authored palette wording or exact hex
+colors outrank it.
+Explicit geometry, direction, relationship, and item-count requirements are
+also persisted in `design_contract.slides` and are hard constraints. Use
+`pyramid-hierarchy-v1` for an explicit pyramid instead of approximating it with
+a technical diagram, and choose a layout whose declared capacity fits the
+required number of visual items.
 
 ### Composition comparison intent
 
@@ -154,7 +170,7 @@ Never simulate a redesign by changing only subtitles or by rewriting
 The scaffold stdout is the complete selected-layout contract. Copy prop names
 and shapes from `fields`/`editor.defaultProps`; do not guess aliases or inspect
 the same layout again. Common arrays are `cards-grid-v1.items`,
-`kpi-grid-v1.items`, `project-case-study-v1.metrics`, and
+`quadrant-matrix-v1.items`, `kpi-grid-v1.items`, `project-case-study-v1.metrics`, and
 `timeline-horizontal-v1.steps`.
 
 ## 0. Non-negotiable Rules
@@ -176,6 +192,7 @@ the same layout again. Common arrays are `cards-grid-v1.items`,
 13. Scaffold the full `deck.json` once, using only exact ids supplied by the current `SCAFFOLD_INPUT`; never guess a theme/layout id or reread the registry when that input is present. After a blocking structural or media validation fails, patch only the paths named in the fresh report. Once a repair patch has been applied, the old blocking reports are stale: let the filesystem checkpoint invoke `finalize_controlled_deck.js` once instead of separately rerunning validators, render, self-check, and runtime probe. Never apply two repair patches from the same report. If the same refreshed spec issue class recurs twice, stop automatic repair and re-read the existing contract once. Source/URL/private-fact findings never trigger an automatic repair loop: use a neutral formulation, replace a required unavailable fact with an explicit placeholder, or omit the unsupported optional claim, then finish the HTML and summarize the finding afterward. Preserve every outline-bound title exactly plus the page's content anchors. Quantitative anchors may be split naturally across KPI/chart labels and values; do not duplicate a full source sentence in every cell merely to satisfy binding. Choose a neutral, source-safe outline title before scaffolding and place any placeholder in its supporting field. A public-research deck must not expose visible `待补充` for an optional gap; use supported copy instead. Reserve visible placeholders for required unavailable facts. Never rewrite scaffolded fact buckets, regenerate the whole deck, or reset with `--force` to clear validation errors.
 14. Source-bound decks never invent named clients, projects, company/product names, financing rounds or stages, awards, publications, rankings, dates, team origins/sizes/history, project narratives, process steps, or future plans. User-authorized assumptions may support disclosed illustrative metrics or performance scenarios only; they do not authorize invented proper nouns, financing stages, dates, team facts, awards, or documentary claims. In a strict source-only request, factual fields such as statement/support copy, KPI detail, project positioning/caption, timeline step title/body, and card body must copy supplied wording, omit an optional field, or use `待补充` only when a required field is genuinely missing; polished generic prose is still unsupported. Do not infer a funding round, infer a founding year from “third year”, invent a prior team size, or turn missing evidence into generic positive copy such as “复购率持续提升”. Creative image direction permits visual imagination, not factual invention. A generated project/case-study image must use `origin: "generated"` and an explicit concept/placeholder alt or caption. A deep-research deck crosses a hard upstream gate before authoring: `validate_research_artifacts.py` must produce a fresh successful report, and `validate_outline.js --research-report ...` accepts only exact `verified_evidence[].canonical` values in `entity | claim | source_type | source_url` form. Conflicting, unverified, cross-entity, or excerpt-unsupported research never enters `truth_contract.research_facts`. Run `validate_deck_truth.js` only as a post-generation source advisory after `index.html` exists. Its source, URL, or private-fact findings never block HTML delivery, invalidate an otherwise usable deck, or trigger a repair loop; summarize them under `Source` or `Limitations`.
 15. Never create a fake bitmap with Pillow, SVG, a solid fill, or copied placeholder merely to satisfy a media field. If image generation fails, either block as required by `creative_image_mode`, switch to a layout whose media is optional, or retain the built-in editable placeholder and record the decision as `failed`/`skip`. Never relabel a placeholder as `generated`, and never reuse one placeholder as several supposedly distinct generated images.
+16. Exact user-authored `#RRGGBB` palettes are hard design contracts and outrank color-name paraphrases introduced by the outline. Two or three exact values map deterministically to background, primary, and accent unless the user labels those roles explicitly. Never replace an exact accent such as `#EF4444` with the nearest named red. A user instruction that forbids image generation is also a hard contract: every generated-image decision must remain `skip`, `generation_forbidden` is persisted in the manifest, and image QA must fail if a generated or required image entry reappears.
 
 ## 1. Route Decision
 
@@ -185,7 +202,7 @@ Use this path by default:
 
 1. **Pass the content & outline gate first (see §1.1 and `references/outline.md`).** Every new controlled deck writes one `outline.json` and validates it to `qa/outline_check.json` before theme/layout selection. When the user already supplied a complete page list, this is a lightweight traceability mapping, not a new invented storyline. A concise solution brief naming the intended system, integrations, processes, and page count is also enough to plan a proposal without external research. Do not write slide HTML or start image planning until that report is `ok`. If a material audience/scope choice is missing, call `request_user_input` once; route to `research-synthesis` only when external evidence is necessary (§1.1). End the clarification turn after the tool call; the next user reply continues this deck rather than starting a fresh HTML task.
 2. inspect the built-in theme catalog with `scripts/inspect_deck_contract.js` only when the current checkpoint does not already contain `SCAFFOLD_INPUT`. When it does, use its exact registered ids directly. For a normal request, pass `--theme auto`; the scaffold performs the built-in metadata match and reports `theme_selection`. If `html-templates` is available, its Visual DNA may inform the brief, but it is not required for selection. Use `--theme <REGISTERED_THEME_ID> --lock-theme` only after the user explicitly names or chooses that exact id. Use `default_theme_id` only when the matcher reports `fallback_default`; never copy it into the command merely because it is the default, and never invent a theme id (see §3.0).
-3. query layouts by page role/density/media needs, choose the **ordered layout id for every slide (including repeats)**, choose `--image-mode auto` or `creative_image_mode` from the brief, then run the hard-start scaffold command with `--outline outline.json --out deck.json` once. Semantic fidelity beats forced variety: a qualitative page must not use `chart-*` or `kpi-grid-v1` unless its outline evidence contains real quantities, and repeated layouts are allowed. Use `technical-diagram-v1` for professional architecture, system-integration, data-flow, and data-pipeline pages: set `diagram_kind`, author stable node ids plus explicit edges, and let the bundled DiagramSpec + ELK runtime compute the SVG. Keep `architecture-layered-v1` and `system-integration-v1` only for compatibility with existing decks. Use `dashboard-overview-v1` for a dashboard concept whose real values have not been supplied; use `kpi-grid-v1` only once quantitative evidence exists. A requested risk heatmap uses `heatmap-matrix-v1`; its editable semantic cells render as intensity levels without being mistaken for a plain table. A requested Gantt plan uses `table-data-v1` with `variant: "gantt"`; it supports a task column plus up to five editable phase columns and up to twelve work packages, and inactive cells use `"—"` rather than an empty string. The scaffold persists each page's title/message/layout/visual as `outline_intent`, normalizes strong visual mismatches (for example heatmap→heatmap matrix, matrix→table, Gantt→Gantt table, quadrant→cards, architecture→technical diagram, integration→technical diagram, qualitative dashboard→dashboard overview), and safely converts an otherwise qualitative chart/KPI choice to cards instead of inventing values or requiring a model retry. Later QA checks explicit visual cardinality such as “三段式” or “四象限”. Do not discard or rewrite that intent metadata. Use `table-data-v1`, not `closing-next-steps-v1`, when a next-step page carries parallel fields such as task/action, role/owner, responsibility, member/name, status, or date; the closing layout is only for self-contained calls to action whose label and detail do not imply a responsibility matrix. The scaffold may enforce this distinction from the bound outline and reports any change under `layout_normalizations`; author only against the returned effective layout contract. For `source_mode=user_provided`, exact quantities in that page's message/bullets are evidence even when its external-link `evidence` array is empty; never downgrade a user-mandated editable chart or KPI page merely because the supplied facts do not need URLs. Use `project-case-study-v1` only for an actual source-backed project/case with proof metrics; it is not a generic image-plus-text layout for history, profiles, or other editorial narratives. A requested project case that combines a thumbnail/media region with project metrics remains `project-case-study-v1`; words such as “关键数字指标卡” describe the proof region and must not convert the whole page into `kpi-grid-v1`. Missing private project values may use visible `待补充` placeholders without changing that composition. Translate every explicit recoverable page-content requirement into an exact `--require-field SLIDE:FIELD` from that chosen contract: KPI grids use `items`, while project case studies use `metrics`. Decorative styling is not a recoverable content requirement: for example, a cover asking for a generated hero plus rotated corner labels uses the hero layout and composition styling, not `--require-field 1:tags`. A project page that must contain 2-3 metrics must use a layout whose fields include `metrics` (do not substitute `image-hero-split-v1`, which has no metrics), and a requested KPI page stays on `kpi-grid-v1` rather than being weakened to a generic cards layout. The scaffold stdout returns the complete selected-layout contracts and bound outline pages; do not call `inspect_layout.js` once per selected slide before or after scaffolding. Valid props are under `layouts[].fields` and examples/defaults under `layouts[].editor.defaultProps`. Do not query nonexistent `.props` / `.required_fields`, read the full manifest in chunks, use `execute_code` to inspect it, grep the registry source, or repeatedly inspect the same layout. Use `inspect_deck_contract.js --list-themes` and `query_layouts.js --list` for compact discovery.
+3. query layouts by page role/density/media needs, choose the **ordered layout id for every slide (including repeats)**, choose `--image-mode auto` or `creative_image_mode` from the brief, then run the hard-start scaffold command with `--outline outline.json --out deck.json` once. Semantic fidelity beats forced variety: a qualitative page must not use `chart-*` or `kpi-grid-v1` unless its outline evidence contains real quantities, and repeated layouts are allowed. Use `technical-diagram-v1` for professional architecture, system-integration, data-flow, and data-pipeline pages: set `diagram_kind`, author stable node ids plus explicit edges, and let the bundled DiagramSpec + ELK runtime compute the SVG. Keep `architecture-layered-v1` and `system-integration-v1` only for compatibility with existing decks. Use `quadrant-matrix-v1` for a true editable 2×2/四象限 priority matrix; do not approximate it with a table or generic cards. Use `dashboard-overview-v1` for a dashboard concept whose real values have not been supplied; use `kpi-grid-v1` only once quantitative evidence exists. A requested risk heatmap uses `heatmap-matrix-v1`; its editable semantic cells render as intensity levels without being mistaken for a plain table. A requested Gantt plan uses `table-data-v1` with `variant: "gantt"`; it supports a task column plus up to five editable phase columns and up to twelve work packages, and inactive cells use `"—"` rather than an empty string. The scaffold persists each page's title/message/layout/visual as `outline_intent`, normalizes strong visual mismatches (for example heatmap→heatmap matrix, 2×2 matrix→quadrant matrix, generic matrix→table, Gantt→Gantt table, architecture→technical diagram, integration→technical diagram, qualitative dashboard→dashboard overview), and safely converts an otherwise qualitative chart/KPI choice to cards instead of inventing values or requiring a model retry. Later QA checks explicit visual cardinality such as “三段式” or “四象限”. Do not discard or rewrite that intent metadata. Use `table-data-v1`, not `closing-next-steps-v1`, when a next-step page carries parallel fields such as task/action, role/owner, responsibility, member/name, status, or date; the closing layout is only for self-contained calls to action whose label and detail do not imply a responsibility matrix. The scaffold may enforce this distinction from the bound outline and reports any change under `layout_normalizations`; author only against the returned effective layout contract. For `source_mode=user_provided`, exact quantities in that page's message/bullets are evidence even when its external-link `evidence` array is empty; never downgrade a user-mandated editable chart or KPI page merely because the supplied facts do not need URLs. Use `project-case-study-v1` only for an actual source-backed project/case with proof metrics; it is not a generic image-plus-text layout for history, profiles, or other editorial narratives. A requested project case that combines a thumbnail/media region with project metrics remains `project-case-study-v1`; words such as “关键数字指标卡” describe the proof region and must not convert the whole page into `kpi-grid-v1`. Missing private project values may use visible `待补充` placeholders without changing that composition. Translate every explicit recoverable page-content requirement into an exact `--require-field SLIDE:FIELD` from that chosen contract: KPI grids use `items`, while project case studies use `metrics`. Decorative styling is not a recoverable content requirement: for example, a cover asking for a generated hero plus rotated corner labels uses the hero layout and composition styling, not `--require-field 1:tags`. A project page that must contain 2-3 metrics must use a layout whose fields include `metrics` (do not substitute `image-hero-split-v1`, which has no metrics), and a requested KPI page stays on `kpi-grid-v1` rather than being weakened to a generic cards layout. The scaffold stdout returns the complete selected-layout contracts and bound outline pages; do not call `inspect_layout.js` once per selected slide before or after scaffolding. Valid props are under `layouts[].fields` and examples/defaults under `layouts[].editor.defaultProps`. Do not query nonexistent `.props` / `.required_fields`, read the full manifest in chunks, use `execute_code` to inspect it, grep the registry source, or repeatedly inspect the same layout. Use `inspect_deck_contract.js --list-themes` and `query_layouts.js --list` for compact discovery.
 4. plan slide-level image decisions in the scaffolded `assets/generated/manifest.json`. Derive one stable deck context/style anchor from the selected theme and repeat it inside every generated-image prompt; do not add a competing top-level manifest schema. For each declared slot choose `generate`, `use_existing`, or `skip` from the narrative job. A concrete subject normally uses a fixed-frame hero slot; atmosphere may use the slide-level background; typography/data-led pages may skip bitmap media. Prefer one dominant media treatment rather than filling both hero and background without a reason.
 5. call `generate_image` for every `generate` item before final validation. Emit independent image calls together in one assistant tool-call batch; the executor runs this parallel-safe tool concurrently. Do not create a sub-agent merely to wait for image generation—the parent still needs the returned asset paths before manifest binding and QA. Always pass `watermark: false`. Localize every `use_existing` asset. Once the files exist, run `sync_image_manifest_status.js` once instead of manually editing the manifest. Store artifact-root-relative paths in the declared media prop or `slide.background`, and set media `origin` to `generated` or `asset`; the final `deck.json` never contains an unresolved generation request.
 6. fill the scaffolded `deck.json` with one controlled batch patch when practical, then run the checkpoint's single `scripts/finalize_controlled_deck.js deck.json --out index.html` command. It validates spec and the image manifest before rendering, compiles HTML, runs HTML self-check and `probe_deck_runtime.js` at `1440x900`, then records source/truth findings as a non-blocking advisory. It stops at the first actionable structural, media, HTML, or runtime failure and keeps successful validator payloads out of model history. On a blocking failure, patch only the named paths. Source/URL/private-fact findings are reported after generation and never start a repair loop. For public-research decks, do not expose `待补充` merely because a nonessential claim was not researched: omit that claim and use supported copy instead. For required unavailable public facts use `暂无可验证公开数据`; for required user/private facts use `待补充` or `待客户确认`, then continue without asking.
@@ -438,6 +455,49 @@ This is a supported path, not a blocker and not automatically a limitation.
 Use `default_theme_id` only when the brief does not clearly match another
 registered theme.
 
+Short entity-led briefs still carry visual meaning. The built-in matcher maps
+fantasy or wizarding-world subjects to `vellum`, sandbox or voxel-game subjects
+to `8-bit-orbit`, museum and cultural-heritage subjects to
+`biennale-yellow`, and electric-mobility subjects to `neo-grid-bold`. Keep
+these subject signals in the original brief passed to `--theme auto`; do not
+replace a meaningful title such as Harry Potter, Minecraft, the Palace Museum,
+or Tesla with a generic category before theme selection.
+
+For a short one-sentence brief, classify the user before falling back to a
+generic business theme. Audience outranks topic when they conflict: a primary
+school solar-system lesson uses the child-friendly `daisy-days` system rather
+than a formal science grid. User purpose and subject then select the closest
+registered design language: classroom teaching uses `pin-and-paper`; science
+history and space exploration use `cobalt-grid`; archaeology and ancient
+civilizations use `stencil-tablet`; operating reviews use
+`data-intelligence`; formal proposals use `consulting-navy`; food and
+hospitality use `long-table`; youthful beauty launches use `capsule`; gentle
+animation, travel, and wedding stories use `soft-editorial`; sports culture
+uses `bold-poster`; portfolios use `block-frame`; public-interest campaigns
+use `peoples-platform`; climate and nature research use `grove`; and
+independent music uses `retro-zine`. These are broad intent classes, not a list
+of isolated title exceptions. Preserve the user's original entity, audience,
+and purpose together so layout-family inference can distinguish a data review
+from a generic institutional report.
+
+Ten high-frequency professional intents own dedicated visual systems rather
+than sharing a generic business palette: employee onboarding, employee
+handbooks, culture, and talent programs use `people-handbook`; investment
+memos, valuation, earnings interpretation, capital allocation, and investor
+relations use `capital-ledger`; clinical trials, cases, patient pathways, and
+medical education use `clinical-atlas`; government, public policy, regulation,
+municipal services, and public governance use `civic-brief`; thesis defenses,
+research proposals, literature reviews, and research methodology use
+`research-notebook`; manufacturing operations, production lines, lean quality,
+and OEE use `factory-floor`; legal opinions, case analysis, disputes, evidence,
+and compliance review use `legal-docket`; real-estate development, land
+acquisition, site analysis, and asset facts use `property-atlas`; retail,
+ecommerce, merchandising, GMV, SKU, and conversion analysis use
+`commerce-pulse`; supply-chain, logistics, warehousing, inventory, fulfillment,
+and OTIF use `logistics-control-tower`. Prefer these precise intent rules over broad industry
+metadata. Keep a conflicting stronger audience rule intact—for example a
+primary-school health lesson remains `daisy-days`.
+
 For neo-brutalist block-frame briefs, keep palette intent explicit: select
 `block-frame-mono-blue` when the user asks for high-contrast black/white with
 only a restrained saturated-blue accent; keep `block-frame` for playful
@@ -472,11 +532,25 @@ intelligence, analytics, finance, and decision-dashboard briefs. It defaults to
 `analytical-exhibit` and supplies a high-density evidence console with KPI,
 chart, table, and data-flow treatments.
 
-`signal` and `soft-editorial` own dedicated CSS in addition to their theme
-tokens. `signal` uses institutional navy/bone/gold rules, serif authority, and
-ledger-like evidence surfaces. `soft-editorial` uses warm paper, magazine
-rules, asymmetric reading rhythm, and softly colored editorial blocks. Do not
-describe either theme as a palette-only variation.
+`signal`, `soft-editorial`, `daisy-days`, `people-handbook`, `capital-ledger`,
+`clinical-atlas`, `civic-brief`, `research-notebook`, `factory-floor`,
+`legal-docket`, `property-atlas`, `commerce-pulse`, and
+`logistics-control-tower` own dedicated CSS in
+addition to their theme tokens. `signal` uses institutional navy/bone/gold
+rules, serif authority, and ledger-like evidence surfaces. `soft-editorial`
+uses warm paper, magazine rules, asymmetric reading rhythm, and softly colored
+editorial blocks. `daisy-days` uses a recognizable pastel collage, chunky
+outlined cards, dotted classroom rules, and a CSS flower/rainbow signature.
+The professional systems remain distinguishable without bitmap media:
+employee badge and pinned paper, valuation axes and financial hairlines,
+clinical graph paper and specimen labels, policy docket and civic seal, or
+monograph section marks and footnote rhythm; the five newer systems add safety
+rails and QC tags, docket/exhibit rhythm, cadastral grids and north marks, SKU
+labels and receipt barcodes, or container IDs and ETA routes. Their flagship
+editable layouts are `factory-process-line-v1`, `legal-case-logic-v1`,
+`property-factsheet-v1`, `commerce-funnel-v1`, and `supply-network-v1`.
+Do not describe these themes as
+palette-only variations.
 
 ### 3.1 Layout constraints
 

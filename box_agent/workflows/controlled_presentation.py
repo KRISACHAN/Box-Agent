@@ -52,6 +52,12 @@ _IMAGE_GENERATION_TOOL_ERROR = (
     "with an exact listed output_path and watermark=false; do not inspect files or "
     "invent another path."
 )
+_IMAGE_AUTH_BLOCKED_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_IMAGE_AUTH_BLOCKED: the image service returned HTTP 401 "
+    "for this presentation. Do not call generate_image or any other tool again in "
+    "this turn. End the turn and report that image generation is blocked until the "
+    "service authorization is refreshed."
+)
 _SCAFFOLD_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY: SCAFFOLD_INPUT in the latest "
     "checkpoint already contains every registered theme/layout id and every page "
@@ -147,6 +153,12 @@ _RESEARCH_HANDOFF_TOOL_ERROR = (
     "research QA report, or inspect/list the filesystem. Read only a Markdown "
     "handoff file explicitly named in RESEARCH_INPUT when its content is missing "
     "from context; otherwise write outline.json now."
+)
+_RESEARCH_SEARCH_COMPLETE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research searches "
+    "already returned usable evidence. Do not call web_search or a browser read tool "
+    "again. Complete the cross-verification, insight, evidence ledger, and validation "
+    "report from the evidence already in context."
 )
 
 _PPTX_SCRIPTS_DIR = (
@@ -605,6 +617,18 @@ def _repair_stalled_checkpoint() -> str:
     )
 
 
+def _image_auth_blocked_checkpoint() -> str:
+    return (
+        "Internal controlled-presentation checkpoint; the image service returned "
+        "HTTP 401, which is a non-retryable authorization failure for this turn. "
+        "Further image requests are stopped to prevent an unbounded retry loop.\n"
+        f"{CHECKPOINT_MARKER}image_auth_blocked\n"
+        "NEXT_ACTION=Do not call generate_image or any other tool again. End the "
+        "turn and state that delivery is incomplete because image generation "
+        "authorization must be refreshed before retrying."
+    )
+
+
 def _checkpoint_json(
     checkpoint_text: str,
     label: str,
@@ -853,6 +877,21 @@ def _research_result_is_empty(result: ToolResult) -> bool:
     }
 
 
+def _image_result_is_unauthorized(result: ToolResult) -> bool:
+    """Return whether image generation failed with a deterministic HTTP 401."""
+    if result.success:
+        return False
+    raw_output = result.raw_output
+    if isinstance(raw_output, dict) and raw_output.get("status_code") == 401:
+        return True
+    payload = "\n".join(
+        part
+        for part in (result.error, result.content, result.model_context)
+        if isinstance(part, str) and part
+    )
+    return re.search(r"(?<!\d)401(?!\d)", payload) is not None
+
+
 @dataclass(slots=True)
 class ControlledPresentationPolicy:
     """Stateful policy for one controlled-presentation agent run."""
@@ -868,6 +907,8 @@ class ControlledPresentationPolicy:
     has_image_input: bool = False
     has_repair_input: bool = False
     repair_stalled: bool = False
+    image_auth_blocked: bool = False
+    research_search_exhausted: bool = False
     apply_patch_repair_allowed: bool = False
     apply_patch_repair_paths: tuple[str, ...] = ()
     _last_checkpoint_text: str | None = None
@@ -887,12 +928,21 @@ class ControlledPresentationPolicy:
 
     def build_checkpoint(self) -> str | None:
         """Derive the current presentation stage from persisted artifacts."""
+        if self.image_auth_blocked:
+            return _image_auth_blocked_checkpoint()
         if self._research_calls_since_checkpoint:
             self._research_rounds_without_handoff += 1
             self._research_calls_since_checkpoint = 0
-        fallback_allowed = (
+        round_limit_reached = (
             self._research_rounds_without_handoff >= RESEARCH_ROUND_LIMIT
         )
+        unavailable = self._research_failed_attempts + self._research_empty_attempts
+        fallback_allowed = (
+            round_limit_reached
+            and self._research_tool_attempts > 0
+            and unavailable == self._research_tool_attempts
+        )
+        self.research_search_exhausted = round_limit_reached and not fallback_allowed
         attempt_summary = {
             "rounds": self._research_rounds_without_handoff,
             "calls": self._research_tool_attempts,
@@ -902,21 +952,14 @@ class ControlledPresentationPolicy:
         }
         fallback_reason = None
         if fallback_allowed:
-            unavailable = (
-                self._research_failed_attempts + self._research_empty_attempts
-            )
-            fallback_reason = (
-                "research_sources_unavailable"
-                if self._research_tool_attempts > 0
-                and unavailable == self._research_tool_attempts
-                else "research_round_limit_reached_without_validated_report"
-            )
+            fallback_reason = "research_sources_unavailable"
         checkpoint_text = build_checkpoint_text(
             self.workspace_dir,
             self.research_mode,
             research_fallback_allowed=fallback_allowed,
             research_fallback_reason=fallback_reason,
             research_attempt_summary=attempt_summary,
+            research_search_exhausted=self.research_search_exhausted,
         )
         research_input = (
             _checkpoint_json(checkpoint_text, "RESEARCH_INPUT")
@@ -1031,11 +1074,27 @@ class ControlledPresentationPolicy:
             arguments,
         )
         if parallel:
+            if self.stage == "image_auth_blocked":
+                return _IMAGE_AUTH_BLOCKED_TOOL_ERROR
+            if (
+                self.stage == "research"
+                and self.research_search_exhausted
+                and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
+            ):
+                return _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR
             return handoff_error
         if self.stage == "repair_stalled":
             return _REPAIR_STALLED_TOOL_ERROR
+        if self.stage == "image_auth_blocked":
+            return _IMAGE_AUTH_BLOCKED_TOOL_ERROR
         if handoff_error is not None:
             return handoff_error
+        if (
+            self.stage == "research"
+            and self.research_search_exhausted
+            and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
+        ):
+            return _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR
         if (
             self.stage == "content_patch"
             and self.has_patch_input
@@ -1093,6 +1152,17 @@ class ControlledPresentationPolicy:
         result: ToolResult,
     ) -> None:
         """Update deterministic-repair state after one tool result."""
+        if (
+            self.stage == "images"
+            and tool_name == "generate_image"
+            and _image_result_is_unauthorized(result)
+        ):
+            self.image_auth_blocked = True
+            _log.warning(
+                "controlled_presentation/image_auth_blocked status=401 "
+                "further_image_calls_stopped=true"
+            )
+
         if self.stage == "research" and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS:
             self._research_tool_attempts += 1
             self._research_calls_since_checkpoint += 1
@@ -1206,7 +1276,12 @@ class ControlledPresentationPolicy:
         return tool_name in DIRECT_RESEARCH_READ_TOOLS
 
     def allows_completion_continuation(self) -> bool:
-        return self.stage not in {"complete", "repair_stalled"}
+        return self.stage not in {"complete", "repair_stalled", "image_auth_blocked"}
 
     def suppresses_generic_final_summary(self) -> bool:
-        return self.stage not in {None, "complete", "repair_stalled"}
+        return self.stage not in {
+            None,
+            "complete",
+            "repair_stalled",
+            "image_auth_blocked",
+        }

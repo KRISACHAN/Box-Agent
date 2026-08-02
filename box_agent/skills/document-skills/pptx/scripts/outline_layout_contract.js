@@ -1,19 +1,8 @@
 "use strict";
 
-const CHINESE_COUNTS = Object.freeze({
-  一: 1,
-  二: 2,
-  三: 3,
-  四: 4,
-  五: 5,
-  六: 6,
-  七: 7,
-  八: 8,
-  九: 9,
-  十: 10,
-});
+const { explicitCount } = require("./design_contract_core.js");
 
-const QUADRANT_RE = /(?:四象限|象限图|quadrant)/i;
+const QUADRANT_RE = /(?:四象限|象限图|2\s*[×xX*]\s*2|二乘二|优先级矩阵|影响[^\n]{0,20}紧急|quadrant|priority\s*matrix)/i;
 const HEATMAP_RE = /(?:风险热力图|热力图|风险矩阵[^\n]{0,16}热力|heat\s*map|risk\s+heat\s*map)/i;
 const MATRIX_RE = /(?:风险\s*[\/+与、]?依赖)?矩阵|matrix|(?:结构化)?表格|\btable\b/i;
 const BAR_CHART_RE = /(?:柱状图|条形图|排名图|bar\s*chart|column\s*chart)/i;
@@ -29,8 +18,15 @@ const PROJECT_CASE_METRICS_RE = /(?:关键数字|项目指标|成果指标|metri
 const GANTT_RE = /(?:甘特(?:图|计划)?|gantt(?:\s*(?:chart|plan|schedule))?)/i;
 const TIMELINE_RE = /(?:时间轴|路线图|里程碑|节点串联|timeline|roadmap)/i;
 const PROCESS_RE = /(?:三段式|四段式|能力路径|演进路径|流程路径|process\s*flow|journey)/i;
+const FACTORY_PROCESS_RE = /(?:制造产线|生产线|工位流程|工序节拍|质量控制点|factory\s+line|production\s+line|station\s+flow|shop\s+floor)/i;
+const LEGAL_LOGIC_RE = /(?:IRAC|法律论证|案件逻辑|争点.{0,12}规则.{0,12}分析|issue.{0,12}rule.{0,12}analysis|legal\s+reasoning)/i;
+const PROPERTY_FACTSHEET_RE = /(?:地产底卡|项目底卡|地块分区|资产底卡|用地指标|property\s+factsheet|site\s+facts|parcel\s+plan)/i;
+const COMMERCE_FUNNEL_RE = /(?:零售漏斗|电商漏斗|转化漏斗|触达.{0,12}成交|commerce\s+funnel|e-?commerce\s+funnel|conversion\s+funnel)/i;
+const SUPPLY_NETWORK_RE = /(?:供应链网络|物流网络|履约网络|控制塔|control\s+tower|supply\s+network|logistics\s+network|fulfillment\s+network)/i;
+const PYRAMID_RE = /(?:金字塔|pyramid)/i;
+const NUMBERED_ACTIONS_RE = /(?:行动清单|编号行动|(?<![上下第])[一二三四五六七八九十0-9]+步(?:行动|清单|流程)|numbered\s+actions?)/i;
 const COMPARISON_RE = /(?:双栏对比|前后对比|方案对比|two[- ]column\s*comparison|before\s*(?:and|\/)?\s*after)/i;
-const COVER_RE = /(?:封面|\bcover\b|\bopening\b)/i;
+const COVER_RE = /(?:封面|\bcover\b|cover[_-]|\bopening\b)/i;
 const TAG_RE = /(?:标签|主线卡|关键词|\btags?\b|\bchips?\b)/i;
 const MEDIA_RE = /(?:照片|人物|海报|主视觉|插画|概念图|界面|截图|样机|hero|photo|portrait|poster|illustration|concept\s*art|interface|screenshot|mockup)/i;
 
@@ -107,12 +103,30 @@ function analyzeOutlineLayoutIntent(
     );
   };
 
-  if (QUADRANT_RE.test(visual)) {
+  if (PYRAMID_RE.test(visual) || PYRAMID_RE.test(layout)) {
     return semanticRule(
-      "quadrant",
+      "pyramid",
+      "pyramid-hierarchy-v1",
+      ["pyramid-hierarchy-v1"],
+      "outline explicitly asks for a top-down pyramid hierarchy"
+    );
+  }
+
+  if (NUMBERED_ACTIONS_RE.test(all)) {
+    return semanticRule(
+      "numbered-actions",
       "cards-grid-v1",
       ["cards-grid-v1"],
-      "outline asks for quadrant cards, which require four parallel card regions"
+      "outline explicitly asks for a complete ordered action list with editable numbered cards"
+    );
+  }
+
+  if (QUADRANT_RE.test(all)) {
+    return semanticRule(
+      "quadrant",
+      "quadrant-matrix-v1",
+      ["quadrant-matrix-v1"],
+      "outline explicitly asks for an editable two-by-two quadrant matrix"
     );
   }
   if (GANTT_RE.test(visual) || GANTT_RE.test(layout)) {
@@ -230,6 +244,54 @@ function analyzeOutlineLayoutIntent(
       "outline explicitly asks for a cover image or hero visual"
     );
   }
+  if (COVER_RE.test(layout)) {
+    return semanticRule(
+      "typography-cover",
+      "cover-editorial-v1",
+      ["cover-editorial-v1"],
+      "outline explicitly marks this page as a typography-led cover"
+    );
+  }
+  if (FACTORY_PROCESS_RE.test(all)) {
+    return semanticRule(
+      "factory-process-line",
+      "factory-process-line-v1",
+      ["factory-process-line-v1"],
+      "outline asks for a production-line view with editable station and quality metrics"
+    );
+  }
+  if (LEGAL_LOGIC_RE.test(all)) {
+    return semanticRule(
+      "legal-case-logic",
+      "legal-case-logic-v1",
+      ["legal-case-logic-v1"],
+      "outline asks for an editable legal issue-rule-analysis-conclusion chain"
+    );
+  }
+  if (PROPERTY_FACTSHEET_RE.test(all)) {
+    return semanticRule(
+      "property-factsheet",
+      "property-factsheet-v1",
+      ["property-factsheet-v1"],
+      "outline asks for a site or asset factsheet with editable zones and metrics"
+    );
+  }
+  if (COMMERCE_FUNNEL_RE.test(all)) {
+    return semanticRule(
+      "commerce-funnel",
+      "commerce-funnel-v1",
+      ["commerce-funnel-v1"],
+      "outline asks for an editable retail conversion funnel"
+    );
+  }
+  if (SUPPLY_NETWORK_RE.test(all)) {
+    return semanticRule(
+      "supply-network",
+      "supply-network-v1",
+      ["supply-network-v1"],
+      "outline asks for an editable supply network and fulfillment status view"
+    );
+  }
   if (TIMELINE_RE.test(visual) || /(?:timeline|roadmap)/i.test(layout)) {
     return semanticRule(
       "timeline",
@@ -283,14 +345,7 @@ function analyzeOutlineLayoutIntent(
 }
 
 function expectedVisualItemCount(slide) {
-  const visual = text(slide && slide.visual);
-  if (!visual) return null;
-  const match = visual.match(
-    /(?:^|[^0-9一二三四五六七八九十])([0-9]{1,2}|[一二三四五六七八九十])\s*(?:条|个|项|类|段(?:式)?|象限|节点|阶段|主线|里程碑|卡片|标签)/u
-  );
-  if (!match) return null;
-  const count = /^\d+$/.test(match[1]) ? Number(match[1]) : CHINESE_COUNTS[match[1]];
-  return Number.isInteger(count) && count >= 2 && count <= 10 ? count : null;
+  return explicitCount(slide);
 }
 
 function visualCollectionForSlide(slide) {
@@ -301,8 +356,29 @@ function visualCollectionForSlide(slide) {
   if (slide.layout_id === "cards-grid-v1") {
     return { field: "items", value: slide.props.items };
   }
+  if (slide.layout_id === "quadrant-matrix-v1") {
+    return { field: "items", value: slide.props.items };
+  }
+  if (slide.layout_id === "pyramid-hierarchy-v1") {
+    return { field: "items", value: slide.props.items };
+  }
   if (slide.layout_id === "timeline-horizontal-v1") {
     return { field: "steps", value: slide.props.steps };
+  }
+  if (slide.layout_id === "factory-process-line-v1") {
+    return { field: "stations", value: slide.props.stations };
+  }
+  if (slide.layout_id === "legal-case-logic-v1") {
+    return { field: "sections", value: slide.props.sections };
+  }
+  if (slide.layout_id === "property-factsheet-v1") {
+    return { field: "zones", value: slide.props.zones };
+  }
+  if (slide.layout_id === "commerce-funnel-v1") {
+    return { field: "stages", value: slide.props.stages };
+  }
+  if (slide.layout_id === "supply-network-v1") {
+    return { field: "nodes", value: slide.props.nodes };
   }
   if (slide.layout_id === "table-data-v1") {
     return { field: "rows", value: slide.props.rows };
@@ -312,6 +388,9 @@ function visualCollectionForSlide(slide) {
   }
   if (slide.layout_id === "closing-next-steps-v1") {
     return { field: "actions", value: slide.props.actions };
+  }
+  if (slide.layout_id === "statement-focus-v1") {
+    return { field: "proofs", value: slide.props.proofs };
   }
   return null;
 }

@@ -8,6 +8,7 @@ import shlex
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 from ..artifacts import OUTPUT_SUBDIR
 from ..loop_guards import CompletionGate
@@ -52,7 +53,6 @@ _CONTROLLED_PRESENTATION_REPORTS: Final[tuple[str, ...]] = (
     "html_self_check.json",
     "runtime_probe.json",
 )
-_RESEARCH_FALLBACK_MIN_MARKDOWN_FILES: Final = 3
 
 
 def _newest_file(paths: list[Path]) -> Path | None:
@@ -142,16 +142,43 @@ def _advisory_report_warning_count(report_path: Path) -> int:
 
 
 def _research_fallback_available(research_files: tuple[Path, ...]) -> bool:
-    """Return whether bounded research work is enough to continue safely."""
-    markdown_count = sum(path.suffix.casefold() == ".md" for path in research_files)
-    report_attempted = any(
-        path.name.endswith("_research_check.json")
-        for path in research_files
-    )
-    return (
-        report_attempted
-        or markdown_count >= _RESEARCH_FALLBACK_MIN_MARKDOWN_FILES
-    )
+    """Return whether an earlier policy run explicitly allowed fallback."""
+    for path in research_files:
+        if path.name != "research_status.json":
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(payload, dict)
+            and payload.get("status") == "fallback"
+            and payload.get("report_available") is False
+            and payload.get("generation_continues") is True
+        ):
+            return True
+    return False
+
+
+def _validated_research_source(item: dict[str, object]) -> bool:
+    """Mirror the research validator's accepted source-reference contract."""
+    source_url = item.get("source_url")
+    if not isinstance(source_url, str):
+        return False
+    try:
+        parsed = urlsplit(source_url)
+        scheme = parsed.scheme.casefold()
+    except ValueError:
+        return False
+    if item.get("source_type") == "user_input" and scheme in {
+        "file",
+        "user-input",
+    }:
+        return True
+    try:
+        return scheme in {"http", "https"} and bool(parsed.hostname)
+    except ValueError:
+        return False
 
 
 def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, tuple[Path, ...]]:
@@ -186,6 +213,7 @@ def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, t
         [
             *research_root.rglob("*.md"),
             *research_root.glob("*_evidence.json"),
+            research_root / "qa" / "research_status.json",
         ]
     )
     report_paths = non_empty(research_root.rglob("*_research_check.json"))
@@ -233,8 +261,7 @@ def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, t
             or not item["entity"].strip()
             or not isinstance(item.get("claim"), str)
             or not item["claim"].strip()
-            or not isinstance(item.get("source_url"), str)
-            or not item["source_url"].startswith(("http://", "https://"))
+            or not _validated_research_source(item)
             or not isinstance(item.get("canonical"), str)
             or not item["canonical"].strip()
             for item in verified_evidence
@@ -908,6 +935,7 @@ def build_checkpoint_text(
     research_fallback_allowed: bool = False,
     research_fallback_reason: str | None = None,
     research_attempt_summary: dict[str, int] | None = None,
+    research_search_exhausted: bool = False,
 ) -> str | None:
     """Return an authoritative next-stage checkpoint for controlled decks.
 
@@ -1101,29 +1129,42 @@ def build_checkpoint_text(
         and html_path is None
     ):
         stage = "research"
-        next_action = (
-            "This short factual presentation brief requires the preloaded "
-            "research-synthesis workflow before outline authoring. Choose Route A "
-            "for a broad landscape or Route B for a bounded topic, run the skill's "
-            "coarse-to-fine searches, and preserve the full useful search evidence "
-            "under research/. Do not replace that workflow with an ad-hoc four-query "
-            "scan. Consume each result set before the next batch; every later query "
-            "must name a still-uncovered slide-relevant dimension, conflict, or "
-            "first-party source instead of lightly rephrasing an already-run "
-            "entity/fact query. An empty AuthLevel or site:-filtered result is not "
-            "permission to repeat the same intent without the filter. For a known "
-            "exact URL, use an actually available direct browser tool; in officev3 "
-            "use standalone Playwright MCP rather than browser-gateway "
-            "source_preference:playwright, or use gateway auto/browser_connector. "
-            "Do not create or validate outline.json yet. The checkpoint "
-            "advances only after research/ contains at least three distinct "
-            "dimension files, the route's cross-verification and insight files, "
-            "and a fresh successful research/qa/*_research_check.json written by "
-            "validate_research_artifacts.py --report. Route A must also include "
-            "wide exploration. If an early "
-            "outline already exists, preserve it; update it from the completed "
-            "research in the next stage instead of deleting or duplicating it."
-        )
+        if research_search_exhausted:
+            next_action = (
+                "The bounded search rounds already returned usable evidence, so do "
+                "not call web_search or any browser read tool again. Do not create "
+                "outline.json yet. Use only the evidence already present in model "
+                "context and research/ to finish the route's cross-verification, "
+                "insight, structured evidence ledger, and fresh "
+                "research/qa/*_research_check.json via "
+                "validate_research_artifacts.py --report. Repair an unsuccessful "
+                "report from the existing evidence instead of bypassing validation. "
+                "The checkpoint advances only after that report is successful."
+            )
+        else:
+            next_action = (
+                "This short factual presentation brief requires the preloaded "
+                "research-synthesis workflow before outline authoring. Choose Route A "
+                "for a broad landscape or Route B for a bounded topic, run the skill's "
+                "coarse-to-fine searches, and preserve the full useful search evidence "
+                "under research/. Do not replace that workflow with an ad-hoc four-query "
+                "scan. Consume each result set before the next batch; every later query "
+                "must name a still-uncovered slide-relevant dimension, conflict, or "
+                "first-party source instead of lightly rephrasing an already-run "
+                "entity/fact query. An empty AuthLevel or site:-filtered result is not "
+                "permission to repeat the same intent without the filter. For a known "
+                "exact URL, use an actually available direct browser tool; in officev3 "
+                "use standalone Playwright MCP rather than browser-gateway "
+                "source_preference:playwright, or use gateway auto/browser_connector. "
+                "Do not create or validate outline.json yet. The checkpoint "
+                "advances only after research/ contains at least three distinct "
+                "dimension files, the route's cross-verification and insight files, "
+                "and a fresh successful research/qa/*_research_check.json written by "
+                "validate_research_artifacts.py --report. Route A must also include "
+                "wide exploration. If an early "
+                "outline already exists, preserve it; update it from the completed "
+                "research in the next stage instead of deleting or duplicating it."
+            )
     elif (deck_path is not None or html_path is not None) and outline_path is None:
         stage = "outline_backfill"
         next_action = (

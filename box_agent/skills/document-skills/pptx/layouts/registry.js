@@ -515,6 +515,70 @@ function renderCards(slide, index) {
   );
 }
 
+function renderQuadrantMatrix(slide, index) {
+  const p = slide.props;
+  const cards = p.items.map((item, itemIndex) => [
+    `<article class="quadrant-card quadrant-slot-${itemIndex}" data-item-index="${itemIndex}">`,
+    editableText("p", `items.${itemIndex}.kicker`, item.kicker || "", "quadrant-kicker"),
+    editableText("h3", `items.${itemIndex}.title`, item.title, "quadrant-title"),
+    editableText("p", `items.${itemIndex}.body`, item.body || "", "quadrant-body-copy"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    "layout-quadrant-matrix",
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      '<div class="quadrant-stage" data-layout-region="content">',
+      editableText("p", "y_axis_label", p.y_axis_label, "quadrant-y-axis"),
+      `<div class="quadrant-grid">${cards}</div>`,
+      editableText("p", "x_axis_label", p.x_axis_label, "quadrant-x-axis"),
+      "</div>",
+    ].join("\n")
+  );
+}
+
+function renderPyramid(slide, index) {
+  const p = slide.props;
+  const [apex, ...supports] = p.items;
+  const renderItem = (item, itemIndex, className) => [
+    `<article class="${className}" data-item-index="${itemIndex}">`,
+    editableText("p", `items.${itemIndex}.kicker`, item.kicker || "", "pyramid-kicker"),
+    editableText("h3", `items.${itemIndex}.title`, item.title),
+    editableText("p", `items.${itemIndex}.body`, item.body || "", "pyramid-body"),
+    "</article>",
+  ].join("\n");
+  const lower = supports.map((item, index) => (
+    renderItem(item, index + 1, "pyramid-support")
+  )).join("\n");
+  const connectorDrops = supports.map((_item, index) => {
+    const position = supports.length === 1 ? 50 : (index / (supports.length - 1)) * 100;
+    return `<span style="left:${position.toFixed(2)}%"></span>`;
+  }).join("");
+  return slideFrame(
+    slide,
+    index,
+    `layout-pyramid pyramid-${p.variant || "one-to-many"} pyramid-count-${p.items.length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      '<div class="pyramid-stage" data-layout-region="content">',
+      renderItem(apex, 0, "pyramid-apex"),
+      `<div class="pyramid-connectors" aria-hidden="true">${connectorDrops}</div>`,
+      `<div class="pyramid-supports">${lower}</div>`,
+      "</div>",
+    ].join("\n")
+  );
+}
+
 function comparisonColumn(side, value) {
   const items = value.items.map((item, index) => editableText("li", `${side}.items.${index}`, item)).join("\n");
   return [
@@ -830,6 +894,166 @@ function renderTimeline(slide, index) {
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
       "</header>",
       `<div class="timeline-track" data-layout-region="content">${steps}</div>`,
+    ].join("\n")
+  );
+}
+
+function renderFactoryProcessLine(slide, index) {
+  const p = slide.props;
+  const stations = (p.stations || []).map((station, stationIndex) => [
+    `<article class="factory-station" data-item-index="${stationIndex}">`,
+    '<div class="factory-station-head">',
+    editableText("span", `stations.${stationIndex}.code`, station.code, "factory-station-code"),
+    editableText("span", `stations.${stationIndex}.status`, station.status || "", "factory-station-status"),
+    "</div>",
+    editableText("h3", `stations.${stationIndex}.title`, station.title),
+    editableText("strong", `stations.${stationIndex}.metric`, station.metric, "factory-station-metric"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-factory-process factory-count-${(p.stations || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      `<div class="factory-process-track" data-layout-region="content">${stations}</div>`,
+      editableText("p", "note", p.note || "", "factory-process-note"),
+    ].join("\n")
+  );
+}
+
+function renderLegalCaseLogic(slide, index) {
+  const p = slide.props;
+  const sections = (p.sections || []).map((section, sectionIndex) => [
+    `<article class="legal-logic-section" data-item-index="${sectionIndex}">`,
+    '<div class="legal-section-index">',
+    `<span>${String(sectionIndex + 1).padStart(2, "0")}</span>`,
+    editableText("strong", `sections.${sectionIndex}.label`, section.label, "legal-section-label"),
+    "</div>",
+    editableText("h3", `sections.${sectionIndex}.title`, section.title),
+    editableText("p", `sections.${sectionIndex}.body`, section.body, "legal-section-body"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    "layout-legal-case-logic",
+    [
+      '<header class="slide-header legal-case-header" data-layout-region="header">',
+      '<div>',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</div>",
+      editableText("span", "matter_no", p.matter_no || "", "legal-matter-number"),
+      "</header>",
+      `<div class="legal-logic-grid" data-layout-region="content">${sections}</div>`,
+      editableText("p", "conclusion", p.conclusion || "", "legal-conclusion"),
+    ].join("\n")
+  );
+}
+
+function renderPropertyFactsheet(slide, index) {
+  const p = slide.props;
+  const zones = (p.zones || []).map((zone, zoneIndex) => [
+    `<article class="property-zone" data-item-index="${zoneIndex}">`,
+    editableText("span", `zones.${zoneIndex}.code`, zone.code, "property-zone-code"),
+    editableText("h3", `zones.${zoneIndex}.title`, zone.title),
+    editableText("p", `zones.${zoneIndex}.detail`, zone.detail, "property-zone-detail"),
+    "</article>",
+  ].join("\n")).join("\n");
+  const metrics = (p.metrics || []).map((metric, metricIndex) => [
+    `<article class="property-metric" data-item-index="${metricIndex}">`,
+    editableText("span", `metrics.${metricIndex}.label`, metric.label, "property-metric-label"),
+    editableText("strong", `metrics.${metricIndex}.value`, metric.value, "property-metric-value"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-property-factsheet property-zones-${(p.zones || []).length}`,
+    [
+      '<header class="slide-header property-header" data-layout-region="header">',
+      '<div>',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</div>",
+      editableText("span", "address", p.address || "", "property-address"),
+      "</header>",
+      '<div class="property-factsheet-grid" data-layout-region="content">',
+      `<div class="property-site-plan">${zones}<span class="property-north" aria-hidden="true">N</span></div>`,
+      `<aside class="property-metrics">${metrics}</aside>`,
+      "</div>",
+      editableText("p", "note", p.note || "", "property-note"),
+    ].join("\n")
+  );
+}
+
+function renderCommerceFunnel(slide, index) {
+  const p = slide.props;
+  const stages = (p.stages || []).map((stage, stageIndex) => [
+    `<article class="commerce-stage" data-item-index="${stageIndex}">`,
+    `<span class="commerce-stage-index">${String(stageIndex + 1).padStart(2, "0")}</span>`,
+    editableText("h3", `stages.${stageIndex}.label`, stage.label),
+    '<div class="commerce-stage-values">',
+    editableText("strong", `stages.${stageIndex}.value`, stage.value, "commerce-stage-value"),
+    editableText("span", `stages.${stageIndex}.rate`, stage.rate || "", "commerce-stage-rate"),
+    "</div>",
+    editableText("p", `stages.${stageIndex}.detail`, stage.detail || "", "commerce-stage-detail"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-commerce-funnel commerce-count-${(p.stages || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      `<div class="commerce-funnel-track" data-layout-region="content">${stages}</div>`,
+      editableText("p", "insight", p.insight || "", "commerce-insight"),
+    ].join("\n")
+  );
+}
+
+function renderSupplyNetwork(slide, index) {
+  const p = slide.props;
+  const nodes = (p.nodes || []).map((node, nodeIndex) => [
+    `<article class="supply-node" data-item-index="${nodeIndex}">`,
+    '<div class="supply-node-head">',
+    editableText("span", `nodes.${nodeIndex}.code`, node.code, "supply-node-code"),
+    editableText("span", `nodes.${nodeIndex}.status`, node.status || "", "supply-node-status"),
+    "</div>",
+    editableText("h3", `nodes.${nodeIndex}.title`, node.title),
+    editableText("p", `nodes.${nodeIndex}.detail`, node.detail || "", "supply-node-detail"),
+    "</article>",
+  ].join("\n")).join("\n");
+  const metrics = (p.metrics || []).map((metric, metricIndex) => [
+    `<article class="supply-metric" data-item-index="${metricIndex}">`,
+    editableText("span", `metrics.${metricIndex}.label`, metric.label, "supply-metric-label"),
+    editableText("strong", `metrics.${metricIndex}.value`, metric.value, "supply-metric-value"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-supply-network supply-count-${(p.nodes || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      `<div class="supply-network-track" data-layout-region="content">${nodes}</div>`,
+      `<div class="supply-metrics supply-metrics-${(p.metrics || []).length}" data-layout-region="metrics">${metrics}</div>`,
+      editableText("p", "note", p.note || "", "supply-note"),
     ].join("\n")
   );
 }
@@ -1676,6 +1900,9 @@ const layouts = [
     roles: ["overview", "capabilities", "agenda", "use-cases"],
     density: "medium-high",
     contentShape: ["cards", "list"],
+    visualKinds: ["cards", "numbered-actions", "quadrant", "process"],
+    relationships: ["parallel", "ordered"],
+    directions: ["left-to-right", "top-down"],
     mediaSlots: mediaSlots(0, 0, [], {
       backgroundMode: "rare",
       textRegionNames: ["header", "content"],
@@ -1695,6 +1922,114 @@ const layouts = [
     },
     defaultProps: { subtitle: "", variant: "balanced" },
     render: renderCards,
+  },
+  {
+    id: "quadrant-matrix-v1",
+    label: "Editable two-by-two priority matrix",
+    editor: {
+      label: "优先级四象限",
+      description: "按横纵两个维度放置四类可编辑事项",
+      controls: {},
+      defaultProps: {
+        eyebrow: "决策矩阵",
+        title: "输入需要排序的问题",
+        subtitle: "横轴与纵轴共同决定处理顺序",
+        x_axis_label: "紧急程度：低 → 高",
+        y_axis_label: "影响程度：低 → 高",
+        items: [
+          { kicker: "高影响 · 高紧急", title: "立即处理", body: "最优先解决的事项。" },
+          { kicker: "高影响 · 低紧急", title: "规划推进", body: "纳入近期计划持续推动。" },
+          { kicker: "低影响 · 高紧急", title: "快速治理", body: "用轻量动作及时消除扰动。" },
+          { kicker: "低影响 · 低紧急", title: "持续观察", body: "保留跟踪并控制投入。" },
+        ],
+      },
+    },
+    roles: ["quadrant", "priority-matrix", "impact-urgency", "decision-matrix"],
+    density: "medium",
+    contentShape: ["quadrant", "matrix", "four-categories"],
+    visualKinds: ["quadrant"],
+    relationships: ["matrix"],
+    directions: ["x-y"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable quadrant is the primary visual; skip generated media.",
+    }),
+    capabilities: ["editable", "pptx-safe", "matrix", "quadrant"],
+    variants: ["impact-urgency"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(72, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      x_axis_label: textField(36, { role: "label" }),
+      y_axis_label: textField(36, { role: "label" }),
+      items: arrayField(4, 4, {
+        kicker: textField(28, { required: false, role: "label" }),
+        title: textField(36, { role: "heading" }),
+        body: textField(100, { required: false, role: "body" }),
+      }),
+    },
+    defaultProps: { subtitle: "" },
+    render: renderQuadrantMatrix,
+  },
+  {
+    id: "pyramid-hierarchy-v1",
+    label: "Top-down pyramid hierarchy",
+    editor: {
+      label: "金字塔层级",
+      description: "一个顶层结论统领二到五个下层支撑",
+      controls: {
+        enums: {
+          variant: {
+            label: "层级样式",
+            options: { "one-to-many": "一统多", layered: "分层" },
+          },
+        },
+        collections: {
+          items: {
+            label: "层级节点",
+            itemDefault: { kicker: "支撑", title: "新增节点", body: "补充支撑说明。" },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "核心原则",
+        title: "输入金字塔标题",
+        subtitle: "顶层结论统领下层支撑，保持一层一个逻辑角色。",
+        items: [
+          { kicker: "顶层", title: "核心结论", body: "先给出最重要的判断。" },
+          { kicker: "支撑 01", title: "第一支撑", body: "解释第一条依据。" },
+          { kicker: "支撑 02", title: "第二支撑", body: "解释第二条依据。" },
+          { kicker: "支撑 03", title: "第三支撑", body: "解释第三条依据。" },
+        ],
+        variant: "one-to-many",
+      },
+    },
+    roles: ["hierarchy", "pyramid", "principles", "framework"],
+    density: "medium-high",
+    contentShape: ["pyramid", "hierarchy", "one-to-many"],
+    visualKinds: ["pyramid"],
+    relationships: ["one-to-many"],
+    directions: ["top-down"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+    }),
+    capabilities: ["editable", "pptx-safe", "hierarchy"],
+    variants: ["one-to-many", "layered"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      items: arrayField(3, 6, {
+        kicker: textField(24, { required: false, role: "label" }),
+        title: textField(36, { role: "heading" }),
+        body: textField(90, { required: false, role: "body" }),
+      }),
+      variant: enumField(["one-to-many", "layered"], "one-to-many"),
+    },
+    defaultProps: { subtitle: "", variant: "one-to-many" },
+    render: renderPyramid,
   },
   {
     id: "text-columns-v1",
@@ -1806,6 +2141,9 @@ const layouts = [
     roles: ["comparison", "before-after", "decision"],
     density: "medium-high",
     contentShape: ["comparison", "two-column"],
+    visualKinds: ["comparison"],
+    relationships: ["contrast"],
+    directions: ["left-to-right"],
     mediaSlots: mediaSlots(0, 0, [], {
       backgroundMode: "rare",
       textRegionNames: ["header", "content"],
@@ -2086,6 +2424,9 @@ const layouts = [
     ],
     density: "high",
     contentShape: ["diagram-spec", "nodes", "edges", "architecture", "pipeline"],
+    visualKinds: ["architecture", "integration", "pipeline", "process"],
+    relationships: ["network", "ordered"],
+    directions: ["left-to-right", "top-down"],
     mediaSlots: mediaSlots(0, 0, [], {
       backgroundMode: "rare",
       textRegionNames: ["header", "content"],
@@ -2558,6 +2899,9 @@ const layouts = [
     roles: ["timeline", "process", "roadmap", "journey"],
     density: "medium",
     contentShape: ["sequence", "steps"],
+    visualKinds: ["timeline", "process"],
+    relationships: ["ordered"],
+    directions: ["left-to-right"],
     mediaSlots: mediaSlots(0, 0, [], {
       backgroundMode: "subtle",
       textRegionNames: ["header", "content"],
@@ -2577,6 +2921,265 @@ const layouts = [
     },
     defaultProps: { subtitle: "", variant: "horizontal" },
     render: renderTimeline,
+  },
+  {
+    id: "factory-process-line-v1",
+    label: "Manufacturing process line with station metrics",
+    editor: {
+      label: "制造产线",
+      description: "三到六个工位、质量状态与关键指标",
+      controls: {
+        collections: {
+          stations: { label: "工位", itemDefault: { code: "ST-01", title: "新工位", metric: "待补充", status: "RUN" } },
+        },
+      },
+      defaultProps: {
+        eyebrow: "SHOP FLOOR / PROCESS",
+        title: "关键产线与质量控制点",
+        subtitle: "用工位顺序呈现节拍、良率与异常状态",
+        stations: [
+          { code: "ST-01", title: "原料上线", metric: "99.2%", status: "PASS" },
+          { code: "ST-02", title: "核心加工", metric: "42s", status: "RUN" },
+          { code: "QC-03", title: "在线质检", metric: "98.7%", status: "WATCH" },
+          { code: "PK-04", title: "包装入库", metric: "1.8h", status: "PASS" },
+        ],
+        note: "黄色标记用于安全、瓶颈与待处置事项，不作为大面积装饰。",
+      },
+    },
+    roles: ["manufacturing", "process", "quality", "operations"],
+    density: "medium",
+    contentShape: ["production-line", "stations", "quality-metrics"],
+    visualKinds: ["process-line", "factory-flow"],
+    relationships: ["ordered", "handoff"],
+    directions: ["left-to-right"],
+    mediaSlots: mediaSlots(0, 0, [], { backgroundMode: "rare", textRegionNames: ["header", "content"] }),
+    capabilities: ["editable", "pptx-safe", "domain-specific"],
+    variants: ["process-line"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      stations: arrayField(3, 6, {
+        code: textField(12, { role: "label" }),
+        title: textField(32, { role: "heading" }),
+        metric: textField(20, { role: "metric" }),
+        status: textField(20, { required: false, role: "label" }),
+      }),
+      note: textField(140, { required: false, role: "caption" }),
+    },
+    defaultProps: { subtitle: "", note: "" },
+    render: renderFactoryProcessLine,
+  },
+  {
+    id: "legal-case-logic-v1",
+    label: "Legal case logic using an IRAC evidence structure",
+    editor: {
+      label: "法律论证",
+      description: "按争点、规则、分析、结论组织案件或合规判断",
+      controls: {},
+      defaultProps: {
+        eyebrow: "LEGAL ANALYSIS",
+        title: "核心法律争点与判断路径",
+        subtitle: "把事实、规则与推理拆开，保留可复核的证据链",
+        matter_no: "MATTER 26-014",
+        sections: [
+          { label: "ISSUE", title: "需要判断的争点", body: "明确请求、主体、时间与待解决的法律问题。" },
+          { label: "RULE", title: "适用规则", body: "列出法律依据、合同条款、监管口径与例外。" },
+          { label: "ANALYSIS", title: "事实与规则匹配", body: "逐项说明证据如何支持或削弱每个构成要件。" },
+          { label: "CONCLUSION", title: "结论与风险", body: "给出判断、置信边界和下一步证据动作。" },
+        ],
+        conclusion: "初步结论：风险可控，但需在决策前补齐关键书面证据。",
+      },
+    },
+    roles: ["legal", "case-analysis", "compliance", "argument"],
+    density: "high",
+    contentShape: ["IRAC", "evidence-chain", "reasoning"],
+    visualKinds: ["legal-logic", "argument-grid"],
+    relationships: ["evidence-to-conclusion", "ordered"],
+    directions: ["left-to-right"],
+    mediaSlots: mediaSlots(0, 0, [], { backgroundMode: "rare", textRegionNames: ["header", "content"] }),
+    capabilities: ["editable", "pptx-safe", "domain-specific"],
+    variants: ["irac"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      matter_no: textField(24, { required: false, role: "label" }),
+      sections: arrayField(4, 4, {
+        label: textField(16, { role: "label" }),
+        title: textField(36, { role: "heading" }),
+        body: textField(140, { role: "body" }),
+      }),
+      conclusion: textField(160, { required: false, role: "lead" }),
+    },
+    defaultProps: { subtitle: "", matter_no: "", conclusion: "" },
+    render: renderLegalCaseLogic,
+  },
+  {
+    id: "property-factsheet-v1",
+    label: "Real estate asset and site factsheet",
+    editor: {
+      label: "地产底卡",
+      description: "地块分区、地址信息与核心资产指标",
+      controls: {
+        collections: {
+          zones: { label: "地块分区", itemDefault: { code: "A1", title: "新分区", detail: "补充业态或开发条件。" } },
+          metrics: { label: "资产指标", itemDefault: { label: "新指标", value: "待补充" } },
+        },
+      },
+      defaultProps: {
+        eyebrow: "SITE / ASSET FACTS",
+        title: "项目核心条件一页读懂",
+        subtitle: "用地块关系和数字底卡快速建立共同事实",
+        address: "示例地址 · 城市核心区",
+        zones: [
+          { code: "A1", title: "住宅组团", detail: "主力户型与首开区" },
+          { code: "B2", title: "商业界面", detail: "沿街商业与社区配套" },
+          { code: "C3", title: "公共空间", detail: "景观轴与公共服务" },
+        ],
+        metrics: [
+          { label: "总用地", value: "86,400㎡" },
+          { label: "容积率", value: "2.6" },
+          { label: "计容建面", value: "224,640㎡" },
+          { label: "目标货值", value: "¥42亿" },
+        ],
+        note: "面积、货值和开发节奏应以最新规划条件及测算口径为准。",
+      },
+    },
+    roles: ["real-estate", "asset", "site-analysis", "investment"],
+    density: "high",
+    contentShape: ["site-plan", "asset-metrics", "factsheet"],
+    visualKinds: ["site-plan", "factsheet"],
+    relationships: ["spatial", "part-to-whole"],
+    directions: ["spatial"],
+    mediaSlots: mediaSlots(0, 0, [], { backgroundMode: "rare", textRegionNames: ["header", "content"] }),
+    capabilities: ["editable", "pptx-safe", "domain-specific"],
+    variants: ["site-plan"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      address: textField(64, { required: false, role: "label" }),
+      zones: arrayField(3, 5, {
+        code: textField(12, { role: "label" }),
+        title: textField(32, { role: "heading" }),
+        detail: textField(90, { role: "body" }),
+      }),
+      metrics: arrayField(3, 6, {
+        label: textField(28, { role: "label" }),
+        value: textField(24, { role: "metric" }),
+      }),
+      note: textField(140, { required: false, role: "caption" }),
+    },
+    defaultProps: { subtitle: "", address: "", note: "" },
+    render: renderPropertyFactsheet,
+  },
+  {
+    id: "commerce-funnel-v1",
+    label: "Retail ecommerce conversion funnel",
+    editor: {
+      label: "零售漏斗",
+      description: "四到五个经营阶段与转化率、客群或商品动作",
+      controls: {
+        collections: {
+          stages: { label: "漏斗阶段", itemDefault: { label: "新阶段", value: "待补充", rate: "—", detail: "补充经营动作。" } },
+        },
+      },
+      defaultProps: {
+        eyebrow: "COMMERCE / FUNNEL",
+        title: "从流量到复购的经营漏斗",
+        subtitle: "同时观察规模、转化效率和下一步商品动作",
+        stages: [
+          { label: "触达", value: "1.28M", rate: "100%", detail: "站内推荐与内容种草" },
+          { label: "到店", value: "386K", rate: "30.2%", detail: "首屏承接与活动入口" },
+          { label: "加购", value: "96K", rate: "24.9%", detail: "主推 SKU 与价格力" },
+          { label: "成交", value: "42K", rate: "43.8%", detail: "支付体验与权益组合" },
+          { label: "复购", value: "12K", rate: "28.6%", detail: "会员触达与补货周期" },
+        ],
+        insight: "最大机会位于到店后的商品承接：优先优化主推 SKU、价格锚点和加购理由。",
+      },
+    },
+    roles: ["retail", "ecommerce", "funnel", "merchandising"],
+    density: "medium-high",
+    contentShape: ["conversion-funnel", "stage-metrics", "commercial-actions"],
+    visualKinds: ["funnel", "conversion-flow"],
+    relationships: ["ordered", "conversion"],
+    directions: ["left-to-right"],
+    mediaSlots: mediaSlots(0, 0, [], { backgroundMode: "rare", textRegionNames: ["header", "content"] }),
+    capabilities: ["editable", "pptx-safe", "domain-specific"],
+    variants: ["conversion"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      stages: arrayField(4, 6, {
+        label: textField(28, { role: "heading" }),
+        value: textField(20, { role: "metric" }),
+        rate: textField(18, { required: false, role: "label" }),
+        detail: textField(70, { required: false, role: "body" }),
+      }),
+      insight: textField(140, { required: false, role: "lead" }),
+    },
+    defaultProps: { subtitle: "", insight: "" },
+    render: renderCommerceFunnel,
+  },
+  {
+    id: "supply-network-v1",
+    label: "Supply chain control-tower network",
+    editor: {
+      label: "供应链网络",
+      description: "四到七个节点、在途状态与履约指标",
+      controls: {
+        collections: {
+          nodes: { label: "网络节点", itemDefault: { code: "NODE-01", title: "新节点", status: "ON TIME", detail: "补充位置与动作。" } },
+          metrics: { label: "履约指标", itemDefault: { label: "新指标", value: "待补充" } },
+        },
+      },
+      defaultProps: {
+        eyebrow: "CONTROL TOWER / NETWORK",
+        title: "端到端供应网络与履约状态",
+        subtitle: "从供应、干线、仓配到交付定位异常与缓冲",
+        nodes: [
+          { code: "SUP-01", title: "核心供应商", status: "READY", detail: "原料齐套 · T-2" },
+          { code: "HUB-SH", title: "华东集散", status: "IN TRANSIT", detail: "干线到达 · ETA 18:40" },
+          { code: "DC-07", title: "区域仓", status: "WATCH", detail: "波次拣选 · 负荷 87%" },
+          { code: "LM-12", title: "末端交付", status: "ON TIME", detail: "当日达覆盖 · 92%" },
+        ],
+        metrics: [
+          { label: "OTIF", value: "94.6%" },
+          { label: "库存周转", value: "31天" },
+          { label: "订单周期", value: "18.4h" },
+        ],
+        note: "橙色仅表示异常、在途变化或需要调度的节点。",
+      },
+    },
+    roles: ["supply-chain", "logistics", "fulfillment", "network"],
+    density: "high",
+    contentShape: ["supply-network", "status-nodes", "fulfillment-metrics"],
+    visualKinds: ["network", "route-map", "control-tower"],
+    relationships: ["flow", "handoff", "status"],
+    directions: ["left-to-right"],
+    mediaSlots: mediaSlots(0, 0, [], { backgroundMode: "rare", textRegionNames: ["header", "content"] }),
+    capabilities: ["editable", "pptx-safe", "domain-specific"],
+    variants: ["control-tower"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(64, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      nodes: arrayField(4, 7, {
+        code: textField(18, { role: "label" }),
+        title: textField(30, { role: "heading" }),
+        status: textField(20, { required: false, role: "label" }),
+        detail: textField(64, { required: false, role: "body" }),
+      }),
+      metrics: arrayField(3, 4, {
+        label: textField(28, { role: "label" }),
+        value: textField(20, { role: "metric" }),
+      }),
+      note: textField(140, { required: false, role: "caption" }),
+    },
+    defaultProps: { subtitle: "", note: "" },
+    render: renderSupplyNetwork,
   },
   {
     id: "project-case-study-v1",
@@ -2739,6 +3342,9 @@ const layouts = [
     roles: ["closing", "next-steps", "cta", "contact", "thank-you"],
     density: "medium-low",
     contentShape: ["closing-statement", "actions", "contact"],
+    visualKinds: ["closing", "numbered-actions"],
+    relationships: ["ordered"],
+    directions: ["top-down"],
     mediaSlots: mediaSlots(0, 0, [], {
       backgroundMode: "expressive",
       textRegionNames: ["closing-copy", "closing-actions"],
@@ -2825,6 +3431,9 @@ function contentSnapshot(sourceSlide) {
   addUnits(props.systems);
   addUnits(props.nodes);
   addUnits(props.rows);
+  addUnits(props.stations);
+  addUnits(props.zones);
+  addUnits(props.stages);
   if (Array.isArray(props.categories) && Array.isArray(props.series)) {
     const firstSeries = props.series.find(item => item && Array.isArray(item.values));
     props.categories.forEach((category, index) => {
@@ -2917,6 +3526,13 @@ function createEditorProps(layoutId, sourceSlide = null) {
       body: fitText(firstText(unit.body, unit.title, unit.value), 100, "补充说明"),
     }));
     props.items = fillFromDefaults(mapped, props.items, 3);
+  } else if (layoutId === "quadrant-matrix-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 4).map((unit, index) => ({
+      kicker: fitText(unit.label, 28, props.items[index].kicker),
+      title: fitText(firstText(unit.title, unit.value), 36, props.items[index].title),
+      body: fitText(firstText(unit.body, unit.title, unit.value), 100, props.items[index].body),
+    }));
+    props.items = fillFromDefaults(mapped, props.items, 4).slice(0, 4);
   } else if (layoutId === "text-columns-v1" && snapshot.units.length) {
     const mapped = snapshot.units.slice(0, 3).map((unit, index) => ({
       label: fitText(unit.label, 24, String(index + 1).padStart(2, "0")),
@@ -2962,6 +3578,45 @@ function createEditorProps(layoutId, sourceSlide = null) {
       flow: fitText(firstText(unit.body, unit.label), 64, "输入交换的数据或动作"),
     }));
     props.systems = fillFromDefaults(mapped, props.systems, 4);
+  } else if (layoutId === "factory-process-line-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 6).map((unit, index) => ({
+      code: fitText(unit.label, 12, `ST-${String(index + 1).padStart(2, "0")}`),
+      title: fitText(firstText(unit.title, unit.body), 32, `工位 ${index + 1}`),
+      metric: fitText(firstText(unit.value), 20, "待补充"),
+      status: "RUN",
+    }));
+    props.stations = fillFromDefaults(mapped, props.stations, 3);
+  } else if (layoutId === "legal-case-logic-v1" && snapshot.units.length) {
+    const labels = ["ISSUE", "RULE", "ANALYSIS", "CONCLUSION"];
+    const mapped = snapshot.units.slice(0, 4).map((unit, index) => ({
+      label: labels[index],
+      title: fitText(firstText(unit.title, unit.value), 36, props.sections[index].title),
+      body: fitText(firstText(unit.body, unit.title), 140, props.sections[index].body),
+    }));
+    props.sections = fillFromDefaults(mapped, props.sections, 4).slice(0, 4);
+  } else if (layoutId === "property-factsheet-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 5).map((unit, index) => ({
+      code: fitText(unit.label, 12, `${String.fromCharCode(65 + index)}${index + 1}`),
+      title: fitText(firstText(unit.title, unit.value), 32, `分区 ${index + 1}`),
+      detail: fitText(firstText(unit.body, unit.title), 90, "补充业态或开发条件。"),
+    }));
+    props.zones = fillFromDefaults(mapped, props.zones, 3);
+  } else if (layoutId === "commerce-funnel-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 5).map((unit, index) => ({
+      label: fitText(firstText(unit.label, unit.title), 28, `阶段 ${index + 1}`),
+      value: fitText(firstText(unit.value), 20, "待补充"),
+      rate: "—",
+      detail: fitText(firstText(unit.body), 70, "补充经营动作。"),
+    }));
+    props.stages = fillFromDefaults(mapped, props.stages, 4);
+  } else if (layoutId === "supply-network-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 7).map((unit, index) => ({
+      code: fitText(unit.label, 18, `NODE-${String(index + 1).padStart(2, "0")}`),
+      title: fitText(firstText(unit.title, unit.value), 30, `节点 ${index + 1}`),
+      status: "ON TIME",
+      detail: fitText(firstText(unit.body), 64, "补充位置与动作。"),
+    }));
+    props.nodes = fillFromDefaults(mapped, props.nodes, 4);
   } else if (layoutId === "technical-diagram-v1" && snapshot.units.length) {
     const mapped = snapshot.units.slice(0, 12).map((unit, index) => ({
       id: `node-${index + 1}`,

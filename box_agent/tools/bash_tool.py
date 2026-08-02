@@ -131,12 +131,42 @@ _SAFETY_SCOPE = "safety"
 _DANGEROUS_COMMAND_SCOPE = "dangerous_command"
 
 
+def _is_shell_output_redirect_path(command: str, path: str) -> bool:
+    """Return whether *path* is the target of a shell output redirect."""
+    escaped = re.escape(path)
+    return (
+        re.search(
+            rf"(?:^|[\s;|&])\d*>{{1,2}}\s*['\"]?{escaped}"
+            rf"(?:['\"]|(?=\s|;|\||&|$))",
+            command,
+        )
+        is not None
+    )
+
+
 def _is_temp_shell_redirect_path(command: str, path: str) -> bool:
     """Allow bash-only scratch files written via redirect under temp roots."""
-    if not Path(path).name.startswith("box_agent_"):
-        return False
-    escaped = re.escape(path)
-    return re.search(rf"(^|[\s\d])>{{1,2}}\s*['\"]?{escaped}(?:['\"]|\s|$)", command) is not None
+    return Path(path).name.startswith("box_agent_") and _is_shell_output_redirect_path(
+        command, path
+    )
+
+
+_MUTATING_SHELL_COMMAND_RE = re.compile(
+    r"\b(cp|mv|rsync|tee|dd|install|scp|tar\s+.*-x|sed\s+-i)\b"
+)
+
+
+def _path_requires_write_permission(command: str, path: str) -> bool:
+    """Classify one extracted path instead of upgrading the whole command.
+
+    File-descriptor redirects such as ``2>&1`` have no filesystem target and
+    therefore never turn a referenced script into a write. Mutating utilities
+    remain conservative because their source/destination grammar varies by
+    platform and flags.
+    """
+    return bool(_MUTATING_SHELL_COMMAND_RE.search(command)) or _is_shell_output_redirect_path(
+        command, path
+    )
 
 
 def _resolve_login_shell() -> str:
@@ -1014,18 +1044,16 @@ Examples:
                             exit_code=1,
                         )
 
-                    # Determine if this is a write operation based on command patterns
-                    _write_ops = re.search(
-                        r"\b(cp|mv|rsync|tee|dd|install|scp|tar\s+.*-x|sed\s+-i)\b"
-                        r"|[>]{1,2}(?!/dev/null)",  # redirect but not >/dev/null
-                        command,
-                    )
-
                     for p in abs_paths:
                         if _is_temp_shell_redirect_path(command, p):
                             continue
-                        # Use write capability for write-looking commands, read otherwise
-                        cap = FILESYSTEM_WRITE if _write_ops else FILESYSTEM_READ
+                        # Classify each concrete path separately. A redirect to
+                        # another path (or 2>&1) must not make this path writable.
+                        cap = (
+                            FILESYSTEM_WRITE
+                            if _path_requires_write_permission(command, p)
+                            else FILESYSTEM_READ
+                        )
                         decision = self._perm.check(
                             capability=cap,
                             resource={"path": p},

@@ -137,6 +137,7 @@ function main() {
     if (!item || item.required !== true || item.decision === "generate") return false;
     return !isSuccessfulExisting(item, manifestPath);
   });
+  const generationForbidden = manifest.generation_forbidden === true;
 
   if (!imagePlan.length) {
     issues.push("manifest.image_plan is missing or empty.");
@@ -147,6 +148,18 @@ function main() {
   }
   if (!["auto", "creative_image_mode"].includes(manifest.mode)) {
     issues.push(`manifest.mode must be "auto" or "creative_image_mode", got ${JSON.stringify(manifest.mode)}.`);
+  }
+
+  if (generationForbidden) {
+    const forbiddenEntries = imagePlan.filter(
+      item => item && (item.decision === "generate" || item.required === true)
+    );
+    if (forbiddenEntries.length || successfulGenerated.length) {
+      issues.push(
+        "manifest.generation_forbidden is true, but generated or required image " +
+        "entries remain: " + forbiddenEntries.map(item => item.slide || "?").join(", ")
+      );
+    }
   }
 
   unresolvedGenerated.forEach(item => {
@@ -249,6 +262,7 @@ function main() {
     ok: issues.length === 0,
     manifest: manifestPath,
     mode: manifest.mode || null,
+    generationForbidden,
     imagePlanCount: imagePlan.length,
     requiredImageCount: imagePlan.filter(item => item && item.required === true).length,
     successfulGeneratedCount: successfulGenerated.length,

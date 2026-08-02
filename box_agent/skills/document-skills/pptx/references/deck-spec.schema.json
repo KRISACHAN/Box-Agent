@@ -48,6 +48,44 @@
         }
       }
     },
+    "design_contract": {
+      "type": "object",
+      "description": "Original hard/soft visual requirements persisted before scaffold resolution.",
+      "additionalProperties": false,
+      "required": ["version"],
+      "properties": {
+        "version": { "const": 1 },
+        "palette": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": { "enum": ["explicit", "inferred"] },
+            "requested": { "type": "array", "items": { "type": "string" } },
+            "background": { "$ref": "#/$defs/colorContract" },
+            "surface": { "$ref": "#/$defs/colorContract" },
+            "primary": { "$ref": "#/$defs/colorContract" },
+            "accent": { "$ref": "#/$defs/colorContract" },
+            "accent_usage": { "enum": ["sparse", "balanced", "dominant"] }
+          }
+        },
+        "slides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["visual_kind", "source"],
+            "properties": {
+              "visual_kind": { "type": "string", "minLength": 1 },
+              "source": { "enum": ["explicit", "recommended", "inferred"] },
+              "item_count": { "type": "integer", "minimum": 1, "maximum": 40 },
+              "direction": { "type": "string" },
+              "relationship": { "type": "string" },
+              "hierarchy_depth": { "type": "integer", "minimum": 1, "maximum": 8 }
+            }
+          }
+        }
+      }
+    },
     "truth_contract": {
       "type": "object",
       "additionalProperties": false,
@@ -146,6 +184,18 @@
             }
           }
         }
+      }
+    }
+  },
+  "$defs": {
+    "colorContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "requested", "source"],
+      "properties": {
+        "value": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "requested": { "type": "string" },
+        "source": { "enum": ["explicit", "recommended", "inferred"] }
       }
     }
   }
