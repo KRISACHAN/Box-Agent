@@ -35,7 +35,7 @@ else:
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from box_agent.auth import request_auth_headers, resolve_auth_token, should_attach_auth_header
 
@@ -614,9 +614,9 @@ class MCPServerConnection:
         connect_timeout = self._get_connect_timeout()
         sse_read_timeout = self._get_sse_read_timeout()
 
-        # streamablehttp_client returns (read, write, get_session_id)
+        # streamable_http_client returns (read, write, get_session_id)
         read_stream, write_stream, _ = await self.exit_stack.enter_async_context(
-            streamablehttp_client(
+            streamable_http_client(
                 url=self.url,
                 headers=self.headers if self.headers else None,
                 timeout=connect_timeout,
