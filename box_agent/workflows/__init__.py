@@ -8,6 +8,11 @@ from ..loop_guards import CompletionGate
 from ..workflow_policy import WorkflowPolicy
 from .controlled_presentation import ControlledPresentationPolicy
 from .presentation_contract import RESEARCH_MODE_OPTION
+from .presentation_preflight import (
+    build_presentation_preflight_result,
+    build_presentation_recommendation_prompt,
+    load_presentation_preflight_config,
+)
 
 
 def create_workflow_policy(
@@ -41,6 +46,9 @@ def recover_completion_gate(
 
 __all__ = [
     "ControlledPresentationPolicy",
+    "build_presentation_preflight_result",
+    "build_presentation_recommendation_prompt",
     "create_workflow_policy",
+    "load_presentation_preflight_config",
     "recover_completion_gate",
 ]
