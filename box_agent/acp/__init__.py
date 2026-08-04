@@ -732,6 +732,8 @@ class SessionState:
     pending_completion_gate: CompletionGate | None = None
     waiting_for_user_input: bool = False
     last_error: str | None = None
+    last_error_code: int | str | None = None
+    last_error_category: str | None = None
 
 
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
@@ -1090,6 +1092,10 @@ class BoxACPAgent:
 
         llm_binding = _normalize_llm_binding(meta)
         session_llm = SessionBoundLLM(self._llm_for_binding(llm_binding))
+        session_llm.set_request_context(
+            session_id=upstream_session_id or session_id,
+            title=upstream_title,
+        )
 
         # Canonical artifact directory is only part of output mode. Existing
         # project workspaces are edited in place and must not get an implicit
@@ -1575,6 +1581,12 @@ class BoxACPAgent:
             state.upstream_title = provided_title
         billing_session_id = state.upstream_session_id or session_id
         state.current_turn_id = turn_id
+        if state.session_llm is not None:
+            state.session_llm.set_request_context(
+                session_id=billing_session_id,
+                turn_id=turn_id,
+                title=state.upstream_title,
+            )
         if state.memory_extractor is not None and hasattr(state.memory_extractor, "set_turn_id"):
             state.memory_extractor.set_turn_id(turn_id)
         plan_approval = _plan_approval_from_meta(prompt_meta)
@@ -1961,6 +1973,10 @@ class BoxACPAgent:
             response_meta["deliveryStatus"] = delivery_status
             response_meta["deliveryGaps"] = delivery_gaps
             response_meta["recoverable"] = delivery_status != "complete"
+        if failed and state.last_error_code is not None:
+            response_meta["errorCode"] = state.last_error_code
+        if failed and state.last_error_category:
+            response_meta["errorCategory"] = state.last_error_category
         # Per-turn token total (multi-step loop + summarization + in-turn
         # memory extraction) for host-side telemetry. Best-effort: fire-and-
         # forget memory extractions that finish after this point are not
@@ -2210,6 +2226,9 @@ class BoxACPAgent:
         missing_fields = baseline_result.get("missingFields", [])
         model_text = ""
         if missing_fields:
+            raw_meta = params.get("_meta")
+            preflight_meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+            preflight_meta["purpose"] = "presentation_preflight"
             llm_result = await self._llm_prompt(
                 {
                     "prompt": build_presentation_recommendation_prompt(
@@ -2222,7 +2241,7 @@ class BoxACPAgent:
                     ),
                     "timeoutMs": params.get("timeoutMs", 8000),
                     "workspaceLabel": "presentation-preflight",
-                    "_meta": {"purpose": "presentation_preflight"},
+                    "_meta": preflight_meta,
                 }
             )
             if isinstance(llm_result.get("text"), str):
@@ -2273,6 +2292,8 @@ class BoxACPAgent:
         turn_id = _meta_string(meta, "turn_id", "turnId")
         title = (
             _meta_string(meta, "title", "session_title", "sessionTitle")
+            or str(purpose).strip()
+            or str(params.get("workspaceLabel") or "").strip()
             or _DEFAULT_AGENT_TITLE
         )
         workspace_label = params.get("workspaceLabel") or ""
@@ -2281,6 +2302,11 @@ class BoxACPAgent:
             return {"error": {"code": "invalid_args", "message": "prompt must be a non-empty string"}}
         if system_prompt is not None and not isinstance(system_prompt, str):
             return {"error": {"code": "invalid_args", "message": "systemPrompt must be a string"}}
+
+        if not session_id:
+            session_id = f"local-agent-utility-{uuid4()}"
+        if not turn_id:
+            turn_id = f"{session_id}-turn-{uuid4().hex[:8]}"
 
         timeout: float = 30.0
         if timeout_ms is not None:
@@ -2421,8 +2447,21 @@ class BoxACPAgent:
                 )
                 full_entries = []
             if full_entries:
+                planning_llm = None
+                if session_id:
+                    state = self._sessions.get(session_id)
+                    if state is not None:
+                        planning_llm = state.session_llm
+                if planning_llm is None:
+                    planning_id = f"local-agent-memory-review-{uuid4()}"
+                    planning_llm = SessionBoundLLM(self._llm)
+                    planning_llm.set_request_context(
+                        session_id=planning_id,
+                        turn_id=planning_id,
+                        title="本地 Agent 记忆整理",
+                    )
                 try:
-                    plan = await self._memory.plan_promotion(full_entries, self._llm)
+                    plan = await self._memory.plan_promotion(full_entries, planning_llm)
                 except Exception as exc:
                     log.warn(
                         "memory/proposal_list_plan_skipped",
@@ -2591,6 +2630,8 @@ class BoxACPAgent:
         """Consume the shared execution core and translate events to ACP updates."""
         agent = state.agent
         state.last_error = None
+        state.last_error_code = None
+        state.last_error_category = None
 
         # Clear prompt-level grants at the start of each prompt
         if state.grant_store:
@@ -2891,6 +2932,8 @@ class BoxACPAgent:
                     ),
                     system_prompt=build_follow_up_suggestions_generation_system_prompt(),
                     session_id=state.upstream_session_id,
+                    turn_id=state.current_turn_id,
+                    title=state.upstream_title,
                     timeout=8.0,
                 )
             except LightweightPromptError as exc:
@@ -3165,9 +3208,16 @@ class BoxACPAgent:
                         log.debug("web_search/payload", session_id=session_id, tool_call_id=tid, payload=web_search_payload)
                         await self._send(session_id, update_tool_call(tid, raw_output=web_search_payload))
 
-                    case ErrorEvent(message=msg, is_fatal=True):
+                    case ErrorEvent(
+                        message=msg,
+                        is_fatal=True,
+                        error_code=error_code,
+                        error_category=error_category,
+                    ):
                         log.error("error", session_id=session_id, message=msg, is_fatal=True)
                         state.last_error = msg
+                        state.last_error_code = error_code
+                        state.last_error_category = error_category
                         await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))
                         # Don't return yet — let the loop consume the subsequent DoneEvent
                         # so the async generator is properly exhausted.
@@ -3824,17 +3874,28 @@ async def run_acp_server(config: Config | None = None) -> None:
         memory_bootstrap_task: asyncio.Task | None = None
         if memory_mgr:
             _maintainer_enabled = config.agent.memory_maintainer_enabled
+            memory_bootstrap_id = f"local-agent-memory-{uuid4()}"
+            memory_bootstrap_llm = SessionBoundLLM(llm)
+            memory_bootstrap_llm.set_request_context(
+                session_id=memory_bootstrap_id,
+                turn_id=memory_bootstrap_id,
+                title="本地 Agent 记忆维护",
+            )
 
             async def _memory_bootstrap() -> None:
                 try:
-                    await memory_mgr.import_openclaw(llm)
+                    await memory_mgr.import_openclaw(memory_bootstrap_llm)
                 except Exception:
                     log.warn("server/start", message="OpenClaw import failed (non-fatal)")
                 if _maintainer_enabled:
                     from box_agent.memory_maintainer import MemoryMaintainer
 
                     try:
-                        await MemoryMaintainer(memory_mgr, config.agent, llm=llm).run_if_due()
+                        await MemoryMaintainer(
+                            memory_mgr,
+                            config.agent,
+                            llm=memory_bootstrap_llm,
+                        ).run_if_due()
                     except Exception:
                         log.warn("server/start", message="Memory maintainer failed (non-fatal)")
 

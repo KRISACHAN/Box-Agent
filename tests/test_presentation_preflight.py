@@ -35,7 +35,15 @@ class _FakeLLM:
         turn_id: str = "",
         title: str = "",
     ) -> LLMResponse:
-        self.calls.append({"messages": messages, "tools": tools})
+        self.calls.append(
+            {
+                "messages": messages,
+                "tools": tools,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "title": title,
+            }
+        )
         return LLMResponse(content=self.content, finish_reason="stop")
 
 
@@ -524,6 +532,31 @@ async def test_acp_preflight_uses_lightweight_model_without_session():
     assert result["sources"]["page_count"] == "default"
     assert len(llm.calls) == 1
     assert not hasattr(agent, "_sessions")
+
+
+@pytest.mark.asyncio
+async def test_acp_preflight_forwards_host_correlation_metadata():
+    llm = _FakeLLM(
+        '{"role":"role_teacher","scene":"scene_training",'
+        '"audience":"audience_students"}'
+    )
+    agent = _StubAgent(llm)
+
+    await agent.extMethod(
+        "presentation/preflight",
+        {
+            "prompt": "制作一个人工智能基础课程 PPT",
+            "_meta": {
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "title": "人工智能基础课程",
+            },
+        },
+    )
+
+    assert llm.calls[0]["session_id"] == "session-1"
+    assert llm.calls[0]["turn_id"] == "turn-1"
+    assert llm.calls[0]["title"] == "人工智能基础课程"
 
 
 @pytest.mark.asyncio

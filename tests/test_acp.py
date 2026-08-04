@@ -109,6 +109,21 @@ class CorrelationCaptureLLM:
         yield StreamEvent(type="finish", finish_reason="stop")
 
 
+class PointsInsufficientLLM:
+    async def generate_stream(self, messages, tools=None, **kwargs):
+        if False:
+            yield StreamEvent(type="finish", finish_reason="stop")
+        error = RuntimeError("Bad request")
+        error.status_code = 400
+        error.body = {
+            "error": {"code": 1000007, "message": "insufficient_points"}
+        }
+        raise error
+
+    async def generate(self, messages, tools=None, **kwargs):
+        raise AssertionError("streaming path expected")
+
+
 @pytest.mark.asyncio
 async def test_acp_exposes_loading_then_ready_capability_state(tmp_path):
     gate = asyncio.Event()
@@ -1095,6 +1110,9 @@ async def test_acp_turn_executes_tool(acp_agent):
     prompt = SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "hello"}])
     response = await agent.prompt(prompt)
     assert response.stopReason == "end_turn"
+    assert response.field_meta["ok"] is True
+    assert "errorCode" not in response.field_meta
+    assert "errorCategory" not in response.field_meta
     assert any("tool:ping" in str(update) for update in conn.updates)
     llm_outputs = [
         update.update.rawOutput
@@ -1127,6 +1145,28 @@ async def test_acp_turn_executes_tool(acp_agent):
     assert progress_outputs == []
     await agent.cancel(SimpleNamespace(sessionId=session.sessionId))
     assert agent._sessions[session.sessionId].cancelled
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_exposes_structured_points_insufficient_error(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(DummyConn(), config, PointsInsufficientLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "hello"}])
+    )
+
+    assert response.stopReason == "end_turn"
+    assert response.field_meta["ok"] is False
+    assert response.field_meta["errorCode"] == 1000007
+    assert response.field_meta["errorCategory"] == "quota"
 
 
 @pytest.mark.asyncio

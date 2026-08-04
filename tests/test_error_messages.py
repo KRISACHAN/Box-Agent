@@ -1,6 +1,10 @@
 """Tests for box_agent.llm.error_messages.humanize_llm_error."""
 
-from box_agent.llm.error_messages import classify_llm_error, humanize_llm_error
+from box_agent.llm.error_messages import (
+    classify_llm_error,
+    extract_llm_error_code,
+    humanize_llm_error,
+)
 from box_agent.retry import RetryExhaustedError, StreamInterrupted
 
 
@@ -58,6 +62,21 @@ def test_rate_limit_error():
 def test_quota_error():
     exc = Exception("You exceeded your current quota, please check your billing")
     assert classify_llm_error(exc).category == "quota"
+
+
+def test_points_insufficient_error_preserves_structured_business_code():
+    exc = _FakeAPIError(
+        "Bad request",
+        status_code=400,
+        body={"error": {"code": "1000007", "message": "insufficient_points"}},
+    )
+
+    assert classify_llm_error(exc).category == "quota"
+    assert extract_llm_error_code(exc) == 1000007
+
+
+def test_error_code_extraction_does_not_parse_unstructured_message_text():
+    assert extract_llm_error_code(Exception("request failed with code 1000007")) is None
 
 
 def test_context_length_error():

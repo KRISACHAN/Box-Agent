@@ -38,7 +38,11 @@ class _FollowUpLLM:
 
 
 class _DedicatedFollowUpLLM:
+    def __init__(self) -> None:
+        self.generate_calls = []
+
     async def generate(self, messages, tools=None, **_):
+        self.generate_calls.append(_)
         return LLMResponse(
             content='{"suggestions":["核对项目当前的 React 版本", "查看 React 19.2 的新增内容"]}',
             finish_reason="stop",
@@ -142,6 +146,7 @@ async def test_acp_strips_model_metadata_and_emits_structured_suggestions(tmp_pa
 @pytest.mark.asyncio
 async def test_acp_generates_suggestions_in_a_dedicated_lightweight_call(tmp_path) -> None:
     conn = _RecordingConn()
+    llm = _DedicatedFollowUpLLM()
     agent = BoxACPAgent(
         conn,
         Config(
@@ -149,16 +154,27 @@ async def test_acp_generates_suggestions_in_a_dedicated_lightweight_call(tmp_pat
             agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
             tools=ToolsConfig(),
         ),
-        _DedicatedFollowUpLLM(),
+        llm,
         [],
         "system",
     )
     session = await agent.newSession(
-        SimpleNamespace(cwd=str(tmp_path), field_meta={"follow_up_suggestions": True})
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "follow_up_suggestions": True,
+                "session_id": "office-session-1",
+                "title": "React 版本查询",
+            },
+        )
     )
 
     response = await agent.prompt(
-        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "React 最新版是多少"}])
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "React 最新版是多少"}],
+            field_meta={"turn_id": "office-turn-1", "title": "React 版本查询"},
+        )
     )
 
     assert response.stopReason == "end_turn"
@@ -175,3 +191,6 @@ async def test_acp_generates_suggestions_in_a_dedicated_lightweight_call(tmp_pat
             "suggestions": ["核对项目当前的 React 版本", "查看 React 19.2 的新增内容"],
         }
     ]
+    assert llm.generate_calls[-1]["session_id"] == "office-session-1"
+    assert llm.generate_calls[-1]["turn_id"] == "office-turn-1"
+    assert llm.generate_calls[-1]["title"] == "React 版本查询"

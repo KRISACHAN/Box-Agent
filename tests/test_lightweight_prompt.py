@@ -241,6 +241,10 @@ async def test_extmethod_llm_prompt_success():
     assert resp["finishReason"] == "stop"
     assert resp["usage"] == {"inputTokens": 12, "outputTokens": 3}
     assert "durationMs" in resp
+    call = llm.calls[0]
+    assert call["session_id"].startswith("local-agent-utility-")
+    assert call["turn_id"].startswith(f'{call["session_id"]}-turn-')
+    assert call["title"] == "local_agent_title"
 
 
 @pytest.mark.asyncio

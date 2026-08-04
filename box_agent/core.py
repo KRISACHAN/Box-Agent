@@ -3050,7 +3050,7 @@ async def run_agent_loop(
             )
 
         except Exception as exc:
-            from .llm.error_messages import classify_llm_error
+            from .llm.error_messages import classify_llm_error, extract_llm_error_code
             from .retry import StreamInterrupted
 
             # The provider request was attempted with the pending arguments in
@@ -3097,7 +3097,13 @@ async def run_agent_loop(
             if hook_mgr.hooks:
                 await hook_mgr.fire_error(message=msg, is_fatal=True, exception=exc)
                 await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
-            yield ErrorEvent(message=msg, is_fatal=True, exception=exc)
+            yield ErrorEvent(
+                message=msg,
+                is_fatal=True,
+                exception=exc,
+                error_code=extract_llm_error_code(exc),
+                error_category=friendly.category,
+            )
             yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
             return
         finally:

@@ -14,7 +14,7 @@ from openai import AsyncOpenAI
 
 from box_agent.llm import AnthropicClient, OpenAIClient
 from box_agent.llm.base import LLMClientBase
-from box_agent.llm.llm_wrapper import LLMClient, LLMProvider
+from box_agent.llm.llm_wrapper import LLMClient, LLMProvider, SessionBoundLLM
 from box_agent.retry import RetryConfig
 from box_agent.schema import Message
 
@@ -436,4 +436,68 @@ async def test_wrapper_threads_agent_headers_to_client():
         _HEADER: "sess-wrap",
         _TURN_HEADER: "sess-wrap-turn-1",
         _TITLE_HEADER: "Quarterly review",
+    }
+
+
+class _CapturingDelegate:
+    def __init__(self):
+        self.generate_kwargs = None
+        self.stream_kwargs = None
+
+    async def generate(self, messages, tools=None, **kwargs):
+        self.generate_kwargs = kwargs
+        return _FakeParsed()
+
+    async def generate_stream(self, messages, tools=None, **kwargs):
+        self.stream_kwargs = kwargs
+        if False:
+            yield None
+
+
+@pytest.mark.asyncio
+async def test_session_bound_llm_inherits_request_context_for_nested_calls():
+    delegate = _CapturingDelegate()
+    wrapper = SessionBoundLLM(delegate)
+    wrapper.set_request_context(
+        session_id=" sess-parent ",
+        turn_id=" turn-parent ",
+        title=" Parent task ",
+    )
+
+    await wrapper.generate(messages=[Message(role="user", content="hi")])
+    async for _ in wrapper.generate_stream(messages=[Message(role="user", content="hi")]):
+        pass
+
+    expected = {
+        "thinking_enabled": False,
+        "session_id": "sess-parent",
+        "turn_id": "turn-parent",
+        "title": "Parent task",
+    }
+    assert delegate.generate_kwargs == expected
+    assert delegate.stream_kwargs == expected
+
+
+@pytest.mark.asyncio
+async def test_session_bound_llm_allows_explicit_correlation_override():
+    delegate = _CapturingDelegate()
+    wrapper = SessionBoundLLM(delegate)
+    wrapper.set_request_context(
+        session_id="sess-parent",
+        turn_id="turn-parent",
+        title="Parent task",
+    )
+
+    await wrapper.generate(
+        messages=[Message(role="user", content="hi")],
+        session_id="sess-explicit",
+        turn_id="turn-explicit",
+        title="Explicit task",
+    )
+
+    assert delegate.generate_kwargs == {
+        "thinking_enabled": False,
+        "session_id": "sess-explicit",
+        "turn_id": "turn-explicit",
+        "title": "Explicit task",
     }

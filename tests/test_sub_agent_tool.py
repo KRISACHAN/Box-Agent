@@ -593,11 +593,13 @@ async def test_batch_files_reads_twenty_files_once_and_calls_generate_once(tmp_p
             self.stream_calls = 0
             self.messages = None
             self.tools = "unset"
+            self.generate_kwargs = None
 
         async def generate(self, messages, tools=None, **kwargs):
             self.generate_calls += 1
             self.messages = messages
             self.tools = tools
+            self.generate_kwargs = kwargs
             encoding = tiktoken.get_encoding("cl100k_base")
             prompt_tokens = sum(
                 len(encoding.encode(str(message.content))) for message in messages
@@ -641,6 +643,7 @@ async def test_batch_files_reads_twenty_files_once_and_calls_generate_once(tmp_p
     assert llm.generate_calls == 1
     assert llm.stream_calls == 0
     assert llm.tools is None
+    assert "session_id" not in llm.generate_kwargs
     assert "<<<UNTRUSTED_FILE" in llm.messages[-1].content
     assert llm.messages[-1].content.count("<<<UNTRUSTED_FILE") == 20
     assert result.raw_output["model_calls"] == 1

@@ -17,6 +17,7 @@ pattern-match on the lowercased string form.
 
 from __future__ import annotations
 
+import json
 from typing import NamedTuple
 
 
@@ -68,7 +69,8 @@ _RULES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "quota",
         ("insufficient_quota", "insufficient quota", "exceeded your current quota",
-         "billing", "arrearage", "balance", "余额", "欠费"),
+         "insufficient_points", "1000007", "billing", "arrearage", "balance",
+         "积分不足", "余额", "欠费"),
         "账户额度不足或欠费，模型服务商已拒绝请求。请充值或检查账单后重试。",
     ),
     (
@@ -171,6 +173,62 @@ def humanize_llm_error(exc: BaseException) -> str:
         return classify_llm_error(exc).message
     except Exception:
         return _GENERIC_FALLBACK
+
+
+def extract_llm_error_code(exc: BaseException) -> int | str | None:
+    """Extract a structured provider/business error code without parsing prose."""
+    try:
+        root = _unwrap(exc)
+    except Exception:
+        root = exc
+
+    try:
+        code = _normalize_error_code(getattr(root, "code", None))
+        if code is not None:
+            return code
+    except Exception:
+        pass
+
+    try:
+        return _error_code_from_body(getattr(root, "body", None))
+    except Exception:
+        return None
+
+
+def _normalize_error_code(value: object) -> int | str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or len(normalized) > 128:
+        return None
+    if normalized.isdecimal():
+        try:
+            return int(normalized)
+        except ValueError:
+            return None
+    return normalized
+
+
+def _error_code_from_body(body: object) -> int | str | None:
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(body, dict):
+        return None
+
+    code = _normalize_error_code(body.get("code"))
+    if code is not None:
+        return code
+    nested = body.get("error")
+    if nested is body:
+        return None
+    return _error_code_from_body(nested)
 
 
 # Error categories that a retry cannot fix — deterministic client-side faults.

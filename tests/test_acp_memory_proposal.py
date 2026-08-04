@@ -12,6 +12,7 @@ import pytest
 
 from box_agent.acp import BoxACPAgent
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
+from box_agent.llm import SessionBoundLLM
 from box_agent.memory import MemoryManager, write_context_file
 from tests.test_memory_promotion import _entry  # reuse helper
 
@@ -187,10 +188,13 @@ async def test_memory_proposal_list_include_plan_attaches_plan(
 ):
     agent, mgr = _make_agent(tmp_path)
     write_context_file(mgr.context_file, [_entry("- promote me", hits=7)])
+    captured_llm = None
 
     from box_agent.events import MemoryPromotionPlan
 
     async def fake_plan_promotion(entries, llm):
+        nonlocal captured_llm
+        captured_llm = llm
         ids = tuple(e.id for e in entries)
         return MemoryPromotionPlan(
             current_core="",
@@ -211,6 +215,10 @@ async def test_memory_proposal_list_include_plan_attaches_plan(
     assert plan["rationale"] == "hot enough"
     assert isinstance(plan["consumedEntryIds"], list)
     assert plan["consumedEntryIds"] == [result["candidates"][0]["id"]]
+    assert isinstance(captured_llm, SessionBoundLLM)
+    assert captured_llm._session_id.startswith("local-agent-memory-review-")
+    assert captured_llm._turn_id == captured_llm._session_id
+    assert captured_llm._title == "本地 Agent 记忆整理"
 
 
 @pytest.mark.asyncio

@@ -207,13 +207,32 @@ class LLMClient:
 
 
 class SessionBoundLLM:
-    """Stable per-session LLM reference with an atomically replaceable delegate."""
+    """Stable per-session LLM reference with inherited request correlation."""
 
     def __init__(self, client: LLMClient):
         self._delegate = client
+        self._session_id = ""
+        self._turn_id = ""
+        self._title = "Box-Agent"
 
     def bind(self, client: LLMClient) -> None:
         self._delegate = client
+
+    def set_request_context(
+        self,
+        *,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        """Set defaults inherited by nested LLM calls in this ACP session."""
+
+        if session_id is not None:
+            self._session_id = session_id.strip()
+        if turn_id is not None:
+            self._turn_id = turn_id.strip()
+        if title is not None:
+            self._title = title.strip() or "Box-Agent"
 
     def __getattr__(self, name: str):
         return getattr(self._delegate, name)
@@ -226,16 +245,16 @@ class SessionBoundLLM:
         thinking_enabled: bool = False,
         session_id: str = "",
         turn_id: str = "",
-        title: str = "Box-Agent",
+        title: str = "",
     ) -> LLMResponse:
         client = self._delegate
         return await client.generate(
             messages,
             tools,
             thinking_enabled=thinking_enabled,
-            session_id=session_id,
-            turn_id=turn_id,
-            title=title,
+            session_id=session_id.strip() or self._session_id,
+            turn_id=turn_id.strip() or self._turn_id,
+            title=title.strip() or self._title,
         )
 
     async def generate_stream(
@@ -246,15 +265,15 @@ class SessionBoundLLM:
         thinking_enabled: bool = False,
         session_id: str = "",
         turn_id: str = "",
-        title: str = "Box-Agent",
+        title: str = "",
     ) -> AsyncIterator[StreamEvent]:
         client = self._delegate
         async for event in client.generate_stream(
             messages,
             tools,
             thinking_enabled=thinking_enabled,
-            session_id=session_id,
-            turn_id=turn_id,
-            title=title,
+            session_id=session_id.strip() or self._session_id,
+            turn_id=turn_id.strip() or self._turn_id,
+            title=title.strip() or self._title,
         ):
             yield event

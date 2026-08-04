@@ -812,7 +812,6 @@ class SubAgentTool(EventEmittingTool):
                 messages=messages,
                 tools=None,
                 thinking_enabled=False,
-                session_id=sub_agent_id,
             )
             if self._batch_synthesis_timeout_seconds > 0:
                 response = await asyncio.wait_for(

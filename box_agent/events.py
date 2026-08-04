@@ -232,6 +232,8 @@ class ErrorEvent:
     message: str
     is_fatal: bool = False
     exception: Exception | None = field(default=None, repr=False)
+    error_code: int | str | None = None
+    error_category: str | None = None
 
 
 @dataclass(frozen=True)
