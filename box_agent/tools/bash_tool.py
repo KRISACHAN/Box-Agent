@@ -1018,65 +1018,62 @@ Examples:
             # 2. Scope control (capability-based or legacy)
             if self._perm:
                 escape_reason = detect_scope_escape(command, workspace_dir=self.scope_root_dir)
-                if escape_reason:
-                    from .permissions import FILESYSTEM_READ, FILESYSTEM_WRITE, extract_absolute_paths
+                from .permissions import FILESYSTEM_READ, FILESYSTEM_WRITE, extract_absolute_paths
 
-                    abs_paths = extract_absolute_paths(command)
-                    log.debug(
-                        "bash/perm/extracted paths=%s reason=%s cmd=%r",
-                        abs_paths, escape_reason, command[:200],
+                abs_paths = extract_absolute_paths(command)
+                log.debug(
+                    "bash/perm/extracted paths=%s reason=%s cmd=%r",
+                    abs_paths, escape_reason, command[:200],
+                )
+
+                # CONSERVATIVE: if an escape pattern has no extractable path,
+                # deny it rather than silently allowing an unverifiable command.
+                if escape_reason and not abs_paths:
+                    return BashOutputResult(
+                        success=False,
+                        error=(
+                            f"Command blocked (phase 1 permission engine): {escape_reason}. "
+                            f"Cannot verify path permissions for this command pattern. "
+                            f"Use absolute paths or request broader access."
+                        ),
+                        stdout="",
+                        stderr=f"Blocked: {escape_reason}",
+                        exit_code=1,
                     )
 
-                    # CONSERVATIVE: if no absolute paths extracted, we cannot verify safety.
-                    # deny the command rather than silently allowing it.
-                    # This covers: relative paths, $HOME/~, shell expansion, embedded
-                    # interpreters (python -c), heredocs, variable-based paths (phase 1 limit).
-                    if not abs_paths:
+                for p in abs_paths:
+                    if _is_temp_shell_redirect_path(command, p):
+                        continue
+                    # Classify each concrete path separately. A redirect to
+                    # another path (or 2>&1) must not make this path writable.
+                    cap = (
+                        FILESYSTEM_WRITE
+                        if _path_requires_write_permission(command, p)
+                        else FILESYSTEM_READ
+                    )
+                    decision = self._perm.check(
+                        capability=cap,
+                        resource={"path": p},
+                        tool_name="bash",
+                    )
+                    if not decision.allowed:
+                        log.warning(
+                            "bash/perm/denied path=%s cap=%s extracted=%s cmd=%r",
+                            p, cap, abs_paths, command[:200],
+                        )
+                        extracted_summary = (
+                            f" Extracted paths from command: {abs_paths}."
+                            if len(abs_paths) > 1
+                            else ""
+                        )
                         return BashOutputResult(
                             success=False,
-                            error=(
-                                f"Command blocked (phase 1 permission engine): {escape_reason}. "
-                                f"Cannot verify path permissions for this command pattern. "
-                                f"Use absolute paths or request broader access."
-                            ),
+                            error=(decision.reason or "Permission denied") + extracted_summary,
                             stdout="",
-                            stderr=f"Blocked: {escape_reason}",
+                            stderr=decision.reason or "Permission denied",
                             exit_code=1,
+                            permission_request=decision.permission_request,
                         )
-
-                    for p in abs_paths:
-                        if _is_temp_shell_redirect_path(command, p):
-                            continue
-                        # Classify each concrete path separately. A redirect to
-                        # another path (or 2>&1) must not make this path writable.
-                        cap = (
-                            FILESYSTEM_WRITE
-                            if _path_requires_write_permission(command, p)
-                            else FILESYSTEM_READ
-                        )
-                        decision = self._perm.check(
-                            capability=cap,
-                            resource={"path": p},
-                            tool_name="bash",
-                        )
-                        if not decision.allowed:
-                            log.warning(
-                                "bash/perm/denied path=%s cap=%s extracted=%s cmd=%r",
-                                p, cap, abs_paths, command[:200],
-                            )
-                            extracted_summary = (
-                                f" Extracted paths from command: {abs_paths}."
-                                if len(abs_paths) > 1
-                                else ""
-                            )
-                            return BashOutputResult(
-                                success=False,
-                                error=(decision.reason or "Permission denied") + extracted_summary,
-                                stdout="",
-                                stderr=decision.reason or "Permission denied",
-                                exit_code=1,
-                                permission_request=decision.permission_request,
-                            )
             elif not self.allow_full_access:
                 escape_reason = detect_scope_escape(command, workspace_dir=self.scope_root_dir)
                 if escape_reason:

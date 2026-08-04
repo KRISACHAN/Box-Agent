@@ -117,7 +117,12 @@ from box_agent.loop_guards import (
     CompletionGate,
     completion_gate_gaps,
 )
-from box_agent.workflows import recover_completion_gate
+from box_agent.workflows import (
+    build_presentation_preflight_result,
+    build_presentation_recommendation_prompt,
+    load_presentation_preflight_config,
+    recover_completion_gate,
+)
 from box_agent.acp.action_hints import (
     ActionHintStreamNormalizer,
     build_action_hints_prompt,
@@ -2200,12 +2205,6 @@ class BoxACPAgent:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Recommend bounded startup options for a new presentation task."""
-        from box_agent.workflows.presentation_preflight import (
-            build_presentation_preflight_result,
-            build_presentation_recommendation_prompt,
-            load_presentation_preflight_config,
-        )
-
         prompt = params.get("prompt", "")
         if not isinstance(prompt, str) or not prompt.strip():
             return {
