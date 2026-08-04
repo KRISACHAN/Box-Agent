@@ -25,6 +25,11 @@ from box_agent.tools.setup import merge_mcp_tools, register_mcp_tools
 from box_agent.tools.base import Tool, ToolResult
 
 
+def test_streamable_http_client_is_available():
+    """The loader resolves the client exported by the installed MCP SDK."""
+    assert callable(mcp_loader.streamable_http_client)
+
+
 class NamedDummyTool(Tool):
     """Small test double for a named tool."""
 

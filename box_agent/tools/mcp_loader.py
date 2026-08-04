@@ -35,7 +35,12 @@ else:
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamable_http_client
+
+try:
+    from mcp.client.streamable_http import streamable_http_client
+except ImportError:
+    # MCP <= 1.19 exports the same client without the separator.
+    from mcp.client.streamable_http import streamablehttp_client as streamable_http_client
 
 from box_agent.auth import request_auth_headers, resolve_auth_token, should_attach_auth_header
 
