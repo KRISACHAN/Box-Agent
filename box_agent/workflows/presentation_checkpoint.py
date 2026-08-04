@@ -14,6 +14,9 @@ from ..artifacts import OUTPUT_SUBDIR
 from ..loop_guards import CompletionGate
 from .presentation_contract import (
     CHECKPOINT_MARKER,
+    IMAGE_GENERATION_EXPLICIT_RETRY,
+    IMAGE_GENERATION_FORBIDDEN,
+    IMAGE_GENERATION_POLICY_OPTION,
     RESEARCH_MODE_OPTION,
     WORKFLOW_KIND,
 )
@@ -389,6 +392,53 @@ def _manifest_generation_progress(
     return (ready, expected, status_ready, tuple(ready_paths))
 
 
+def _manifest_image_policy_state(
+    manifest_path: Path,
+) -> tuple[bool, bool, bool]:
+    """Return generation-forbidden, needs-forbidden-rebase, and auth-blocked."""
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return (False, False, False)
+    if not isinstance(payload, dict):
+        return (False, False, False)
+    generation_forbidden = payload.get("generation_forbidden") is True
+    image_plan = payload.get("image_plan")
+    needs_rebase = not generation_forbidden or not isinstance(image_plan, list)
+    if isinstance(image_plan, list):
+        needs_rebase = needs_rebase or any(
+            isinstance(entry, dict)
+            and (
+                entry.get("decision") != "skip"
+                or entry.get("status") != "skipped"
+                or entry.get("required") is not False
+            )
+            for entry in image_plan
+        )
+    image_service = payload.get("image_service")
+    auth_blocked = bool(
+        isinstance(image_service, dict)
+        and image_service.get("status") == "blocked"
+        and image_service.get("reason") == "authorization_401"
+    )
+    return (generation_forbidden, needs_rebase, auth_blocked)
+
+
+def _json_document_error(path: Path) -> str | None:
+    """Return a compact parse error for a non-empty JSON file."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return f"unable to read UTF-8 JSON: {exc}"
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return f"{exc.msg} at line {exc.lineno} column {exc.colno}"
+    if not isinstance(payload, dict):
+        return "top level must be a JSON object"
+    return None
+
+
 def _missing_artifact_references(
     artifact_path: Path,
     references: tuple[str, ...] | list[str],
@@ -578,7 +628,10 @@ def _content_patch_input(
     )
 
 
-def _scaffold_input(outline_path: Path) -> str | None:
+def _scaffold_input(
+    outline_path: Path,
+    image_generation_policy: str | None = None,
+) -> str | None:
     """Return registered ids plus compact page intent for one scaffold call."""
     manifest_path = (
         Path(__file__).resolve().parents[1]
@@ -636,6 +689,7 @@ def _scaffold_input(outline_path: Path) -> str | None:
         return None
     return json.dumps(
         {
+            "image_generation_policy": image_generation_policy,
             "default_theme_id": manifest.get("default_theme_id"),
             "registered_theme_ids": theme_ids,
             "registered_layout_ids": layout_ids,
@@ -932,6 +986,7 @@ def build_checkpoint_text(
     workspace_dir: str | None,
     research_mode: str | None,
     *,
+    image_generation_policy: str | None = None,
     research_fallback_allowed: bool = False,
     research_fallback_reason: str | None = None,
     research_attempt_summary: dict[str, int] | None = None,
@@ -1056,6 +1111,22 @@ def build_checkpoint_text(
         "sync_image_manifest_status.js",
         "assets/generated/manifest.json",
     )
+    rebase_image_policy_command = _controlled_pptx_command(
+        "rebase_image_policy.js",
+        "deck.json --manifest assets/generated/manifest.json --policy forbidden",
+    )
+    (
+        manifest_generation_forbidden,
+        manifest_needs_forbidden_rebase,
+        manifest_auth_blocked,
+    ) = _manifest_image_policy_state(manifest_path)
+    effective_image_generation_forbidden = (
+        image_generation_policy == IMAGE_GENERATION_FORBIDDEN
+        or (
+            manifest_generation_forbidden
+            and image_generation_policy != IMAGE_GENERATION_EXPLICIT_RETRY
+        )
+    )
     generated_files = tuple(artifact_root / path for path in generated_paths)
     report_dependencies: dict[str, tuple[Path, ...]] = {
         "outline_check.json": tuple(
@@ -1133,12 +1204,16 @@ def build_checkpoint_text(
             next_action = (
                 "The bounded search rounds already returned usable evidence, so do "
                 "not call web_search or any browser read tool again. Do not create "
-                "outline.json yet. Use only the evidence already present in model "
-                "context and research/ to finish the route's cross-verification, "
+                "outline.json yet. Do not inspect/list files or reread skill "
+                "references, validator source, or Markdown research notes. Use only "
+                "the evidence already present in model context and research/ to "
+                "finish the route's cross-verification, "
                 "insight, structured evidence ledger, and fresh "
                 "research/qa/*_research_check.json via "
                 "validate_research_artifacts.py --report. Repair an unsuccessful "
-                "report from the existing evidence instead of bypassing validation. "
+                "report from the existing evidence instead of bypassing validation; "
+                "after a failed validation, read its JSON report and JSON evidence "
+                "ledger once, then make a repair before reading either again. "
                 "The checkpoint advances only after that report is successful."
             )
         else:
@@ -1328,7 +1403,15 @@ def build_checkpoint_text(
                 "inspect_deck_contract.js once to create deck.json and its image "
                 "manifest, passing `--outline outline.json --out deck.json`. The "
                 "ordered plan may repeat layout "
-                "ids; semantic fidelity is more important than forced variety. A "
+                "ids; semantic fidelity is more important than forced variety. "
+                + (
+                    "The latest user constraint forbids images: pass `--no-images`, "
+                    "never select a required-media layout without its registered "
+                    "fallback, and do not request image generation. "
+                    if image_generation_policy == IMAGE_GENERATION_FORBIDDEN
+                    else ""
+                )
+                + "A "
                 "qualitative page must not use chart-* or kpi-grid-v1 unless its "
                 "outline evidence contains real quantities. For source_mode=user_provided, "
                 "exact quantities in that page's message/bullets are evidence even when "
@@ -1349,6 +1432,8 @@ def build_checkpoint_text(
     else:
         has_placeholders = _deck_has_scaffold_placeholders(deck_path)
         patch_exists = patch_path.is_file() and patch_path.stat().st_size > 0
+        patch_json_error = _json_document_error(patch_path) if patch_exists else None
+        patch_is_valid_json = patch_exists and patch_json_error is None
         missing_deck_media = _missing_artifact_references(
             deck_path,
             generated_paths,
@@ -1359,7 +1444,7 @@ def build_checkpoint_text(
             else missing_deck_media
         )
         patch_needs_apply = False
-        if patch_exists:
+        if patch_is_valid_json:
             try:
                 patch_needs_apply = (
                     patch_path.stat().st_mtime_ns > deck_path.stat().st_mtime_ns
@@ -1368,7 +1453,34 @@ def build_checkpoint_text(
             except OSError:
                 patch_needs_apply = has_placeholders
 
-        if generated_expected and generated_ready < generated_expected:
+        if (
+            effective_image_generation_forbidden
+            and manifest_path.is_file()
+            and manifest_needs_forbidden_rebase
+        ):
+            stage = "image_policy_rebase"
+            next_action = (
+                "The latest user instruction forbids images and overrides the older "
+                "image plan. Run exactly one bash tool call: `"
+                f"{rebase_image_policy_command}`. The deterministic helper keeps "
+                "the outline, content anchors, theme, and palette; removes media "
+                "references; replaces only required-media layouts with registered "
+                "no-image fallbacks; and persists generation_forbidden=true. Do not "
+                "read or rewrite deck.json or manifest.json yourself."
+            )
+        elif (
+            manifest_auth_blocked
+            and not effective_image_generation_forbidden
+            and image_generation_policy != IMAGE_GENERATION_EXPLICIT_RETRY
+        ):
+            stage = "image_auth_blocked"
+            next_action = (
+                "The image service returned HTTP 401 earlier for this presentation "
+                "and the block is persisted. Do not call generate_image or any other "
+                "tool. End the turn and report that the user may explicitly choose a "
+                "no-image deck to continue delivery."
+            )
+        elif generated_expected and generated_ready < generated_expected:
             stage = "images"
             next_action = (
                 "IMAGE_INPUT below is complete and authoritative; do not read/list "
@@ -1389,6 +1501,19 @@ def build_checkpoint_text(
                 "marks every existing planned asset ready without replacing the "
                 "manifest, then the filesystem checkpoint will advance to the "
                 "single all-slide content patch."
+            )
+        elif patch_exists and patch_json_error is not None:
+            stage = "content_patch_repair"
+            next_action = (
+                "The existing deck.patch.json is not complete, valid JSON "
+                f"({patch_json_error}). Do not run apply_deck_patch.js yet. Read only "
+                "deck.patch.json to inspect its exact current tail. If the document ends "
+                "mid-value or before its closing delimiters, continue it with one or more "
+                "append_file calls whose content stays below the file-tool limit. If the "
+                "existing prefix is malformed rather than merely incomplete, rewrite "
+                "deck.patch.json with write_file and continue with append_file as needed. "
+                "Keep every chunk as fresh literal content; the filesystem checkpoint "
+                "will advance only after the complete file parses as JSON."
             )
         elif missing_deck_media and not patch_exists:
             stage = "content_patch"
@@ -1538,11 +1663,12 @@ def build_checkpoint_text(
 
     patch_input = (
         _content_patch_input(outline_path, deck_path, generated_paths)
-        if stage == "content_patch" and deck_path is not None
+        if stage in {"content_patch", "content_patch_repair"}
+        and deck_path is not None
         else None
     )
     scaffold_input = (
-        _scaffold_input(outline_path)
+        _scaffold_input(outline_path, image_generation_policy)
         if stage == "scaffold" and outline_path is not None
         else None
     )
@@ -1635,9 +1761,17 @@ def completion_gate_progress_text(
     if gate.workflow_checkpoint_kind != WORKFLOW_KIND:
         return None
     research_mode = gate.workflow_options.get(RESEARCH_MODE_OPTION)
+    image_generation_policy = gate.workflow_options.get(
+        IMAGE_GENERATION_POLICY_OPTION
+    )
     return build_checkpoint_text(
         workspace_dir,
         research_mode if isinstance(research_mode, str) else None,
+        image_generation_policy=(
+            image_generation_policy
+            if isinstance(image_generation_policy, str)
+            else None
+        ),
     )
 
 

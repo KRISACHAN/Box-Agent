@@ -10482,6 +10482,7 @@ def test_no_image_instruction_blocks_technical_cover_generation_and_is_qa_enforc
     assert manifest["generation_forbidden"] is True
     assert manifest["image_plan"][0]["decision"] == "skip"
     assert manifest["image_plan"][0]["required"] is False
+    assert manifest["image_plan"][0]["allowed_strategies"] == ["skip"]
 
     valid = _run(
         "validate_image_manifest.js",
@@ -10504,6 +10505,182 @@ def test_no_image_instruction_blocks_technical_cover_generation_and_is_qa_enforc
     rejected = _run("validate_image_manifest.js", str(manifest_path))
     assert rejected.returncode == 1
     assert "generation_forbidden" in rejected.stdout
+
+
+def test_rebase_image_policy_converts_existing_required_media_deck_idempotently(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=2,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "新员工入职指南",
+            "message": "快速理解团队、流程与协作方式",
+            "layout": "cover",
+            "visual": "简洁文字封面",
+            "evidence": [],
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "我们如何协作",
+            "message": "用透明信息与明确责任减少内耗",
+            "layout": "image story",
+            "visual": "一张团队协作场景图配核心叙事",
+            "evidence": [],
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    env = os.environ.copy()
+    env["BOX_AGENT_OUTPUT_DIR"] = str(tmp_path)
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "制作新员工入职指南 PPT，介绍团队协作方式。".encode()
+    ).decode()
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "image-hero-split-v1",
+        "--outline",
+        "outline.json",
+        "--out",
+        "deck.json",
+        cwd=tmp_path,
+        env=env,
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"]["title"] = outline["slides"][0]["title"]
+    deck["slides"][0]["props"]["subtitle"] = outline["slides"][0]["message"]
+    deck["slides"][1]["props"]["title"] = outline["slides"][1]["title"]
+    deck["slides"][1]["props"]["body"] = outline["slides"][1]["message"]
+    deck_path.write_text(
+        json.dumps(deck, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    rebased = _run(
+        "rebase_image_policy.js",
+        "deck.json",
+        "--manifest",
+        "assets/generated/manifest.json",
+        "--policy",
+        "forbidden",
+        cwd=tmp_path,
+        env=env,
+    )
+    assert rebased.returncode == 0, rebased.stdout + rebased.stderr
+    assert json.loads(rebased.stdout)["changed"] is True
+
+    manifest_path = tmp_path / "assets" / "generated" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["generation_forbidden"] is True
+    assert all(item["decision"] == "skip" for item in manifest["image_plan"])
+    assert all(item["status"] == "skipped" for item in manifest["image_plan"])
+    assert all(item["required"] is False for item in manifest["image_plan"])
+
+    rebased_deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert rebased_deck["slides"][1]["layout_id"] == "statement-focus-v1"
+    assert rebased_deck["slides"][1]["props"]["statement"] == "我们如何协作"
+    assert "透明信息" in rebased_deck["slides"][1]["props"]["support"]
+
+    first_deck = deck_path.read_text(encoding="utf-8")
+    first_manifest = manifest_path.read_text(encoding="utf-8")
+    repeated = _run(
+        "rebase_image_policy.js",
+        "deck.json",
+        "--manifest",
+        "assets/generated/manifest.json",
+        "--policy",
+        "forbidden",
+        cwd=tmp_path,
+        env=env,
+    )
+    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert json.loads(repeated.stdout)["changed"] is False
+    assert deck_path.read_text(encoding="utf-8") == first_deck
+    assert manifest_path.read_text(encoding="utf-8") == first_manifest
+
+    image_qa = _run(
+        "validate_image_manifest.js",
+        "assets/generated/manifest.json",
+        "--deck",
+        "deck.json",
+        cwd=tmp_path,
+        env=env,
+    )
+    assert image_qa.returncode == 0, image_qa.stdout + image_qa.stderr
+
+    deck_qa = _run("validate_deck_spec.js", "deck.json", cwd=tmp_path, env=env)
+    assert deck_qa.returncode == 0, deck_qa.stdout + deck_qa.stderr
+
+    rendered = _run(
+        "render_deck_html.js",
+        "deck.json",
+        "--out",
+        "index.html",
+        cwd=tmp_path,
+        env=env,
+    )
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    assert (tmp_path / "index.html").is_file()
+
+
+def test_no_images_scaffold_uses_registered_required_media_fallback(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "团队协作方式",
+            "message": "透明信息与明确责任减少协作内耗",
+            "layout": "image story",
+            "visual": "团队协作场景配核心叙事",
+            "evidence": [],
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    env = os.environ.copy()
+    env["BOX_AGENT_OUTPUT_DIR"] = str(tmp_path)
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        "制作无图版团队协作 PPT，不要生成图片。".encode()
+    ).decode()
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "image-hero-split-v1",
+        "--no-images",
+        "--outline",
+        "outline.json",
+        "--out",
+        "deck.json",
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads((tmp_path / "deck.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (tmp_path / "assets" / "generated" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert deck["slides"][0]["layout_id"] == "statement-focus-v1"
+    assert manifest["generation_forbidden"] is True
+    assert manifest["image_plan"][0]["decision"] == "skip"
+    assert manifest["image_plan"][0]["required"] is False
+    assert manifest["image_plan"][0]["allowed_strategies"] == ["skip"]
 
 
 def test_scaffold_normalizes_2x2_priority_matrix_to_editable_quadrant_layout(

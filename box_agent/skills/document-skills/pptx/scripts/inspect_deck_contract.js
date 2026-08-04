@@ -292,6 +292,7 @@ function parseArgs(argv) {
     title: "Untitled deck",
     truthMode: "source_bound",
     imageMode: "auto",
+    noImages: false,
     sourceFacts: [],
     researchFacts: [],
     assumptions: [],
@@ -326,6 +327,8 @@ function parseArgs(argv) {
     } else if (arg === "--image-mode" && value) {
       opts.imageMode = value;
       index += 1;
+    } else if (arg === "--no-images") {
+      opts.noImages = true;
     } else if (arg === "--fact" && value) {
       opts.sourceFacts.push(value);
       index += 1;
@@ -372,7 +375,7 @@ function parseArgs(argv) {
       console.log(
         "Usage: inspect_deck_contract.js [LAYOUT_ID ...] " +
         "[--theme auto|THEME_ID] [--lock-theme] [--family FAMILY_ID] [--design-seed SEED] [--title TITLE] [--truth-mode MODE] " +
-        "[--image-mode auto|creative_image_mode] " +
+        "[--image-mode auto|creative_image_mode] [--no-images] " +
         "[--image-asset SLIDE:SLOT=PATH ...] " +
         "[--fact TEXT ...] [--research-fact TEXT ...] [--assumption TEXT ...] " +
         "[--require-field SLIDE:FIELD ...] [--outline outline.json] [--out deck.json] " +
@@ -787,7 +790,7 @@ function buildImagePlanEntry(
       ? context.slide.visual
       : slideText
   );
-  const generationForbidden = AUTO_COVER_IMAGE_OPTOUT_RE.test(
+  const generationForbidden = context.generationForbidden === true || AUTO_COVER_IMAGE_OPTOUT_RE.test(
     `${briefText}\n${slideText}`
   );
   const creativeCover = !generationForbidden
@@ -819,7 +822,7 @@ function buildImagePlanEntry(
     && !generationForbidden
     && explicitOptionalVisual
     && strategies.includes("generate");
-  const useExisting = Boolean(existingAsset)
+  const useExisting = !generationForbidden && Boolean(existingAsset)
     && !creativeCover
     && strategies.includes("use_existing");
   const generate = !generationForbidden && !useExisting && Boolean(
@@ -878,7 +881,7 @@ function buildImagePlanEntry(
         asset_hash: existingAsset.hash,
       }
       : {}),
-    allowed_strategies: strategies,
+    allowed_strategies: generationForbidden ? ["skip"] : strategies,
   };
 }
 
@@ -1044,6 +1047,9 @@ function main() {
   if (opts.imageAssets.length && !opts.out) {
     throw new Error("--image-asset requires --out deck.json so the asset can be copied portably");
   }
+  if (opts.noImages && opts.imageAssets.length) {
+    throw new Error("--no-images cannot be combined with --image-asset");
+  }
   opts.layoutIds.forEach(layoutId => {
     const layout = getLayout(layoutId);
     if (!layout) {
@@ -1072,7 +1078,18 @@ function main() {
     outlineBinding,
     layoutPolicy
   );
-  const effectiveLayoutIds = layoutResolution.layoutIds;
+  const effectiveLayoutIds = layoutResolution.layoutIds.map(layoutId => {
+    if (!opts.noImages) return layoutId;
+    const layout = getLayout(layoutId);
+    const requiredSlots = layout && layout.mediaSlots && Array.isArray(layout.mediaSlots.slots)
+      ? layout.mediaSlots.slots.filter(slot => slot && slot.required === true)
+      : [];
+    if (!requiredSlots.length) return layoutId;
+    if (!layout.noImageFallbackLayoutId || !getLayout(layout.noImageFallbackLayoutId)) {
+      throw new Error(`Layout ${layoutId} requires media and has no registered no-image fallback.`);
+    }
+    return layout.noImageFallbackLayoutId;
+  });
   const orderedLayouts = effectiveLayoutIds.map(layoutId => getLayout(layoutId));
   validateOutlineLayoutFit(orderedLayouts, outlineBinding, layoutPolicy);
   const runtimeBinding = runtimeSourceBinding();
@@ -1263,7 +1280,7 @@ function main() {
         ? outlineBinding.content.storyline
         : "",
     ].filter(Boolean).join("\n");
-    const generationForbidden = AUTO_COVER_IMAGE_OPTOUT_RE.test(globalBriefText)
+    const generationForbidden = opts.noImages || AUTO_COVER_IMAGE_OPTOUT_RE.test(globalBriefText)
       || Boolean(
         outlineBinding
         && outlineBinding.slides.some(slide => AUTO_COVER_IMAGE_OPTOUT_RE.test([
@@ -1300,6 +1317,7 @@ function main() {
               outlineBinding ? outlineBinding.slides[index].bullets.join("\n") : "",
             ].filter(Boolean).join("\n"),
             slide: outlineBinding ? outlineBinding.slides[index] : null,
+            generationForbidden,
           },
           [...existingImageAssets.values()].find(
             asset => asset.slide === index + 1

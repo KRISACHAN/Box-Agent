@@ -14,6 +14,8 @@ import pytest
 
 from box_agent.completion import (
     build_auto_completion_gate,
+    pending_completion_gate_for_storage,
+    rebase_pending_completion_gate,
     should_resume_pending_completion_gate,
 )
 from box_agent.delivery import is_meta_prompt_rewrite_request
@@ -33,6 +35,12 @@ from box_agent.workflows.presentation_checkpoint import (
 from box_agent.workflows.controlled_presentation import (
     RESEARCH_ROUND_LIMIT,
     ControlledPresentationPolicy,
+)
+from box_agent.workflows.presentation_contract import (
+    IMAGE_GENERATION_EXPLICIT_RETRY,
+    IMAGE_GENERATION_FORBIDDEN,
+    IMAGE_GENERATION_POLICY_OPTION,
+    image_generation_policy_update,
 )
 from box_agent.events import DoneEvent, InjectedMessageEvent, StopReason, ToolCallResult
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
@@ -622,6 +630,82 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
 @pytest.mark.parametrize(
     "prompt",
     [
+        "不用图也行",
+        "没有图片也可以，继续生成 HTML",
+        "继续做成无图版",
+        "不要再生成图片",
+        "Make it text-only and finish the deck",
+        "Continue without images",
+    ],
+)
+def test_image_generation_policy_detects_explicit_forbidden(prompt):
+    assert image_generation_policy_update(prompt) == IMAGE_GENERATION_FORBIDDEN
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "图片服务已恢复，重新生成图片",
+        "可以用图了，继续生成图片",
+        "The image service is restored; generate images again",
+    ],
+)
+def test_image_generation_policy_detects_explicit_retry(prompt):
+    assert image_generation_policy_update(prompt) == IMAGE_GENERATION_EXPLICIT_RETRY
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "继续",
+        "重试",
+        "完成 HTML",
+        "解释一下图片服务为什么失败",
+    ],
+)
+def test_image_generation_policy_ignores_ambiguous_updates(prompt):
+    assert image_generation_policy_update(prompt) is None
+
+
+def test_pending_presentation_gate_rebases_latest_image_constraint(tmp_path):
+    gate = build_auto_completion_gate("制作一份产品介绍 PPT", tmp_path)
+    assert gate is not None
+
+    rebased = rebase_pending_completion_gate(gate, "不用图也行，继续生成 HTML")
+
+    assert rebased.required_changed_artifact_globs == gate.required_changed_artifact_globs
+    assert rebased.workflow_options[IMAGE_GENERATION_POLICY_OPTION] == (
+        IMAGE_GENERATION_FORBIDDEN
+    )
+
+
+@pytest.mark.parametrize("prompt", ["不用图也行", "没图也行", "继续做成无图版"])
+def test_image_policy_update_resumes_pending_deliverable(prompt):
+    assert should_resume_pending_completion_gate(
+        prompt,
+        waiting_for_user_input=False,
+    )
+
+
+def test_explicit_image_retry_is_not_retained_across_turns(tmp_path):
+    gate = build_auto_completion_gate("制作 PPT", tmp_path)
+    assert gate is not None
+    current_turn = rebase_pending_completion_gate(
+        gate,
+        "图片服务已经恢复，重新生成图片",
+    )
+
+    retained = pending_completion_gate_for_storage(current_turn)
+
+    assert current_turn.workflow_options[IMAGE_GENERATION_POLICY_OPTION] == (
+        IMAGE_GENERATION_EXPLICIT_RETRY
+    )
+    assert retained.workflow_options[IMAGE_GENERATION_POLICY_OPTION] == "auto"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
         "帮我优化这个制作 PPT 的 prompt",
         "把这个制作 PPT 的 prompt 改一下",
         "把下面这段“生成 PPT”的提示词润色得专业些",
@@ -1046,6 +1130,98 @@ def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
     )
 
 
+def test_completed_research_search_blocks_reinspection_but_allows_one_json_repair_read(
+    tmp_path,
+):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"entity {index} official source"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    blocked = (
+        "CONTROLLED_PRESENTATION_RESEARCH_LOCAL_READ_COMPLETE: bounded research "
+        "is complete. Do not inspect/list files or reread skill references, "
+        "validator source, or Markdown research notes. Use the evidence already in "
+        "context to write the remaining research artifacts and run "
+        "validate_research_artifacts.py with --report. After a failed validation, "
+        "you may read its JSON report and the JSON evidence ledger once, then make "
+        "a repair before reading either again."
+    )
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            {"path": "/runtime/research-synthesis/output_contract.md"},
+            verified_evidence_urls=set(),
+        )
+        == blocked
+    )
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            {"path": "research/topic_dim01.md"},
+            verified_evidence_urls=set(),
+        )
+        == blocked
+    )
+    assert (
+        policy.tool_call_error(
+            "search_files",
+            {"path": "research", "pattern": "**/*"},
+            verified_evidence_urls=set(),
+        )
+        == blocked
+    )
+
+    report_args = {"path": "research/qa/topic_research_check.json"}
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            report_args,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    policy.record_tool_result(
+        "read_file",
+        report_args,
+        ToolResult(success=True, content='{"ok": false}'),
+    )
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            report_args,
+            verified_evidence_urls=set(),
+        )
+        == blocked
+    )
+    policy.record_tool_result(
+        "write_file",
+        {"path": "research/topic_evidence.json", "content": "{}"},
+        ToolResult(success=True, content="written"),
+    )
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            report_args,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+
+
 def test_deep_research_recovers_only_from_explicit_persisted_fallback(tmp_path):
     research = tmp_path / "output" / "research"
     qa = research / "qa"
@@ -1128,6 +1304,25 @@ def test_deep_research_checkpoint_accepts_validated_user_input_evidence(tmp_path
 
 
 def test_controlled_images_stop_after_http_401(tmp_path):
+    generated = tmp_path / "output" / "assets" / "generated"
+    generated.mkdir(parents=True)
+    manifest_path = generated / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "mode": "auto",
+                "image_plan": [
+                    {
+                        "decision": "generate",
+                        "status": "pending",
+                        "required": True,
+                        "output_path": "assets/generated/cover.png",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     policy = ControlledPresentationPolicy(
         workspace_dir=str(tmp_path),
         artifact_root_dir=None,
@@ -1148,6 +1343,11 @@ def test_controlled_images_stop_after_http_401(tmp_path):
     assert checkpoint is not None
     policy.update_checkpoint(checkpoint)
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_auth_blocked" in checkpoint
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["image_service"] == {
+        "status": "blocked",
+        "reason": "authorization_401",
+    }
     assert policy.allows_completion_continuation() is False
     assert (
         policy.tool_call_error(
@@ -1161,6 +1361,32 @@ def test_controlled_images_stop_after_http_401(tmp_path):
         "tool again in this turn. End the turn and report that image generation is "
         "blocked until the service authorization is refreshed."
     )
+
+
+def test_controlled_successful_mutations_without_progress_stop_after_two(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+    )
+    checkpoint = (
+        "Internal checkpoint\n"
+        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}deck_spec_repair\n"
+        "NEXT_ACTION=repair"
+    )
+    policy.update_checkpoint(checkpoint)
+
+    for _ in range(2):
+        policy.record_tool_result(
+            "write_file",
+            {"path": "deck.patch.json", "content": "{}"},
+            ToolResult(success=True, content="written"),
+        )
+        update = policy.update_checkpoint(checkpoint)
+
+    assert policy.repair_stalled is True
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled" in update.text
+    assert policy.allows_completion_continuation() is False
 
 
 def test_deep_research_checkpoint_does_not_fail_open_without_progress(tmp_path):
@@ -1677,6 +1903,94 @@ def test_controlled_content_patch_checkpoint_embeds_complete_compact_input(tmp_p
     assert "输入演示标题" in checkpoint
 
 
+def test_controlled_incomplete_patch_stays_appendable_until_json_is_valid(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "Exact title",
+                        "message": "Exact message",
+                        "bullets": ["Exact bullet"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "id": "slide-01",
+                        "layout_id": "cover-hero-v1",
+                        "source_outline_page": 1,
+                        "props": {"title": "输入演示标题"},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+    )
+
+    initial = policy.build_checkpoint()
+    assert initial is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}content_patch" in initial
+
+    patch_path = output / "deck.patch.json"
+    patch_path.write_text(
+        '{"slides":{"slide-01":{"props":{"title":"Exact',
+        encoding="utf-8",
+    )
+    incomplete = policy.build_checkpoint()
+    assert incomplete is not None
+    assert (
+        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}content_patch_repair"
+        in incomplete
+    )
+    assert "not complete, valid JSON" in incomplete
+    assert "Do not run apply_deck_patch.js yet" in incomplete
+    assert "PATCH_INPUT=" in incomplete
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}apply_patch" not in incomplete
+
+    policy.update_checkpoint(incomplete)
+    assert (
+        policy.tool_call_error(
+            "append_file",
+            {"path": "deck.patch.json", "content": ' title"}}}}'},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    blocked = policy.tool_call_error(
+        "bash",
+        {"command": "node apply_deck_patch.js deck.json deck.patch.json"},
+        verified_evidence_urls=set(),
+    )
+    assert blocked is not None
+    assert "CONTROLLED_PRESENTATION_PATCH_JSON_INCOMPLETE" in blocked
+
+    with patch_path.open("a", encoding="utf-8") as stream:
+        stream.write(' title"}}}}')
+
+    complete = policy.build_checkpoint()
+    assert complete is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}apply_patch" in complete
+    assert "content_patch_repair" not in complete
+
+
 def test_controlled_content_patch_maps_statement_title_and_numeric_evidence(tmp_path):
     gate = CompletionGate(workflow_checkpoint_kind="controlled_presentation")
     output = tmp_path / "output"
@@ -1846,6 +2160,168 @@ def test_controlled_content_patch_requires_visible_missing_fact_disclosure(tmp_p
     )
     assert "visibly include its supplied disclosure_evidence" in checkpoint
     assert "never promote a missing private fact to positive copy" in checkpoint
+
+
+def test_controlled_image_policy_rebase_precedes_stale_image_checkpoint(tmp_path):
+    output = tmp_path / "output"
+    generated = output / "assets" / "generated"
+    generated.mkdir(parents=True)
+    (output / "outline.json").write_text(
+        json.dumps({"slides": []}),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text(
+        json.dumps(
+            {
+                "title": "Deck title",
+                "theme_id": "blue-professional",
+                "slides": [
+                    {
+                        "id": "slide-01",
+                        "layout_id": "image-hero-split-v1",
+                        "props": {
+                            "eyebrow": "CASE",
+                            "title": "Exact title",
+                            "body": "Exact message",
+                            "image": {"src": "assets/generated/hero.png"},
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (generated / "manifest.json").write_text(
+        json.dumps(
+            {
+                "mode": "auto",
+                "generation_forbidden": False,
+                "image_plan": [
+                    {
+                        "slide": 1,
+                        "slide_id": "slide-01",
+                        "layout_id": "image-hero-split-v1",
+                        "slot": "image",
+                        "prop_path": "image",
+                        "required": True,
+                        "decision": "generate",
+                        "status": "pending",
+                        "output_path": "assets/generated/hero.png",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gate = CompletionGate(
+        workflow_checkpoint_kind="controlled_presentation",
+        workflow_options={
+            IMAGE_GENERATION_POLICY_OPTION: IMAGE_GENERATION_FORBIDDEN,
+        },
+    )
+
+    checkpoint = completion_gate_progress_text(gate, str(tmp_path))
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_policy_rebase" in checkpoint
+    assert "rebase_image_policy.js" in checkpoint
+    assert "IMAGE_INPUT=" not in checkpoint
+
+
+def test_controlled_persisted_image_401_blocks_new_policy_instance(tmp_path):
+    output = tmp_path / "output"
+    generated = output / "assets" / "generated"
+    generated.mkdir(parents=True)
+    (output / "outline.json").write_text(
+        json.dumps({"slides": []}),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text('{"slides": []}', encoding="utf-8")
+    manifest = generated / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "mode": "auto",
+                "generation_forbidden": False,
+                "image_service": {
+                    "status": "blocked",
+                    "reason": "authorization_401",
+                },
+                "image_plan": [
+                    {
+                        "decision": "generate",
+                        "status": "pending",
+                        "required": True,
+                        "output_path": "assets/generated/hero.png",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_auth_blocked" in checkpoint
+    assert "IMAGE_INPUT=" not in checkpoint
+
+
+def test_persisted_no_image_policy_outlives_blocked_image_service(tmp_path):
+    output = tmp_path / "output"
+    generated = output / "assets" / "generated"
+    generated.mkdir(parents=True)
+    (output / "outline.json").write_text(
+        json.dumps({"slides": []}),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text('{"slides": []}', encoding="utf-8")
+    (generated / "manifest.json").write_text(
+        json.dumps(
+            {
+                "mode": "auto",
+                "generation_forbidden": True,
+                "image_service": {
+                    "status": "blocked",
+                    "reason": "authorization_401",
+                },
+                "image_plan": [
+                    {
+                        "decision": "skip",
+                        "status": "skipped",
+                        "required": False,
+                        "output_path": None,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_auth_blocked" not in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}images" not in checkpoint
 
 
 @pytest.mark.asyncio

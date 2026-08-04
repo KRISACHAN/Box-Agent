@@ -138,6 +138,7 @@ function main() {
     return !isSuccessfulExisting(item, manifestPath);
   });
   const generationForbidden = manifest.generation_forbidden === true;
+  const imageService = manifest.image_service;
 
   if (!imagePlan.length) {
     issues.push("manifest.image_plan is missing or empty.");
@@ -148,6 +149,21 @@ function main() {
   }
   if (!["auto", "creative_image_mode"].includes(manifest.mode)) {
     issues.push(`manifest.mode must be "auto" or "creative_image_mode", got ${JSON.stringify(manifest.mode)}.`);
+  }
+
+  if (imageService !== undefined) {
+    if (!imageService || typeof imageService !== "object" || Array.isArray(imageService)) {
+      issues.push("manifest.image_service must be an object when present.");
+    } else if (!["ready", "blocked"].includes(imageService.status)) {
+      issues.push('manifest.image_service.status must be "ready" or "blocked".');
+    } else if (
+      imageService.status === "blocked"
+      && imageService.reason !== "authorization_401"
+    ) {
+      issues.push(
+        'blocked manifest.image_service.reason must be "authorization_401".'
+      );
+    }
   }
 
   if (generationForbidden) {
@@ -263,6 +279,7 @@ function main() {
     manifest: manifestPath,
     mode: manifest.mode || null,
     generationForbidden,
+    imageService: imageService || null,
     imagePlanCount: imagePlan.length,
     requiredImageCount: imagePlan.filter(item => item && item.required === true).length,
     successfulGeneratedCount: successfulGenerated.length,

@@ -111,6 +111,8 @@ from box_agent.completion import (
     build_auto_completion_gate,
     cancels_pending_completion_gate,
     completion_gate_has_workflow_lifecycle,
+    pending_completion_gate_for_storage,
+    rebase_pending_completion_gate,
     should_resume_pending_completion_gate,
 )
 from box_agent.loop_guards import (
@@ -1774,6 +1776,15 @@ class BoxACPAgent:
             elif cancels_pending_completion_gate(plan_detection_text):
                 state.pending_completion_gate = None
                 state.waiting_for_user_input = False
+        if completion_gate is not None:
+            completion_gate = rebase_pending_completion_gate(
+                completion_gate,
+                plan_detection_text,
+            )
+            if completion_gate_has_workflow_lifecycle(completion_gate):
+                state.pending_completion_gate = pending_completion_gate_for_storage(
+                    completion_gate
+                )
         if completion_gate is not None:
             log.info(
                 "completion_gate/enabled",

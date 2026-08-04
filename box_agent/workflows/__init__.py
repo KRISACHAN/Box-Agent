@@ -7,7 +7,10 @@ from typing import Any
 from ..loop_guards import CompletionGate
 from ..workflow_policy import WorkflowPolicy
 from .controlled_presentation import ControlledPresentationPolicy
-from .presentation_contract import RESEARCH_MODE_OPTION
+from .presentation_contract import (
+    IMAGE_GENERATION_POLICY_OPTION,
+    RESEARCH_MODE_OPTION,
+)
 from .presentation_preflight import (
     build_presentation_preflight_result,
     build_presentation_recommendation_prompt,
@@ -25,11 +28,19 @@ def create_workflow_policy(
     """Create a per-run policy without exposing implementations to the kernel."""
     if workflow_kind == ControlledPresentationPolicy.kind:
         research_mode = (workflow_options or {}).get(RESEARCH_MODE_OPTION)
+        image_generation_policy = (workflow_options or {}).get(
+            IMAGE_GENERATION_POLICY_OPTION
+        )
         return ControlledPresentationPolicy(
             workspace_dir=workspace_dir,
             artifact_root_dir=artifact_root_dir,
             research_mode=(
                 research_mode if isinstance(research_mode, str) else None
+            ),
+            image_generation_policy=(
+                image_generation_policy
+                if isinstance(image_generation_policy, str)
+                else None
             ),
         )
     return None

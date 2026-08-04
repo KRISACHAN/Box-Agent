@@ -19,7 +19,10 @@ from ..evidence import extract_http_urls
 from ..tools.base import ToolResult
 from ..workflow_policy import WorkflowCheckpointUpdate
 from .presentation_checkpoint import build_checkpoint_text
-from .presentation_contract import CHECKPOINT_MARKER, WORKFLOW_KIND
+from .presentation_contract import (
+    CHECKPOINT_MARKER,
+    WORKFLOW_KIND,
+)
 
 DIRECT_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
     {
@@ -46,6 +49,14 @@ _CONTENT_PATCH_TOOL_ERROR = (
     "media paths. Do not inspect files again. Write deck.patch.json now with write_file "
     "(and append_file only if the body exceeds the file-tool limit)."
 )
+_CONTENT_PATCH_REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
+    {"read_file", "write_file", "append_file", "edit_file"}
+)
+_CONTENT_PATCH_REPAIR_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_PATCH_JSON_INCOMPLETE: deck.patch.json is not complete, "
+    "valid JSON. Read, rewrite, edit, or append only that file until it parses; do not "
+    "run apply_deck_patch.js or mutate another artifact yet."
+)
 _IMAGE_GENERATION_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_IMAGE_INPUT_READY: IMAGE_INPUT already contains the "
     "missing image paths, page intent, and theme palette. Call generate_image now "
@@ -67,6 +78,16 @@ _SCAFFOLD_TOOL_ERROR = (
 _REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"write_file", "append_file"}
 )
+_MUTATION_TOOLS: Final[frozenset[str]] = frozenset(
+    {
+        "write_file",
+        "append_file",
+        "edit_file",
+        "bash",
+        "execute_code",
+        "generate_image",
+    }
+)
 _REPAIR_STAGES: Final[frozenset[str]] = frozenset(
     {"outline_repair", "deck_spec_repair"}
 )
@@ -86,6 +107,12 @@ _IMAGE_STATUS_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_IMAGE_STATUS_SYNC_REQUIRED: all planned image files "
     "exist. Run sync_image_manifest_status.js once with bash; do not reread/edit "
     "manifest.json or regenerate an existing image."
+)
+_IMAGE_POLICY_REBASE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_IMAGE_POLICY_REBASE_REQUIRED: the latest user "
+    "instruction forbids images. Run the exact rebase_image_policy.js command "
+    "from the latest checkpoint once; do not read or rewrite deck.json or the "
+    "image manifest manually."
 )
 _FINALIZE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_FINALIZE_REQUIRED: run the single deterministic "
@@ -160,6 +187,14 @@ _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR = (
     "again. Complete the cross-verification, insight, evidence ledger, and validation "
     "report from the evidence already in context."
 )
+_RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_LOCAL_READ_COMPLETE: bounded research is "
+    "complete. Do not inspect/list files or reread skill references, validator "
+    "source, or Markdown research notes. Use the evidence already in context to "
+    "write the remaining research artifacts and run validate_research_artifacts.py "
+    "with --report. After a failed validation, you may read its JSON report and the "
+    "JSON evidence ledger once, then make a repair before reading either again."
+)
 
 _PPTX_SCRIPTS_DIR = (
     Path(__file__).resolve().parents[1]
@@ -171,6 +206,7 @@ _PPTX_SCRIPTS_DIR = (
 _FINALIZER_SCRIPT = _PPTX_SCRIPTS_DIR / "finalize_controlled_deck.js"
 _INSPECT_SCRIPT = _PPTX_SCRIPTS_DIR / "inspect_deck_contract.js"
 _APPLY_PATCH_SCRIPT = _PPTX_SCRIPTS_DIR / "apply_deck_patch.js"
+_REBASE_IMAGE_POLICY_SCRIPT = _PPTX_SCRIPTS_DIR / "rebase_image_policy.js"
 _VALIDATE_OUTLINE_SCRIPT = _PPTX_SCRIPTS_DIR / "validate_outline.js"
 _JSON_MISSING = object()
 
@@ -604,6 +640,77 @@ def _apply_patch_failure_signature(
     return re.sub(r"\s+", " ", semantic).strip()[:4000]
 
 
+def _content_patch_repair_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    if stage != "content_patch_repair":
+        return None
+    path = arguments.get("path")
+    safe_patch_path = (
+        isinstance(path, str)
+        and Path(path).name == "deck.patch.json"
+        and ".." not in Path(path).parts
+    )
+    if tool_name not in _CONTENT_PATCH_REPAIR_ALLOWED_TOOLS or not safe_patch_path:
+        return _CONTENT_PATCH_REPAIR_TOOL_ERROR
+    return None
+
+
+def _image_policy_rebase_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str | None:
+    if stage != "image_policy_rebase":
+        return None
+    command = arguments.get("command")
+    if tool_name != "bash" or not isinstance(command, str):
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
+    script_indexes = [
+        index
+        for index, token in enumerate(tokens)
+        if Path(token).name == "rebase_image_policy.js"
+    ]
+    if len(script_indexes) != 1 or script_indexes[0] < 1:
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
+    script_index = script_indexes[0]
+    node_token = tokens[script_index - 1]
+    supplied_script = Path(tokens[script_index])
+    if not (
+        Path(node_token).name in {"node", "node.exe"}
+        or "BOX_AGENT_NODE" in node_token
+    ):
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
+    if (
+        not supplied_script.is_absolute()
+        or supplied_script.resolve() != _REBASE_IMAGE_POLICY_SCRIPT
+    ):
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
+    command_prefix = tokens[: script_index - 1]
+    if command_prefix and not (
+        len(command_prefix) == 3
+        and command_prefix[0] == "cd"
+        and command_prefix[1]
+        and command_prefix[2] == "&&"
+    ):
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
+    if tokens[script_index + 1 :] != [
+        "deck.json",
+        "--manifest",
+        "assets/generated/manifest.json",
+        "--policy",
+        "forbidden",
+    ]:
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
+    return None
+
+
 def _repair_stalled_checkpoint() -> str:
     return (
         "Internal controlled-presentation checkpoint; the same deterministic "
@@ -794,6 +901,12 @@ def _scaffold_error(
         return _SCAFFOLD_TOOL_ERROR
     if tokens.count("--outline") != 1 or tokens.count("--out") != 1:
         return _SCAFFOLD_TOOL_ERROR
+    if (
+        scaffold_input.get("image_generation_policy")
+        == "forbidden_by_user"
+        and tokens.count("--no-images") != 1
+    ):
+        return _SCAFFOLD_TOOL_ERROR
     outline_index = tokens.index("--outline") + 1
     out_index = tokens.index("--out") + 1
     if (
@@ -899,6 +1012,7 @@ class ControlledPresentationPolicy:
     workspace_dir: str | None
     artifact_root_dir: str | Path | None
     research_mode: str | None = None
+    image_generation_policy: str | None = None
     stage: str | None = None
     scaffold_input: dict[str, Any] | None = None
     image_input: dict[str, Any] | None = None
@@ -921,6 +1035,9 @@ class ControlledPresentationPolicy:
     _research_empty_attempts: int = 0
     _research_calls_since_checkpoint: int = 0
     _research_rounds_without_handoff: int = 0
+    _research_json_reads_since_mutation: set[str] = field(default_factory=set)
+    _successful_mutation_since_checkpoint: bool = False
+    _no_progress_mutation_streak: int = 0
 
     kind: ClassVar[str] = WORKFLOW_KIND
     checkpoint_injection_id: ClassVar[str] = CHECKPOINT_MARKER
@@ -956,6 +1073,7 @@ class ControlledPresentationPolicy:
         checkpoint_text = build_checkpoint_text(
             self.workspace_dir,
             self.research_mode,
+            image_generation_policy=self.image_generation_policy,
             research_fallback_allowed=fallback_allowed,
             research_fallback_reason=fallback_reason,
             research_attempt_summary=attempt_summary,
@@ -1011,11 +1129,65 @@ class ControlledPresentationPolicy:
                 exc,
             )
 
+    def _persist_image_auth_blocked(self) -> None:
+        """Persist a non-retryable image authorization failure across turns."""
+        root = artifact_scan_root(self.workspace_dir, self.artifact_root_dir)
+        if root is None or not root.is_dir():
+            return
+        manifests = list(root.rglob("assets/generated/manifest.json"))
+        if not manifests:
+            return
+        try:
+            manifest_path = max(
+                manifests,
+                key=lambda path: path.stat().st_mtime_ns,
+            )
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return
+            image_service = {
+                "status": "blocked",
+                "reason": "authorization_401",
+            }
+            if payload.get("image_service") == image_service:
+                return
+            payload["image_service"] = image_service
+            serialized = json.dumps(
+                payload,
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n"
+            temp_path = manifest_path.with_name(
+                f".{manifest_path.name}.tmp"
+            )
+            temp_path.write_text(serialized, encoding="utf-8")
+            temp_path.replace(manifest_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            _log.warning(
+                "controlled_presentation/image_auth_state_write_failed "
+                "error=%s",
+                exc,
+            )
+
     def update_checkpoint(
         self,
         checkpoint_text: str,
     ) -> WorkflowCheckpointUpdate:
         """Parse a fresh filesystem checkpoint and update policy state."""
+        candidate_changed = checkpoint_text != self._last_checkpoint_text
+        if self._successful_mutation_since_checkpoint:
+            if candidate_changed:
+                self._no_progress_mutation_streak = 0
+            else:
+                self._no_progress_mutation_streak += 1
+            self._successful_mutation_since_checkpoint = False
+            if self._no_progress_mutation_streak >= 2:
+                self.repair_stalled = True
+                _log.warning(
+                    "controlled_presentation/repair_stalled "
+                    "successful_mutations_without_progress=%d",
+                    self._no_progress_mutation_streak,
+                )
         if self.repair_stalled:
             checkpoint_text = _repair_stalled_checkpoint()
         next_stage = _stage(checkpoint_text)
@@ -1058,6 +1230,41 @@ class ControlledPresentationPolicy:
         """Validate a structured plan before host approval handling."""
         return _plan_scope_error(self.stage, tool_name, arguments)
 
+    def _research_json_read_key(self, arguments: dict[str, Any]) -> str | None:
+        path_value = arguments.get("path")
+        if not isinstance(path_value, str) or not path_value.strip():
+            return None
+        root = artifact_scan_root(self.workspace_dir, self.artifact_root_dir)
+        if root is None:
+            return None
+        path = Path(path_value)
+        candidate = path if path.is_absolute() else root / path
+        try:
+            relative = candidate.resolve(strict=False).relative_to(
+                (root / "research").resolve(strict=False)
+            )
+        except ValueError:
+            return None
+        if relative.suffix.casefold() != ".json":
+            return None
+        return relative.as_posix()
+
+    def _research_local_read_error(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str | None:
+        if self.stage != "research" or not self.research_search_exhausted:
+            return None
+        if tool_name == "search_files":
+            return _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR
+        if tool_name != "read_file":
+            return None
+        key = self._research_json_read_key(arguments)
+        if key is None or key in self._research_json_reads_since_mutation:
+            return _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR
+        return None
+
     def tool_call_error(
         self,
         tool_name: str,
@@ -1082,6 +1289,12 @@ class ControlledPresentationPolicy:
                 and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
             ):
                 return _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR
+            research_local_read_error = self._research_local_read_error(
+                tool_name,
+                arguments,
+            )
+            if research_local_read_error is not None:
+                return research_local_read_error
             return handoff_error
         if self.stage == "repair_stalled":
             return _REPAIR_STALLED_TOOL_ERROR
@@ -1089,6 +1302,26 @@ class ControlledPresentationPolicy:
             return _IMAGE_AUTH_BLOCKED_TOOL_ERROR
         if handoff_error is not None:
             return handoff_error
+        research_local_read_error = self._research_local_read_error(
+            tool_name,
+            arguments,
+        )
+        if research_local_read_error is not None:
+            return research_local_read_error
+        content_patch_repair_error = _content_patch_repair_error(
+            self.stage,
+            tool_name,
+            arguments,
+        )
+        if content_patch_repair_error is not None:
+            return content_patch_repair_error
+        image_policy_rebase_error = _image_policy_rebase_error(
+            self.stage,
+            tool_name,
+            arguments,
+        )
+        if image_policy_rebase_error is not None:
+            return image_policy_rebase_error
         if (
             self.stage == "research"
             and self.research_search_exhausted
@@ -1153,11 +1386,18 @@ class ControlledPresentationPolicy:
     ) -> None:
         """Update deterministic-repair state after one tool result."""
         if (
+            result.success
+            and tool_name in _MUTATION_TOOLS
+            and self.stage != "research"
+        ):
+            self._successful_mutation_since_checkpoint = True
+        if (
             self.stage == "images"
             and tool_name == "generate_image"
             and _image_result_is_unauthorized(result)
         ):
             self.image_auth_blocked = True
+            self._persist_image_auth_blocked()
             _log.warning(
                 "controlled_presentation/image_auth_blocked status=401 "
                 "further_image_calls_stopped=true"
@@ -1172,6 +1412,13 @@ class ControlledPresentationPolicy:
                 self._research_empty_attempts += 1
             else:
                 self._research_successful_attempts += 1
+        if self.stage == "research" and result.success:
+            if tool_name in _MUTATION_TOOLS:
+                self._research_json_reads_since_mutation.clear()
+            elif tool_name == "read_file":
+                key = self._research_json_read_key(arguments)
+                if key is not None:
+                    self._research_json_reads_since_mutation.add(key)
 
         if self.stage in _REPAIR_STAGES:
             if result.success:

@@ -3257,6 +3257,7 @@ const layouts = [
   {
     id: "image-hero-split-v1",
     label: "Image-led split story",
+    noImageFallbackLayoutId: "statement-focus-v1",
     editor: {
       label: "图文重点",
       description: "一张主图与一段核心叙事",

@@ -66,6 +66,17 @@ function main() {
       `Cannot mark unresolved generated image(s) ready: ${unresolved.join(", ")}`,
     );
   }
+  const generatedReady = imagePlan.some(
+    entry => entry && entry.decision === "generate" && entry.status === "generated"
+  );
+  if (
+    generatedReady
+    && manifest.image_service
+    && manifest.image_service.status === "blocked"
+  ) {
+    manifest.image_service = { status: "ready" };
+    changed += 1;
+  }
   if (changed) {
     const temporaryPath = `${manifestPath}.tmp`;
     fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

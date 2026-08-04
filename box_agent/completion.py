@@ -15,6 +15,13 @@ from .delivery import (
 )
 from .loop_guards import CompletionGate, artifact_signatures_for_globs
 from .turn_policy import text_is_short_acknowledgement
+from .workflows.presentation_contract import (
+    IMAGE_GENERATION_AUTO,
+    IMAGE_GENERATION_EXPLICIT_RETRY,
+    IMAGE_GENERATION_POLICY_OPTION,
+    WORKFLOW_KIND,
+    image_generation_policy_update,
+)
 from .workflows.presentation_routing import build_presentation_completion_gate
 
 
@@ -183,6 +190,8 @@ def should_resume_pending_completion_gate(
         or is_meta_prompt_rewrite_request(user_text)
     ):
         return False
+    if image_generation_policy_update(user_text) is not None:
+        return True
     if waiting_for_user_input:
         return True
     compact = normalized.replace(" ", "")
@@ -192,6 +201,44 @@ def should_resume_pending_completion_gate(
     ):
         return True
     return text_is_short_acknowledgement(normalized)
+
+
+def rebase_pending_completion_gate(
+    gate: CompletionGate,
+    user_text: str,
+) -> CompletionGate:
+    """Apply explicit latest-turn workflow constraints without dropping delivery."""
+    if gate.workflow_checkpoint_kind != WORKFLOW_KIND:
+        return gate
+    image_policy = image_generation_policy_update(user_text)
+    if image_policy is None:
+        return gate
+    return replace(
+        gate,
+        workflow_options={
+            **gate.workflow_options,
+            IMAGE_GENERATION_POLICY_OPTION: image_policy,
+        },
+    )
+
+
+def pending_completion_gate_for_storage(
+    gate: CompletionGate,
+) -> CompletionGate:
+    """Remove one-turn workflow overrides before retaining a pending gate."""
+    if (
+        gate.workflow_checkpoint_kind == WORKFLOW_KIND
+        and gate.workflow_options.get(IMAGE_GENERATION_POLICY_OPTION)
+        == IMAGE_GENERATION_EXPLICIT_RETRY
+    ):
+        return replace(
+            gate,
+            workflow_options={
+                **gate.workflow_options,
+                IMAGE_GENERATION_POLICY_OPTION: IMAGE_GENERATION_AUTO,
+            },
+        )
+    return gate
 
 
 def completion_gate_has_workflow_lifecycle(gate: CompletionGate) -> bool:
