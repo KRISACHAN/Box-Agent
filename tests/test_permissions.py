@@ -978,6 +978,25 @@ class TestAcpPermissionOverride:
         assert decision.allowed is False
         assert decision.permission_request is None
 
+    def test_lexical_workspace_symlink_escape_has_no_escalation(
+        self,
+        engine: PermissionEngine,
+        workspace: Path,
+        tmp_path: Path,
+    ):
+        """A path that only escapes through resolution is not user-authorizable."""
+        requested = workspace / "link_to_outside" / "file.txt"
+        resolved = tmp_path / "outside" / "file.txt"
+
+        assert (
+            engine._compute_escalation(
+                resolved.resolve(),
+                "session_workspace",
+                requested_path=str(requested),
+            )
+            is None
+        )
+
     def test_explicit_posix_path_reports_request_to_host(self, engine: PermissionEngine):
         """A user-named macOS or Linux absolute path reaches the host for approval."""
         requested = "/Volumes/external-project"

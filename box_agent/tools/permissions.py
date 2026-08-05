@@ -331,22 +331,37 @@ class PermissionEngine:
     ) -> str | None:
         """Return the host protocol escalation for an out-of-scope path.
 
-        Existing home-directory escalation semantics remain unchanged.
-        officev3 also negotiates explicit absolute-path approvals as
-        path-specific directory grants. The host protocol currently uses
+        Only user-explicit absolute paths are eligible. Relative escapes and
+        paths that are lexically inside an allowed root but resolve outside it
+        through a symlink fail closed. The host protocol currently uses
         ``requested_scope=user_home`` as the filesystem approval discriminator
         even when the approved grant is a narrower directory outside home.
         """
         if current_scope in ("session_workspace", "custom"):
-            if self._is_under_home(resolved):
-                return "user_home"
             raw = requested_path
             explicit_absolute_path = (
                 PurePosixPath(raw).is_absolute()
                 or PureWindowsPath(raw).is_absolute()
             )
-            if explicit_absolute_path:
-                return "user_home"
+            if not explicit_absolute_path:
+                return None
+
+            # On the native platform, compare the lexical path with active
+            # roots before following symlinks. If it looked in-scope but
+            # resolved out-of-scope, this is a symlink escape, not a request
+            # for a new external directory grant.
+            native_requested_path = Path(raw).expanduser()
+            if native_requested_path.is_absolute():
+                lexical_path = Path(os.path.abspath(str(native_requested_path)))
+                active_roots = (
+                    self._workspace_dir,
+                    self._session_workspace_root,
+                    *self._allowed_dirs,
+                )
+                if any(self._is_inside(lexical_path, root) for root in active_roots):
+                    return None
+
+            return "user_home"
         return None
 
     def _is_inside(self, target: Path, root: Path) -> bool:
