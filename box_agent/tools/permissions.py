@@ -331,9 +331,10 @@ class PermissionEngine:
     ) -> str | None:
         """Return the host protocol escalation for an out-of-scope path.
 
-        Only user-explicit absolute paths are eligible. Relative escapes and
-        paths that are lexically inside an allowed root but resolve outside it
-        through a symlink fail closed. The host protocol currently uses
+        Out-of-scope paths are eligible for host approval, including relative
+        paths whose original spelling is preserved for the prompt. Paths that
+        are lexically inside an allowed root but resolve outside it through a
+        symlink still fail closed. The host protocol currently uses
         ``requested_scope=user_home`` as the filesystem approval discriminator
         even when the approved grant is a narrower directory outside home.
         """
@@ -343,15 +344,12 @@ class PermissionEngine:
                 PurePosixPath(raw).is_absolute()
                 or PureWindowsPath(raw).is_absolute()
             )
-            if not explicit_absolute_path:
-                return None
-
             # On the native platform, compare the lexical path with active
             # roots before following symlinks. If it looked in-scope but
             # resolved out-of-scope, this is a symlink escape, not a request
             # for a new external directory grant.
             native_requested_path = Path(raw).expanduser()
-            if native_requested_path.is_absolute():
+            if native_requested_path.is_absolute() or not explicit_absolute_path:
                 lexical_path = Path(os.path.abspath(str(native_requested_path)))
                 active_roots = (
                     self._workspace_dir,

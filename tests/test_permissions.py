@@ -972,11 +972,12 @@ class TestAcpPermissionOverride:
         assert req["scope"] == "filesystem"
         assert isinstance(req["temporary_supported"], bool)
 
-    def test_no_escalation_request_is_none(self, engine: PermissionEngine):
-        """Relative escape paths do not become user-authorizable roots."""
+    def test_relative_escape_requests_permission(self, engine: PermissionEngine):
+        """Relative escapes preserve their spelling for user approval."""
         decision = engine.check(FILESYSTEM_READ, {"path": "../outside.txt"})
         assert decision.allowed is False
-        assert decision.permission_request is None
+        assert decision.permission_request is not None
+        assert decision.permission_request["path"] == "../outside.txt"
 
     def test_lexical_workspace_symlink_escape_has_no_escalation(
         self,
