@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -220,22 +220,18 @@ class PermissionEngine:
         tool_name: str | None = None,
     ) -> PermissionDecision:
         if capability == FILESYSTEM_READ:
-            requested_path = str(resource["path"])
             return self._check_filesystem(
-                Path(requested_path),
+                Path(resource["path"]),
                 self._policy.filesystem_scope,
                 "read",
                 tool_name,
-                requested_path,
             )
         elif capability == FILESYSTEM_WRITE:
-            requested_path = str(resource["path"])
             return self._check_filesystem(
-                Path(requested_path),
+                Path(resource["path"]),
                 self._policy.filesystem_scope,
                 "write",
                 tool_name,
-                requested_path,
             )
         elif capability == MEMORY_OPENCLAW_IMPORT:
             return self._check_memory_openclaw()
@@ -246,15 +242,9 @@ class PermissionEngine:
     # ── filesystem ──
 
     def _check_filesystem(
-        self,
-        path: Path,
-        scope: str,
-        operation: str,
-        tool_name: str | None = None,
-        requested_path: str | None = None,
+        self, path: Path, scope: str, operation: str, tool_name: str | None = None
     ) -> PermissionDecision:
         resolved = self._resolve_for_check(path)
-        raw_requested_path = requested_path or str(path)
 
         # Directory-level grants take precedence over scope checks. These are
         # recorded by the negotiator after the user approves a permission
@@ -273,22 +263,7 @@ class PermissionEngine:
         if self._path_allowed_by_scope(resolved, scope, operation, tool_name):
             return PermissionDecision(allowed=True)
 
-        protected_write_roots = [*self._app_read_dirs]
-        if self._builtin_skills_dir is not None:
-            protected_write_roots.append(self._builtin_skills_dir)
-        if operation == "write" and any(
-            self._is_inside(resolved, root) for root in protected_write_roots
-        ):
-            return PermissionDecision(
-                allowed=False,
-                reason=f"Access denied: application resources are read-only ({path}).",
-            )
-
-        escalation = self._compute_escalation(
-            resolved,
-            scope,
-            requested_path=raw_requested_path,
-        )
+        escalation = self._compute_escalation(resolved, scope, requested_path=path)
 
         if escalation is None:
             log.warning(
@@ -314,7 +289,7 @@ class PermissionEngine:
                 "type": "permission_request",
                 "scope": "filesystem",
                 "requested_scope": escalation,
-                "path": raw_requested_path,
+                "path": str(path),
                 "reason": f"Path is outside {scope}",
                 "temporary_supported": True,
                 "persistent_supported": True,
@@ -327,39 +302,23 @@ class PermissionEngine:
         resolved: Path,
         current_scope: str,
         *,
-        requested_path: str,
+        requested_path: Path,
     ) -> str | None:
         """Return the host protocol escalation for an out-of-scope path.
 
-        Out-of-scope paths are eligible for host approval, including relative
-        paths whose original spelling is preserved for the prompt. Paths that
-        are lexically inside an allowed root but resolve outside it through a
-        symlink still fail closed. The host protocol currently uses
+        Existing home-directory escalation semantics remain unchanged.
+        officev3 also persists explicit Windows drive/UNC approvals as
+        path-specific custom directories. The host protocol currently uses
         ``requested_scope=user_home`` as the filesystem approval discriminator
         even when the approved grant is a narrower directory outside home.
         """
         if current_scope in ("session_workspace", "custom"):
-            raw = requested_path
-            explicit_absolute_path = (
-                PurePosixPath(raw).is_absolute()
-                or PureWindowsPath(raw).is_absolute()
-            )
-            # On the native platform, compare the lexical path with active
-            # roots before following symlinks. If it looked in-scope but
-            # resolved out-of-scope, this is a symlink escape, not a request
-            # for a new external directory grant.
-            native_requested_path = Path(raw).expanduser()
-            if native_requested_path.is_absolute() or not explicit_absolute_path:
-                lexical_path = Path(os.path.abspath(str(native_requested_path)))
-                active_roots = (
-                    self._workspace_dir,
-                    self._session_workspace_root,
-                    *self._allowed_dirs,
-                )
-                if any(self._is_inside(lexical_path, root) for root in active_roots):
-                    return None
-
-            return "user_home"
+            if self._is_under_home(resolved):
+                return "user_home"
+            raw = str(requested_path)
+            explicit_windows_path = bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", raw))
+            if explicit_windows_path:
+                return "user_home"
         return None
 
     def _is_inside(self, target: Path, root: Path) -> bool:
