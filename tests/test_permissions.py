@@ -145,11 +145,12 @@ class TestFilesystemRead:
         assert decision.permission_request["requested_scope"] == "user_home"
         assert "path" in decision.permission_request
 
-    def test_read_outside_home_denied_no_escalation(self, engine: PermissionEngine):
+    def test_read_explicit_absolute_path_requests_permission(self, engine: PermissionEngine):
         decision = engine.check(FILESYSTEM_READ, {"path": "/etc/passwd"})
         assert decision.allowed is False
-        assert decision.permission_request is None
-        assert "outside all allowed scopes" in decision.reason
+        assert decision.permission_request is not None
+        assert decision.permission_request["path"] == "/etc/passwd"
+        assert "outside session_workspace" in decision.reason
 
     def test_read_user_home_scope(self, workspace: Path):
         policy = CapabilityPolicy(filesystem_scope="user_home")
@@ -972,10 +973,21 @@ class TestAcpPermissionOverride:
         assert isinstance(req["temporary_supported"], bool)
 
     def test_no_escalation_request_is_none(self, engine: PermissionEngine):
-        """Implicit system-root paths outside home have no escalation option."""
-        decision = engine.check(FILESYSTEM_READ, {"path": "/etc/passwd"})
+        """Relative escape paths do not become user-authorizable roots."""
+        decision = engine.check(FILESYSTEM_READ, {"path": "../outside.txt"})
         assert decision.allowed is False
         assert decision.permission_request is None
+
+    def test_explicit_posix_path_reports_request_to_host(self, engine: PermissionEngine):
+        """A user-named macOS or Linux absolute path reaches the host for approval."""
+        requested = "/Volumes/external-project"
+        decision = engine.check(FILESYSTEM_READ, {"path": requested})
+
+        assert decision.allowed is False
+        assert decision.permission_request is not None
+        assert decision.permission_request["scope"] == "filesystem"
+        assert decision.permission_request["requested_scope"] == "user_home"
+        assert decision.permission_request["path"] == requested
 
     def test_explicit_windows_path_reports_request_to_host(self, engine: PermissionEngine):
         """A user-named drive path reaches officev3 for directory approval."""
