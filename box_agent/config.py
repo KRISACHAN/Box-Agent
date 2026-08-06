@@ -218,8 +218,8 @@ class FilesystemPermissions(BaseModel):
     Canonical field is ``scope`` (maps to officev3 ``fileAccessScope``).
     Read and write share the same scope — no protocol-level read/write split.
 
-    ``allowed_directories`` extends ``session_workspace`` and ``custom`` scopes
-    with a whitelist of additional directories (paths may contain ``~`` or
+    ``allowed_directories`` extends the selected base scope with a whitelist
+    of additional directories (paths may contain ``~`` or
     ``$HOME`` — expansion happens at engine construction time).
     """
 

@@ -122,14 +122,13 @@ def _path_allowed_by_scope(self, resolved: Path, scope: str) -> bool:
     if self._is_inside(resolved, self._workspace_dir):
         return True
     if scope == "user_home":
-        return self._is_under_home(resolved)
+        return self._is_under_home(resolved) or any(
+            self._is_inside(resolved, allowed) for allowed in self._allowed_dirs
+        )
     if scope in ("session_workspace", "custom"):
         if self._is_inside(resolved, self._session_workspace_root):
             return True
-        for allowed in self._allowed_dirs:
-            if self._is_inside(resolved, allowed):
-                return True
-        return False
+        return any(self._is_inside(resolved, allowed) for allowed in self._allowed_dirs)
 ```
 
 `workspace_dir`（ACP `cwd`）始终允许。`session_workspace_root` 与 `allowed_directories` 是叠加白名单。落在外面会触发 `permission_request` 协商（escalation 到 `user_home` 或 `custom`），而不是直接拒绝。

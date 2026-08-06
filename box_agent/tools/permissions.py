@@ -47,9 +47,8 @@ class CapabilityPolicy(BaseModel):
     ``officev3.permissions.filesystem.scope``). Read and write share the same
     scope — no read/write split in the protocol.
 
-    ``allowed_directories`` is an additive whitelist that extends
-    ``session_workspace`` and ``custom`` scopes (the spec treats these two
-    semantically identically).
+    ``allowed_directories`` is an additive whitelist layered on top of the
+    selected base scope.
     """
 
     filesystem_scope: str = "session_workspace"
@@ -312,13 +311,15 @@ class PermissionEngine:
         ``requested_scope=user_home`` as the filesystem approval discriminator
         even when the approved grant is a narrower directory outside home.
         """
+        if current_scope not in ("session_workspace", "custom", "user_home"):
+            return None
         if current_scope in ("session_workspace", "custom"):
             if self._is_under_home(resolved):
                 return "user_home"
-            raw = str(requested_path)
-            explicit_windows_path = bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", raw))
-            if explicit_windows_path:
-                return "user_home"
+        raw = str(requested_path)
+        explicit_windows_path = bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", raw))
+        if explicit_windows_path:
+            return "user_home"
         return None
 
     def _is_inside(self, target: Path, root: Path) -> bool:
@@ -400,17 +401,16 @@ class PermissionEngine:
                     return True
 
         if scope == "user_home":
-            return self._is_under_home(resolved)
+            if self._is_under_home(resolved):
+                return True
+            return any(self._is_inside(resolved, allowed) for allowed in self._allowed_dirs)
 
         # session_workspace and custom share the same semantics:
         # session_workspace_root + workspace_dir + allowed_directories.
         if scope in ("session_workspace", "custom"):
             if self._is_inside(resolved, self._session_workspace_root):
                 return True
-            for allowed in self._allowed_dirs:
-                if self._is_inside(resolved, allowed):
-                    return True
-            return False
+            return any(self._is_inside(resolved, allowed) for allowed in self._allowed_dirs)
 
         # Unknown scope — fail closed.
         log.warning("permission/unknown_scope", extra={"scope": scope})
