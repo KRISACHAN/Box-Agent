@@ -145,12 +145,11 @@ class TestFilesystemRead:
         assert decision.permission_request["requested_scope"] == "user_home"
         assert "path" in decision.permission_request
 
-    def test_read_explicit_absolute_path_requests_permission(self, engine: PermissionEngine):
+    def test_read_outside_home_denied_no_escalation(self, engine: PermissionEngine):
         decision = engine.check(FILESYSTEM_READ, {"path": "/etc/passwd"})
         assert decision.allowed is False
-        assert decision.permission_request is not None
-        assert decision.permission_request["path"] == "/etc/passwd"
-        assert "outside session_workspace" in decision.reason
+        assert decision.permission_request is None
+        assert "outside all allowed scopes" in decision.reason
 
     def test_read_user_home_scope(self, workspace: Path):
         policy = CapabilityPolicy(filesystem_scope="user_home")
@@ -164,7 +163,7 @@ class TestFilesystemRead:
         eng = PermissionEngine(policy, workspace)
         decision = eng.check(FILESYSTEM_READ, {"path": "/etc/passwd"})
         assert decision.allowed is False
-        assert decision.permission_request is None  # no escalation beyond user_home
+        assert decision.permission_request is None  # implicit POSIX system paths never escalate
 
     def test_read_session_workspace_root(self, workspace: Path, tmp_path: Path):
         sws_root = tmp_path / "sws_root"
@@ -972,42 +971,11 @@ class TestAcpPermissionOverride:
         assert req["scope"] == "filesystem"
         assert isinstance(req["temporary_supported"], bool)
 
-    def test_relative_escape_requests_permission(self, engine: PermissionEngine):
-        """Relative escapes preserve their spelling for user approval."""
-        decision = engine.check(FILESYSTEM_READ, {"path": "../outside.txt"})
+    def test_no_escalation_request_is_none(self, engine: PermissionEngine):
+        """Implicit system-root paths outside home have no escalation option."""
+        decision = engine.check(FILESYSTEM_READ, {"path": "/etc/passwd"})
         assert decision.allowed is False
-        assert decision.permission_request is not None
-        assert decision.permission_request["path"] == "../outside.txt"
-
-    def test_lexical_workspace_symlink_escape_has_no_escalation(
-        self,
-        engine: PermissionEngine,
-        workspace: Path,
-        tmp_path: Path,
-    ):
-        """A path that only escapes through resolution is not user-authorizable."""
-        requested = workspace / "link_to_outside" / "file.txt"
-        resolved = tmp_path / "outside" / "file.txt"
-
-        assert (
-            engine._compute_escalation(
-                resolved.resolve(),
-                "session_workspace",
-                requested_path=str(requested),
-            )
-            is None
-        )
-
-    def test_explicit_posix_path_reports_request_to_host(self, engine: PermissionEngine):
-        """A user-named macOS or Linux absolute path reaches the host for approval."""
-        requested = "/Volumes/external-project"
-        decision = engine.check(FILESYSTEM_READ, {"path": requested})
-
-        assert decision.allowed is False
-        assert decision.permission_request is not None
-        assert decision.permission_request["scope"] == "filesystem"
-        assert decision.permission_request["requested_scope"] == "user_home"
-        assert decision.permission_request["path"] == requested
+        assert decision.permission_request is None
 
     def test_explicit_windows_path_reports_request_to_host(self, engine: PermissionEngine):
         """A user-named drive path reaches officev3 for directory approval."""
@@ -1019,6 +987,43 @@ class TestAcpPermissionOverride:
         assert decision.permission_request["scope"] == "filesystem"
         assert decision.permission_request["requested_scope"] == "user_home"
         assert decision.permission_request["path"] == requested
+
+    def test_user_home_explicit_windows_path_reports_request_to_host(
+        self, workspace: Path, tmp_path: Path
+    ):
+        """user_home can still request a path-specific external directory grant."""
+        policy = CapabilityPolicy(
+            filesystem_scope="user_home",
+            session_workspace_root=str(workspace),
+        )
+        engine = PermissionEngine(policy, workspace)
+        # On POSIX, ``Z:\\...`` is parsed as a relative path below the process
+        # cwd. Use an isolated home so the test exercises lexical Windows-path
+        # escalation instead of accidentally inheriting the CI checkout's home.
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        engine._home_dir = fake_home.resolve()
+        requested = r"Z:\external-project"
+
+        decision = engine.check(FILESYSTEM_READ, {"path": requested})
+
+        assert decision.allowed is False
+        assert decision.permission_request is not None
+        assert decision.permission_request["scope"] == "filesystem"
+        assert decision.permission_request["requested_scope"] == "user_home"
+        assert decision.permission_request["path"] == requested
+
+    def test_unknown_scope_explicit_windows_path_does_not_escalate(
+        self, workspace: Path
+    ):
+        """Unknown scopes remain fail-closed for explicit external paths."""
+        policy = CapabilityPolicy(filesystem_scope="unknown")
+        engine = PermissionEngine(policy, workspace)
+
+        decision = engine.check(FILESYSTEM_READ, {"path": r"Z:\external-project"})
+
+        assert decision.allowed is False
+        assert decision.permission_request is None
 
 
 # ── Allowed directories + custom/user_home scopes ────────────
@@ -1129,7 +1134,35 @@ class TestAllowedDirectories:
         eng = self._engine(workspace, "user_home", [])
         decision = eng.check(FILESYSTEM_READ, {"path": "/etc/passwd"})
         assert decision.allowed is False
-        assert decision.permission_request is None  # no escalation past user_home
+        assert decision.permission_request is None  # implicit POSIX system paths never escalate
+
+    def test_user_home_allows_additional_directory(
+        self, workspace: Path, tmp_path: Path
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        external = tmp_path / "external"
+        external.mkdir()
+        report = external / "report.txt"
+        report.write_text("ok")
+
+        eng = self._engine(
+            workspace,
+            "user_home",
+            [str(external)],
+            home=home,
+        )
+
+        assert eng.check(FILESYSTEM_READ, {"path": str(report)}).allowed is True
+
+    def test_unknown_scope_denies_additional_directory(
+        self, workspace: Path, downloads: Path
+    ):
+        report = downloads / "report.txt"
+        report.write_text("private")
+        eng = self._engine(workspace, "unknown", [str(downloads)])
+
+        assert eng.check(FILESYSTEM_READ, {"path": str(report)}).allowed is False
 
     # ── 4. Path safety ──
 
