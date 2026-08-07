@@ -11,6 +11,12 @@ def test_system_prompt_keeps_todo_separate_from_factual_evidence():
     assert "不是事实证据、检索策略或结论来源" in prompt
     assert "完成一项立即标为 `completed`" in prompt
     assert "开始下一项前先把下一项标为 `in_progress`" in prompt
+    assert "已有 plan，新建或重建 todo 前必须先调用 `plan_read`" in prompt
+    assert "todo 必须按 `plan.steps` 的原顺序派生" in prompt
+    assert "先用 `plan_write` 把 plan 标为 `revised`" in prompt
+    assert "优先用 `todo_write` 的 `action=\"set\"`" in prompt
+    assert "不要只提交单项状态变更" in prompt
+    assert "只执行唯一的 `in_progress` 项" in prompt
     assert "任务计划显示完成只代表步骤执行完毕，不代表事实已核实" in prompt
 
 

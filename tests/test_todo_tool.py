@@ -77,6 +77,93 @@ async def test_create_with_initial_status(writer, reader):
 
 
 @pytest.mark.asyncio
+async def test_set_replaces_full_todo_list(writer, reader):
+    await writer.execute(action="create", task="Old task")
+
+    result = await writer.execute(
+        action="set",
+        todos=[
+            {"task": "Inspect logs", "status": "completed", "priority": "high"},
+            {"task": "Compare opencode todo tool", "status": "in_progress", "priority": "high"},
+            {"task": "Adapt Box-Agent todo_write", "status": "pending", "priority": "medium"},
+        ],
+    )
+
+    assert result.success
+    assert result.raw_output["action"] == "set"
+    assert [
+        {
+            "id": item["id"],
+            "task": item["task"],
+            "status": item["status"],
+            "priority": item["priority"],
+        }
+        for item in result.raw_output["items"]
+    ] == [
+        {
+            "id": "1",
+            "task": "Inspect logs",
+            "status": "completed",
+            "priority": "high",
+        },
+        {
+            "id": "2",
+            "task": "Compare opencode todo tool",
+            "status": "in_progress",
+            "priority": "high",
+        },
+        {
+            "id": "3",
+            "task": "Adapt Box-Agent todo_write",
+            "status": "pending",
+            "priority": "medium",
+        },
+    ]
+    assert result.raw_output["summary"] == {
+        "total": 3,
+        "completed": 1,
+        "in_progress": 1,
+        "pending": 1,
+    }
+
+    result = await reader.execute()
+    assert "Old task" not in result.content
+    assert "Inspect logs" in result.content
+    assert "Compare opencode todo tool" in result.content
+    assert "Adapt Box-Agent todo_write" in result.content
+
+
+@pytest.mark.asyncio
+async def test_set_restarts_id_counter_for_follow_up_creates(writer, reader):
+    await writer.execute(action="create", task="Old A")
+    await writer.execute(action="create", task="Old B")
+    await writer.execute(action="set", todos=[{"task": "Only task"}])
+
+    result = await writer.execute(action="create", task="Follow-up")
+
+    assert result.success
+    assert result.raw_output["item"]["id"] == "2"
+    result = await reader.execute()
+    assert "#1 Only task" in result.content
+    assert "#2 Follow-up" in result.content
+
+
+@pytest.mark.asyncio
+async def test_set_requires_valid_todos(writer):
+    result = await writer.execute(action="set")
+    assert not result.success
+    assert "'todos' is required" in result.error
+
+    result = await writer.execute(action="set", todos=[{"status": "pending"}])
+    assert not result.success
+    assert "'task' is required" in result.error
+
+    result = await writer.execute(action="set", todos=[{"task": "Bad", "status": "cancelled"}])
+    assert not result.success
+    assert "Invalid status" in result.error
+
+
+@pytest.mark.asyncio
 async def test_create_requires_task(writer):
     result = await writer.execute(action="create")
     assert not result.success
@@ -94,6 +181,24 @@ async def test_update_status(writer, reader):
     result = await writer.execute(action="update", todo_id="1", status="completed")
     assert result.success
     assert "completed" in result.content
+
+
+@pytest.mark.asyncio
+async def test_write_model_context_repeats_complete_current_list(writer):
+    await writer.execute(action="create", task="Inspect implementation", status="in_progress")
+    await writer.execute(action="create", task="Run verification")
+
+    result = await writer.execute(action="update", todo_id="1", status="completed")
+
+    assert result.success
+    assert result.model_context is not None
+    assert "complete current todo list" in result.model_context
+    assert '"task": "Inspect implementation"' in result.model_context
+    assert '"status": "completed"' in result.model_context
+    assert '"task": "Run verification"' in result.model_context
+    assert '"status": "pending"' in result.model_context
+    assert "action='set'" in result.model_context
+    assert "Run verification" not in result.content
 
 
 @pytest.mark.asyncio
@@ -224,6 +329,8 @@ def test_anthropic_schema(writer, reader):
     schema = writer.to_schema()
     assert schema["name"] == "todo_write"
     assert "input_schema" in schema
+    assert "set" in schema["input_schema"]["properties"]["action"]["enum"]
+    assert "todos" in schema["input_schema"]["properties"]
 
     schema = reader.to_schema()
     assert schema["name"] == "todo_read"
@@ -246,3 +353,8 @@ def test_todo_write_description_keeps_todo_as_progress_tracker(writer):
     assert "not narrow the user's request" in description
     assert "current item in_progress" in description
     assert "finished items completed" in description
+    assert "call plan_read before setting todos" in description
+    assert "Derive the todos from plan steps in order" in description
+    assert "Revise the plan with plan_write" in description
+    assert "for every progress transition" in description
+    assert "model receive the whole current checklist" in description
