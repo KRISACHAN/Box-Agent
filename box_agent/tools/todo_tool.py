@@ -42,6 +42,33 @@ def _todo_snapshot(items: list[dict]) -> dict[str, Any]:
 # ── Shared store ────────────────────────────────────────────
 
 
+def _todo_model_context(items: list[dict], *, action: str) -> str:
+    """Keep the complete execution checklist salient in future model turns."""
+    current = [
+        {
+            "id": item.get("id"),
+            "task": item.get("task"),
+            "status": item.get("status"),
+            "priority": item.get("priority", "medium"),
+        }
+        for item in items
+    ]
+    if not current:
+        return (
+            f"Todo action '{action}' succeeded. The current todo list is empty. "
+            "Do not assume unfinished work remains from an older list."
+        )
+    return (
+        f"Todo action '{action}' succeeded. This is the complete current todo list "
+        "and the execution state for the task:\n"
+        f"{json.dumps(current, indent=2, ensure_ascii=False)}\n"
+        "Continue with the single in_progress item. After completing and verifying it, "
+        "call todo_write with action='set' and the complete updated list so the next "
+        "pending item becomes in_progress. Do not execute work unrelated to this list; "
+        "revise the plan and then rebuild the list if the execution scope must change."
+    )
+
+
 class TodoStore:
     """Lightweight in-memory todo list with optional JSON persistence."""
 
@@ -92,6 +119,21 @@ class TodoStore:
         self._save()
         return item
 
+    def replace(self, todos: list[dict[str, Any]]) -> list[dict]:
+        self._items = {}
+        self._counter = count(1)
+        for todo in todos:
+            todo_id = self._next_id()
+            self._items[todo_id] = {
+                "id": todo_id,
+                "task": str(todo["task"]).strip(),
+                "status": str(todo.get("status") or "pending"),
+                "priority": str(todo.get("priority") or "medium"),
+                "created_at": datetime.now().isoformat(),
+            }
+        self._save()
+        return self.list()
+
     def update(self, todo_id: str, *, status: str | None = None, task: str | None = None) -> dict | None:
         item = self._items.get(todo_id)
         if item is None:
@@ -126,17 +168,23 @@ _VALID_PRIORITIES = ("high", "medium", "low")
 
 
 class TodoWriteTool(Tool):
-    """Create, update, or delete todo items."""
+    """Create, replace, update, or delete todo items."""
 
     def __init__(self, store: TodoStore):
         self._store = store
 
     def _result(self, *, content: str, action: str, item: dict | None = None) -> ToolResult:
-        snapshot = _todo_snapshot(self._store.list())
+        items = self._store.list()
+        snapshot = _todo_snapshot(items)
         raw_output = {**snapshot, "action": action}
         if item is not None:
             raw_output["item"] = dict(item)
-        return ToolResult(success=True, content=content, raw_output=raw_output)
+        return ToolResult(
+            success=True,
+            content=content,
+            raw_output=raw_output,
+            model_context=_todo_model_context(items, action=action),
+        )
 
     @property
     def name(self) -> str:
@@ -146,8 +194,17 @@ class TodoWriteTool(Tool):
     def description(self) -> str:
         return (
             "Manage a todo list for tracking multi-step tasks. "
-            "Actions: 'create' a new item, 'update' an existing item's status or text, "
-            "or 'delete' an item. Use this to decompose complex work into trackable steps "
+            "Actions: 'set' the full current list in one call, 'create' a new item, "
+            "'update' an existing item's status or text, or 'delete' an item. "
+            "For new or substantially revised multi-step work, and for every progress "
+            "transition, prefer 'set' with the complete ordered todos array so the host "
+            "and model receive the whole current checklist. "
+            "If a current plan exists, call plan_read before setting todos. Derive the "
+            "todos from plan steps in order and keep the plan's objective, scope, and "
+            "verification requirements aligned. A plan step may be split into executable "
+            "subtasks, but do not omit plan steps, change their meaning, or add unrelated "
+            "work. Revise the plan with plan_write before materially changing execution. "
+            "Use this to decompose complex work into trackable steps "
             "and mark progress as you go: keep exactly the current item in_progress, mark "
             "finished items completed, and move the next item to in_progress before working "
             "on it. This tool is only a progress tracker: it is not "
@@ -162,8 +219,32 @@ class TodoWriteTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["create", "update", "delete"],
+                    "enum": ["set", "create", "update", "delete"],
                     "description": "Operation to perform.",
+                },
+                "todos": {
+                    "type": "array",
+                    "description": (
+                        "Complete ordered todo list for action='set'. This replaces the "
+                        "current list. Each item needs task, with optional status and priority."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "task": {"type": "string", "description": "Task description."},
+                            "status": {
+                                "type": "string",
+                                "enum": list(_VALID_STATUSES),
+                                "description": "Task status. Default: pending.",
+                            },
+                            "priority": {
+                                "type": "string",
+                                "enum": list(_VALID_PRIORITIES),
+                                "description": "Priority level. Default: medium.",
+                            },
+                        },
+                        "required": ["task"],
+                    },
                 },
                 "task": {
                     "type": "string",
@@ -197,7 +278,18 @@ class TodoWriteTool(Tool):
         todo_id: str | None = None,
         status: str | None = None,
         priority: str = "medium",
+        todos: list[dict[str, Any]] | None = None,
     ) -> ToolResult:
+        if action == "set":
+            validation_error = self._validate_todos(todos)
+            if validation_error:
+                return ToolResult(success=False, error=validation_error)
+            items = self._store.replace(todos or [])
+            return self._result(
+                content=f"Set todo list with {len(items)} item{'s' if len(items) != 1 else ''}.",
+                action="set",
+            )
+
         if action == "create":
             if not task:
                 return ToolResult(success=False, error="'task' is required for create.")
@@ -224,6 +316,26 @@ class TodoWriteTool(Tool):
             return self._result(content=f"Deleted todo #{todo_id}.", action="delete")
 
         return ToolResult(success=False, error=f"Unknown action: {action}")
+
+    @staticmethod
+    def _validate_todos(todos: list[dict[str, Any]] | None) -> str | None:
+        if todos is None:
+            return "'todos' is required for set."
+        if not isinstance(todos, list):
+            return "'todos' must be a list for set."
+        for index, todo in enumerate(todos, start=1):
+            if not isinstance(todo, dict):
+                return f"Todo #{index} must be an object."
+            task = str(todo.get("task") or "").strip()
+            if not task:
+                return f"'task' is required for todo #{index}."
+            status = str(todo.get("status") or "pending")
+            if status not in _VALID_STATUSES:
+                return f"Invalid status for todo #{index}: {status}."
+            priority = str(todo.get("priority") or "medium")
+            if priority not in _VALID_PRIORITIES:
+                return f"Invalid priority for todo #{index}: {priority}."
+        return None
 
 
 class TodoReadTool(Tool):
