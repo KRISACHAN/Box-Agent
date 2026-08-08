@@ -7,30 +7,19 @@ from pathlib import Path
 from typing import Final
 
 from ..artifacts import OUTPUT_SUBDIR
-from ..delivery import (
-    has_deliverable_intent,
-    is_meta_prompt_rewrite_request,
-    strip_negated_format_clauses,
-)
+from ..delivery import strip_negated_format_clauses
 from ..loop_guards import (
     DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
     CompletionGate,
     artifact_signatures_for_globs,
 )
-from .presentation_contract import RESEARCH_MODE_OPTION, WORKFLOW_KIND
-
-
-PRESENTATION_DELIVERY_KEYWORDS: Final[tuple[str, ...]] = (
-    "ppt",
-    "pptx",
-    "powerpoint",
-    "演示文稿",
-    "幻灯片",
-    "slide deck",
-    "slides",
-    "presentation",
+from .presentation_contract import (
+    PRESENTATION_DELIVERY_KEYWORDS,
+    RESEARCH_MODE_OPTION,
+    WORKFLOW_KIND,
 )
+from .presentation_preflight import classify_presentation_request
 
 _PPTX_SKILL_REFERENCE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:(?<![a-z0-9])pptx(?![a-z0-9])\s*(?:skill|技能)"
@@ -124,19 +113,6 @@ _PAGE_PLAN_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:第\s*\d+\s*页|slide\s*\d+\s*[:：.-])",
     re.IGNORECASE,
 )
-_OUTLINE_ONLY_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:"
-    r"(?<!不要)(?<!别)(?<!不)(?:只|仅)(?:要|需要|需|输出|生成)?"
-    r"(?:一份)?(?:ppt\s*)?(?:大纲|内容方案)(?:即可|就好|就可以)?"
-    r"|(?:不要|无需|不需要)(?:生成|制作|渲染)(?:最终)?"
-    r"(?:页面|幻灯片|html|pptx?)(?:文件)?(?=[，。；;.!?\s]|$)"
-    r"|\b(?:outline\s+only|only\s+(?:need|want|create|provide)\s+"
-    r"(?:an?\s+)?outline|do\s+not\s+(?:generate|create|render)\s+"
-    r"(?:slides?|pages?|html))\b"
-    r")",
-    re.IGNORECASE,
-)
-
 _SUCCESS_REPORT_GLOBS: Final[tuple[str, ...]] = (
     f"{OUTPUT_SUBDIR}/**/qa/outline_check.json",
     f"{OUTPUT_SUBDIR}/**/qa/deck_contract.json",
@@ -208,21 +184,14 @@ def _explicit_pptx_delivery_requested(positive_format_text: str) -> bool:
 def build_presentation_completion_gate(
     user_text: str,
     workspace_dir: str | Path,
+    *,
+    confirmed_presentation: bool = False,
 ) -> CompletionGate | None:
     """Build the presentation workflow gate, or return None for another router."""
-    if is_meta_prompt_rewrite_request(user_text):
-        return None
-    if not has_deliverable_intent(user_text):
+    if not confirmed_presentation and classify_presentation_request(user_text) is None:
         return None
     text = user_text.strip().lower()
     positive_format_text = strip_negated_format_clauses(text)
-    if not any(
-        keyword in positive_format_text
-        for keyword in PRESENTATION_DELIVERY_KEYWORDS
-    ):
-        return None
-    if _OUTLINE_ONLY_RE.search(text):
-        return None
 
     explicit_pptx = _explicit_pptx_delivery_requested(positive_format_text)
     patterns = (

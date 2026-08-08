@@ -58,6 +58,19 @@ def test_controlled_presentation_gate_preloads_pptx_even_for_html_artifacts() ->
     assert document_preload_skill_names((), gate) == ["pptx"]
 
 
+def test_controlled_presentation_gate_preloads_resolved_provider_without_builtin() -> None:
+    gate = CompletionGate(
+        required_changed_artifact_globs=("output/**/*.pptx",),
+        workflow_checkpoint_kind="controlled_presentation",
+    )
+
+    assert document_preload_skill_names(
+        (),
+        gate,
+        presentation_skill_name="custom-decks",
+    ) == ["custom-decks"]
+
+
 def test_research_synthesis_expands_web_search_budget() -> None:
     assert web_search_total_limit_for_active_skills(
         ("research-synthesis",),
@@ -178,6 +191,26 @@ def test_auto_loaded_skills_stay_before_existing_active_skills(tmp_path) -> None
     )
     assert "AUTO_RULE" in final_prompt
     assert final_prompt.endswith("ACTIVE_RULE")
+
+
+def test_empty_turn_preload_removes_previous_auto_loaded_block(tmp_path) -> None:
+    skill_dir = tmp_path / "pptx"
+    skill_dir.mkdir()
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\nname: pptx\ndescription: Build decks\n---\n\nPPT_RULE",
+        encoding="utf-8",
+    )
+    loader = SkillLoader(tmp_path)
+    loader.discover_skills()
+    loaded = build_auto_loaded_skills_prompt(loader, "base system", ["pptx"])
+
+    unloaded = build_auto_loaded_skills_prompt(loader, loaded.system_prompt, [])
+
+    assert unloaded.loaded_names == ()
+    assert unloaded.changed is True
+    assert unloaded.system_prompt == "base system"
+    assert AUTO_LOADED_SKILLS_HEADING not in unloaded.system_prompt
+    assert "PPT_RULE" not in unloaded.system_prompt
 
 
 def test_required_skill_is_attributed_as_non_billable_dependency(tmp_path) -> None:

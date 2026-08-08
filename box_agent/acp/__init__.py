@@ -120,10 +120,13 @@ from box_agent.loop_guards import (
     completion_gate_gaps,
 )
 from box_agent.workflows import (
+    build_presentation_preflight_analysis_text,
     build_presentation_preflight_result,
     build_presentation_recommendation_prompt,
     load_presentation_preflight_config,
+    parse_host_presentation_config,
     recover_completion_gate,
+    resolve_presentation_skill_provider,
 )
 from box_agent.acp.action_hints import (
     ActionHintStreamNormalizer,
@@ -864,8 +867,14 @@ class BoxACPAgent:
         self,
         matched_skill_names: tuple[str, ...],
         completion_gate: CompletionGate | None,
+        *,
+        presentation_skill_name: str | None = "pptx",
     ) -> list[str]:
-        return document_preload_skill_names(matched_skill_names, completion_gate)
+        return document_preload_skill_names(
+            matched_skill_names,
+            completion_gate,
+            presentation_skill_name=presentation_skill_name,
+        )
 
     def _host_runtime_preload_skill_names(
         self,
@@ -885,12 +894,17 @@ class BoxACPAgent:
         completion_gate: CompletionGate | None,
         env_context: EnvContext | None,
         user_text: str | None,
+        *,
+        presentation_skill_name: str | None = "pptx",
+        force_presentation_skill: bool = False,
     ) -> list[str]:
         return turn_preload_skill_names(
             matched_skill_names,
             completion_gate,
             env_context,
             user_text,
+            presentation_skill_name=presentation_skill_name,
+            force_presentation_skill=force_presentation_skill,
         )
 
     def _apply_auto_loaded_skills(
@@ -904,12 +918,11 @@ class BoxACPAgent:
             self._sync_cache_fingerprint_context(state)
             return
         include_disabled = state.expert_context is not None
+        previous_skill_names = set(state.preloaded_skill_names)
         result = build_auto_loaded_skills_prompt(
             skill_loader,
             state.agent.system_prompt,
             skill_names,
-            existing_skill_names=state.preloaded_skill_names,
-            existing_attributions=state.preloaded_skill_attributions,
             include_disabled=include_disabled,
         )
         for skill_name in result.missing_names:
@@ -922,17 +935,22 @@ class BoxACPAgent:
             for attribution in result.loaded_attributions
         }
         self._sync_cache_fingerprint_context(state)
-        if not result.loaded_names:
-            return
-        if not result.changed:
-            return
-        self._set_agent_system_prompt(state.agent, result.system_prompt)
-        log.info(
-            "skills/preloaded",
-            session_id=session_id,
-            skills=",".join(state.preloaded_skill_names),
-            prompt_chars=len(result.system_prompt),
-        )
+        if result.changed:
+            self._set_agent_system_prompt(state.agent, result.system_prompt)
+        unloaded_skill_names = previous_skill_names - set(result.loaded_names)
+        if unloaded_skill_names:
+            log.info(
+                "skills/auto_unloaded",
+                session_id=session_id,
+                skills=",".join(sorted(unloaded_skill_names)),
+            )
+        if result.loaded_names and result.changed:
+            log.info(
+                "skills/preloaded",
+                session_id=session_id,
+                skills=",".join(state.preloaded_skill_names),
+                prompt_chars=len(result.system_prompt),
+            )
 
     async def _ensure_mcp_loaded(self) -> None:
         """Merge startup MCP tools into the agent on first prompt.
@@ -1706,9 +1724,81 @@ class BoxACPAgent:
             except Exception as exc:
                 log.warn("skills/filter_error", session_id=session_id, message=str(exc))
 
-        detected_completion_gate = build_auto_completion_gate(
-            plan_detection_text,
-            state.agent.workspace_dir,
+        matched_skill_names = (
+            state.skill_selector.matched_skill_names
+            if state.skill_selector is not None
+            else ()
+        )
+        current_skill_names = (
+            tuple(
+                skill.name
+                for skill in state.skill_loader.filter_by_query(plan_detection_text)
+            )
+            if state.skill_loader is not None and plan_detection_text.strip()
+            else ()
+        )
+        host_presentation_config = parse_host_presentation_config(prompt_meta)
+        if host_presentation_config is not None and cancels_pending_completion_gate(
+            plan_detection_text
+        ):
+            host_presentation_config = None
+        presentation_provider = (
+            resolve_presentation_skill_provider(
+                state.skill_loader,
+                current_skill_names,
+                preferred_skill=(
+                    host_presentation_config.preferred_skill
+                    if host_presentation_config is not None
+                    else None
+                ),
+                query=plan_detection_text,
+            )
+            if state.skill_loader is not None
+            else None
+        )
+        if host_presentation_config is not None:
+            log.info(
+                "presentation/provider",
+                session_id=session_id,
+                skill=(
+                    presentation_provider.skill_name
+                    if presentation_provider is not None
+                    else None
+                ),
+                workflow=(
+                    presentation_provider.workflow
+                    if presentation_provider is not None
+                    else None
+                ),
+                source=(
+                    presentation_provider.source
+                    if presentation_provider is not None
+                    else None
+                ),
+                confirmed_by=host_presentation_config.confirmed_by,
+            )
+
+        provider_uses_controlled_workflow = (
+            presentation_provider is not None
+            and presentation_provider.uses_controlled_workflow
+        )
+        detected_completion_gate = (
+            None
+            if host_presentation_config is not None
+            and presentation_provider is not None
+            and not provider_uses_controlled_workflow
+            else build_auto_completion_gate(
+                plan_detection_text,
+                state.agent.workspace_dir,
+                confirmed_presentation=(
+                    host_presentation_config is not None
+                    and provider_uses_controlled_workflow
+                ),
+                allow_controlled_presentation=(
+                    host_presentation_config is None
+                    or provider_uses_controlled_workflow
+                ),
+            )
         )
         if (
             state.artifact_mode == "project"
@@ -1799,6 +1889,15 @@ class BoxACPAgent:
                 completion_gate,
                 state.env_context,
                 plan_detection_text,
+                presentation_skill_name=(
+                    presentation_provider.skill_name
+                    if presentation_provider is not None
+                    else None
+                ),
+                force_presentation_skill=(
+                    host_presentation_config is not None
+                    and presentation_provider is not None
+                ),
             )
             if preload_names:
                 self._apply_auto_loaded_skills(state, session_id, preload_names)
@@ -2225,9 +2324,16 @@ class BoxACPAgent:
                 }
             }
         has_existing_presentation = params.get("hasExistingPresentation") is True
+        raw_reference_context = params.get("referenceContext", "")
+        reference_context = (
+            raw_reference_context.strip()
+            if isinstance(raw_reference_context, str)
+            else ""
+        )
         baseline_result = build_presentation_preflight_result(
             prompt,
             has_existing_presentation=has_existing_presentation,
+            reference_context=reference_context,
         )
         if not baseline_result.get("matched") or not baseline_result.get("shouldShow"):
             return baseline_result
@@ -2239,10 +2345,14 @@ class BoxACPAgent:
             raw_meta = params.get("_meta")
             preflight_meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
             preflight_meta["purpose"] = "presentation_preflight"
+            recommendation_text = build_presentation_preflight_analysis_text(
+                prompt,
+                reference_context,
+            )
             llm_result = await self._llm_prompt(
                 {
                     "prompt": build_presentation_recommendation_prompt(
-                        prompt,
+                        recommendation_text,
                         config,
                         missing_fields,
                     ),
@@ -2267,6 +2377,7 @@ class BoxACPAgent:
             prompt,
             model_text=model_text,
             has_existing_presentation=has_existing_presentation,
+            reference_context=reference_context,
         )
         log.info(
             "presentation/preflight",

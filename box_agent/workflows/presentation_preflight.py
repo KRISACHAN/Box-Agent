@@ -6,14 +6,13 @@ import copy
 import json
 import re
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from ..delivery import (
-    has_deliverable_intent,
     is_meta_prompt_rewrite_request,
     strip_negated_format_clauses,
 )
-from .presentation_routing import PRESENTATION_DELIVERY_KEYWORDS
+from .presentation_contract import PRESENTATION_DELIVERY_KEYWORDS
 
 
 _PREFLIGHT_CONFIG_PATH: Final[Path] = (
@@ -34,20 +33,28 @@ _NEW_VERSION_RE: Final[re.Pattern[str]] = re.compile(
     r"再做一版|new\s+(?:deck|presentation)|from\s+scratch|remake)",
     re.IGNORECASE,
 )
-_EXPORT_ONLY_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:导出|转换|转成|另存为|export|convert|save\s+as)",
-    re.IGNORECASE,
-)
-_CREATE_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:做一份|做一个|做个|做份|制作|生成|创建|新建|另出|另做|重新做|"
-    r"create|generate|make|build|produce|draft|remake)",
-    re.IGNORECASE,
-)
 _CREATE_PRESENTATION_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:做一份|做一个|做个|做份|制作|生成|创建|新建|另出|另做|重新做|"
     r"create|generate|make|build|produce|draft|remake)"
     r"(?!\s*的)"
     r"[^，。；;.!?\n]{0,48}"
+    r"(?:pptx?|powerpoint|演示文稿|幻灯片|slide\s+deck|slides?|presentation)",
+    re.IGNORECASE,
+)
+_EXPORT_PRESENTATION_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:导出|转换|转成|另存为|export|convert|save\s+as)"
+    r"[^，。；;.!?\n]{0,48}"
+    r"(?:pptx?|powerpoint|演示文稿|幻灯片|slide\s+deck|slides?|presentation)",
+    re.IGNORECASE,
+)
+_CONTINUE_PRESENTATION_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:"
+    r"(?:继续|接着)(?:做|制作|生成|创建|完成|补完|渲染|导出)"
+    r"[^，。；;.!?\n]{0,32}"
+    r"|(?:继续|接着)\s*(?:这个|这份)?\s*"
+    r"|(?:补完|完成)\s*"
+    r"|(?:continue|resume|finish)(?:\s+(?:making|creating|finishing|rendering))?\s+"
+    r")"
     r"(?:pptx?|powerpoint|演示文稿|幻灯片|slide\s+deck|slides?|presentation)",
     re.IGNORECASE,
 )
@@ -78,6 +85,64 @@ _OUTLINE_ONLY_RE: Final[re.Pattern[str]] = re.compile(
     r"\b(?:outline\s+only|only\s+(?:need|want).{0,12}outline)\b",
     re.IGNORECASE,
 )
+_NEGATED_PRESENTATION_REQUEST_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:不是|并非)\s*(?:要|想|需要)?"
+    r"[^，。；;.!?\n]{0,24}"
+    r"(?:制作|生成|创建|新建|导出|create|generate|make|build|export)"
+    r"[^，。；;.!?\n]{0,32}"
+    r"(?:pptx?|powerpoint|演示文稿|幻灯片|slide\s+deck|slides?|presentation)",
+    re.IGNORECASE,
+)
+_STRONG_REFERENCE_ACTION_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:解释|说明|翻译|总结|讨论|比较|研究|阅读|解读|"
+    r"explain|translate|summarize|discuss|compare|study|read)",
+    re.IGNORECASE,
+)
+_REFERENCE_MARKER_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:关于|提到|引用|如何|怎么|为什么|方法|教程|文章|原文|文字|文本|"
+    r"句子|概念|机制|问题|区别|含义|whether|how|why|article|text|sentence|tutorial)",
+    re.IGNORECASE,
+)
+_QUOTED_REFERENCE_MARKER_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:提到|关于|文章|原文|文字|文本|句子|提示词|quoted|article|text|sentence|prompt)",
+    re.IGNORECASE,
+)
+_REFERENCE_EXECUTION_PREFIX_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:根据|按照|按(?:照)?|并|然后|再按|"
+    r"\b(?:use|using|then|and)\b)",
+    re.IGNORECASE,
+)
+_PRESENTATION_PROMPT_TARGET_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:pptx?|powerpoint|演示文稿|幻灯片|slide\s+deck|slides?|presentation)"
+    r"\s*(?:的\s*)?"
+    r"(?:(?:生成|创建|编写|撰写|写|拟定|起草|generate|create|write|draft)\s*)?"
+    r"(?:一份|一个|一版|个|份|a\s+)?\s*"
+    r"(?:prompt(?:s)?|提示词|提示语|系统提示|指令|需求描述|任务描述)",
+    re.IGNORECASE,
+)
+_PROMPT_FOR_PRESENTATION_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:生成|创建|编写|撰写|写|拟定|起草|generate|create|write|draft)"
+    r"[^，。；;.!?\n]{0,24}"
+    r"(?:prompt(?:s)?|提示词|提示语|系统提示|指令|需求描述|任务描述)"
+    r"[^，。；;.!?\n]{0,32}"
+    r"(?:用于|用来|来|以便|for|to)"
+    r"[^，。；;.!?\n]{0,32}"
+    r"(?:pptx?|powerpoint|演示文稿|幻灯片|slide\s+deck|slides?|presentation)",
+    re.IGNORECASE,
+)
+_FOLLOW_ON_EXECUTION_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:后|之后|然后|再|接着|随后|并(?:根据|按照|按|使用)?|"
+    r"\b(?:then|afterwards|and(?:\s+then)?)\b)",
+    re.IGNORECASE,
+)
+_REFERENCE_CONTEXT_REQUEST_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:基于|根据|按照|参考|使用|沿用|结合)\s*"
+    r"(?:以上|上述|上面|前述|前面|刚才|这些|该(?:内容|提示词)|"
+    r"the\s+(?:above|previous)|(?:above|previous|earlier)\s+(?:content|prompt))"
+    r"|(?:以上|上述|上面|前述|前面|刚才)(?:内容|提示词|方案|回答)",
+    re.IGNORECASE,
+)
+_REFERENCE_CONTEXT_MAX_CHARS: Final[int] = 12_000
 _JSON_OBJECT_RE: Final[re.Pattern[str]] = re.compile(r"\{.*\}", re.DOTALL)
 _PAGE_TOKEN_RE: Final[str] = (
     r"(?:\d{1,2}|[一二两三四五六七八九]?十[一二三四五六七八九]?|[一二两三四五六七八九])"
@@ -184,52 +249,163 @@ def load_presentation_preflight_config() -> dict[str, Any]:
     return copy.deepcopy(data)
 
 
+PresentationRequestKind = Literal["create", "export", "continue"]
+
+
+def _is_referenced_creation(
+    text: str,
+    creation_match: re.Match[str],
+) -> bool:
+    clause_start = max(
+        text.rfind(separator, 0, creation_match.start())
+        for separator in ("，", ",", "。", ";", "；", "\n")
+    )
+    clause_end_candidates = [
+        index
+        for separator in ("，", ",", "。", ";", "；", "\n")
+        if (index := text.find(separator, creation_match.end())) >= 0
+    ]
+    clause_end = min(clause_end_candidates, default=len(text))
+    clause = text[clause_start + 1 : clause_end]
+    prefix = text[clause_start + 1 : creation_match.start()]
+    if _REFERENCE_EXECUTION_PREFIX_RE.search(prefix):
+        return False
+    return bool(
+        (_STRONG_REFERENCE_ACTION_RE.search(prefix) and _REFERENCE_MARKER_RE.search(clause))
+        or _QUOTED_REFERENCE_MARKER_RE.search(prefix)
+    )
+
+
+def _is_presentation_prompt_authoring_request(text: str) -> bool:
+    """Return whether the requested artifact is a prompt, not a deck.
+
+    A presentation word can qualify the prompt itself (for example,
+    ``生成一份产品介绍 PPT 提示词``).  An explicit follow-on request to use
+    that prompt to create a deck still counts as presentation execution.
+    """
+    matches = list(_PRESENTATION_PROMPT_TARGET_RE.finditer(text))
+    matches.extend(_PROMPT_FOR_PRESENTATION_RE.finditer(text))
+    if not matches:
+        return False
+
+    prompt_target = min(matches, key=lambda match: match.start())
+    suffix = text[prompt_target.end() :]
+    connector = _FOLLOW_ON_EXECUTION_CONNECTOR_RE.search(suffix)
+    execution = _CREATE_PRESENTATION_RE.search(suffix)
+    if (
+        connector is not None
+        and execution is not None
+        and connector.start() <= execution.start()
+    ):
+        return False
+    return True
+
+
+def classify_presentation_request(
+    user_text: str,
+    *,
+    has_existing_presentation: bool = False,
+) -> PresentationRequestKind | None:
+    """Classify a directly requested presentation deliverable.
+
+    Creation and export actions must bind to the presentation target inside a
+    single punctuation-delimited clause. References to creating a presentation
+    inside an explanation, summary, translation, or quoted text are rejected.
+    """
+    text = user_text.strip()
+    if not text:
+        return None
+    if is_meta_prompt_rewrite_request(text):
+        return None
+    if _NEGATED_PRESENTATION_REQUEST_RE.search(text):
+        return None
+    positive_text = strip_negated_format_clauses(text).casefold()
+    if not any(keyword in positive_text for keyword in PRESENTATION_DELIVERY_KEYWORDS):
+        return None
+    if _OUTLINE_ONLY_RE.search(positive_text):
+        return None
+    if _is_presentation_prompt_authoring_request(positive_text):
+        return None
+
+    direct_create_match = _CREATE_PRESENTATION_RE.search(positive_text)
+    request_new_match = _REQUEST_NEW_RE.search(positive_text)
+    export_match = _EXPORT_PRESENTATION_RE.search(positive_text)
+    continuation_match = _CONTINUE_PRESENTATION_RE.search(positive_text)
+    if _INSPECT_EXISTING_RE.search(positive_text) and direct_create_match is None:
+        request_new_match = None
+    editing_existing = _EDIT_EXISTING_RE.search(positive_text) is not None
+    if (
+        editing_existing
+        and not _NEW_VERSION_RE.search(positive_text)
+        and continuation_match is None
+    ):
+        request_new_match = None
+    if export_match is not None and direct_create_match is None:
+        request_new_match = None
+
+    create_matches = [
+        match for match in (direct_create_match, request_new_match) if match is not None
+    ]
+    create_match = min(create_matches, key=lambda match: match.start(), default=None)
+    if create_match is not None and _is_referenced_creation(positive_text, create_match):
+        create_match = None
+
+    if (
+        editing_existing
+        and not _NEW_VERSION_RE.search(positive_text)
+        and create_match is None
+        and continuation_match is None
+    ):
+        return None
+    if (
+        has_existing_presentation
+        and editing_existing
+        and not _NEW_VERSION_RE.search(positive_text)
+        and create_match is None
+        and continuation_match is None
+    ):
+        return None
+    if create_match is not None:
+        return "create"
+    if continuation_match is not None:
+        return "continue"
+    if export_match is not None:
+        return "export"
+    return None
+
+
+def build_presentation_preflight_analysis_text(
+    user_text: str,
+    reference_context: str = "",
+) -> str:
+    """Add bounded prior context only for an explicitly referential request."""
+    context = reference_context.strip()
+    if not context or not _REFERENCE_CONTEXT_REQUEST_RE.search(user_text):
+        return user_text
+    bounded_context = context[-_REFERENCE_CONTEXT_MAX_CHARS:]
+    return (
+        "<presentation_reference_context>\n"
+        f"{bounded_context}\n"
+        "</presentation_reference_context>\n"
+        "<current_request>\n"
+        f"{user_text}\n"
+        "</current_request>"
+    )
+
+
 def is_new_presentation_request(
     user_text: str,
     *,
     has_existing_presentation: bool = False,
 ) -> bool:
     """Return whether a turn should enter new-deck preflight."""
-    text = user_text.strip()
-    if not text:
-        return False
-    if is_meta_prompt_rewrite_request(text):
-        return False
-    positive_text = strip_negated_format_clauses(text).casefold()
-    has_create_action = _CREATE_RE.search(positive_text) is not None
-    has_create_delivery = (
-        _CREATE_PRESENTATION_RE.search(positive_text) is not None
+    return (
+        classify_presentation_request(
+            user_text,
+            has_existing_presentation=has_existing_presentation,
+        )
+        == "create"
     )
-    has_new_request = _REQUEST_NEW_RE.search(positive_text) is not None
-    if (
-        not has_deliverable_intent(positive_text)
-        and not has_create_action
-        and not has_new_request
-    ):
-        return False
-    if not any(keyword in positive_text for keyword in PRESENTATION_DELIVERY_KEYWORDS):
-        return False
-    if _OUTLINE_ONLY_RE.search(positive_text):
-        return False
-    if _EXPORT_ONLY_RE.search(positive_text) and not has_create_action:
-        return False
-    if _INSPECT_EXISTING_RE.search(positive_text) and not has_create_action:
-        return False
-    editing_existing = _EDIT_EXISTING_RE.search(positive_text) is not None
-    if (
-        editing_existing
-        and not _NEW_VERSION_RE.search(positive_text)
-        and not has_create_delivery
-    ):
-        return False
-    if (
-        has_existing_presentation
-        and editing_existing
-        and not _NEW_VERSION_RE.search(positive_text)
-        and not has_create_delivery
-    ):
-        return False
-    return has_create_action or has_new_request
 
 
 def _option_ids_by_field(config: dict[str, Any]) -> dict[str, set[str]]:
@@ -489,6 +665,7 @@ def build_presentation_preflight_result(
     *,
     model_text: str = "",
     has_existing_presentation: bool = False,
+    reference_context: str = "",
 ) -> dict[str, Any]:
     """Build the normalized host response with safe defaults."""
     config = load_presentation_preflight_config()
@@ -502,7 +679,11 @@ def build_presentation_preflight_result(
             "schemaVersion": config["version"],
         }
 
-    explicit_values = infer_explicit_presentation_values(user_text, config)
+    analysis_text = build_presentation_preflight_analysis_text(
+        user_text,
+        reference_context,
+    )
+    explicit_values = infer_explicit_presentation_values(analysis_text, config)
     missing_fields = [
         field_id
         for field_id in config["required_fields"]
@@ -526,7 +707,7 @@ def build_presentation_preflight_result(
     }
     return {
         "matched": True,
-        "shouldShow": _should_show_preflight(user_text, config, missing_fields),
+        "shouldShow": _should_show_preflight(analysis_text, config, missing_fields),
         "schemaVersion": config["version"],
         "requiredFields": list(config["required_fields"]),
         "missingFields": missing_fields,

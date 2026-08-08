@@ -5,6 +5,16 @@ from typing import Final
 
 
 WORKFLOW_KIND: Final[str] = "controlled_presentation"
+PRESENTATION_DELIVERY_KEYWORDS: Final[tuple[str, ...]] = (
+    "ppt",
+    "pptx",
+    "powerpoint",
+    "演示文稿",
+    "幻灯片",
+    "slide deck",
+    "slides",
+    "presentation",
+)
 CHECKPOINT_MARKER: Final[str] = "CONTROLLED_PRESENTATION_STAGE="
 RESEARCH_MODE_OPTION: Final[str] = "research_mode"
 IMAGE_GENERATION_POLICY_OPTION: Final[str] = "image_generation_policy"

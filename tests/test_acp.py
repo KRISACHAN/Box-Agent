@@ -2332,6 +2332,280 @@ async def test_acp_preloads_matched_pptx_skill_for_deliverable(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_unloads_auto_preloaded_skill_after_it_is_disabled(tmp_path):
+    skills_dir = tmp_path / "skills"
+    settings_path = tmp_path / "skill-settings.json"
+    settings_path.write_text('{"disabledSkillNames": []}', encoding="utf-8")
+    pptx_dir = skills_dir / "pptx"
+    pptx_dir.mkdir(parents=True)
+    pptx_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "capabilities: [presentation.authoring]\n"
+        "workflow: controlled_presentation\n"
+        "---\n"
+        "# PPTX FULL RULES\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(
+        skills_dir,
+        skill_settings_path=settings_path,
+    )
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "生成一份季度汇报 PPT"}],
+        )
+    )
+    state = agent._sessions[session.sessionId]
+    assert state.preloaded_skill_names == ["pptx"]
+    assert "# PPTX FULL RULES" in state.agent.system_prompt
+
+    settings_path.write_text('{"disabledSkillNames": ["pptx"]}', encoding="utf-8")
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "再生成一份产品介绍 PPT"}],
+        )
+    )
+
+    assert state.preloaded_skill_names == []
+    assert "## Auto-Loaded Skill Instructions" not in state.agent.system_prompt
+    assert "# PPTX FULL RULES" not in state.agent.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_acp_host_presentation_config_guarantees_presentation_provider(tmp_path):
+    skills_dir = tmp_path / "skills"
+    pptx_dir = skills_dir / "pptx"
+    pptx_dir.mkdir(parents=True)
+    (pptx_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "capabilities: [presentation.authoring]\n"
+        "workflow: controlled_presentation\n"
+        "---\n"
+        "# PPTX FULL RULES\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    captured: dict[str, object] = {}
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured["gate"] = kwargs.get("completion_gate")
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "继续"}],
+            field_meta={
+                "presentation_config": {
+                    "schema_version": 1,
+                    "intent": "create",
+                    "confirmed_by": "user",
+                }
+            },
+        )
+    )
+
+    gate = captured["gate"]
+    assert isinstance(gate, CompletionGate)
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert agent._sessions[session.sessionId].preloaded_skill_names == ["pptx"]
+
+
+@pytest.mark.asyncio
+async def test_acp_generic_ppt_request_does_not_preload_matched_lark_slides(tmp_path):
+    user_root = tmp_path / "user-skills"
+    builtin_root = tmp_path / "builtin-skills"
+    lark_dir = user_root / "lark-slides"
+    lark_dir.mkdir(parents=True)
+    lark_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: lark-slides\n"
+        "description: Create and edit Lark or Feishu PPT slides.\n"
+        "capabilities: [presentation.authoring]\n"
+        "---\n"
+        "# LARK SLIDES RULES\n",
+        encoding="utf-8",
+    )
+    pptx_dir = builtin_root / "pptx"
+    pptx_dir.mkdir(parents=True)
+    pptx_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "capabilities: [presentation.authoring]\n"
+        "workflow: controlled_presentation\n"
+        "---\n"
+        "# PPTX FULL RULES\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(
+        [(user_root, "user"), (builtin_root, "builtin")]
+    )
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "制作一份哈利波特主题介绍 PPT"}],
+            field_meta={
+                "presentation_config": {
+                    "schema_version": 1,
+                    "intent": "create",
+                    "confirmed_by": "implicit",
+                }
+            },
+        )
+    )
+
+    state = agent._sessions[session.sessionId]
+    assert state.preloaded_skill_names == ["pptx"]
+    assert "# PPTX FULL RULES" in state.agent.system_prompt
+    assert "# LARK SLIDES RULES" not in state.agent.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_acp_host_config_uses_matched_legacy_presentation_skill(tmp_path):
+    user_root = tmp_path / "user-skills"
+    builtin_root = tmp_path / "builtin-skills"
+    legacy_dir = user_root / "legacy-slides"
+    legacy_dir.mkdir(parents=True)
+    legacy_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: legacy-slides\n"
+        "description: 创建和编辑飞书幻灯片\n"
+        "---\n"
+        "# LEGACY SLIDES RULES\n",
+        encoding="utf-8",
+    )
+    pptx_dir = builtin_root / "pptx"
+    pptx_dir.mkdir(parents=True)
+    pptx_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: pptx\n"
+        "description: Create editable PowerPoint PPTX slide decks.\n"
+        "capabilities: [presentation.authoring]\n"
+        "workflow: controlled_presentation\n"
+        "---\n"
+        "# PPTX FULL RULES\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(
+        [(user_root, "user"), (builtin_root, "builtin")]
+    )
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    captured: dict[str, object] = {}
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured["gate"] = kwargs.get("completion_gate")
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "用飞书创建幻灯片"}],
+            field_meta={
+                "presentation_config": {
+                    "schema_version": 1,
+                    "intent": "create",
+                    "confirmed_by": "implicit",
+                }
+            },
+        )
+    )
+
+    assert captured["gate"] is None
+    assert agent._sessions[session.sessionId].preloaded_skill_names == [
+        "legacy-slides"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_acp_does_not_repeat_preloaded_skill_in_get_skill_tool_context(tmp_path):
     skills_dir = tmp_path / "skills"
     pptx_dir = skills_dir / "pptx"

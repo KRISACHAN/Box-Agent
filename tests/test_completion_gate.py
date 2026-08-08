@@ -630,6 +630,46 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
 @pytest.mark.parametrize(
     "prompt",
     [
+        "生成一份摘要，原文讨论了 PPT 的制作方法",
+        "请解释制作 PPT 时如何选择字体",
+        "总结这篇关于生成 PPT 的文章",
+        "把下面提到创建 PPT 的文字翻译成英文",
+        "继续分析 PPT skill 的加载机制",
+        "我不是要生成 PPT，只是想知道为什么会触发",
+        "生成 一份哈利波特主题介绍PPT 提示词",
+    ],
+)
+def test_ppt_reference_does_not_enable_controlled_presentation(tmp_path, prompt):
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is None or gate.workflow_checkpoint_kind != "controlled_presentation"
+
+
+def test_host_confirmed_presentation_can_start_without_prompt_keyword(tmp_path):
+    gate = build_auto_completion_gate(
+        "继续",
+        tmp_path,
+        confirmed_presentation=True,
+    )
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+
+
+def test_controlled_presentation_can_be_owned_by_another_workflow(tmp_path):
+    assert (
+        build_auto_completion_gate(
+            "生成一份 PPT",
+            tmp_path,
+            allow_controlled_presentation=False,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
         "不用图也行",
         "没有图片也可以，继续生成 HTML",
         "继续做成无图版",

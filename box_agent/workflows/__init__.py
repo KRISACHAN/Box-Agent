@@ -12,9 +12,14 @@ from .presentation_contract import (
     RESEARCH_MODE_OPTION,
 )
 from .presentation_preflight import (
+    build_presentation_preflight_analysis_text,
     build_presentation_preflight_result,
     build_presentation_recommendation_prompt,
     load_presentation_preflight_config,
+)
+from .presentation_provider import (
+    parse_host_presentation_config,
+    resolve_presentation_skill_provider,
 )
 
 
@@ -57,9 +62,12 @@ def recover_completion_gate(
 
 __all__ = [
     "ControlledPresentationPolicy",
+    "build_presentation_preflight_analysis_text",
     "build_presentation_preflight_result",
     "build_presentation_recommendation_prompt",
     "create_workflow_policy",
     "load_presentation_preflight_config",
+    "parse_host_presentation_config",
     "recover_completion_gate",
+    "resolve_presentation_skill_provider",
 ]

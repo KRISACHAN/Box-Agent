@@ -249,12 +249,15 @@ def completion_gate_has_workflow_lifecycle(gate: CompletionGate) -> bool:
 def build_auto_completion_gate(
     user_text: str,
     workspace_dir: str | Path,
+    *,
+    confirmed_presentation: bool = False,
+    allow_controlled_presentation: bool = True,
 ) -> CompletionGate | None:
     """Create an evidence-backed gate for a recognized deliverable request."""
     requires_host_receipt, execution_result_criteria_count = (
         _host_execution_contract(user_text)
     )
-    if is_meta_prompt_rewrite_request(user_text):
+    if not confirmed_presentation and is_meta_prompt_rewrite_request(user_text):
         if not requires_host_receipt:
             return None
         return CompletionGate(
@@ -263,12 +266,21 @@ def build_auto_completion_gate(
             max_continuations=3,
             deadline_seconds=900.0,
         )
-    if not has_deliverable_intent(user_text) and not requires_host_receipt:
+    if (
+        not confirmed_presentation
+        and not has_deliverable_intent(user_text)
+        and not requires_host_receipt
+    ):
         return None
 
-    presentation_gate = build_presentation_completion_gate(
-        user_text,
-        workspace_dir,
+    presentation_gate = (
+        build_presentation_completion_gate(
+            user_text,
+            workspace_dir,
+            confirmed_presentation=confirmed_presentation,
+        )
+        if allow_controlled_presentation
+        else None
     )
     if presentation_gate is not None:
         if not requires_host_receipt:

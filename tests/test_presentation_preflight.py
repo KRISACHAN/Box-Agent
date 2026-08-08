@@ -8,6 +8,7 @@ import pytest
 from box_agent.acp import BoxACPAgent
 from box_agent.schema import LLMResponse
 from box_agent.workflows.presentation_preflight import (
+    classify_presentation_request,
     build_presentation_preflight_result,
     build_presentation_recommendation_prompt,
     infer_explicit_presentation_values,
@@ -125,6 +126,16 @@ def test_skill_owned_preflight_config_is_valid():
         ("把下面这段“生成 PPT”的提示词润色专业些", False),
         ("把“重新制作 PPT”这句提示词改自然", False),
         ("Polish this text: create a PPT and editable HTML", False),
+        ("生成一份摘要，原文讨论了 PPT 的制作方法", False),
+        ("请解释制作 PPT 时如何选择字体", False),
+        ("总结这篇关于生成 PPT 的文章", False),
+        ("把下面提到创建 PPT 的文字翻译成英文", False),
+        ("继续分析 PPT skill 的加载机制", False),
+        ("我不是要生成 PPT，只是想知道为什么会触发", False),
+        ("生成 一份哈利波特主题介绍PPT 提示词", False),
+        ("帮我写一个制作哈利波特介绍 PPT 的提示词", False),
+        ("为哈利波特主题 PPT 生成提示词", False),
+        ("Generate a prompt for a Harry Potter presentation", False),
         (
             "制作一份介绍四家酒庄的 PPT，使用公开资料。\n"
             "优化以上 prompt 的格式",
@@ -168,10 +179,24 @@ def test_non_new_deck_requests_skip_preflight(text: str, has_existing: bool):
         "Use this prompt to create a PPT in PowerPoint format",
         "Use this prompt to create a PowerPoint and polish the layout",
         "Polish this prompt and create the presentation",
+        "先生成一份哈利波特主题 PPT 提示词，然后根据它制作 PPT",
     ],
 )
 def test_new_deck_requests_enter_preflight(text: str):
     assert is_new_presentation_request(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "生成一份摘要，原文讨论了 PPT 的制作方法",
+        "请解释制作 PPT 时如何选择字体",
+        "总结这篇关于生成 PPT 的文章",
+        "把下面提到创建 PPT 的文字翻译成英文",
+    ],
+)
+def test_referenced_creation_phrases_do_not_become_delivery_intent(text: str):
+    assert classify_presentation_request(text) is None
 
 
 def test_explicit_values_are_extracted_without_model_guessing():
@@ -512,6 +537,39 @@ def test_ai_quality_pitch_prompt_is_complete_enough_to_skip_card():
     assert result["values"]["page_count"] == "page_count_5_10"
 
 
+def test_referential_request_uses_rich_prior_prompt_to_skip_card():
+    reference_context = (
+        "助手：\n"
+        "请制作一份 10 页的哈利波特主题介绍 PPT，面向中学生，用于课堂知识分享。"
+        "内容要求：从魔法世界观、霍格沃茨学院、主要人物、核心故事线、主题价值五部分展开；"
+        "每页只讲一个观点，结尾设计互动问答。"
+        "视觉风格采用深蓝与金色，使用羊皮纸、魔杖、城堡剪影等元素，避免大段文字。"
+    )
+
+    result = build_presentation_preflight_result(
+        "基于以上内容制作 PPT",
+        reference_context=reference_context,
+    )
+
+    assert result["matched"] is True
+    assert result["shouldShow"] is False
+    assert result["values"]["scene"] == "scene_knowledge_sharing"
+    assert result["values"]["audience"] == "audience_students"
+    assert result["values"]["page_count"] == "page_count_5_10"
+
+
+def test_non_referential_request_does_not_inherit_unrelated_rich_context():
+    result = build_presentation_preflight_result(
+        "制作一份全新的产品介绍 PPT",
+        reference_context=(
+            "上一轮是一份 10 页教学 PPT，面向学生，包含详细内容结构、视觉风格和互动问答。"
+        ),
+    )
+
+    assert result["matched"] is True
+    assert result["shouldShow"] is True
+
+
 @pytest.mark.asyncio
 async def test_acp_preflight_uses_lightweight_model_without_session():
     llm = _FakeLLM(
@@ -532,6 +590,56 @@ async def test_acp_preflight_uses_lightweight_model_without_session():
     assert result["sources"]["page_count"] == "default"
     assert len(llm.calls) == 1
     assert not hasattr(agent, "_sessions")
+
+
+@pytest.mark.asyncio
+async def test_acp_preflight_skips_model_for_rich_referenced_context():
+    llm = _FakeLLM('{"role":"role_teacher"}')
+    agent = _StubAgent(llm)
+
+    result = await agent.extMethod(
+        "presentation/preflight",
+        {
+            "prompt": "基于以上内容制作 PPT",
+            "referenceContext": (
+                "助手：请制作一份 10 页哈利波特主题介绍 PPT，面向中学生，用于课堂知识分享。"
+                "内容要求包括世界观、学院、人物、故事线和主题价值，每页只讲一个观点。"
+                "视觉风格使用深蓝和金色，并设计结尾互动问答。"
+            ),
+        },
+    )
+
+    assert result["matched"] is True
+    assert result["shouldShow"] is False
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_acp_preflight_rejects_reference_without_calling_model():
+    llm = _FakeLLM('{"scene":"scene_training"}')
+    agent = _StubAgent(llm)
+
+    result = await agent.extMethod(
+        "presentation/preflight",
+        {"prompt": "生成一份摘要，原文讨论了 PPT 的制作方法"},
+    )
+
+    assert result == {"matched": False, "shouldShow": False, "schemaVersion": 1}
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_acp_preflight_rejects_presentation_prompt_authoring_without_model():
+    llm = _FakeLLM('{"scene":"scene_training"}')
+    agent = _StubAgent(llm)
+
+    result = await agent.extMethod(
+        "presentation/preflight",
+        {"prompt": "生成 一份哈利波特主题介绍PPT 提示词"},
+    )
+
+    assert result == {"matched": False, "shouldShow": False, "schemaVersion": 1}
+    assert llm.calls == []
 
 
 @pytest.mark.asyncio

@@ -122,14 +122,24 @@ def build_active_skills_prompt(
 def document_preload_skill_names(
     matched_skill_names: tuple[str, ...],
     completion_gate: CompletionGate | None,
+    *,
+    presentation_skill_name: str | None = "pptx",
 ) -> list[str]:
     if completion_gate is None:
         return []
     patterns = tuple(completion_gate.required_changed_artifact_globs)
     preload: list[str] = []
-    if completion_gate.workflow_checkpoint_kind == "controlled_presentation":
-        preload.append("pptx")
+    if (
+        completion_gate.workflow_checkpoint_kind == "controlled_presentation"
+        and presentation_skill_name
+    ):
+        preload.append(presentation_skill_name)
     for skill_name, suffixes in GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES.items():
+        if (
+            skill_name == "pptx"
+            and completion_gate.workflow_checkpoint_kind == "controlled_presentation"
+        ):
+            continue
         if any(suffix in pattern for pattern in patterns for suffix in suffixes):
             preload.append(skill_name)
     for skill_name in matched_skill_names:
@@ -199,9 +209,18 @@ def turn_preload_skill_names(
     completion_gate: CompletionGate | None,
     env_context: Any | None,
     user_text: str | None,
+    *,
+    presentation_skill_name: str | None = "pptx",
+    force_presentation_skill: bool = False,
 ) -> list[str]:
     preload: list[str] = []
-    for skill_name in document_preload_skill_names(matched_skill_names, completion_gate):
+    if force_presentation_skill and presentation_skill_name:
+        preload.append(presentation_skill_name)
+    for skill_name in document_preload_skill_names(
+        matched_skill_names,
+        completion_gate,
+        presentation_skill_name=presentation_skill_name,
+    ):
         if skill_name not in preload:
             preload.append(skill_name)
     for skill_name in host_runtime_preload_skill_names(
@@ -329,13 +348,16 @@ def build_auto_loaded_skills_prompt(
     )
     requested_names = [item.skill_name for item in requested_attributions]
     if not requested_names:
+        base_prompt = strip_auto_loaded_skills(
+            strip_active_skills(system_prompt)
+        ).rstrip()
         return AutoLoadedSkillsPrompt(
-            system_prompt=system_prompt,
+            system_prompt=base_prompt,
             loaded_names=(),
             loaded_skill_hashes=(),
             loaded_attributions=(),
             missing_names=(),
-            changed=False,
+            changed=system_prompt != base_prompt,
         )
 
     blocks: list[str] = []
@@ -358,13 +380,16 @@ def build_auto_loaded_skills_prompt(
         )
 
     if not blocks:
+        base_prompt = strip_auto_loaded_skills(
+            strip_active_skills(system_prompt)
+        ).rstrip()
         return AutoLoadedSkillsPrompt(
-            system_prompt=system_prompt,
+            system_prompt=base_prompt,
             loaded_names=tuple(loaded_names),
             loaded_skill_hashes=tuple(loaded_skill_hashes),
             loaded_attributions=tuple(loaded_attributions),
             missing_names=tuple(missing_names),
-            changed=False,
+            changed=system_prompt != base_prompt,
         )
 
     # Active skills are rendered by Agent after this auto-loaded block. Strip

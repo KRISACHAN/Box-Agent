@@ -16,7 +16,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 import yaml
 
@@ -116,11 +116,13 @@ class Skill:
     source: SkillSource = "builtin"
     license: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
-    metadata: Optional[Dict[str, str]] = None
+    metadata: Optional[Dict[str, Any]] = None
     skill_path: Optional[Path] = None
     keywords: Optional[List[str]] = None
     required_skills: Optional[List[str]] = None
     related_skills: Optional[List[str]] = None
+    capabilities: Optional[List[str]] = None
+    workflow: Optional[str] = None
     broken: bool = False
     broken_reason: Optional[str] = None
 
@@ -171,6 +173,8 @@ All files and references in this skill are relative to this directory.
             "allowed_tools": self.allowed_tools or [],
             "required_skills": self.required_skills or [],
             "related_skills": self.related_skills or [],
+            "capabilities": self.capabilities or [],
+            "workflow": self.workflow,
             "broken": self.broken,
             "broken_reason": self.broken_reason,
         }
@@ -263,6 +267,13 @@ class SkillLoader:
             if name and _SKILL_NAME_RE.match(name) and name not in names:
                 names.append(name)
         return sorted(names) or None
+
+    @staticmethod
+    def _parse_skill_name(raw_value: object) -> Optional[str]:
+        if not isinstance(raw_value, str):
+            return None
+        name = raw_value.strip()
+        return name if name and _SKILL_NAME_RE.match(name) else None
 
     # Backward compatibility — expose the first source directory
     @property
@@ -424,6 +435,31 @@ class SkillLoader:
                 frontmatter.get("allowed_tools", frontmatter.get("allowed-tools"))
             )
 
+            raw_metadata = frontmatter.get("metadata")
+            metadata = raw_metadata if isinstance(raw_metadata, dict) else None
+            capabilities = self._parse_skill_name_list(
+                frontmatter.get(
+                    "capabilities",
+                    frontmatter.get(
+                        "capability",
+                        metadata.get("capabilities", metadata.get("capability"))
+                        if metadata
+                        else None,
+                    ),
+                )
+            )
+            workflow = self._parse_skill_name(
+                frontmatter.get(
+                    "workflow",
+                    frontmatter.get(
+                        "workflow_kind",
+                        metadata.get("workflow", metadata.get("workflow_kind"))
+                        if metadata
+                        else None,
+                    ),
+                )
+            )
+
             return Skill(
                 name=frontmatter["name"],
                 description=frontmatter["description"],
@@ -431,11 +467,13 @@ class SkillLoader:
                 source=source,
                 license=frontmatter.get("license"),
                 allowed_tools=allowed_tools,
-                metadata=frontmatter.get("metadata"),
+                metadata=metadata,
                 skill_path=skill_path,
                 keywords=keywords_list,
                 required_skills=required_skills,
                 related_skills=related_skills,
+                capabilities=capabilities,
+                workflow=workflow,
             )
 
         except Exception as e:
@@ -892,6 +930,12 @@ class SkillLoader:
                     routing_hints.append(
                         f"related: {', '.join(skill.related_skills)}"
                     )
+                if skill.capabilities:
+                    routing_hints.append(
+                        f"capabilities: {', '.join(skill.capabilities)}"
+                    )
+                if skill.workflow:
+                    routing_hints.append(f"workflow: {skill.workflow}")
                 routing_suffix = (
                     f" [{'; '.join(routing_hints)}]"
                     if routing_hints

@@ -2153,21 +2153,27 @@ async def run_agent(
             skill_loader,
             agent.system_prompt,
             preload_names,
-            existing_skill_names=cli_preloaded_skill_names,
         )
+        previous_skill_names = set(cli_preloaded_skill_names)
         cli_preloaded_skill_names[:] = list(result.loaded_names)
         cli_preloaded_skill_hashes.clear()
         cli_preloaded_skill_hashes.update(result.loaded_skill_hashes)
         _sync_cli_cache_fingerprint_context()
         for missing_name in result.missing_names:
             print(f"{Colors.YELLOW}⚠️  Skill preload target not found: {missing_name}{Colors.RESET}")
-        if not result.loaded_names or not result.changed:
-            return
-        _set_agent_system_prompt(result.system_prompt)
-        print(
-            f"{Colors.DIM}Auto-loaded skills: "
-            f"{', '.join(result.loaded_names)}{Colors.RESET}"
-        )
+        if result.changed:
+            _set_agent_system_prompt(result.system_prompt)
+        unloaded_skill_names = previous_skill_names - set(result.loaded_names)
+        if unloaded_skill_names:
+            print(
+                f"{Colors.DIM}Auto-unloaded skills: "
+                f"{', '.join(sorted(unloaded_skill_names))}{Colors.RESET}"
+            )
+        if result.loaded_names and result.changed:
+            print(
+                f"{Colors.DIM}Auto-loaded skills: "
+                f"{', '.join(result.loaded_names)}{Colors.RESET}"
+            )
 
     # 8. Display welcome information
     if not task:
