@@ -1,6 +1,7 @@
 """Test cases for tools."""
 
 import asyncio
+import hashlib
 import tempfile
 from pathlib import Path
 
@@ -38,7 +39,16 @@ async def test_read_tool():
         # ReadTool now returns content with line numbers in format: "LINE_NUMBER|LINE_CONTENT"
         assert "Hello, World!" in result.content, f"Content mismatch: {result.content}"
         assert "|Hello, World!" in result.content, f"Expected line number format: {result.content}"
-        assert result.raw_output == {
+        descriptor = result.raw_output["context_resource"]
+        assert descriptor == {
+            "resource_id": str(Path(temp_path).resolve()),
+            "content_version": hashlib.sha256(b"Hello, World!").hexdigest(),
+            "start_line": 1,
+            "end_line": 1,
+            "total_lines": 1,
+            "resource_class": "reconstructable",
+        }
+        assert {k: v for k, v in result.raw_output.items() if k != "context_resource"} == {
             "source_char_count": len("Hello, World!"),
             "selected_char_count": len("Hello, World!"),
             "selected_line_count": 1,
@@ -64,7 +74,16 @@ async def test_read_tool_reports_selected_range_completeness(tmp_path):
     )
 
     assert result.success is True
-    assert result.raw_output == {
+    descriptor = result.raw_output["context_resource"]
+    assert descriptor == {
+        "resource_id": str(path.resolve()),
+        "content_version": hashlib.sha256(b"one\ntwo\nthree\n").hexdigest(),
+        "start_line": 2,
+        "end_line": 2,
+        "total_lines": 3,
+        "resource_class": "reconstructable",
+    }
+    assert {k: v for k, v in result.raw_output.items() if k != "context_resource"} == {
         "source_char_count": len("one\ntwo\nthree\n"),
         "selected_char_count": len("two\n"),
         "selected_line_count": 1,

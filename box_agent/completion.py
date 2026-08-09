@@ -40,6 +40,8 @@ _PENDING_GATE_CANCEL_PHRASES: Final[tuple[str, ...]] = (
 
 _PENDING_GATE_CONTINUE_PHRASES: Final[tuple[str, ...]] = (
     "继续",
+    "确认继续",
+    "确认制作",
     "接着",
     "补完",
     "完成",

@@ -55,11 +55,11 @@ from box_agent.tools.skill_preload import (
     turn_preload_skill_names,
 )
 from box_agent.tools.setup import (
-    SANDBOX_INFO_PROMPT,
     add_workspace_tools,
     await_mcp_tools,
     build_file_delivery_prompt,
     build_image_generation_prompt,
+    build_sandbox_info_prompt,
     initialize_base_tools,
     register_mcp_tools,
 )
@@ -69,8 +69,12 @@ from box_agent.tools.runtime import (
     NodeRuntimeManager,
     build_skill_runtime_context,
     build_skill_runtime_prompt,
+    resolve_cli_shell_python,
 )
+from box_agent.tools.skill_execution_env import build_skill_execution_env
 from box_agent.utils import calculate_display_width
+from box_agent.acp.project_context import build_project_startup_context_prompt
+from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
 
 
 def run_setup_wizard(config_path: Path) -> bool:
@@ -386,6 +390,9 @@ def _config_summary(config: Config, config_path: Path, show_secrets: bool = Fals
             "goal_autopilot_max_turns": config.agent.goal_autopilot_max_turns,
             "goal_autopilot_max_seconds": config.agent.goal_autopilot_max_seconds,
             "goal_autopilot_no_progress_turns": config.agent.goal_autopilot_no_progress_turns,
+            "context_resource_dedup_enabled": (
+                config.agent.context_resource_dedup_enabled
+            ),
             "enable_memory": config.agent.enable_memory,
             "memory_dir": config.agent.memory_dir,
             "enable_memory_extraction": config.agent.enable_memory_extraction,
@@ -441,6 +448,7 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
     print(f"  parallel_timeout  : {agent['parallel_tool_timeout_seconds']}s")
     print(f"  batch_synth_timeout: {agent['sub_agent_batch_synthesis_timeout_seconds']}s")
     print(f"  goal_autopilot    : {agent['goal_autopilot_enabled']} ({agent['goal_autopilot_max_turns']} turns, {agent['goal_autopilot_max_seconds']}s, no-progress {agent['goal_autopilot_no_progress_turns']})")
+    print(f"  context_resources : {agent['context_resource_dedup_enabled']}")
     print(f"  enable_memory     : {agent['enable_memory']}")
 
     tools = summary["tools"]
@@ -1019,6 +1027,12 @@ Examples:
         help="Workspace directory (default: current directory)",
     )
     parser.add_argument(
+        "--workspace-type",
+        choices=("general", "code"),
+        default=None,
+        help="Persist the workspace type in ~/.box-agent/config/workspaces.json",
+    )
+    parser.add_argument(
         "--task",
         "-t",
         type=str,
@@ -1529,10 +1543,22 @@ def _playwright_env() -> dict[str, str]:
     return env
 
 
+def _cli_node_execution_env() -> tuple[str | None, dict[str, str]]:
+    """Return the managed npx path and shared Skill execution environment."""
+    runtime_context = build_skill_runtime_context(sandbox_mode=False)
+    env = _playwright_env()
+    managed_env = build_skill_execution_env(runtime_context, base_env=env)
+    env.pop("npm_config_prefix", None)
+    env.pop("npm_config_cache", None)
+    env.update(managed_env)
+    npx = runtime_context.get("node").env_vars.get("BOX_AGENT_NPX")
+    return npx or shutil.which("npx", path=env.get("PATH")), env
+
+
 def _doctor_browser_status() -> dict[str, Any]:
     """Check whether Node.js (npx) and Playwright Chromium are available."""
-    npx = shutil.which("npx")
-    browsers_path = _playwright_env()["PLAYWRIGHT_BROWSERS_PATH"]
+    npx, execution_env = _cli_node_execution_env()
+    browsers_path = execution_env["PLAYWRIGHT_BROWSERS_PATH"]
     if not npx:
         return _doctor_check(
             "warning",
@@ -1546,7 +1572,7 @@ def _doctor_browser_status() -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=30,
-            env=_playwright_env(),
+            env=execution_env,
         )
     except subprocess.TimeoutExpired:
         return _doctor_check(
@@ -1584,13 +1610,13 @@ async def cmd_install_browser() -> None:
     """Install Chromium for Playwright MCP, then enable the playwright entry in mcp.json."""
     print(f"{Colors.BOLD}Box Agent · Install Browser Runtime{Colors.RESET}\n")
 
-    npx = shutil.which("npx")
+    npx, execution_env = _cli_node_execution_env()
     if not npx:
         print(f"{Colors.RED}❌ `npx` not found.{Colors.RESET}")
         print(f"{Colors.DIM}Install Node.js ≥ 18 first: https://nodejs.org/{Colors.RESET}")
         sys.exit(1)
 
-    browsers_path = _default_browsers_path()
+    browsers_path = Path(execution_env["PLAYWRIGHT_BROWSERS_PATH"])
     browsers_path.mkdir(parents=True, exist_ok=True)
 
     print(f"{Colors.DIM}Target: {browsers_path}{Colors.RESET}")
@@ -1599,7 +1625,7 @@ async def cmd_install_browser() -> None:
         result = subprocess.run(
             [npx, "-y", "playwright", "install", "chromium"],
             check=False,
-            env=_playwright_env(),
+            env=execution_env,
         )
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}⚠️  Interrupted.{Colors.RESET}")
@@ -1624,14 +1650,14 @@ async def cmd_install_browser() -> None:
 
 
 def cmd_install_node(version: str = DEFAULT_NODE_VERSION) -> None:
-    """Install Box-Agent's self-managed macOS Node runtime."""
+    """Install Box-Agent's self-managed Node runtime for this platform."""
     print(f"{Colors.BOLD}Box Agent · Install Node Runtime{Colors.RESET}\n")
     manager = NodeRuntimeManager()
     print(f"{Colors.DIM}Target: {manager.root}{Colors.RESET}")
     print(f"{Colors.DIM}Version: {version}{Colors.RESET}")
     print(f"{Colors.DIM}Source: official Node.js release archive + SHASUMS256.txt{Colors.RESET}\n")
     try:
-        runtime = manager.install_macos(version=version)
+        runtime = manager.install_for_current_platform(version=version)
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}⚠️  Interrupted.{Colors.RESET}")
         sys.exit(130)
@@ -1762,6 +1788,17 @@ async def run_agent(
     except Exception as e:
         print(f"{Colors.RED}❌ Error: Failed to load configuration file: {e}{Colors.RESET}")
         return 1
+
+    try:
+        workspace_profile = WorkspaceRegistry().get(workspace_dir)
+    except WorkspaceRegistryError as exc:
+        workspace_profile = None
+        print(f"{Colors.YELLOW}⚠️  Workspace config unavailable: {exc}{Colors.RESET}")
+    code_workspace = bool(
+        workspace_profile is not None and workspace_profile.task_type == "code"
+    )
+    if code_workspace:
+        print(f"{Colors.GREEN}✅ Workspace type: code{Colors.RESET}")
 
     # 2. Initialize LLM client
     from box_agent.retry import RetryConfig as RetryConfigBase
@@ -1978,7 +2015,11 @@ async def run_agent(
         perm_engine = PermissionEngine(policy, workspace_dir, grant_store=grant_store)
 
     cli_env_context = build_cli_env_context()
-    skill_runtime_context = build_skill_runtime_context(sandbox_mode=sandbox_mode, env_context=cli_env_context)
+    skill_runtime_context = build_skill_runtime_context(
+        sandbox_mode=sandbox_mode,
+        env_context=cli_env_context,
+        shell_python_path=resolve_cli_shell_python(),
+    )
 
     add_workspace_tools(
         tools, config, workspace_dir,
@@ -1994,6 +2035,7 @@ async def run_agent(
             if mcp_task is not None and not mcp_task.done()
             else "ready"
         ),
+        use_output_dir=not code_workspace,
         env_context=cli_env_context,
     )
 
@@ -2028,7 +2070,10 @@ async def run_agent(
 
     # 6.5 Inject Sandbox info if enabled
     if sandbox_mode:
-        system_prompt = system_prompt.replace("{SANDBOX_INFO}", SANDBOX_INFO_PROMPT)
+        system_prompt = system_prompt.replace(
+            "{SANDBOX_INFO}",
+            build_sandbox_info_prompt(use_output_dir=not code_workspace),
+        )
         print(f"{Colors.GREEN}✅ Sandbox mode enabled with execute_code tool{Colors.RESET}")
     else:
         # Remove placeholder if sandbox not enabled
@@ -2036,8 +2081,31 @@ async def run_agent(
 
     system_prompt = system_prompt.replace(
         "{FILE_DELIVERY_INFO}",
-        build_file_delivery_prompt(use_output_dir=True),
+        build_file_delivery_prompt(use_output_dir=not code_workspace),
     )
+
+    if code_workspace:
+        project_mode_prompt = (
+            "## Project Workspace Mode\n"
+            "- This session is editing an existing code/project workspace.\n"
+            "- Do not create or use an `output/` folder unless the user explicitly asks for one.\n"
+            "- Treat file edits, generated source files, tests, and build results in the project tree as the deliverable."
+        )
+        system_prompt = (
+            f"{system_prompt.rstrip()}\n\n{project_mode_prompt}\n\n"
+            f"{build_project_startup_context_prompt(workspace_dir)}"
+        )
+        code_prompt_path = Config.find_config_file(config.agent.code_prompt_path)
+        if code_prompt_path and code_prompt_path.exists():
+            code_prompt = code_prompt_path.read_text(encoding="utf-8").strip()
+            if code_prompt:
+                system_prompt = f"{system_prompt.rstrip()}\n\n{code_prompt}"
+                print(
+                    f"{Colors.GREEN}✅ Loaded code workspace prompt "
+                    f"(from: {code_prompt_path}){Colors.RESET}"
+                )
+        else:
+            print(f"{Colors.YELLOW}⚠️  Code workspace prompt not found{Colors.RESET}")
 
     system_prompt = (
         f"{system_prompt.rstrip()}\n\n{build_image_generation_prompt(config)}"
@@ -2081,6 +2149,7 @@ async def run_agent(
         max_truncation_continuations=config.agent.max_truncation_continuations,
         max_truncated_tool_call_retries=config.agent.max_truncated_tool_call_retries,
         truncated_tool_call_boost_cap=config.agent.truncated_tool_call_boost_cap,
+        context_resource_dedup_enabled=config.agent.context_resource_dedup_enabled,
     )
 
     restored_goal = _restore_cli_goal(agent, workspace_dir)
@@ -2274,9 +2343,14 @@ async def run_agent(
             _save_goal_state(workspace_dir, agent.goal)
             print_stats(agent, session_start)
             if json_summary:
+                paused = agent.last_stop_reason == StopReason.CHECKPOINT_PAUSED.value
                 _json_print({
                     "ok": ok,
                     "error": error,
+                    "runStatus": "paused" if paused else ("completed" if ok else "error"),
+                    "completed": ok and not paused,
+                    "recoverable": paused,
+                    "checkpoint": agent.last_checkpoint if paused else None,
                     "workspace": str(workspace_dir),
                     "task": task,
                     "goal": goal_payload(agent.goal),
@@ -2702,8 +2776,19 @@ def main() -> int:
 
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
-    # Ensure the canonical artifact directory exists before any tool can write to it.
-    ensure_output_dir(workspace_dir)
+    try:
+        registry = WorkspaceRegistry()
+        requested_workspace_type = getattr(args, "workspace_type", None)
+        if requested_workspace_type:
+            registry.set(workspace_dir, requested_workspace_type)
+        workspace_profile = registry.get(workspace_dir)
+    except WorkspaceRegistryError as exc:
+        print(f"{Colors.RED}❌ Workspace config error: {exc}{Colors.RESET}")
+        return 1
+    if workspace_profile is None or workspace_profile.task_type != "code":
+        # General tasks keep their canonical output directory. Code workspaces
+        # edit the project tree directly and must not create it implicitly.
+        ensure_output_dir(workspace_dir)
 
     # Run the agent (config always loaded from package directory)
     try:

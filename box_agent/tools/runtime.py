@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import hashlib
 import json
+import os
 import platform
 import shutil
 import sys
@@ -60,15 +60,42 @@ def build_skill_runtime_context(
     env_context: Any | None = None,
     sandbox_env: SandboxEnvironment | None = None,
     node_runtime_root: Path | None = None,
+    office_node_runtime_root: Path | None = None,
+    shell_python_path: Path | None = None,
 ) -> SkillRuntimeContext:
     """Discover runtimes available to skills for this session."""
     host_runtimes = _env_context_runtimes(env_context)
     return SkillRuntimeContext(
         runtimes={
-            "python": _build_python_runtime(sandbox_mode, host_runtimes, sandbox_env),
-            "node": _build_node_runtime(host_runtimes, node_runtime_root=node_runtime_root),
+            "python": _build_python_runtime(
+                sandbox_mode,
+                host_runtimes,
+                sandbox_env,
+                shell_python_path=shell_python_path,
+            ),
+            "node": _build_node_runtime(
+                host_runtimes,
+                node_runtime_root=node_runtime_root,
+                office_node_runtime_root=office_node_runtime_root,
+            ),
         }
     )
+
+
+def resolve_cli_shell_python() -> Path | None:
+    """Return a non-venv Python suitable for third-party shell skills.
+
+    Box-Agent's execute_code sandbox remains isolated.  Shell skills commonly
+    run ``python -m pip install --user``; that command is rejected inside a
+    normal virtualenv, so standalone CLI sessions prefer the interpreter that
+    created the current environment when it is available.
+    """
+    if getattr(sys, "frozen", False):
+        return bundled_win_python()
+    for raw in (getattr(sys, "_base_executable", None), sys.executable):
+        if isinstance(raw, str) and _is_executable_file(raw):
+            return Path(raw)
+    return None
 
 
 def build_skill_runtime_prompt(ctx: SkillRuntimeContext) -> str:
@@ -79,7 +106,10 @@ def build_skill_runtime_prompt(ctx: SkillRuntimeContext) -> str:
     lines = ["## Skill Runtime Context"]
 
     if python.available:
-        py_line = f"- Python: {python.provider} via `$BOX_AGENT_PYTHON`（不要用裸 `python`/`python3`）"
+        py_line = (
+            f"- Python: {python.provider}，标准 `python`/`python3` 已指向受管运行时"
+            "（也可用 `$BOX_AGENT_PYTHON`）"
+        )
     else:
         py_line = "- Python: 仅 `execute_code` 沙箱可用，无 shell python"
     if python.notes:
@@ -93,7 +123,10 @@ def build_skill_runtime_prompt(ctx: SkillRuntimeContext) -> str:
             if name in node.env_vars
         ]
         via = " / ".join(f"`${name}`" for name in node_env_vars) or "configured runtime"
-        node_line = f"- Node: {node.provider} via {via}"
+        node_line = (
+            f"- Node: {node.provider}，标准 `node`/`npm`/`npx` 已指向受管运行时"
+            f"（内部路径：{via}）"
+        )
     else:
         node_line = "- Node: 不可用——skill 若依赖 Node 应直接报告依赖缺失，不要回退系统 node"
     if node.notes:
@@ -101,7 +134,9 @@ def build_skill_runtime_prompt(ctx: SkillRuntimeContext) -> str:
     lines.append(node_line)
 
     lines.append(
-        "- Rules: 优先 `$BOX_AGENT_*` 环境变量；禁用 `npm install -g`、`npx --yes`、裸 `python`/`python3`/`node`/`npm`/`npx`。"
+        "- Rules: 第三方 skill 可使用标准运行时命令；仅在确认依赖缺失时安装。"
+        "`npm install -g` 已被重定向到 `$BOX_AGENT_SKILL_TOOLS_ROOT`，"
+        "禁止 `sudo` 或用 `--prefix` 绕到系统目录。"
     )
     return "\n".join(lines)
 
@@ -110,6 +145,8 @@ def _build_python_runtime(
     sandbox_mode: bool,
     host_runtimes: Any,
     sandbox_env: SandboxEnvironment | None,
+    *,
+    shell_python_path: Path | None = None,
 ) -> SkillRuntime:
     host = _runtime(host_runtimes, "python")
     if host is not None and bool(_runtime_field(host, "ready", False)) and _runtime_field(host, "path"):
@@ -174,16 +211,21 @@ def _build_python_runtime(
     env = sandbox_env or SandboxEnvironment()
     python_path = Path(env.python_path)
     if python_path.is_file() and os.access(python_path, os.X_OK):
-        path = str(python_path)
+        sandbox_path = str(python_path)
+        shell_path = (
+            str(shell_python_path)
+            if shell_python_path is not None and _is_executable_file(str(shell_python_path))
+            else sandbox_path
+        )
         return SkillRuntime(
             kind="python",
             status="available",
             provider="box_agent",
-            executable_path=path,
+            executable_path=shell_path,
             env_vars={
-                "BOX_AGENT_PYTHON": path,
-                "BOX_AGENT_PYTHON3": path,
-                "BOX_AGENT_SANDBOX_PYTHON": path,
+                "BOX_AGENT_PYTHON": shell_path,
+                "BOX_AGENT_PYTHON3": shell_path,
+                "BOX_AGENT_SANDBOX_PYTHON": sandbox_path,
             },
         )
 
@@ -206,8 +248,6 @@ class NodeRuntimeManager:
         state_root = DEFAULT_NODE_RUNTIME_ROOT if _is_bundled_node_runtime_root(self.root) else self.root
         self.sandbox_dir = state_root / "sandbox"
         self.node_modules_dir = self.sandbox_dir / "node_modules"
-        self.npm_cache_dir = self.sandbox_dir / "npm-cache"
-        self.npm_prefix_dir = self.sandbox_dir / "npm-prefix"
 
     def install_macos(
         self,
@@ -398,8 +438,23 @@ class NodeRuntimeManager:
         )
         return self.discover()
 
+    def install_for_current_platform(
+        self, *, version: str = DEFAULT_NODE_VERSION
+    ) -> SkillRuntime:
+        """Install the managed Node build matching the current desktop platform."""
+        if sys.platform == "darwin":
+            return self.install_macos(version=version)
+        if sys.platform == "win32":
+            return self.install_win(version=version)
+        raise NodeRuntimeInstallError(
+            f"Node auto-install currently supports macOS and Windows, got {sys.platform}."
+        )
+
     def discover(self) -> SkillRuntime:
         if not self.manifest_path.exists():
+            discovered = self._discover_from_versions()
+            if discovered is not None:
+                return discovered
             return SkillRuntime(
                 kind="node",
                 status="missing",
@@ -463,14 +518,48 @@ class NodeRuntimeManager:
             notes=notes,
         )
 
+    def _discover_from_versions(self) -> SkillRuntime | None:
+        """Read an Office-provisioned Node tree that predates runtime manifests."""
+        if not self.versions_dir.is_dir():
+            return None
+        for version_dir in sorted(self.versions_dir.iterdir(), reverse=True):
+            if not version_dir.is_dir():
+                continue
+            if sys.platform == "win32":
+                node = version_dir / "node.exe"
+                npm = version_dir / "npm.cmd"
+                npx = version_dir / "npx.cmd"
+                usable = all(_path_exists(path) for path in (node, npm, npx))
+            else:
+                node = version_dir / "bin" / "node"
+                npm = version_dir / "bin" / "npm"
+                npx = version_dir / "bin" / "npx"
+                usable = all(
+                    _is_executable_file(str(path)) for path in (node, npm, npx)
+                )
+            if not usable:
+                continue
+            return SkillRuntime(
+                kind="node",
+                status="available",
+                provider="box_agent",
+                executable_path=str(node),
+                env_vars=self._env_vars(
+                    node=str(node),
+                    npm=str(npm),
+                    npx=str(npx),
+                    node_modules=str(self.node_modules_dir),
+                ),
+                notes=(f"Box-Agent managed Node tree: {version_dir.name}.",),
+            )
+        return None
+
     def _env_vars(self, *, node: str, npm: str, npx: str, node_modules: str) -> dict[str, str]:
         return {
             "BOX_AGENT_NODE": node,
             "BOX_AGENT_NPM": npm,
             "BOX_AGENT_NPX": npx,
             "NODE_PATH": node_modules,
-            "npm_config_cache": str(self.npm_cache_dir),
-            "npm_config_prefix": str(self.npm_prefix_dir),
         }
 
     def _managed_path(self, raw: Any) -> str | None:
@@ -509,7 +598,12 @@ class NodeRuntimeManager:
         os.replace(tmp_path, self.manifest_path)
 
 
-def _build_node_runtime(host_runtimes: Any, *, node_runtime_root: Path | None = None) -> SkillRuntime:
+def _build_node_runtime(
+    host_runtimes: Any,
+    *,
+    node_runtime_root: Path | None = None,
+    office_node_runtime_root: Path | None = None,
+) -> SkillRuntime:
     host = _runtime(host_runtimes, "node")
     if host is not None and bool(_runtime_field(host, "ready", False)) and _runtime_field(host, "path"):
         node_path = _safe_host_executable_path(_runtime_field(host, "path"))
@@ -539,7 +633,23 @@ def _build_node_runtime(host_runtimes: Any, *, node_runtime_root: Path | None = 
             notes=_host_note(host),
         )
 
-    return NodeRuntimeManager(root=node_runtime_root).discover()
+    runtime = NodeRuntimeManager(root=node_runtime_root).discover()
+    if node_runtime_root is not None or runtime.status != "missing":
+        return runtime
+    office_root = office_node_runtime_root
+    if office_root is None:
+        configured_office_root = os.environ.get("BOX_AGENT_OFFICE_NODE_RUNTIME_ROOT")
+        office_root = (
+            Path(configured_office_root).expanduser()
+            if configured_office_root
+            else Path.home()
+            / ".box-agent"
+            / "box-agent-runtime"
+            / "runtimes"
+            / "node"
+        )
+    office_runtime = NodeRuntimeManager(root=office_root).discover()
+    return office_runtime if office_runtime.available else runtime
 
 
 def _env_context_runtimes(env_context: Any | None) -> Any:
@@ -576,7 +686,9 @@ def _safe_host_runtime_path(raw: Any) -> str | None:
         return None
     if "`" in raw or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
         return None
-    if raw.startswith("/") or (len(raw) >= 3 and raw[1:3] == ":\\"):
+    if raw.startswith("/") or (
+        len(raw) >= 3 and raw[1] == ":" and raw[2] in "\\/"
+    ):
         return raw
     return None
 

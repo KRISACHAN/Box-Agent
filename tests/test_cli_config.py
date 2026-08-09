@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import yaml
 
 import box_agent.cli as cli
+from box_agent.workspace_registry import WorkspaceRegistry
 
 
 def _write_config(path: Path, api_key: str = "sk-test-key") -> None:
@@ -175,6 +176,19 @@ def test_config_parallel_tool_timeout_defaults_and_overrides(tmp_path: Path) -> 
     assert cli.Config.from_yaml(disabled_path).agent.parallel_tool_timeout_seconds == 0
 
 
+def test_context_resource_dedup_defaults_on_and_can_be_disabled(tmp_path: Path) -> None:
+    default_path = tmp_path / "default.yaml"
+    _write_config(default_path)
+    assert cli.Config.from_yaml(default_path).agent.context_resource_dedup_enabled is True
+
+    disabled_path = tmp_path / "disabled.yaml"
+    _write_config(disabled_path)
+    with disabled_path.open("a", encoding="utf-8") as stream:
+        stream.write("context_resource_dedup_enabled: false\n")
+
+    assert cli.Config.from_yaml(disabled_path).agent.context_resource_dedup_enabled is False
+
+
 def test_cmd_doctor_json_returns_structured_status(monkeypatch, capsys) -> None:
     async def fake_api_status(_config):
         return cli._doctor_check("ok", "api ok")
@@ -254,6 +268,49 @@ def test_main_returns_run_agent_exit_code(
     monkeypatch.setattr(cli, "run_agent", fake_run_agent)
 
     assert cli.main() == 7
+
+
+def test_main_persists_code_workspace_type_without_creating_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    workspace = tmp_path / "project"
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path)
+
+    async def fake_run_agent(*args, **kwargs):
+        return 0
+
+    monkeypatch.setattr(
+        cli,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command=None,
+            workspace=str(workspace),
+            workspace_type="code",
+            task="inspect code",
+            goal=None,
+            json=False,
+            no_verify_api=True,
+            deep_think=False,
+            force_plan_start=False,
+            no_completion_gate=True,
+            no_goal_autopilot=True,
+            no_sandbox=False,
+        ),
+    )
+    monkeypatch.setattr(cli.Config, "_ensure_user_config", lambda: config_path)
+    monkeypatch.setattr(
+        cli.Config,
+        "from_yaml",
+        lambda _path: SimpleNamespace(llm=SimpleNamespace(api_key="sk-test-key")),
+    )
+    monkeypatch.setattr(cli, "run_agent", fake_run_agent)
+
+    assert cli.main() == 0
+    assert WorkspaceRegistry().get(workspace).task_type == "code"
+    assert not (workspace / "output").exists()
 
 
 def test_cmd_goal_persists_workspace_goal(tmp_path: Path, monkeypatch, capsys) -> None:

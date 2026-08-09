@@ -35,6 +35,14 @@ from .artifacts import (
     safe_output_name,
 )
 from .cache_fingerprint import build_cache_fingerprint
+from .context_resources import (
+    ContextResourceLedger,
+    HistoryTransformResult,
+    ResourceClass,
+    ResourceDescriptor,
+    build_resource_receipt,
+    build_resource_shedding_placeholder,
+)
 from .evidence import (
     extract_http_urls as _http_urls,
     normalize_search_url as _normalize_search_url,
@@ -43,6 +51,7 @@ from .events import (
     AgentEvent,
     ArtifactEvent,
     ContentEvent,
+    ContextCheckpointEvent,
     DoneEvent,
     ErrorEvent,
     InjectedMessageEvent,
@@ -74,6 +83,8 @@ from .model_history import (
 from .loop_guards import (
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
+    SEARCH_FILES_EMPTY_RESULT_LIMIT,
+    SEARCH_FILES_TOOL_NAME,
     TOOL_CALL_LIMITS,
     WEB_SEARCH_BATCH_SIZE,
     WEB_SEARCH_TOOL_NAME,
@@ -90,6 +101,9 @@ from .loop_guards import (
     no_progress_wrapup_text,
     repeated_stream_pattern,
     reply_is_substantial,
+    search_files_empty_result_guidance,
+    search_files_empty_result_message,
+    search_files_result_is_empty,
     total_tool_call_budget_message,
     total_tool_call_budget_wrapup_text,
     tool_call_budget_message,
@@ -113,6 +127,10 @@ from .turn_policy import (
     text_requests_plan_start,
 )
 from .workflow_policy import WorkflowPolicy
+from .workflow_checkpoint_store import (
+    clear_workflow_checkpoint,
+    save_workflow_checkpoint,
+)
 
 # Type alias — consumers supply a zero-arg callable that returns True
 # when the execution should be cancelled.
@@ -678,6 +696,7 @@ def _tool_message_content_for_model(
     result: ToolResult,
     visible_content: str,
     visible_error: str | None,
+    resource_receipt: str | None = None,
 ) -> str:
     """Return the content stored in conversation history for a tool result.
 
@@ -686,6 +705,9 @@ def _tool_message_content_for_model(
     """
     if not result.success:
         return f"Error: {visible_error}"
+
+    if resource_receipt is not None:
+        return resource_receipt
 
     # read_file now enforces bounded line pagination and rejects pages above
     # its character safety limit. Preserve each successful page verbatim so
@@ -703,6 +725,84 @@ def _tool_message_content_for_model(
         content=visible_content,
     )
     return _strip_plot_data(compacted)
+
+
+@dataclass(frozen=True, slots=True)
+class _ContextResourceHistoryDecision:
+    descriptor: ResourceDescriptor | None = None
+    source_tool_call_ids: tuple[str, ...] = ()
+    receipt: str | None = None
+
+
+def _context_resource_history_decision(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: ToolResult,
+    messages: list[Message],
+    ledger: ContextResourceLedger | None,
+) -> _ContextResourceHistoryDecision:
+    """Choose full read content or a receipt from live source coverage."""
+    if ledger is None or tool_name != "read_file" or not result.success:
+        return _ContextResourceHistoryDecision()
+    descriptor = ResourceDescriptor.from_raw_output(result.raw_output)
+    if descriptor is None or not descriptor.has_content:
+        return _ContextResourceHistoryDecision(descriptor=descriptor)
+    if arguments.get("refresh") is True:
+        return _ContextResourceHistoryDecision(descriptor=descriptor)
+    source_ids = ledger.covering_source_ids(descriptor, messages)
+    if not source_ids:
+        return _ContextResourceHistoryDecision(descriptor=descriptor)
+    return _ContextResourceHistoryDecision(
+        descriptor=descriptor,
+        source_tool_call_ids=source_ids,
+        receipt=build_resource_receipt(descriptor, source_ids),
+    )
+
+
+def _record_context_resource_history(
+    *,
+    tool_call_id: str,
+    decision: _ContextResourceHistoryDecision,
+    result: ToolResult,
+    visible_content: str,
+    model_content: str,
+    ledger: ContextResourceLedger | None,
+) -> None:
+    """Update the ledger only after the tool message is in model history."""
+    descriptor = decision.descriptor
+    if ledger is None or descriptor is None or not result.success:
+        return
+    if decision.receipt is not None:
+        ledger.register_receipt(tool_call_id, decision.source_tool_call_ids)
+        _log.info(
+            "context_resource/read_repeat tool_call_id=%s version=%s lines=%d-%d "
+            "sources=%s visible_chars=%d model_chars=%d",
+            tool_call_id,
+            descriptor.content_version[:12],
+            descriptor.start_line,
+            descriptor.end_line,
+            ",".join(decision.source_tool_call_ids),
+            len(visible_content),
+            len(model_content),
+        )
+        return
+    # Hook-modified or pre-compacted content is not an exact file body and
+    # therefore cannot safely contribute coverage.
+    if model_content != visible_content or visible_content != result.content:
+        return
+    ledger.register_full_source(tool_call_id, descriptor, model_content)
+    if ledger.source(tool_call_id) is not None:
+        _log.info(
+            "context_resource/read_full tool_call_id=%s class=%s version=%s "
+            "lines=%d-%d model_chars=%d",
+            tool_call_id,
+            descriptor.resource_class.value,
+            descriptor.content_version[:12],
+            descriptor.start_line,
+            descriptor.end_line,
+            len(model_content),
+        )
 
 
 def _permission_event_kwargs(permission_request: dict[str, Any]) -> dict[str, Any]:
@@ -2035,7 +2135,10 @@ def _compact_web_search_result_for_model(
     return "\n".join(lines)
 
 
-def _micro_compact(messages: list[Message]) -> int:
+def _micro_compact(
+    messages: list[Message],
+    context_resource_ledger: ContextResourceLedger | None = None,
+) -> HistoryTransformResult:
     """Replace old tool-result content with short placeholders.
 
     Walks the message list, finds tool-role messages, keeps the last
@@ -2050,12 +2153,12 @@ def _micro_compact(messages: list[Message]) -> int:
 
     This is a cheap, zero-LLM-call operation that runs every step.
 
-    Returns:
-        Number of messages compacted.
+    Returns transformation metadata so live resource sources can be invalidated
+    by the caller before the next model request.
     """
     tool_indices = [i for i, m in enumerate(messages) if m.role == "tool"]
     if len(tool_indices) <= 1:
-        return 0
+        return HistoryTransformResult()
 
     # Start with the conservative N-recent keep window.
     keep_count = min(_KEEP_RECENT_TOOL_RESULTS, len(tool_indices))
@@ -2070,11 +2173,22 @@ def _micro_compact(messages: list[Message]) -> int:
         keep_count -= 1
 
     if len(tool_indices) <= keep_count:
-        return 0
+        return HistoryTransformResult()
 
     compacted = 0
+    replaced_source_ids: list[str] = []
     for idx in tool_indices[:-keep_count]:
         msg = messages[idx]
+        source = (
+            context_resource_ledger.source(msg.tool_call_id)
+            if context_resource_ledger is not None and msg.tool_call_id
+            else None
+        )
+        if (
+            source is not None
+            and source.descriptor.resource_class is ResourceClass.INSTRUCTION_PINNED
+        ):
+            continue
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
         if len(content) <= _MIN_COMPACT_LEN:
             continue
@@ -2100,8 +2214,66 @@ def _micro_compact(messages: list[Message]) -> int:
             name=msg.name,
         )
         compacted += 1
+        if source is not None:
+            replaced_source_ids.append(source.tool_call_id)
 
-    return compacted
+    return HistoryTransformResult(
+        transformed_count=compacted,
+        replaced_source_tool_call_ids=tuple(replaced_source_ids),
+    )
+
+
+def _shed_reconstructable_read_resources(
+    messages: list[Message],
+    context_resource_ledger: ContextResourceLedger | None,
+    *,
+    token_limit: int,
+    tools: dict[str, Tool] | None = None,
+) -> HistoryTransformResult:
+    """Deterministically shed only reconstructable complete read results."""
+    estimated_before = _estimate_request_tokens(messages, tools)
+    if context_resource_ledger is None or estimated_before <= token_limit:
+        return HistoryTransformResult(
+            estimated_before=estimated_before,
+            estimated_after=estimated_before,
+        )
+
+    context_resource_ledger.reconcile(messages)
+    candidates: list[tuple[int, str]] = []
+    for index, message in enumerate(messages):
+        if message.role != "tool" or not message.tool_call_id:
+            continue
+        source = context_resource_ledger.source(message.tool_call_id)
+        if (
+            source is not None
+            and source.descriptor.resource_class is ResourceClass.RECONSTRUCTABLE
+        ):
+            candidates.append((index, source.tool_call_id))
+
+    replaced_source_ids: list[str] = []
+    estimated_after = estimated_before
+    for index, source_id in candidates:
+        source = context_resource_ledger.source(source_id)
+        if source is None:
+            continue
+        message = messages[index]
+        messages[index] = Message(
+            role="tool",
+            content=build_resource_shedding_placeholder(source),
+            tool_call_id=message.tool_call_id,
+            name=message.name,
+        )
+        replaced_source_ids.append(source_id)
+        estimated_after = _estimate_request_tokens(messages, tools)
+        if estimated_after <= token_limit:
+            break
+
+    return HistoryTransformResult(
+        transformed_count=len(replaced_source_ids),
+        replaced_source_tool_call_ids=tuple(replaced_source_ids),
+        estimated_before=estimated_before,
+        estimated_after=estimated_after,
+    )
 
 
 # ── Cleanup helper ──────────────────────────────────────────────
@@ -2249,6 +2421,8 @@ async def run_agent_loop(
     active_skill_activator: ActiveSkillActivator | None = None,
     workflow_policy: WorkflowPolicy | None = None,
     current_turn_text: str | None = None,
+    context_resource_ledger: ContextResourceLedger | None = None,
+    context_resource_dedup_enabled: bool = True,
 ) -> AsyncIterator[AgentEvent]:
     """Execute the agent loop, yielding structured events.
 
@@ -2324,8 +2498,17 @@ async def run_agent_loop(
         current_turn_text: Optional host-sanitized latest user request used to
             gate tools that access the user's active browser tab. When omitted,
             the latest user message is used.
+        context_resource_ledger: Optional caller-owned ledger. Agent sessions
+            pass a persistent instance; direct and child loops get a local one.
+        context_resource_dedup_enabled: Disable the first-batch resource-history
+            optimization without changing visible tool execution.
     """
     cancelled = is_cancelled or (lambda: False)
+    resource_ledger = (
+        context_resource_ledger or ContextResourceLedger()
+        if context_resource_dedup_enabled
+        else None
+    )
     hook_mgr = HookManager(hooks)
     if (
         max_tool_calls is None
@@ -2389,6 +2572,14 @@ async def run_agent_loop(
             "synthesized interrupted-stub tool responses.",
             healed,
         )
+    if resource_ledger is not None:
+        invalidated = resource_ledger.reconcile(messages)
+        if invalidated:
+            _log.info(
+                "context_resource/ledger_reconciled invalidated=%s epoch=%d",
+                ",".join(invalidated),
+                resource_ledger.epoch,
+            )
 
     async def _build_proposal_event() -> MemoryProposalEvent | None:
         """Read promotion candidates from memory and bump their last_proposed."""
@@ -2577,6 +2768,8 @@ async def run_agent_loop(
     web_search_unique_results = 0
     web_search_duplicate_results = 0
     web_search_no_new_batches = 0
+    search_files_consecutive_empty_results = 0
+    search_files_empty_guidance_injected = False
     plan_start_emitted = False
     forced_plan_guidance_injected = False
     forced_plan_retry_injected = False
@@ -2598,6 +2791,14 @@ async def run_agent_loop(
         pending.tool_calls = _tool_calls_for_model_history(pending.tool_calls)
 
     for step in range(max_steps):
+        if resource_ledger is not None:
+            invalidated = resource_ledger.reconcile(messages)
+            if invalidated:
+                _log.info(
+                    "context_resource/ledger_reconciled invalidated=%s epoch=%d",
+                    ",".join(invalidated),
+                    resource_ledger.epoch,
+                )
         for message in messages:
             if message.role == "user":
                 verified_evidence_urls.update(_http_urls(message.content))
@@ -2711,6 +2912,22 @@ async def run_agent_loop(
                 )
                 yield InjectedMessageEvent(content=budget_text, injection_id=None, user_visible=False)
         if (
+            search_files_consecutive_empty_results >= SEARCH_FILES_EMPTY_RESULT_LIMIT
+            and not search_files_empty_guidance_injected
+        ):
+            search_files_empty_guidance_injected = True
+            guidance = search_files_empty_result_guidance(
+                SEARCH_FILES_EMPTY_RESULT_LIMIT
+            )
+            messages.append(
+                Message(role="user", content=format_injected_message(guidance))
+            )
+            yield InjectedMessageEvent(
+                content=guidance,
+                injection_id=None,
+                user_visible=False,
+            )
+        if (
             completion_gate is not None
             and max_tool_calls is not None
             and completion_gate.completion_reserve_tool_calls > 0
@@ -2759,9 +2976,36 @@ async def run_agent_loop(
 
         # ── Micro-compact (Layer 1) ────────────────────────
         # Cheap: replace old tool results with placeholders
-        micro_compacted = _micro_compact(messages)
+        micro_result = _micro_compact(messages, resource_ledger)
+        if resource_ledger is not None and micro_result.replaced_source_tool_call_ids:
+            invalidated = resource_ledger.invalidate_source_ids(
+                micro_result.replaced_source_tool_call_ids
+            )
+            _log.info(
+                "context_resource/source_invalidated transform=micro_compact ids=%s",
+                ",".join(invalidated),
+            )
 
-        # ── Summarization (Layer 2) ────────────────────────
+        # ── Reconstructable resource shedding (Layer 2) ────
+        shedding_result = _shed_reconstructable_read_resources(
+            messages,
+            resource_ledger,
+            token_limit=token_limit,
+            tools=tools,
+        )
+        if resource_ledger is not None and shedding_result.replaced_source_tool_call_ids:
+            invalidated = resource_ledger.invalidate_source_ids(
+                shedding_result.replaced_source_tool_call_ids
+            )
+            _log.info(
+                "context_resource/source_invalidated transform=resource_shedding "
+                "ids=%s before=%s after=%s",
+                ",".join(invalidated),
+                shedding_result.estimated_before,
+                shedding_result.estimated_after,
+            )
+
+        # ── Summarization (Layer 3) ────────────────────────
         result = await _maybe_summarize(
             llm,
             messages,
@@ -2798,19 +3042,121 @@ async def run_agent_loop(
                 estimated_after=result.estimated_after,
                 mode=result.mode,
                 summary_calls=result.summary_calls,
-                micro_compacted=micro_compacted,
+                micro_compacted=micro_result.transformed_count,
                 error=result.error,
                 error_type=result.error_type,
                 trigger_source=result.trigger_source,
             )
             messages.clear()
             messages.extend(new_msgs)
-        if result.blocked:
+            if resource_ledger is not None:
+                resource_ledger.rotate_epoch()
+                _log.info(
+                    "context_resource/epoch_rotated transform=summary epoch=%d",
+                    resource_ledger.epoch,
+                )
+        tool_budget_checkpoint_required = (
+            workflow_policy is not None
+            and completion_gate is not None
+            and max_tool_calls is not None
+            and tool_call_total >= max_tool_calls
+            and bool(
+                completion_gate_gaps(
+                    completion_gate,
+                    succeeded_tools,
+                    workspace_dir,
+                )
+            )
+        )
+        if result.blocked or tool_budget_checkpoint_required:
+            pause_checkpoint = None
+            checkpoint_error: Exception | None = None
+            if workflow_policy is not None:
+                try:
+                    pause_checkpoint = await asyncio.to_thread(
+                        save_workflow_checkpoint,
+                        workflow_policy,
+                        workspace_dir=workspace_dir,
+                        artifact_root_dir=artifact_root_dir,
+                    )
+                except Exception as exc:
+                    checkpoint_error = exc
+                    _log.warning(
+                        "workflow_checkpoint/save_failed workflow=%s error=%s",
+                        getattr(workflow_policy, "kind", "unknown"),
+                        exc,
+                    )
+            if pause_checkpoint is not None:
+                pause_message = (
+                    "Tool-call budget reached the safe continuation boundary. Progress "
+                    "was saved to a durable workspace checkpoint; continue this task to "
+                    "resume from canonical artifacts."
+                    if tool_budget_checkpoint_required and not result.blocked
+                    else
+                    "Context reached the safe continuation boundary. Progress was "
+                    "saved to a durable workspace checkpoint; continue this task to "
+                    "resume from canonical artifacts."
+                )
+                _log.info(
+                    "workflow_checkpoint/paused checkpoint_id=%s workflow=%s "
+                    "schema_version=%d artifact_count=%d",
+                    pause_checkpoint.checkpoint_id,
+                    pause_checkpoint.workflow_kind,
+                    pause_checkpoint.schema_version,
+                    pause_checkpoint.artifact_count,
+                )
+                yield ContextCheckpointEvent(
+                    checkpoint_id=pause_checkpoint.checkpoint_id,
+                    workflow_kind=pause_checkpoint.workflow_kind,
+                    adapter_id=pause_checkpoint.adapter_id,
+                    schema_version=pause_checkpoint.schema_version,
+                    workspace_identity=pause_checkpoint.workspace_identity,
+                    path=pause_checkpoint.path,
+                    stage=pause_checkpoint.stage,
+                    artifact_count=pause_checkpoint.artifact_count,
+                    artifact_set_sha256=pause_checkpoint.artifact_set_sha256,
+                )
+                original_message_count = len(messages)
+                retained_messages = [
+                    message for message in messages if message.role == "system"
+                ]
+                retained_system_count = len(retained_messages)
+                retained_messages.append(
+                    Message(role="assistant", content=pause_message)
+                )
+                removed_message_count = original_message_count - retained_system_count
+                messages.clear()
+                messages.extend(retained_messages)
+                if resource_ledger is not None:
+                    resource_ledger.rotate_epoch()
+                _log.info(
+                    "workflow_checkpoint/history_reset checkpoint_id=%s "
+                    "removed_messages=%d retained_messages=%d",
+                    pause_checkpoint.checkpoint_id,
+                    removed_message_count,
+                    len(retained_messages),
+                )
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_done(
+                        stop_reason=StopReason.CHECKPOINT_PAUSED,
+                        final_content=pause_message,
+                    )
+                yield DoneEvent(
+                    stop_reason=StopReason.CHECKPOINT_PAUSED,
+                    final_content=pause_message,
+                )
+                return
             msg = (
+                "The workflow reached its tool-call continuation boundary, but a durable "
+                "checkpoint could not be saved."
+                if tool_budget_checkpoint_required and not result.blocked
+                else
                 "Context remains above the safe input limit after bounded compaction "
                 f"({result.estimated_after} estimated tokens; limit {token_limit}). "
                 "Start a new session or reduce active instructions/tool output before retrying."
             )
+            if checkpoint_error is not None:
+                msg += " A durable workflow checkpoint could not be saved."
             if hook_mgr.hooks:
                 await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
                 await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
@@ -3417,6 +3763,129 @@ async def run_agent_loop(
                     yield StepEnd(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
                     continue
 
+            exhausted_gate_gaps = (
+                completion_gate_gaps(
+                    completion_gate,
+                    succeeded_tools,
+                    workspace_dir,
+                )
+                if completion_gate is not None
+                and workflow_policy is not None
+                and completion_gate.pause_tools.isdisjoint(succeeded_tools)
+                and (
+                    gate_continuations >= completion_gate.max_continuations
+                    or (
+                        completion_gate.deadline_seconds is not None
+                        and (perf_counter() - run_start)
+                        >= completion_gate.deadline_seconds
+                    )
+                )
+                else []
+            )
+            if exhausted_gate_gaps:
+                pause_checkpoint = None
+                checkpoint_error: Exception | None = None
+                try:
+                    pause_checkpoint = await asyncio.to_thread(
+                        save_workflow_checkpoint,
+                        workflow_policy,
+                        workspace_dir=workspace_dir,
+                        artifact_root_dir=artifact_root_dir,
+                    )
+                except Exception as exc:
+                    checkpoint_error = exc
+                    _log.warning(
+                        "workflow_checkpoint/save_failed workflow=%s error=%s",
+                        getattr(workflow_policy, "kind", "unknown"),
+                        exc,
+                    )
+                if pause_checkpoint is not None:
+                    pause_message = (
+                        "The recoverable workflow reached its bounded continuation "
+                        "boundary with delivery work remaining. Progress was saved to "
+                        "a durable workspace checkpoint; continue this task to resume "
+                        "from canonical artifacts."
+                    )
+                    _log.info(
+                        "workflow_checkpoint/paused checkpoint_id=%s workflow=%s "
+                        "schema_version=%d artifact_count=%d reason=continuation_exhausted",
+                        pause_checkpoint.checkpoint_id,
+                        pause_checkpoint.workflow_kind,
+                        pause_checkpoint.schema_version,
+                        pause_checkpoint.artifact_count,
+                    )
+                    yield ContextCheckpointEvent(
+                        checkpoint_id=pause_checkpoint.checkpoint_id,
+                        workflow_kind=pause_checkpoint.workflow_kind,
+                        adapter_id=pause_checkpoint.adapter_id,
+                        schema_version=pause_checkpoint.schema_version,
+                        workspace_identity=pause_checkpoint.workspace_identity,
+                        path=pause_checkpoint.path,
+                        stage=pause_checkpoint.stage,
+                        artifact_count=pause_checkpoint.artifact_count,
+                        artifact_set_sha256=pause_checkpoint.artifact_set_sha256,
+                    )
+                    original_message_count = len(messages)
+                    retained_messages = [
+                        message for message in messages if message.role == "system"
+                    ]
+                    retained_system_count = len(retained_messages)
+                    retained_messages.append(
+                        Message(role="assistant", content=pause_message)
+                    )
+                    messages.clear()
+                    messages.extend(retained_messages)
+                    if resource_ledger is not None:
+                        resource_ledger.rotate_epoch()
+                    _log.info(
+                        "workflow_checkpoint/history_reset checkpoint_id=%s "
+                        "removed_messages=%d retained_messages=%d",
+                        pause_checkpoint.checkpoint_id,
+                        original_message_count - retained_system_count,
+                        len(retained_messages),
+                    )
+                    elapsed = perf_counter() - step_start
+                    total = perf_counter() - run_start
+                    if hook_mgr.hooks:
+                        await hook_mgr.fire_step_end(
+                            step=step + 1,
+                            elapsed_seconds=elapsed,
+                            total_elapsed_seconds=total,
+                        )
+                        await hook_mgr.fire_done(
+                            stop_reason=StopReason.CHECKPOINT_PAUSED,
+                            final_content=pause_message,
+                        )
+                    yield StepEnd(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                    yield DoneEvent(
+                        stop_reason=StopReason.CHECKPOINT_PAUSED,
+                        final_content=pause_message,
+                    )
+                    return
+                msg = (
+                    "The recoverable workflow reached its bounded continuation "
+                    "boundary, but a durable checkpoint could not be saved."
+                )
+                if checkpoint_error is not None:
+                    msg += f" {type(checkpoint_error).__name__}: {checkpoint_error}"
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(
+                        message=msg,
+                        is_fatal=True,
+                        exception=checkpoint_error,
+                    )
+                    await hook_mgr.fire_done(
+                        stop_reason=StopReason.ERROR,
+                        final_content=msg,
+                    )
+                yield ErrorEvent(message=msg, is_fatal=True)
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
+
             # ── Suspected-truncation continuation (opt-in) ──
             # The provider reported a normal finish with no tool calls, but
             # the body ends mid-thought. Re-prompt once (bounded) to finish
@@ -3514,6 +3983,17 @@ async def run_agent_loop(
 
             elapsed = perf_counter() - step_start
             total = perf_counter() - run_start
+            if completion_gate is not None and workflow_policy is not None:
+                final_gaps = completion_gate_gaps(
+                    completion_gate,
+                    succeeded_tools,
+                    workspace_dir,
+                )
+                if not final_gaps:
+                    clear_workflow_checkpoint(
+                        workspace_dir=workspace_dir,
+                        workflow_kind=getattr(workflow_policy, "kind", None),
+                    )
             if hook_mgr.hooks:
                 await hook_mgr.fire_step_end(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
                 await hook_mgr.fire_done(stop_reason=StopReason.END_TURN, final_content=response.content)
@@ -3646,6 +4126,14 @@ async def run_agent_loop(
 
         def _reserve_tool_budget(tool_name: str) -> tuple[bool, str | None]:
             nonlocal tool_call_total
+            if (
+                tool_name == SEARCH_FILES_TOOL_NAME
+                and search_files_consecutive_empty_results
+                >= SEARCH_FILES_EMPTY_RESULT_LIMIT
+            ):
+                return False, search_files_empty_result_message(
+                    SEARCH_FILES_EMPTY_RESULT_LIMIT
+                )
             is_workflow_budget_exempt = (
                 workflow_policy is not None
                 and workflow_policy.exempts_tool_budget(tool_name)
@@ -3668,6 +4156,44 @@ async def run_agent_loop(
             if is_budgeted:
                 tool_call_total += 1
             return True, None
+
+        def _record_nested_tool_budget(
+            tool_name: str,
+            result: ToolResult,
+        ) -> None:
+            """Charge completed child executions to recoverable workflow budgets."""
+            nonlocal tool_call_total
+            if (
+                workflow_policy is None
+                or max_tool_calls is None
+                or tool_name != "sub_agent"
+                or not isinstance(result.raw_output, dict)
+                or result.raw_output.get("type") != "sub_agent_delegation"
+            ):
+                return
+            nested_tool_calls = result.raw_output.get("tool_calls")
+            if (
+                isinstance(nested_tool_calls, bool)
+                or not isinstance(nested_tool_calls, int)
+                or nested_tool_calls <= 0
+            ):
+                return
+            tool_call_total += nested_tool_calls
+            _log.info(
+                "workflow_budget/nested_tool_calls count=%d total=%d limit=%d",
+                nested_tool_calls,
+                tool_call_total,
+                max_tool_calls,
+            )
+
+        def _record_search_files_result(tool_name: str, result: ToolResult) -> None:
+            nonlocal search_files_consecutive_empty_results
+            if tool_name != SEARCH_FILES_TOOL_NAME:
+                return
+            if search_files_result_is_empty(result):
+                search_files_consecutive_empty_results += 1
+            elif result.success:
+                search_files_consecutive_empty_results = 0
 
         def _reserve_web_search_call(arguments: dict[str, Any]) -> tuple[bool, str | None]:
             nonlocal web_search_step_seen
@@ -4008,13 +4534,19 @@ async def run_agent_loop(
                 browser_snapshot_target,
             )
             result = _activate_skill_result(fn_name, fn_args, result)
+            _record_nested_tool_budget(fn_name, result)
             if workflow_policy is not None:
                 workflow_policy.record_tool_result(fn_name, fn_args, result)
+            _record_search_files_result(fn_name, result)
             step_tool_success_by_id[tc_id] = result.success
 
             # Progress signal for the no-progress breaker: a successful tool
             # call with non-empty content counts as making progress.
-            if result.success and (result.content or "").strip():
+            if (
+                result.success
+                and (result.content or "").strip()
+                and not search_files_result_is_empty(result)
+            ):
                 step_made_progress = True
                 if (
                     completion_gate is None
@@ -4071,12 +4603,20 @@ async def run_agent_loop(
             # the conversation could be left with an assistant tool_calls
             # message that has no matching tool response — a fatal protocol
             # state for the next LLM call.
+            resource_decision = _context_resource_history_decision(
+                tool_name=fn_name,
+                arguments=fn_args,
+                result=result,
+                messages=messages,
+                ledger=resource_ledger,
+            )
             msg_content = _tool_message_content_for_model(
                 tool_name=fn_name,
                 arguments=fn_args,
                 result=result,
                 visible_content=tc_content,
                 visible_error=tc_error,
+                resource_receipt=resource_decision.receipt,
             )
             if result.success and fn_name == WEB_SEARCH_TOOL_NAME:
                 _log_web_search_model_results(fn_args, tc_content, msg_content)
@@ -4087,6 +4627,14 @@ async def run_agent_loop(
                 name=fn_name,
             )
             messages.append(tool_msg)
+            _record_context_resource_history(
+                tool_call_id=tc_id,
+                decision=resource_decision,
+                result=result,
+                visible_content=tc_content,
+                model_content=msg_content,
+                ledger=resource_ledger,
+            )
 
             yield ToolCallResult(
                 tool_call_id=tc_id,
@@ -4480,12 +5028,18 @@ async def run_agent_loop(
                     result,
                     par_browser_snapshot_targets.get(tc_id),
                 )
+                _record_nested_tool_budget(fn_name, result)
                 if workflow_policy is not None:
                     workflow_policy.record_tool_result(fn_name, fn_args, result)
+                _record_search_files_result(fn_name, result)
                 step_tool_success_by_id[tc_id] = result.success
 
                 # Progress signal for the no-progress breaker.
-                if result.success and (result.content or "").strip():
+                if (
+                    result.success
+                    and (result.content or "").strip()
+                    and not search_files_result_is_empty(result)
+                ):
                     step_made_progress = True
                     if (
                         completion_gate is None
@@ -4539,12 +5093,20 @@ async def run_agent_loop(
                 # Append the tool message BEFORE yielding any events — see
                 # the equivalent comment in the sequential branch above for
                 # the protocol-state rationale.
+                resource_decision = _context_resource_history_decision(
+                    tool_name=fn_name,
+                    arguments=par_fn_args,
+                    result=result,
+                    messages=messages,
+                    ledger=resource_ledger,
+                )
                 msg_content = _tool_message_content_for_model(
                     tool_name=fn_name,
-                    arguments=fn_args,
+                    arguments=par_fn_args,
                     result=result,
                     visible_content=par_content,
                     visible_error=par_error,
+                    resource_receipt=resource_decision.receipt,
                 )
                 if result.success and fn_name == WEB_SEARCH_TOOL_NAME:
                     _log_web_search_model_results(
@@ -4559,6 +5121,14 @@ async def run_agent_loop(
                     name=fn_name,
                 )
                 messages.append(tool_msg)
+                _record_context_resource_history(
+                    tool_call_id=tc_id,
+                    decision=resource_decision,
+                    result=result,
+                    visible_content=par_content,
+                    model_content=msg_content,
+                    ledger=resource_ledger,
+                )
 
                 yield ToolCallResult(
                     tool_call_id=tc_id,

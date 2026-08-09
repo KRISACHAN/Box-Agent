@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -13,6 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
 from ..events import ProgressEvent
+from ..context_resources import (
+    CONTEXT_RESOURCE_RAW_KEY,
+    ResourceDescriptor,
+    classify_read_resource,
+)
 from ..model_history import (
     is_model_history_placeholder,
     is_model_instruction_source_path,
@@ -320,7 +326,7 @@ class ReadTool(Tool):
             "'LINE_NUMBER|LINE_CONTENT' (1-indexed). The default page is 500 lines and the "
             "maximum is 2000; use offset and limit to continue through large files. "
             "Binary and structured document files are rejected with an actionable error. "
-            "You can call this tool multiple times in parallel to read different files simultaneously."
+            "Call it repeatedly to read different files or page through one file."
         )
 
     @property
@@ -345,11 +351,25 @@ class ReadTool(Tool):
                     "minimum": 1,
                     "maximum": MAX_READ_LINES,
                 },
+                "refresh": {
+                    "type": "boolean",
+                    "description": (
+                        "Force the exact page back into model context even when the same "
+                        "file version and line range are already available"
+                    ),
+                    "default": False,
+                },
             },
             "required": ["path"],
         }
 
-    async def execute(self, path: str, offset: int | None = None, limit: int | None = None) -> ToolResult:
+    async def execute(
+        self,
+        path: str,
+        offset: int | None = None,
+        limit: int | None = None,
+        refresh: bool = False,
+    ) -> ToolResult:
         """Execute read file."""
         try:
             offset, limit = _normalize_read_pagination(offset, limit)
@@ -419,8 +439,17 @@ class ReadTool(Tool):
             source_char_count = 0
             total_lines = 0
             replacement_seen = False
-            with open(file_path, encoding="utf-8", errors="replace") as stream:
-                for index, line in enumerate(stream):
+            content_hasher = hashlib.sha256()
+            with open(file_path, "rb") as stream:
+                for index, raw_line in enumerate(stream):
+                    content_hasher.update(raw_line)
+                    line = raw_line.decode("utf-8", errors="replace")
+                    # Match text-mode universal newline behavior while hashing
+                    # the original bytes for change detection.
+                    if line.endswith("\r\n"):
+                        line = line[:-2] + "\n"
+                    elif line.endswith("\r"):
+                        line = line[:-1] + "\n"
                     total_lines = index + 1
                     source_char_count += len(line)
                     replacement_seen = replacement_seen or "\ufffd" in line
@@ -470,6 +499,17 @@ class ReadTool(Tool):
                 )
 
             model_context = build_read_file_model_context(file_path, content, total_lines)
+            descriptor = ResourceDescriptor(
+                resource_id=str(file_path.resolve()),
+                content_version=content_hasher.hexdigest(),
+                start_line=offset,
+                end_line=(offset + selected_line_count - 1),
+                total_lines=total_lines,
+                resource_class=classify_read_resource(
+                    str(file_path.resolve()),
+                    requested_path=path,
+                ),
+            )
             return ToolResult(
                 success=True,
                 content=content,
@@ -482,6 +522,7 @@ class ReadTool(Tool):
                     "truncated": False,
                     "has_more": has_more,
                     "next_offset": offset + selected_line_count if has_more else None,
+                    CONTEXT_RESOURCE_RAW_KEY: descriptor.as_raw_output(),
                 },
             )
         except Exception as e:

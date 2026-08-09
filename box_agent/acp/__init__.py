@@ -89,6 +89,7 @@ from box_agent.turn_policy import (
 from box_agent.events import (
     ArtifactEvent,
     ContentEvent,
+    ContextCheckpointEvent,
     DoneEvent,
     ErrorEvent,
     InjectedMessageEvent,
@@ -120,12 +121,16 @@ from box_agent.loop_guards import (
     completion_gate_gaps,
 )
 from box_agent.workflows import (
+    CONTROLLED_PRESENTATION_WORKFLOW_KIND,
+    EXTERNAL_SKILL_WORKFLOW_KIND,
+    build_external_skill_completion_gate,
     build_presentation_preflight_analysis_text,
     build_presentation_preflight_result,
     build_presentation_recommendation_prompt,
     load_presentation_preflight_config,
     parse_host_presentation_config,
     recover_completion_gate,
+    resolve_explicit_skill_invocation,
     resolve_presentation_skill_provider,
 )
 from box_agent.acp.action_hints import (
@@ -165,6 +170,7 @@ from box_agent.tools.skill_preload import (
     turn_preload_skill_names,
     web_search_total_limit_for_active_skills,
 )
+from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
 
 from .debug_logger import acp_logger as log
 
@@ -744,6 +750,7 @@ class SessionState:
     last_error: str | None = None
     last_error_code: int | str | None = None
     last_error_category: str | None = None
+    last_checkpoint: dict[str, Any] | None = None
 
 
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
@@ -1115,6 +1122,20 @@ class BoxACPAgent:
                 or _DEFAULT_AGENT_TITLE
             )
 
+        try:
+            workspace_profile = WorkspaceRegistry().get(workspace)
+        except WorkspaceRegistryError as exc:
+            workspace_profile = None
+            log.info("workspace/config_error", path=str(workspace), error=str(exc))
+        if workspace_profile is not None and workspace_profile.task_type == "code":
+            if session_mode is None:
+                session_mode = "code_agent"
+            if session_mode == "code_agent" and not (
+                isinstance(meta, dict)
+                and ("artifact_mode" in meta or "artifactMode" in meta)
+            ):
+                artifact_mode = "project"
+
         llm_binding = _normalize_llm_binding(meta)
         session_llm = SessionBoundLLM(self._llm_for_binding(llm_binding))
         session_llm.set_request_context(
@@ -1315,6 +1336,9 @@ class BoxACPAgent:
             max_truncation_continuations=self._config.agent.max_truncation_continuations,
             max_truncated_tool_call_retries=self._config.agent.max_truncated_tool_call_retries,
             truncated_tool_call_boost_cap=self._config.agent.truncated_tool_call_boost_cap,
+            context_resource_dedup_enabled=(
+                self._config.agent.context_resource_dedup_enabled
+            ),
         )
 
         if initial_goal_request is not None:
@@ -1737,6 +1761,24 @@ class BoxACPAgent:
             if state.skill_loader is not None and plan_detection_text.strip()
             else ()
         )
+        explicit_skill = resolve_explicit_skill_invocation(
+            state.skill_loader,
+            plan_detection_text,
+        )
+        if explicit_skill is not None:
+            log.info(
+                "skill/invocation",
+                session_id=session_id,
+                skill=explicit_skill.name,
+                source=explicit_skill.source,
+                workflow=explicit_skill.workflow,
+                lifecycle=(
+                    "controlled"
+                    if explicit_skill.workflow
+                    == CONTROLLED_PRESENTATION_WORKFLOW_KIND
+                    else "external"
+                ),
+            )
         host_presentation_config = parse_host_presentation_config(prompt_meta)
         if host_presentation_config is not None and cancels_pending_completion_gate(
             plan_detection_text
@@ -1782,10 +1824,35 @@ class BoxACPAgent:
             presentation_provider is not None
             and presentation_provider.uses_controlled_workflow
         )
+        presentation_provider_skill = (
+            state.skill_loader.get_skill(presentation_provider.skill_name)
+            if state.skill_loader is not None
+            and presentation_provider is not None
+            else None
+        )
         detected_completion_gate = (
-            None
+            build_auto_completion_gate(
+                plan_detection_text,
+                state.agent.workspace_dir,
+                confirmed_presentation=True,
+                allow_controlled_presentation=True,
+            )
+            if explicit_skill is not None
+            and explicit_skill.workflow == CONTROLLED_PRESENTATION_WORKFLOW_KIND
+            else build_external_skill_completion_gate(
+                user_text=plan_detection_text,
+                workspace_dir=state.agent.workspace_dir,
+                skill=explicit_skill,
+            )
+            if explicit_skill is not None
+            else build_external_skill_completion_gate(
+                user_text=plan_detection_text,
+                workspace_dir=state.agent.workspace_dir,
+                skill=presentation_provider_skill,
+            )
             if host_presentation_config is not None
             and presentation_provider is not None
+            and presentation_provider_skill is not None
             and not provider_uses_controlled_workflow
             else build_auto_completion_gate(
                 plan_detection_text,
@@ -1899,6 +1966,22 @@ class BoxACPAgent:
                     and presentation_provider is not None
                 ),
             )
+            lifecycle_skill_name = (
+                explicit_skill.name
+                if explicit_skill is not None
+                else (
+                    completion_gate.workflow_options.get("skill_name")
+                    if completion_gate is not None
+                    and completion_gate.workflow_checkpoint_kind
+                    == EXTERNAL_SKILL_WORKFLOW_KIND
+                    else None
+                )
+            )
+            if (
+                lifecycle_skill_name
+                and lifecycle_skill_name not in preload_names
+            ):
+                preload_names.insert(0, lifecycle_skill_name)
             if preload_names:
                 self._apply_auto_loaded_skills(state, session_id, preload_names)
             elif state.preloaded_skill_names:
@@ -1992,10 +2075,12 @@ class BoxACPAgent:
             state.turn_active = False
             turn_meter = get_token_meter()
             reset_token_meter(meter_token)
-        delivery_status: str | None = None
+        paused = stop_reason == StopReason.CHECKPOINT_PAUSED.value
+        delivery_status: str | None = "paused" if paused else None
         delivery_gaps: list[str] = []
         if (
-            completion_gate is not None
+            not paused
+            and completion_gate is not None
             and completion_gate_has_workflow_lifecycle(completion_gate)
         ):
             delivery_gaps = completion_gate_gaps(
@@ -2047,6 +2132,7 @@ class BoxACPAgent:
             "cancelled": "cancelled",
             "max_steps": "max_turn_requests",
             "max_tokens": "max_tokens",
+            "checkpoint_paused": "end_turn",
             "error": "end_turn",
         }
         acp_stop_reason = _ACP_STOP_REASON_MAP.get(stop_reason, "end_turn")
@@ -2067,6 +2153,9 @@ class BoxACPAgent:
                 else None
             ),
             "lastStopReason": stop_reason,
+            "runStatus": "paused" if paused else ("error" if failed else "completed"),
+            "completed": not failed and not paused,
+            "paused": paused,
             "usage": {
                 "totalTokens": turn_total_tokens,
                 "sessionId": billing_session_id,
@@ -2084,7 +2173,12 @@ class BoxACPAgent:
                 "noProgressTurns": auto_no_progress_turns,
                 "lastStopReason": stop_reason,
             }
-        if delivery_status is not None:
+        if paused:
+            response_meta["deliveryStatus"] = "paused"
+            response_meta["deliveryGaps"] = []
+            response_meta["recoverable"] = True
+            response_meta["checkpoint"] = state.last_checkpoint
+        elif delivery_status is not None:
             response_meta["deliveryStatus"] = delivery_status
             response_meta["deliveryGaps"] = delivery_gaps
             response_meta["recoverable"] = delivery_status != "complete"
@@ -2272,6 +2366,42 @@ class BoxACPAgent:
             return await self._llm_prompt(params)
         if method == "presentation/preflight":
             return await self._presentation_preflight(params)
+        if method == "workspace/list":
+            try:
+                registry = WorkspaceRegistry()
+                return {
+                    "workspaces": [profile.to_dict() for profile in registry.list()],
+                    "configPath": str(registry.path),
+                }
+            except WorkspaceRegistryError as exc:
+                return {"error": str(exc)}
+        if method == "workspace/get":
+            workspace_path = params.get("path", "")
+            if not isinstance(workspace_path, str) or not workspace_path.strip():
+                return {"error": "path is required"}
+            try:
+                registry = WorkspaceRegistry()
+                profile = registry.get(workspace_path)
+                return {
+                    "workspace": profile.to_dict() if profile is not None else None,
+                    "configPath": str(registry.path),
+                }
+            except WorkspaceRegistryError as exc:
+                return {"error": str(exc)}
+        if method == "workspace/set":
+            workspace_path = params.get("path", "")
+            task_type = params.get("taskType") or params.get("task_type")
+            if not isinstance(workspace_path, str) or not workspace_path.strip():
+                return {"error": "path is required"}
+            try:
+                registry = WorkspaceRegistry()
+                profile = registry.set(workspace_path, task_type)
+                return {
+                    "workspace": profile.to_dict(),
+                    "configPath": str(registry.path),
+                }
+            except WorkspaceRegistryError as exc:
+                return {"error": str(exc)}
         if method == "mcp/status":
             from box_agent.tools.mcp_loader import get_mcp_status, is_mcp_loading, get_mcp_config_path
             servers = get_mcp_status()
@@ -2753,6 +2883,7 @@ class BoxACPAgent:
         state.last_error = None
         state.last_error_code = None
         state.last_error_category = None
+        state.last_checkpoint = None
 
         # Clear prompt-level grants at the start of each prompt
         if state.grant_store:
@@ -3342,6 +3473,31 @@ class BoxACPAgent:
                         await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))
                         # Don't return yet — let the loop consume the subsequent DoneEvent
                         # so the async generator is properly exhausted.
+
+                    case ContextCheckpointEvent() as checkpoint:
+                        checkpoint_payload = {
+                            "type": "context_checkpoint",
+                            "status": "paused",
+                            "checkpointId": checkpoint.checkpoint_id,
+                            "workflowKind": checkpoint.workflow_kind,
+                            "adapterId": checkpoint.adapter_id,
+                            "schemaVersion": checkpoint.schema_version,
+                            "workspaceIdentity": checkpoint.workspace_identity,
+                            "path": checkpoint.path,
+                            "stage": checkpoint.stage,
+                            "artifactCount": checkpoint.artifact_count,
+                            "artifactSetSha256": checkpoint.artifact_set_sha256,
+                            "recoverable": True,
+                        }
+                        state.last_checkpoint = checkpoint_payload
+                        await self._send(
+                            session_id,
+                            update_tool_call(
+                                f"context-checkpoint-{checkpoint.checkpoint_id[:12]}",
+                                status="completed",
+                                raw_output=checkpoint_payload,
+                            ),
+                        )
 
                     case InjectedMessageEvent(content=text, injection_id=injection_id, user_visible=user_visible):
                         log.info(

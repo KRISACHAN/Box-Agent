@@ -18,6 +18,10 @@ from ..artifacts import artifact_scan_root
 from ..evidence import extract_http_urls
 from ..tools.base import ToolResult
 from ..workflow_policy import WorkflowCheckpointUpdate
+from ..workflow_checkpoint_store import (
+    WorkflowPauseCheckpoint,
+    checkpoint_resume_instruction,
+)
 from .presentation_checkpoint import build_checkpoint_text
 from .presentation_contract import (
     CHECKPOINT_MARKER,
@@ -1026,6 +1030,7 @@ class ControlledPresentationPolicy:
     apply_patch_repair_allowed: bool = False
     apply_patch_repair_paths: tuple[str, ...] = ()
     _last_checkpoint_text: str | None = None
+    _resume_checkpoint: WorkflowPauseCheckpoint | None = None
     _step_failure_counts: dict[str, int] = field(default_factory=dict)
     _repair_failure_stage: str | None = None
     _repair_failure_streak: int = 0
@@ -1042,6 +1047,13 @@ class ControlledPresentationPolicy:
     kind: ClassVar[str] = WORKFLOW_KIND
     checkpoint_injection_id: ClassVar[str] = CHECKPOINT_MARKER
     evidence_read_batch_size: ClassVar[int] = RESEARCH_READ_BATCH_SIZE
+
+    def attach_resume_checkpoint(
+        self,
+        checkpoint: WorkflowPauseCheckpoint,
+    ) -> None:
+        """Attach validated durable metadata loaded by the trusted registry."""
+        self._resume_checkpoint = checkpoint
 
     def build_checkpoint(self) -> str | None:
         """Derive the current presentation stage from persisted artifacts."""
@@ -1086,6 +1098,12 @@ class ControlledPresentationPolicy:
         )
         if research_input and research_input.get("fallback") is True:
             self._persist_research_fallback_status(research_input)
+        if checkpoint_text is not None and self._resume_checkpoint is not None:
+            checkpoint_text = (
+                f"{checkpoint_resume_instruction(self._resume_checkpoint)}\n\n"
+                f"{checkpoint_text}"
+            )
+            self._resume_checkpoint = None
         return checkpoint_text
 
     def _persist_research_fallback_status(

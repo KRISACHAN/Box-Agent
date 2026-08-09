@@ -186,6 +186,15 @@ def _has_provider_specific_match(skill: Skill, query: str | None) -> bool:
     return bool(query_tokens & provider_tokens)
 
 
+def _query_explicitly_names_provider(skill: Skill, query: str | None) -> bool:
+    """Return whether the query names this provider beyond generic PPT terms."""
+    if not query or not query.strip():
+        return False
+    query_tokens = _routing_tokens(query) - _GENERIC_PROVIDER_TOKENS
+    name_tokens = _routing_tokens(skill.name) - _GENERIC_PROVIDER_TOKENS
+    return bool(name_tokens) and name_tokens <= query_tokens
+
+
 def _is_lark_presentation_provider(skill: Skill) -> bool:
     routing_text = f"{skill.name} {' '.join(skill.keywords or [])} {skill.description}"
     return _LARK_PROVIDER_RE.search(routing_text) is not None
@@ -266,6 +275,9 @@ def resolve_presentation_skill_provider(
         for skill, candidate in matched_providers
         if not _is_lark_presentation_provider(skill)
     ]
+    for skill, candidate in eligible_matched_providers:
+        if _query_explicitly_names_provider(skill, query):
+            return candidate
     for skill, candidate in eligible_matched_providers:
         if _has_provider_specific_match(skill, query):
             return candidate

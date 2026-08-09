@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+from pathlib import Path
 from time import monotonic
 
 import pytest
@@ -16,11 +17,16 @@ from box_agent.core import (
     text_requests_plan_start,
 )
 from box_agent.core import FINAL_SUMMARY_TOOL_CALL_THRESHOLD as _FS_THRESHOLD
-from box_agent.loop_guards import CompletionGate, repeated_stream_pattern
+from box_agent.loop_guards import (
+    SEARCH_FILES_EMPTY_RESULT_LIMIT,
+    CompletionGate,
+    repeated_stream_pattern,
+)
 from box_agent.runtime import run_agent_loop
 from box_agent.events import (
     ArtifactEvent,
     ContentEvent,
+    ContextCheckpointEvent,
     DoneEvent,
     ErrorEvent,
     InjectedMessageEvent,
@@ -34,6 +40,9 @@ from box_agent.events import (
     ToolCallResult,
     ToolCallStart,
 )
+from box_agent.workflow_policy import WorkflowCheckpointUpdate
+from box_agent.workflow_checkpoint_store import load_workflow_checkpoint
+from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
@@ -105,6 +114,19 @@ class MockLLM:
         )
 
 
+class _RecoverablePresentationPolicy:
+    kind = "controlled_presentation"
+    checkpoint_injection_id = "test-checkpoint"
+    evidence_read_batch_size = 1
+    stage = "outline"
+
+    def build_checkpoint(self) -> str:
+        return "CONTROLLED_PRESENTATION_STAGE=outline"
+
+    def update_checkpoint(self, text: str) -> WorkflowCheckpointUpdate:
+        return WorkflowCheckpointUpdate(text=text, changed=True)
+
+
 class CapturingStreamLLM(MockLLM):
     """Mock LLM that keeps a snapshot of each message list it receives."""
 
@@ -116,6 +138,277 @@ class CapturingStreamLLM(MockLLM):
         self.message_calls.append([msg.model_copy(deep=True) for msg in messages])
         async for event in super().generate_stream(messages, tools=tools, **_):
             yield event
+
+
+@pytest.mark.asyncio
+async def test_context_limit_pauses_only_after_durable_workflow_checkpoint(
+    tmp_path,
+) -> None:
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "outline.json").write_text(
+        '{"slides": []}\n',
+        encoding="utf-8",
+    )
+    messages = [Message(role="system", content="system instructions exceed limit")]
+
+    events = [
+        event
+        async for event in run_agent_loop(
+            llm=MockLLM([]),
+            messages=messages,
+            tools={},
+            max_steps=1,
+            token_limit=1,
+            workspace_dir=str(tmp_path),
+            workflow_policy=_RecoverablePresentationPolicy(),
+        )
+    ]
+
+    checkpoint = next(event for event in events if isinstance(event, ContextCheckpointEvent))
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert checkpoint.workflow_kind == "controlled_presentation"
+    assert checkpoint.stage == "outline"
+    assert done.stop_reason is StopReason.CHECKPOINT_PAUSED
+    assert not any(isinstance(event, ErrorEvent) for event in events)
+    assert Path(checkpoint.path).is_file()
+    assert [message.role for message in messages] == ["system", "assistant"]
+    assert messages[-1].content == done.final_content
+
+
+@pytest.mark.asyncio
+async def test_context_limit_keeps_error_for_unregistered_workflow(tmp_path) -> None:
+    class UnregisteredPolicy(_RecoverablePresentationPolicy):
+        kind = "third_party_untrusted"
+
+    events = [
+        event
+        async for event in run_agent_loop(
+            llm=MockLLM([]),
+            messages=[Message(role="system", content="system instructions exceed limit")],
+            tools={},
+            max_steps=1,
+            token_limit=1,
+            workspace_dir=str(tmp_path),
+            workflow_policy=UnregisteredPolicy(),
+        )
+    ]
+
+    assert not any(isinstance(event, ContextCheckpointEvent) for event in events)
+    assert any(isinstance(event, ErrorEvent) for event in events)
+    assert next(event for event in events if isinstance(event, DoneEvent)).stop_reason is StopReason.ERROR
+
+
+@pytest.mark.asyncio
+async def test_tool_budget_pauses_incomplete_recoverable_workflow(tmp_path) -> None:
+    (tmp_path / "output").mkdir()
+    messages = _msgs()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="budget-call",
+                        type="function",
+                        function=FunctionCall(
+                            name="echo",
+                            arguments={"text": "progress"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            )
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"echo": EchoTool()},
+            max_steps=3,
+            completion_gate=CompletionGate(
+                required_changed_artifact_globs=("output/**/*.pptx",),
+                max_tool_calls=1,
+                workflow_checkpoint_kind="controlled_presentation",
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    checkpoint = next(
+        event for event in events if isinstance(event, ContextCheckpointEvent)
+    )
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert checkpoint.workflow_kind == "controlled_presentation"
+    assert done.stop_reason is StopReason.CHECKPOINT_PAUSED
+    assert "Tool-call budget" in done.final_content
+    assert not any(isinstance(event, ErrorEvent) for event in events)
+    assert Path(checkpoint.path).is_file()
+    assert [message.role for message in messages] == ["system", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_tool_budget_pauses_external_skill_with_data_only_checkpoint(
+    tmp_path,
+) -> None:
+    (tmp_path / "output").mkdir()
+    messages = _msgs()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="external-skill-budget-call",
+                        type="function",
+                        function=FunctionCall(
+                            name="echo",
+                            arguments={"text": "progress"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            )
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"echo": EchoTool()},
+            max_steps=3,
+            completion_gate=CompletionGate(
+                required_changed_artifact_globs=("output/**/*.pptx",),
+                max_tool_calls=1,
+                workflow_checkpoint_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
+                workflow_options={
+                    "skill_name": "ppt-master",
+                    "skill_source": "user",
+                    "task_text": "/ppt-master topic",
+                    "artifact_globs": '["output/**/*.pptx"]',
+                },
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    checkpoint_event = next(
+        event for event in events if isinstance(event, ContextCheckpointEvent)
+    )
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert checkpoint_event.workflow_kind == EXTERNAL_SKILL_WORKFLOW_KIND
+    assert done.stop_reason is StopReason.CHECKPOINT_PAUSED
+    checkpoint = load_workflow_checkpoint(
+        workspace_dir=tmp_path,
+        workflow_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
+    )
+    assert checkpoint is not None
+    assert checkpoint.workflow_options["skill_name"] == "ppt-master"
+    assert checkpoint.adapter_id == "box-agent.external-skill.v1"
+
+
+class NestedDelegationTool(Tool):
+    @property
+    def name(self) -> str:
+        return "sub_agent"
+
+    @property
+    def description(self) -> str:
+        return "Run a nested test delegation"
+
+    @property
+    def parameters(self) -> dict:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self) -> ToolResult:
+        return ToolResult(
+            success=True,
+            content="Nested work saved canonical artifacts.",
+            raw_output={
+                "type": "sub_agent_delegation",
+                "tool_calls": 2,
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_nested_tool_calls_count_toward_recoverable_workflow_budget(
+    tmp_path,
+) -> None:
+    (tmp_path / "output").mkdir()
+    messages = _msgs()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="nested-budget-call",
+                        type="function",
+                        function=FunctionCall(name="sub_agent", arguments={}),
+                    )
+                ],
+                finish_reason="tool",
+            )
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"sub_agent": NestedDelegationTool()},
+            max_steps=3,
+            completion_gate=CompletionGate(
+                required_changed_artifact_globs=("output/**/*.pptx",),
+                max_tool_calls=2,
+                workflow_checkpoint_kind="controlled_presentation",
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert next(
+        event for event in events if isinstance(event, DoneEvent)
+    ).stop_reason is StopReason.CHECKPOINT_PAUSED
+    assert any(isinstance(event, ContextCheckpointEvent) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_completion_continuation_exhaustion_pauses_recoverable_workflow(
+    tmp_path,
+) -> None:
+    (tmp_path / "output").mkdir()
+    messages = _msgs()
+    llm = MockLLM(
+        [
+            LLMResponse(content="Still working.", finish_reason="stop"),
+            LLMResponse(content="Delivery remains incomplete.", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={},
+            max_steps=3,
+            completion_gate=CompletionGate(
+                required_changed_artifact_globs=("output/**/*.pptx",),
+                max_continuations=1,
+                workflow_checkpoint_kind="controlled_presentation",
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert done.stop_reason is StopReason.CHECKPOINT_PAUSED
+    assert "bounded continuation boundary" in done.final_content
+    assert any(isinstance(event, ContextCheckpointEvent) for event in events)
+    assert not any(isinstance(event, ErrorEvent) for event in events)
 
 
 class ActiveSkillTool(Tool):
@@ -1140,6 +1433,215 @@ async def test_read_file_skill_reference_stays_available_for_next_model_turn(tmp
         "[Full file content omitted from model history]" not in content
         for content in second_request_tool_results
     )
+
+
+@pytest.mark.asyncio
+async def test_repeated_read_file_uses_receipt_only_after_full_source_survives(tmp_path):
+    marker = "EXACT_REFERENCE_BODY"
+    path = tmp_path / "reference.md"
+    path.write_text(marker + "\n", encoding="utf-8")
+    msgs = _msgs()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="read-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": "reference.md"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="read-2",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": "reference.md"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=msgs,
+            tools={"read_file": ReadTool(workspace_dir=str(tmp_path))},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    visible_results = [
+        event.content
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_name == "read_file"
+    ]
+    tool_messages = [message for message in msgs if message.role == "tool"]
+    assert len(visible_results) == 2
+    assert all(marker in content for content in visible_results)
+    assert marker in tool_messages[0].content
+    assert "Resource already available" in tool_messages[1].content
+    assert len(tool_messages[1].content) <= 300
+    assert "read-1" in tool_messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_changed_file_version_returns_full_content_again(tmp_path):
+    path = tmp_path / "reference.md"
+    path.write_text("VERSION_ONE\n", encoding="utf-8")
+
+    class ChangeBeforeSecondRead(ReadTool):
+        def __init__(self) -> None:
+            super().__init__(workspace_dir=str(tmp_path))
+            self.calls = 0
+
+        async def execute(self, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                path.write_text("VERSION_TWO\n", encoding="utf-8")
+            return await super().execute(**kwargs)
+
+    msgs = _msgs()
+    read_calls = [
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id=f"read-{index}",
+                    type="function",
+                    function=FunctionCall(
+                        name="read_file",
+                        arguments={"path": "reference.md"},
+                    ),
+                )
+            ],
+            finish_reason="tool",
+        )
+        for index in (1, 2)
+    ]
+
+    await collect(
+        run_agent_loop(
+            llm=MockLLM([*read_calls, LLMResponse(content="done", finish_reason="stop")]),
+            messages=msgs,
+            tools={"read_file": ChangeBeforeSecondRead()},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    tool_messages = [message.content for message in msgs if message.role == "tool"]
+    assert "VERSION_ONE" in tool_messages[0]
+    assert "VERSION_TWO" in tool_messages[1]
+    assert "Resource already available" not in tool_messages[1]
+
+
+@pytest.mark.asyncio
+async def test_read_file_refresh_forces_full_model_history_content(tmp_path):
+    marker = "REFRESHED_REFERENCE_BODY"
+    (tmp_path / "reference.md").write_text(marker + "\n", encoding="utf-8")
+    msgs = _msgs()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="read-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": "reference.md"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="read-2",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": "reference.md", "refresh": True},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=msgs,
+            tools={"read_file": ReadTool(workspace_dir=str(tmp_path))},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    tool_messages = [message for message in msgs if message.role == "tool"]
+    assert len(tool_messages) == 2
+    assert all(marker in message.content for message in tool_messages)
+    assert all("Resource already available" not in message.content for message in tool_messages)
+
+
+@pytest.mark.asyncio
+async def test_context_resource_dedup_can_be_disabled(tmp_path):
+    marker = "ROLLBACK_FULL_BODY"
+    (tmp_path / "reference.md").write_text(marker + "\n", encoding="utf-8")
+    msgs = _msgs()
+    read_calls = [
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id=f"read-{index}",
+                    type="function",
+                    function=FunctionCall(
+                        name="read_file",
+                        arguments={"path": "reference.md"},
+                    ),
+                )
+            ],
+            finish_reason="tool",
+        )
+        for index in (1, 2)
+    ]
+
+    await collect(
+        run_agent_loop(
+            llm=MockLLM([*read_calls, LLMResponse(content="done", finish_reason="stop")]),
+            messages=msgs,
+            tools={"read_file": ReadTool(workspace_dir=str(tmp_path))},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+            context_resource_dedup_enabled=False,
+        )
+    )
+
+    tool_messages = [message for message in msgs if message.role == "tool"]
+    assert len(tool_messages) == 2
+    assert all(marker in message.content for message in tool_messages)
 
 
 @pytest.mark.asyncio
@@ -3098,6 +3600,80 @@ async def test_no_progress_resets_on_successful_tool():
 
 
 @pytest.mark.asyncio
+async def test_search_files_empty_result_breaker_blocks_more_searches():
+    class EmptySearchTool(Tool):
+        def __init__(self):
+            self.calls = 0
+
+        @property
+        def name(self):
+            return "search_files"
+
+        @property
+        def description(self):
+            return "search files"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, **_kwargs):
+            self.calls += 1
+            return ToolResult(
+                success=True,
+                content="No matches found.",
+                raw_output={"returned_matches": 0, "timed_out": False},
+            )
+
+    def search_call(index):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id=f"search-{index}",
+                    type="function",
+                    function=FunctionCall(
+                        name="search_files",
+                        arguments={"pattern": f"missing-{index}"},
+                    ),
+                )
+            ],
+            finish_reason="tool",
+        )
+
+    tool = EmptySearchTool()
+    events = await collect(
+        run_agent_loop(
+            llm=MockLLM(
+                [
+                    search_call(1),
+                    search_call(2),
+                    search_call(3),
+                    search_call(4),
+                    LLMResponse(content="file is missing", finish_reason="stop"),
+                ]
+            ),
+            messages=_msgs(),
+            tools={"search_files": tool},
+            max_steps=10,
+        )
+    )
+
+    assert tool.calls == SEARCH_FILES_EMPTY_RESULT_LIMIT
+    assert any(
+        isinstance(event, InjectedMessageEvent) and "文件搜索熔断器已打开" in event.content
+        for event in events
+    )
+    blocked = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_call_id == "search-4"
+    )
+    assert blocked.success is False
+    assert "circuit breaker is open" in blocked.error
+
+
+@pytest.mark.asyncio
 async def test_max_parallel_tools_caps_concurrency():
     """Even when the model emits many parallel_safe calls in one step, no more
     than max_parallel_tools execute concurrently; all still run."""
@@ -3682,7 +4258,7 @@ def test_micro_compact_no_op_when_few_tool_msgs():
         _make_tool_msg("bash", "y" * 500, "tc-2"),
         _make_tool_msg("bash", "z" * 500, "tc-3"),
     ]
-    assert _micro_compact(msgs) == 0
+    assert _micro_compact(msgs).transformed_count == 0
     # Content should be unchanged
     assert msgs[3].content == "x" * 500
 
@@ -3703,7 +4279,7 @@ def test_micro_compact_replaces_old_tool_results():
     ]
     # 6 tool messages, keep last 3 → compact first 3
     compacted = _micro_compact(msgs)
-    assert compacted == 3
+    assert compacted.transformed_count == 3
 
     # First 3 tool messages should be compacted
     assert msgs[3].content.startswith("[Previous result from execute_code:")
@@ -3728,7 +4304,7 @@ def test_micro_compact_preserves_short_content():
     ]
     compacted = _micro_compact(msgs)
     # First 2 are candidates; tc-1 is short so only tc-2 gets compacted
-    assert compacted == 1
+    assert compacted.transformed_count == 1
     assert msgs[1].content == "short"  # preserved
     assert msgs[2].content.startswith("[Previous result from execute_code:")
 
@@ -3799,6 +4375,231 @@ def test_micro_compact_web_search_retains_evidence_from_json_payload():
     assert "https://openai.com/example" in msgs[1].content
     assert "Official release notes" in msgs[1].content
     assert msgs[1].content != "[Previous result from web_search: {...]"
+
+
+def test_micro_compact_reports_replaced_resource_source_id():
+    from box_agent.context_resources import (
+        ContextResourceLedger,
+        ResourceClass,
+        ResourceDescriptor,
+    )
+
+    content = "resource body\n" + "x" * 500
+    descriptor = ResourceDescriptor(
+        resource_id="/workspace/source.txt",
+        content_version="a" * 64,
+        start_line=1,
+        end_line=2,
+        total_lines=2,
+        resource_class=ResourceClass.RECONSTRUCTABLE,
+    )
+    ledger = ContextResourceLedger()
+    ledger.register_full_source("source-1", descriptor, content)
+    msgs = [
+        Message(role="system", content="sys"),
+        _make_tool_msg("read_file", content, "source-1"),
+        _make_tool_msg("bash", "a" * 500, "tc-2"),
+        _make_tool_msg("bash", "b" * 500, "tc-3"),
+        _make_tool_msg("bash", "c" * 500, "tc-4"),
+    ]
+
+    result = _micro_compact(msgs, ledger)
+
+    assert result.replaced_source_tool_call_ids == ("source-1",)
+    ledger.invalidate_source_ids(result.replaced_source_tool_call_ids)
+    assert ledger.source_ids == ()
+
+
+def test_micro_compact_preserves_instruction_pinned_resource_source():
+    from box_agent.context_resources import (
+        ContextResourceLedger,
+        ResourceClass,
+        ResourceDescriptor,
+    )
+
+    content = "authoritative workflow\n" + "x" * 500
+    descriptor = ResourceDescriptor(
+        resource_id="/workspace/skills/ppt/references/contract.md",
+        content_version="a" * 64,
+        start_line=1,
+        end_line=2,
+        total_lines=2,
+        resource_class=ResourceClass.INSTRUCTION_PINNED,
+    )
+    ledger = ContextResourceLedger()
+    ledger.register_full_source("source-1", descriptor, content)
+    msgs = [
+        Message(role="system", content="sys"),
+        _make_tool_msg("read_file", content, "source-1"),
+        _make_tool_msg("bash", "a" * 500, "tc-2"),
+        _make_tool_msg("bash", "b" * 500, "tc-3"),
+        _make_tool_msg("bash", "c" * 500, "tc-4"),
+    ]
+
+    result = _micro_compact(msgs, ledger)
+
+    assert msgs[1].content == content
+    assert "source-1" not in result.replaced_source_tool_call_ids
+    assert ledger.source("source-1") is not None
+
+
+def test_resource_shedding_invalidates_only_reconstructable_source():
+    from box_agent.context_resources import (
+        ContextResourceLedger,
+        ResourceClass,
+        ResourceDescriptor,
+        build_resource_receipt,
+    )
+    from box_agent.core import (
+        _context_resource_history_decision,
+        _shed_reconstructable_read_resources,
+    )
+
+    descriptor = ResourceDescriptor(
+        resource_id="/workspace/reference.md",
+        content_version="a" * 64,
+        start_line=1,
+        end_line=1,
+        total_lines=1,
+        resource_class=ResourceClass.RECONSTRUCTABLE,
+    )
+    content = "large exact source " * 4_000
+    ledger = ContextResourceLedger()
+    ledger.register_full_source("source-a", descriptor, content)
+    receipt = build_resource_receipt(descriptor, ["source-a"])
+    ledger.register_receipt("receipt-b", ["source-a"])
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="task"),
+        _make_tool_msg("read_file", content, "source-a"),
+        _make_tool_msg("read_file", receipt, "receipt-b"),
+    ]
+
+    result = _shed_reconstructable_read_resources(
+        msgs,
+        ledger,
+        token_limit=50,
+    )
+
+    assert result.replaced_source_tool_call_ids == ("source-a",)
+    assert msgs[2].content.startswith(
+        "[Reconstructable read_file content shed from model history]"
+    )
+    ledger.invalidate_source_ids(result.replaced_source_tool_call_ids)
+    assert ledger.covering_source_ids(descriptor, msgs) == ()
+    assert ledger.receipt_ids == ("receipt-b",)
+    reread_decision = _context_resource_history_decision(
+        tool_name="read_file",
+        arguments={"path": "reference.md"},
+        result=ToolResult(
+            success=True,
+            content=content,
+            raw_output={"context_resource": descriptor.as_raw_output()},
+        ),
+        messages=msgs,
+        ledger=ledger,
+    )
+    assert reread_decision.receipt is None
+
+
+def test_resource_shedding_never_replaces_instruction_pinned_source():
+    from box_agent.context_resources import (
+        ContextResourceLedger,
+        ResourceClass,
+        ResourceDescriptor,
+    )
+    from box_agent.core import _shed_reconstructable_read_resources
+
+    descriptor = ResourceDescriptor(
+        resource_id="/workspace/skills/ppt/references/contract.md",
+        content_version="a" * 64,
+        start_line=1,
+        end_line=1,
+        total_lines=1,
+        resource_class=ResourceClass.INSTRUCTION_PINNED,
+    )
+    content = "authoritative instruction " * 4_000
+    ledger = ContextResourceLedger()
+    ledger.register_full_source("source-a", descriptor, content)
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="task"),
+        _make_tool_msg("read_file", content, "source-a"),
+    ]
+
+    result = _shed_reconstructable_read_resources(
+        msgs,
+        ledger,
+        token_limit=50,
+    )
+
+    assert result.transformed_count == 0
+    assert msgs[-1].content == content
+    assert ledger.source("source-a") is not None
+
+
+@pytest.mark.asyncio
+async def test_summary_rewrite_rotates_context_resource_epoch():
+    from box_agent.context_resources import (
+        ContextResourceLedger,
+        ResourceClass,
+        ResourceDescriptor,
+    )
+
+    content = "authoritative instruction " * 4_000
+    descriptor = ResourceDescriptor(
+        resource_id="/workspace/skills/ppt/references/contract.md",
+        content_version="a" * 64,
+        start_line=1,
+        end_line=1,
+        total_lines=1,
+        resource_class=ResourceClass.INSTRUCTION_PINNED,
+    )
+    ledger = ContextResourceLedger()
+    ledger.register_full_source("source-a", descriptor, content)
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old request"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="source-a",
+                    type="function",
+                    function=FunctionCall(
+                        name="read_file",
+                        arguments={"path": descriptor.resource_id},
+                    ),
+                )
+            ],
+        ),
+        _make_tool_msg("read_file", content, "source-a"),
+        Message(role="user", content="current request"),
+    ]
+    class SummaryThenFinalLLM:
+        async def generate(self, **_kwargs):
+            return LLMResponse(content="bounded summary", finish_reason="stop")
+
+        async def generate_stream(self, **_kwargs):
+            yield StreamEvent(type="text", delta="done")
+            yield StreamEvent(type="finish", finish_reason="stop")
+
+    llm = SummaryThenFinalLLM()
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=msgs,
+            tools={},
+            max_steps=2,
+            token_limit=500,
+            context_resource_ledger=ledger,
+        )
+    )
+
+    assert ledger.epoch == 1
+    assert ledger.source_ids == ()
 
 
 # ── Artifact envelope / helpers ──────────────────────────────
@@ -4256,7 +5057,10 @@ def test_micro_compact_token_budget_shrinks_keep_window_when_recent_oversized():
 
     compacted = _micro_compact(msgs)
     # Strict-N keep would compact 4 - 3 = 1. Token-aware keep should compact more.
-    assert compacted >= 2, f"token-aware keep should compact more than the strict N-recent baseline; got {compacted}"
+    assert compacted.transformed_count >= 2, (
+        "token-aware keep should compact more than the strict N-recent baseline; "
+        f"got {compacted.transformed_count}"
+    )
 
     # The most recent tool message must always be preserved verbatim.
     last_tool = [m for m in msgs if m.role == "tool"][-1]
@@ -4297,8 +5101,8 @@ def test_micro_compact_preserves_at_least_one_recent_when_single_giant():
         Message(role="assistant", content=""),
         Message(role="tool", content="y" * 100_000, tool_call_id="t0", name="bash"),
     ]
-    n = _micro_compact(msgs)
-    assert n == 0
+    result = _micro_compact(msgs)
+    assert result.transformed_count == 0
     assert len(msgs[-1].content) == 100_000
 
 

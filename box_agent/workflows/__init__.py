@@ -6,10 +6,20 @@ from typing import Any
 
 from ..loop_guards import CompletionGate
 from ..workflow_policy import WorkflowPolicy
+from ..workflow_checkpoint_store import load_workflow_checkpoint
 from .controlled_presentation import ControlledPresentationPolicy
+from .external_skill import (
+    EXTERNAL_SKILL_WORKFLOW_KIND,
+    ExternalSkillRunPolicy,
+    build_external_skill_completion_gate,
+    build_external_skill_completion_gate_from_options,
+    external_skill_policy_from_options,
+    resolve_explicit_skill_invocation,
+)
 from .presentation_contract import (
     IMAGE_GENERATION_POLICY_OPTION,
     RESEARCH_MODE_OPTION,
+    WORKFLOW_KIND as CONTROLLED_PRESENTATION_WORKFLOW_KIND,
 )
 from .presentation_preflight import (
     build_presentation_preflight_analysis_text,
@@ -36,7 +46,7 @@ def create_workflow_policy(
         image_generation_policy = (workflow_options or {}).get(
             IMAGE_GENERATION_POLICY_OPTION
         )
-        return ControlledPresentationPolicy(
+        policy = ControlledPresentationPolicy(
             workspace_dir=workspace_dir,
             artifact_root_dir=artifact_root_dir,
             research_mode=(
@@ -48,6 +58,26 @@ def create_workflow_policy(
                 else None
             ),
         )
+        resume_checkpoint = load_workflow_checkpoint(
+            workspace_dir=workspace_dir,
+            workflow_kind=workflow_kind,
+        )
+        if resume_checkpoint is not None:
+            policy.attach_resume_checkpoint(resume_checkpoint)
+        return policy
+    if workflow_kind == EXTERNAL_SKILL_WORKFLOW_KIND:
+        policy = external_skill_policy_from_options(
+            workspace_dir=workspace_dir,
+            artifact_root_dir=artifact_root_dir,
+            workflow_options=workflow_options,
+        )
+        resume_checkpoint = load_workflow_checkpoint(
+            workspace_dir=workspace_dir,
+            workflow_kind=workflow_kind,
+        )
+        if resume_checkpoint is not None:
+            policy.attach_resume_checkpoint(resume_checkpoint)
+        return policy
     return None
 
 
@@ -57,11 +87,27 @@ def recover_completion_gate(
     """Recover the first incomplete built-in workflow from durable artifacts."""
     from .presentation_recovery import recover_presentation_completion_gate
 
-    return recover_presentation_completion_gate(workspace_dir)
+    controlled = recover_presentation_completion_gate(workspace_dir)
+    if controlled is not None:
+        return controlled
+    checkpoint = load_workflow_checkpoint(
+        workspace_dir=workspace_dir,
+        workflow_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
+    )
+    if checkpoint is None:
+        return None
+    return build_external_skill_completion_gate_from_options(
+        workspace_dir=workspace_dir,
+        workflow_options=checkpoint.workflow_options,
+    )
 
 
 __all__ = [
     "ControlledPresentationPolicy",
+    "CONTROLLED_PRESENTATION_WORKFLOW_KIND",
+    "EXTERNAL_SKILL_WORKFLOW_KIND",
+    "ExternalSkillRunPolicy",
+    "build_external_skill_completion_gate",
     "build_presentation_preflight_analysis_text",
     "build_presentation_preflight_result",
     "build_presentation_recommendation_prompt",
@@ -69,5 +115,6 @@ __all__ = [
     "load_presentation_preflight_config",
     "parse_host_presentation_config",
     "recover_completion_gate",
+    "resolve_explicit_skill_invocation",
     "resolve_presentation_skill_provider",
 ]

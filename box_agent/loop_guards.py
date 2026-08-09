@@ -44,6 +44,8 @@ WEB_SEARCH_TOOL_NAME: Final = "web_search"
 WEB_SEARCH_BATCH_SIZE: Final = 6
 WEB_SEARCH_TOTAL_LIMIT: Final = 24
 DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT: Final = 36
+SEARCH_FILES_TOOL_NAME: Final = "search_files"
+SEARCH_FILES_EMPTY_RESULT_LIMIT: Final = 3
 
 # Per-turn call caps for tools the model tends to over-request.
 TOOL_CALL_LIMITS: Final[dict[str, int]] = {
@@ -153,6 +155,44 @@ def total_tool_call_budget_wrapup_text(limit: int) -> str:
         f"⚠️ 本任务工具调用总预算已达到上限（{limit} 次）。"
         "现在请停止调用任何工具，仅基于已有结果直接给出完整最终答案；"
         "缺口简要标注即可。"
+    )
+
+
+def search_files_result_is_empty(result: Any) -> bool:
+    """Return whether a successful search_files call found no matches.
+
+    Prefer structured metadata so wording changes do not disable the guard.
+    The text fallback keeps compatibility with older or third-party tool
+    implementations that only return the standard no-match sentence.
+    """
+    if not bool(getattr(result, "success", False)):
+        return False
+    raw_output = getattr(result, "raw_output", None)
+    if isinstance(raw_output, dict):
+        returned_matches = raw_output.get("returned_matches")
+        timed_out = raw_output.get("timed_out") is True
+        if isinstance(returned_matches, int) and not isinstance(returned_matches, bool):
+            return returned_matches == 0 and not timed_out
+    content = getattr(result, "content", "")
+    return isinstance(content, str) and content.strip().lower() == "no matches found."
+
+
+def search_files_empty_result_message(limit: int) -> str:
+    """Synthetic tool error after repeated empty file searches."""
+    return (
+        f"search_files circuit breaker is open after {limit} consecutive empty results. "
+        "Do not call search_files again this turn. Use known paths with read_file, "
+        "inspect already collected evidence, or explain the missing file instead of "
+        "trying more search patterns."
+    )
+
+
+def search_files_empty_result_guidance(limit: int) -> str:
+    """One-shot model guidance when the empty-search breaker opens."""
+    return (
+        f"⚠️ search_files 已连续 {limit} 次返回空结果，文件搜索熔断器已打开。"
+        "本轮不要再调用 search_files；请改用已知路径配合 read_file、基于已有证据继续，"
+        "或明确说明文件缺失。不要继续更换 pattern/path 盲搜。"
     )
 
 

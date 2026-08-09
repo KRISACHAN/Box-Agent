@@ -10,6 +10,7 @@ import pytest
 import tiktoken
 
 from box_agent.events import DoneEvent, StopReason, SubAgentEvent, WebSearchEvent
+from box_agent.context_resources import ResourceDescriptor
 from box_agent.schema import LLMResponse, Message, StreamEvent, TokenUsage
 from box_agent.agent import Agent
 from box_agent.tools.base import Tool, ToolResult
@@ -270,6 +271,74 @@ def test_agent_wires_system_prompt_into_sub_agent(tmp_path):
     assert tool._parent_system_prompt is not None
     assert "Parent constraint: keep output generic." in tool._parent_system_prompt
     assert "Current Workspace" in tool._parent_system_prompt
+
+
+async def test_sub_agent_read_ledger_is_local_to_child_context(tmp_path):
+    from box_agent.schema import FunctionCall, ToolCall
+
+    path = tmp_path / "reference.md"
+    path.write_text("CHILD_EXACT_BODY\n", encoding="utf-8")
+    captured_requests: list[list[Message]] = []
+    call_count = 0
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        captured_requests.append([message.model_copy(deep=True) for message in messages])
+        if call_count == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="child-read",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": "reference.md"},
+                        ),
+                    )
+                ],
+            )
+            return
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    read_tool = ReadTool(workspace_dir=str(tmp_path))
+    sub_agent = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": read_tool},
+        workspace_dir=str(tmp_path),
+    )
+    parent = Agent(
+        llm_client=llm,
+        system_prompt="parent",
+        tools=[read_tool, sub_agent],
+        workspace_dir=str(tmp_path),
+    )
+    parent_read = await read_tool.execute(path="reference.md")
+    descriptor = ResourceDescriptor.from_raw_output(parent_read.raw_output)
+    assert descriptor is not None
+    parent.context_resource_ledger.register_full_source(
+        "parent-read",
+        descriptor,
+        parent_read.content,
+    )
+
+    result = await sub_agent.execute(
+        task="Read the reference",
+        capabilities={"required_tools": ["read_file"]},
+    )
+
+    assert result.success is True
+    child_tool_message = next(
+        message for message in captured_requests[1] if message.role == "tool"
+    )
+    assert "CHILD_EXACT_BODY" in child_tool_message.content
+    assert "Resource already available" not in child_tool_message.content
+    assert parent.context_resource_ledger.source_ids == ("parent-read",)
 
 
 async def test_new_style_general_loop_uses_only_resolved_tools_and_slim_prompt(tmp_path):

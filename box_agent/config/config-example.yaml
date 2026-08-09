@@ -77,6 +77,7 @@ code_prompt_path: "code_prompt.md" # Extra prompt for code_agent sessions
 # continuation so the answer finishes within the same message. Detection is
 # conservative (only fires on a clearly unfinished ending). Default on.
 retry_on_suspected_truncation: true # Auto-continue a reply cut off mid-sentence
+context_resource_dedup_enabled: true # Session-local read_file receipts and reconstructable resource shedding
 max_truncation_continuations: 1 # Max continuations per turn (loop guard)
 
 # ===== Memory Configuration =====

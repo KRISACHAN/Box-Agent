@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +21,7 @@ from box_agent.tools.runtime import (
     build_skill_runtime_context,
     build_skill_runtime_prompt,
 )
+from box_agent.tools.skill_execution_env import build_skill_execution_env
 
 
 def _make_executable(path: Path) -> None:
@@ -82,6 +85,24 @@ def test_python_runtime_uses_existing_sandbox_python(tmp_path: Path) -> None:
     assert python.executable_path == str(sandbox.python_path)
     assert ctx.env()["BOX_AGENT_PYTHON"] == str(sandbox.python_path)
     assert ctx.env()["BOX_AGENT_PYTHON3"] == str(sandbox.python_path)
+
+
+def test_cli_shell_python_is_separate_from_execute_code_sandbox(tmp_path: Path) -> None:
+    sandbox = SandboxEnvironment(base_dir=tmp_path / "sandbox")
+    shell_python = tmp_path / "python-runtime" / "bin" / "python3"
+    _make_executable(sandbox.python_path)
+    _make_executable(shell_python)
+
+    ctx = build_skill_runtime_context(
+        sandbox_mode=True,
+        sandbox_env=sandbox,
+        shell_python_path=shell_python,
+        node_runtime_root=tmp_path / "missing-node",
+    )
+
+    assert ctx.env()["BOX_AGENT_PYTHON"] == str(shell_python)
+    assert ctx.env()["BOX_AGENT_PYTHON3"] == str(shell_python)
+    assert ctx.env()["BOX_AGENT_SANDBOX_PYTHON"] == str(sandbox.python_path)
 
 
 def test_frozen_python_runtime_does_not_inject_fake_path(monkeypatch, tmp_path: Path) -> None:
@@ -344,9 +365,15 @@ def test_self_managed_node_runtime_from_manifest(tmp_path: Path) -> None:
     assert env["BOX_AGENT_NPM"] == str(npm)
     assert env["BOX_AGENT_NPX"] == str(npx)
     assert env["NODE_PATH"] == str(root / "sandbox" / "node_modules")
-    assert env["npm_config_cache"] == str(root / "sandbox" / "npm-cache")
-    assert env["npm_config_prefix"] == str(root / "sandbox" / "npm-prefix")
-    assert ".npm" not in env["npm_config_cache"]
+    execution_env = build_skill_execution_env(
+        ctx,
+        base_env={"PATH": "/usr/bin"},
+        home_dir=tmp_path,
+    )
+    skill_tools = tmp_path / ".box-agent" / "skill-tools"
+    assert execution_env["NPM_CONFIG_CACHE"] == str(skill_tools / "npm-cache")
+    assert execution_env["NPM_CONFIG_PREFIX"] == str(skill_tools)
+    assert execution_env["PATH"].split(":")[0] == str(skill_tools / "bin")
 
 
 def test_self_managed_node_runtime_accepts_relative_manifest_paths(tmp_path: Path) -> None:
@@ -373,6 +400,29 @@ def test_self_managed_node_runtime_accepts_relative_manifest_paths(tmp_path: Pat
 
     assert ctx.get("node").status == "available"
     assert ctx.env()["BOX_AGENT_NODE"] == str(version_dir / "node")
+
+
+def test_cli_reuses_office_provisioned_node_without_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    default_root = tmp_path / ".box-agent" / "runtimes" / "node"
+    office_root = tmp_path / ".box-agent" / "box-agent-runtime" / "runtimes" / "node"
+    node_bin = office_root / "versions" / "node-v24.15.0-darwin-arm64" / "bin"
+    for name in ("node", "npm", "npx"):
+        _make_executable(node_bin / name)
+    monkeypatch.setattr("box_agent.tools.runtime.DEFAULT_NODE_RUNTIME_ROOT", default_root)
+
+    ctx = build_skill_runtime_context(
+        sandbox_mode=False,
+        node_runtime_root=None,
+        office_node_runtime_root=office_root,
+    )
+
+    # Keep this test independent from the developer's real default runtime.
+    default_runtime = NodeRuntimeManager(root=default_root).discover()
+    assert default_runtime.status == "missing"
+    assert ctx.get("node").status == "available"
+    assert ctx.env()["BOX_AGENT_NODE"] == str(node_bin / "node")
 
 
 def test_frozen_runtime_discovers_bundled_node_and_uses_user_state_dirs(tmp_path: Path, monkeypatch) -> None:
@@ -404,8 +454,17 @@ def test_frozen_runtime_discovers_bundled_node_and_uses_user_state_dirs(tmp_path
 
     assert ctx.get("node").status == "available"
     assert env["BOX_AGENT_NODE"] == str(version_dir / "node")
-    assert env["npm_config_cache"] == str(DEFAULT_NODE_RUNTIME_ROOT / "sandbox" / "npm-cache")
-    assert env["npm_config_prefix"] == str(DEFAULT_NODE_RUNTIME_ROOT / "sandbox" / "npm-prefix")
+    execution_env = build_skill_execution_env(
+        ctx,
+        base_env={"PATH": "/usr/bin"},
+        home_dir=tmp_path,
+    )
+    assert execution_env["NPM_CONFIG_CACHE"] == str(
+        tmp_path / ".box-agent" / "skill-tools" / "npm-cache"
+    )
+    assert execution_env["NPM_CONFIG_PREFIX"] == str(
+        tmp_path / ".box-agent" / "skill-tools"
+    )
 
 
 def test_install_macos_downloads_verifies_extracts_and_writes_manifest(tmp_path: Path) -> None:
@@ -453,6 +512,22 @@ def test_install_macos_checksum_mismatch_does_not_write_manifest(tmp_path: Path)
 
     assert not (root / "manifest.json").exists()
     assert not (root / "versions" / archive_name.removesuffix(".tar.gz")).exists()
+
+
+def test_install_for_current_platform_dispatches_to_windows(monkeypatch, tmp_path: Path) -> None:
+    manager = NodeRuntimeManager(root=tmp_path / "node-runtime")
+    expected = manager.discover()
+    calls: list[str] = []
+
+    monkeypatch.setattr("box_agent.tools.runtime.sys.platform", "win32")
+    monkeypatch.setattr(
+        manager,
+        "install_win",
+        lambda *, version: calls.append(version) or expected,
+    )
+
+    assert manager.install_for_current_platform(version="v24.1.0") is expected
+    assert calls == ["v24.1.0"]
 
 
 def test_install_macos_failure_preserves_existing_manifest(tmp_path: Path) -> None:
@@ -713,8 +788,9 @@ def test_runtime_prompt_mentions_python_node_and_npm_rules(tmp_path: Path) -> No
     assert "- Node:" in out
     assert "不可用" in out
     assert "npm install -g" in out
-    assert "npx --yes" in out
-    assert "`python`/`python3`/`node`/`npm`/`npx`" in out
+    assert "$BOX_AGENT_SKILL_TOOLS_ROOT" in out
+    assert "标准 `python`/`python3`" in out
+    assert "禁止 `sudo`" in out
 
 
 def test_runtime_prompt_mentions_available_self_managed_node(tmp_path: Path) -> None:
@@ -748,3 +824,151 @@ def test_runtime_env_only_contains_existing_python_path(tmp_path: Path) -> None:
 
     assert ctx.get("python").status == "missing"
     assert ctx.env() == {}
+
+
+def test_skill_execution_env_prefers_managed_tools_and_shared_browser(tmp_path: Path) -> None:
+    node_dir = tmp_path / "managed-node" / "bin"
+    python_dir = tmp_path / "managed-python" / "bin"
+    node = node_dir / "node"
+    npm = node_dir / "npm"
+    npx = node_dir / "npx"
+    python = python_dir / "python3"
+    node_modules = tmp_path / "managed-node-modules"
+    for executable in (node, npm, npx, python):
+        _make_executable(executable)
+    browser_root = tmp_path / ".box-agent" / "browsers"
+    chromium = (
+        browser_root
+        / "chromium-1234"
+        / "chrome-mac-arm64"
+        / "Google Chrome for Testing.app"
+        / "Contents"
+        / "MacOS"
+        / "Google Chrome for Testing"
+    )
+    _make_executable(chromium)
+    ctx = build_skill_runtime_context(
+        sandbox_mode=True,
+        env_context={
+            "runtimes": {
+                "node": {
+                    "path": str(node),
+                    "npm": str(npm),
+                    "npx": str(npx),
+                    "node_modules": str(node_modules),
+                    "ready": True,
+                },
+                "python": {"path": str(python), "ready": True},
+            }
+        },
+    )
+
+    env = build_skill_execution_env(
+        ctx,
+        base_env={"PATH": "/user/node/bin:/usr/bin"},
+        platform_name="darwin",
+        home_dir=tmp_path,
+    )
+    skill_tools = tmp_path / ".box-agent" / "skill-tools"
+    path_entries = env["PATH"].split(":")
+
+    assert path_entries[0] == str(skill_tools / "bin")
+    assert path_entries.index(str(node_dir)) < path_entries.index("/user/node/bin")
+    assert path_entries.index(str(python_dir)) < path_entries.index("/user/node/bin")
+    assert env["NPM_CONFIG_PREFIX"] == str(skill_tools)
+    assert env["PYTHONUSERBASE"] == str(skill_tools / "python")
+    assert env["PYTHONPATH"].split(":")[0] == str(
+        skill_tools
+        / "python"
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    assert env["AGENT_BROWSER_EXECUTABLE_PATH"] == str(chromium)
+    assert env["NODE_PATH"].split(":")[0] == str(skill_tools / "lib" / "node_modules")
+
+
+def test_skill_execution_env_uses_windows_global_bin_layout(tmp_path: Path) -> None:
+    node_dir = tmp_path / "managed-node"
+    python_dir = tmp_path / "managed-python"
+    node = node_dir / "node.exe"
+    npm = node_dir / "npm.cmd"
+    npx = node_dir / "npx.cmd"
+    python = python_dir / "python.exe"
+    for executable in (node, npm, npx, python):
+        _make_executable(executable)
+    browser_root = tmp_path / ".box-agent" / "browsers"
+    chromium = browser_root / "chromium-4321" / "chrome-win64" / "chrome.exe"
+    _make_executable(chromium)
+    ctx = build_skill_runtime_context(
+        sandbox_mode=True,
+        env_context={
+            "runtimes": {
+                "node": {
+                    "path": str(node),
+                    "npm": str(npm),
+                    "npx": str(npx),
+                    "ready": True,
+                },
+                "python": {"path": str(python), "ready": True},
+            }
+        },
+    )
+
+    env = build_skill_execution_env(
+        ctx,
+        base_env={"PATH": "C:\\user-node;C:\\Windows"},
+        platform_name="win32",
+        home_dir=tmp_path,
+    )
+    skill_tools = tmp_path / ".box-agent" / "skill-tools"
+    path_entries = env["PATH"].split(";")
+
+    assert path_entries[0] == str(skill_tools)
+    assert str(skill_tools / "python" / "Scripts") in path_entries
+    assert path_entries.index(str(node_dir)) < path_entries.index("C:\\user-node")
+    assert env["NPM_CONFIG_PREFIX"] == str(skill_tools)
+    assert env["NODE_PATH"].split(";")[0] == str(skill_tools / "node_modules")
+    assert env["PYTHONPATH"].split(";")[0] == str(
+        skill_tools
+        / "python"
+        / f"Python{sys.version_info.major}{sys.version_info.minor}"
+        / "site-packages"
+    )
+    assert env["AGENT_BROWSER_EXECUTABLE_PATH"] == str(chromium)
+
+
+def test_skill_pythonpath_supports_dependency_created_after_process_start(
+    tmp_path: Path,
+) -> None:
+    ctx = build_skill_runtime_context(
+        sandbox_mode=False,
+        node_runtime_root=tmp_path / "missing-node",
+        office_node_runtime_root=tmp_path / "missing-office-node",
+    )
+    env = {
+        **os.environ,
+        **build_skill_execution_env(
+            ctx,
+            base_env={"PATH": os.environ.get("PATH", "")},
+            home_dir=tmp_path,
+        ),
+    }
+    code = (
+        "from pathlib import Path; import os; "
+        "site = Path(os.environ['PYTHONPATH'].split(os.pathsep)[0]); "
+        "site.mkdir(parents=True, exist_ok=True); "
+        "site.joinpath('fresh_skill_dependency.py').write_text('VALUE = 42\\n'); "
+        "import fresh_skill_dependency; "
+        "assert fresh_skill_dependency.VALUE == 42"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr

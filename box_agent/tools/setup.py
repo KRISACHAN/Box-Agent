@@ -40,6 +40,7 @@ from box_agent.tools.obsidian_tool import create_obsidian_tools
 from box_agent.tools.plan_tool import PlanReadTool, PlanStore, PlanWriteTool
 from box_agent.tools.request_user_input_tool import RequestUserInputTool
 from box_agent.tools.runtime import SkillRuntimeContext, build_skill_runtime_context
+from box_agent.tools.skill_execution_env import build_skill_execution_env
 from box_agent.tools.mcp_config_tool import McpConfigTool
 from box_agent.tools.schedule_tool import CreateScheduledTaskTool
 from box_agent.tools.skill_tool import create_skill_tools
@@ -461,7 +462,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
 
     # Relative tool paths use the project root or the active artifact root.
     runtime_context = skill_runtime_context or build_skill_runtime_context(sandbox_mode=sandbox_mode)
-    runtime_env = runtime_context.env()
+    runtime_env = build_skill_execution_env(runtime_context)
     if artifact_root is not None:
         # Make the canonical delivery root available to subprocess-backed
         # skills even when a generated command unnecessarily changes cwd.

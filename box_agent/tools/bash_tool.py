@@ -600,6 +600,10 @@ class BashTool(Tool):
             # scripts (pyenv, asdf, conda) would override the venv PATH.
             self._use_login_shell = False
         if runtime_env:
+            if "NPM_CONFIG_PREFIX" in runtime_env:
+                for key in tuple(self._subprocess_env):
+                    if key.lower() in {"npm_config_prefix", "npm_config_cache"}:
+                        self._subprocess_env.pop(key, None)
             self._subprocess_env.update(runtime_env)
 
     def update_runtime_env(self, values: dict[str, str | None]) -> None:
@@ -695,6 +699,7 @@ class BashTool(Tool):
             args = [self._login_shell]
             if self._use_login_shell:
                 args.append("-l")
+                command = self._restore_skill_path_after_login(command)
             args.extend(["-c", command])
             # start_new_session=True puts the shell in its own session/process
             # group so a timeout can kill the *whole* tree (shell + any children
@@ -708,6 +713,17 @@ class BashTool(Tool):
                 env=self._subprocess_env,
                 start_new_session=True,
             )
+
+    def _restore_skill_path_after_login(self, command: str) -> str:
+        """Reapply Box-Agent's trusted PATH prefix after login profiles run."""
+        if not self._subprocess_env or not self._subprocess_env.get(
+            "BOX_AGENT_SKILL_PATH_PREFIX"
+        ):
+            return command
+        return (
+            'PATH="${BOX_AGENT_SKILL_PATH_PREFIX}${PATH:+:${PATH}}"; '
+            f"export PATH; {command}"
+        )
 
     @staticmethod
     async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:

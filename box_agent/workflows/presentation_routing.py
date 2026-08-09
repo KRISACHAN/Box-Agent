@@ -29,9 +29,9 @@ _PPTX_SKILL_REFERENCE_RE: Final[re.Pattern[str]] = re.compile(
 _EXPLICIT_PPTX_DELIVERY_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:"
     r"(?:导出|交付|输出|生成|制作|创建|保存|另存为|转换|转成)"
-    r"[^，。；;.!?\n]{0,24}(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
+    r"[^，。；;.!?\n]{0,80}(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
     r"|(?:export|deliver|output|generate|create|save|convert)"
-    r"[^,.;!?\n]{0,24}(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
+    r"[^,.;!?\n]{0,80}(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
     r"|(?:\.pptx(?![a-z0-9])|(?<![a-z0-9])pptx(?![a-z0-9]))"
     r"[^，。；;.!?\n]{0,12}(?:文件|格式|版本|交付物|file|format|version)"
     r"|\.pptx(?![a-z0-9])"

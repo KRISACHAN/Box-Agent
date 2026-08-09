@@ -5,7 +5,11 @@ import inspect
 from box_agent.core import run_agent_loop as core_run_agent_loop
 from box_agent.loop_guards import CompletionGate
 from box_agent.runtime import run_agent_loop
-from box_agent.workflows import create_workflow_policy
+from box_agent.workflows import (
+    EXTERNAL_SKILL_WORKFLOW_KIND,
+    ExternalSkillRunPolicy,
+    create_workflow_policy,
+)
 from box_agent.workflows.controlled_presentation import ControlledPresentationPolicy
 from box_agent.workflows.presentation_checkpoint import (
     CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
@@ -57,6 +61,26 @@ def test_factory_ignores_unknown_workflow(tmp_path) -> None:
     )
 
     assert policy is None
+
+
+def test_factory_builds_builtin_policy_for_external_skill(tmp_path) -> None:
+    policy = create_workflow_policy(
+        workflow_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        workflow_options={
+            "skill_name": "ppt-master",
+            "skill_source": "user",
+            "skill_root": str(tmp_path / "skills" / "ppt-master"),
+            "task_text": "/ppt-master 制作一页 PPT",
+            "artifact_globs": '["output/**/*.pptx"]',
+        },
+    )
+
+    assert isinstance(policy, ExternalSkillRunPolicy)
+    assert policy.skill_name == "ppt-master"
+    assert policy.artifact_globs == ("output/**/*.pptx",)
+    assert policy.suppresses_generic_final_summary() is True
 
 
 def test_checkpoint_update_uses_generic_contract_fields(tmp_path) -> None:

@@ -22,6 +22,7 @@ from .events import (
     AgentEvent,
     ArtifactEvent,
     ContentEvent,
+    ContextCheckpointEvent,
     DoneEvent,
     ErrorEvent,
     InjectedMessageEvent,
@@ -38,6 +39,7 @@ from .events import (
     ToolCallResult,
     ToolCallStart,
 )
+from .context_resources import ContextResourceLedger
 from .llm import LLMClient
 from .logger import AgentLogger
 from .loop_guards import CompletionGate
@@ -475,6 +477,7 @@ class Agent:
         max_truncation_continuations: int = 3,
         max_truncated_tool_call_retries: int = 3,
         truncated_tool_call_boost_cap: int = 32768,
+        context_resource_dedup_enabled: bool = True,
     ):
         self.llm = llm_client
         self.tools = {tool.name: tool for tool in tools}
@@ -485,6 +488,8 @@ class Agent:
         self.max_truncation_continuations = max_truncation_continuations
         self.max_truncated_tool_call_retries = max_truncated_tool_call_retries
         self.truncated_tool_call_boost_cap = truncated_tool_call_boost_cap
+        self.context_resource_dedup_enabled = context_resource_dedup_enabled
+        self.context_resource_ledger = ContextResourceLedger()
         self.token_limit = token_limit
         self.workspace_dir = Path(workspace_dir)
         self.cancel_event: Optional[asyncio.Event] = None
@@ -528,6 +533,7 @@ class Agent:
         self.cache_fingerprint_context: dict[str, object] = {}
         self._streaming_active: bool = False  # Track if streaming output needs trailing newline
         self.last_stop_reason: str | None = None
+        self.last_checkpoint: dict[str, Any] | None = None
         self.goal: GoalState | None = None
         self.tools["goal_read"] = _GoalReadTool(self)
         self.tools["goal_write"] = _GoalWriteTool(self)
@@ -771,6 +777,7 @@ class Agent:
         """
         removed = max(0, len(self.messages) - 1)
         del self.messages[1:]
+        self.context_resource_ledger.rotate_epoch()
         return removed
 
     def _check_cancelled(self) -> bool:
@@ -882,6 +889,8 @@ class Agent:
             active_skill_activator=self.activate_skill_instructions,
             workflow_policy=effective_options.workflow_policy,
             current_turn_text=effective_options.current_turn_text,
+            context_resource_ledger=self.context_resource_ledger,
+            context_resource_dedup_enabled=self.context_resource_dedup_enabled,
         ):
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):
@@ -909,6 +918,7 @@ class Agent:
         """
         final_content = ""
         self.last_stop_reason = None
+        self.last_checkpoint = None
         options = self.default_run_options()
         if current_turn_text is not None:
             options = replace(options, current_turn_text=current_turn_text)
@@ -931,6 +941,18 @@ class Agent:
             if isinstance(event, DoneEvent):
                 final_content = event.final_content
                 self.last_stop_reason = event.stop_reason.value
+            elif isinstance(event, ContextCheckpointEvent):
+                self.last_checkpoint = {
+                    "checkpointId": event.checkpoint_id,
+                    "workflowKind": event.workflow_kind,
+                    "adapterId": event.adapter_id,
+                    "schemaVersion": event.schema_version,
+                    "workspaceIdentity": event.workspace_identity,
+                    "path": event.path,
+                    "stage": event.stage,
+                    "artifactCount": event.artifact_count,
+                    "artifactSetSha256": event.artifact_set_sha256,
+                }
         return final_content
 
     # ── Terminal renderer ───────────────────────────────────
@@ -1050,6 +1072,13 @@ class Agent:
 
             case ErrorEvent(message=msg):
                 print(f"\n{Colors.BRIGHT_RED}❌ Error:{Colors.RESET} {msg}")
+
+            case ContextCheckpointEvent(checkpoint_id=checkpoint_id, stage=stage):
+                stage_text = f" · stage {stage}" if stage else ""
+                print(
+                    f"\n{Colors.BRIGHT_YELLOW}⏸️  Progress saved and task paused"
+                    f"{stage_text} · checkpoint {checkpoint_id[:12]}.{Colors.RESET}"
+                )
 
             case PermissionRequestEvent(scope=scope, requested_scope=req_scope, path=path, reason=reason):
                 print(f"\n{Colors.BRIGHT_YELLOW}🔒 Permission required: {scope} → {req_scope}{Colors.RESET}")

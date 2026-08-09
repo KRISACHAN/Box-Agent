@@ -1,6 +1,7 @@
 """Test cases for Bash Tool."""
 
 import asyncio
+import os
 import unittest.mock
 
 import pytest
@@ -448,6 +449,30 @@ def test_no_sandbox_uses_login_shell():
 
     tool = BashTool()
     assert tool._use_login_shell is True
+
+
+def test_login_shell_reapplies_box_agent_skill_path_prefix():
+    with unittest.mock.patch.dict(
+        os.environ,
+        {"npm_config_prefix": "/user/npm", "npm_config_cache": "/user/cache"},
+    ):
+        tool = BashTool(
+            runtime_env={
+                "BOX_AGENT_SKILL_PATH_PREFIX": "/managed/skill/bin:/managed/node/bin",
+                "PATH": "/managed/skill/bin:/managed/node/bin:/user/bin",
+                "NPM_CONFIG_PREFIX": "/managed/skill",
+                "NPM_CONFIG_CACHE": "/managed/skill/npm-cache",
+            }
+        )
+
+    wrapped = tool._restore_skill_path_after_login("command -v npm")
+
+    assert wrapped.startswith(
+        'PATH="${BOX_AGENT_SKILL_PATH_PREFIX}${PATH:+:${PATH}}"; export PATH; '
+    )
+    assert wrapped.endswith("command -v npm")
+    assert "npm_config_prefix" not in tool._subprocess_env
+    assert "npm_config_cache" not in tool._subprocess_env
 
 
 @pytest.mark.asyncio

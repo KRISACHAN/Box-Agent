@@ -146,6 +146,36 @@ def test_provider_specific_query_beats_generic_builtin_rank(tmp_path) -> None:
     assert provider.skill_name == "legacy-slides"
 
 
+def test_explicit_provider_name_beats_builtin_description_overlap(tmp_path) -> None:
+    user_root = tmp_path / "user"
+    builtin_root = tmp_path / "builtin"
+    _write_skill(
+        user_root,
+        "ppt-master",
+        "Create editable presentations with rendering and visual QA",
+    )
+    _write_skill(
+        builtin_root,
+        "pptx",
+        "Create editable presentation files with rendering and visual QA",
+        capabilities="presentation.authoring",
+        workflow="controlled_presentation",
+    )
+    loader = SkillLoader([(user_root, "user"), (builtin_root, "builtin")])
+    loader.discover_skills()
+
+    provider = resolve_presentation_skill_provider(
+        loader,
+        ("pptx", "ppt-master"),
+        query=(
+            "Use PPT Master to create an editable PPTX with rendering and visual QA"
+        ),
+    )
+
+    assert provider is not None
+    assert provider.skill_name == "ppt-master"
+
+
 def test_generic_ppt_query_prefers_builtin_over_matched_lark_provider(tmp_path) -> None:
     user_root = tmp_path / "user"
     builtin_root = tmp_path / "builtin"

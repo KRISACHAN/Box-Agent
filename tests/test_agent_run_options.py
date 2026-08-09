@@ -7,6 +7,7 @@ import pytest
 
 import box_agent.agent as agent_module
 from box_agent.agent import Agent
+from box_agent.context_resources import ResourceClass, ResourceDescriptor
 from box_agent.events import DoneEvent, StopReason
 from box_agent.loop_guards import CompletionGate
 from box_agent.tools.skill_preload import ACTIVE_SKILLS_HEADING, strip_active_skills
@@ -52,6 +53,8 @@ async def test_agent_run_forwards_core_execution_options(
     assert captured["thinking_enabled"] is True
     assert captured["active_skill_activator"] == agent.activate_skill_instructions
     assert captured["current_turn_text"] == "current user request"
+    assert captured["context_resource_ledger"] is agent.context_resource_ledger
+    assert captured["context_resource_dedup_enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -110,6 +113,7 @@ async def test_agent_run_events_forwards_host_run_options(
     assert captured["cache_fingerprint_sink"] is fingerprint_sink
     assert captured["workflow_policy"] is workflow_policy
     assert captured["current_turn_text"] == "host current turn"
+    assert captured["context_resource_ledger"] is agent.context_resource_ledger
 
 
 def test_agent_public_runtime_configuration_and_history_reset(tmp_path: Path) -> None:
@@ -132,12 +136,26 @@ def test_agent_public_runtime_configuration_and_history_reset(tmp_path: Path) ->
             agent.messages[0].__class__(role="assistant", content="hi"),
         ]
     )
+    agent.context_resource_ledger.register_full_source(
+        "read-1",
+        ResourceDescriptor(
+            resource_id=str(tmp_path / "reference.md"),
+            content_version="a" * 64,
+            start_line=1,
+            end_line=1,
+            total_lines=1,
+            resource_class=ResourceClass.RECONSTRUCTABLE,
+        ),
+        "full body",
+    )
 
     options = agent.default_run_options()
     assert options.permission_negotiator is permission_negotiator
     assert options.memory_extractor is memory_extractor
     assert agent.clear_history() == 2
     assert len(agent.messages) == 1
+    assert agent.context_resource_ledger.epoch == 1
+    assert agent.context_resource_ledger.source_ids == ()
 
 
 def test_agent_preserves_deduplicated_active_skills_across_prompt_updates(

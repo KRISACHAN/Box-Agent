@@ -3,7 +3,9 @@
 import asyncio
 import base64
 import json
+import os
 from hashlib import sha256
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +20,7 @@ from box_agent.acp import (
 )
 from box_agent.acp.stdio_compat import _READ_LIMIT
 from box_agent.completion import should_resume_pending_completion_gate
+from box_agent.events import ContextCheckpointEvent, DoneEvent, StopReason
 from box_agent.config import (
     AgentConfig,
     Config,
@@ -37,7 +40,8 @@ from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS
 from box_agent.tools.skill_loader import SKILL_SLOT_SENTINEL, SkillLoader
 from box_agent.tools.skill_tool import create_skill_tools
 from box_agent.tools.setup import SANDBOX_INFO_PROMPT, build_sandbox_info_prompt
-from box_agent.workflows import recover_completion_gate
+from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND, recover_completion_gate
+from box_agent.workspace_registry import WorkspaceRegistry
 
 
 class DummyConn:
@@ -46,6 +50,56 @@ class DummyConn:
 
     async def sessionUpdate(self, payload):
         self.updates.append(payload)
+
+
+@pytest.mark.asyncio
+async def test_acp_workspace_config_methods_share_profiles(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(workspace)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+
+    saved = await agent.extMethod(
+        "workspace/set",
+        {"path": str(workspace), "taskType": "code"},
+    )
+    loaded = await agent.extMethod("workspace/get", {"path": str(workspace)})
+    listed = await agent.extMethod("workspace/list", {})
+
+    assert saved["workspace"]["task_type"] == "code"
+    assert loaded["workspace"] == saved["workspace"]
+    assert listed["workspaces"] == [saved["workspace"]]
+    assert Path(saved["configPath"]) == (
+        tmp_path / "home" / ".box-agent" / "config" / "workspaces.json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_acp_uses_saved_code_type_when_host_omits_session_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    WorkspaceRegistry().set(workspace, "code")
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(workspace)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+
+    session = await agent.newSession(SimpleNamespace(cwd=str(workspace), field_meta={}))
+    state = agent._sessions[session.sessionId]
+
+    assert state.session_mode == "code_agent"
+    assert state.artifact_mode == "project"
+    assert state.output_dir is None
+    assert "Software Engineering Mode (code_agent)" in state.agent.system_prompt
+    assert "Project Workspace Mode" in state.agent.system_prompt
 
 
 class HangingConn:
@@ -2213,6 +2267,96 @@ async def test_acp_output_html_followup_reuses_pending_presentation_gate(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_acp_checkpoint_pause_overrides_incomplete_and_maps_metadata(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    state = agent._sessions[session.sessionId]
+    state.pending_completion_gate = CompletionGate(
+        required_changed_artifact_globs=("output/**/*.pptx",),
+        workflow_checkpoint_kind="controlled_presentation",
+    )
+
+    async def checkpoint_pause(state_arg, session_id, **kwargs):
+        state_arg.last_checkpoint = {
+            "type": "context_checkpoint",
+            "checkpointId": "checkpoint-1",
+            "workflowKind": "controlled_presentation",
+            "recoverable": True,
+        }
+        return "checkpoint_paused"
+
+    agent._run_turn = checkpoint_pause  # type: ignore[method-assign]
+
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "继续输出 PPTX"}],
+        )
+    )
+
+    assert response.stopReason == "end_turn"
+    assert response.field_meta["ok"] is True
+    assert response.field_meta["runStatus"] == "paused"
+    assert response.field_meta["completed"] is False
+    assert response.field_meta["paused"] is True
+    assert response.field_meta["deliveryStatus"] == "paused"
+    assert response.field_meta["deliveryGaps"] == []
+    assert response.field_meta["recoverable"] is True
+    assert response.field_meta["checkpoint"]["checkpointId"] == "checkpoint-1"
+    assert response.field_meta["lastStopReason"] == "checkpoint_paused"
+
+
+@pytest.mark.asyncio
+async def test_acp_run_turn_maps_context_checkpoint_event_to_host_metadata(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    agent = BoxACPAgent(conn, config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    state = agent._sessions[session.sessionId]
+
+    async def checkpoint_events(*args, **kwargs):
+        yield ContextCheckpointEvent(
+            checkpoint_id="checkpoint-1",
+            workflow_kind="controlled_presentation",
+            adapter_id="box-agent.controlled-presentation.v1",
+            schema_version=1,
+            workspace_identity="workspace-hash",
+            path=str(tmp_path / ".box-agent" / "checkpoints" / "checkpoint.json"),
+            stage="outline",
+            artifact_count=2,
+            artifact_set_sha256="artifact-hash",
+        )
+        yield DoneEvent(
+            stop_reason=StopReason.CHECKPOINT_PAUSED,
+            final_content="Progress saved.",
+        )
+
+    state.agent.run_events = checkpoint_events  # type: ignore[method-assign]
+
+    reason = await agent._run_turn(state, session.sessionId)
+
+    assert reason == "checkpoint_paused"
+    assert state.last_error is None
+    assert state.last_checkpoint is not None
+    assert state.last_checkpoint["checkpointId"] == "checkpoint-1"
+    assert state.last_checkpoint["status"] == "paused"
+    assert any("context_checkpoint" in str(update) for update in conn.updates)
+
+
+@pytest.mark.asyncio
 async def test_acp_resumes_controlled_deck_after_required_user_input(tmp_path):
     output_dir = tmp_path / "output"
     completion_tool = CompleteDeckTool(output_dir)
@@ -2459,6 +2603,127 @@ async def test_acp_host_presentation_config_guarantees_presentation_provider(tmp
 
 
 @pytest.mark.asyncio
+async def test_acp_explicit_external_skill_gets_lifecycle_and_stays_preloaded_on_resume(
+    tmp_path,
+):
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "ppt-master"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: ppt-master\n"
+        "description: Generate editable PPTX presentations.\n"
+        "---\n"
+        "# PPT MASTER RULES\n"
+        "Ask for confirmation when required, then create and export the deck.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader([(skills_dir, "user")])
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    captured: list[CompletionGate | None] = []
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured.append(kwargs.get("completion_gate"))
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "请使用 /ppt-master 介绍内马尔最辉煌的1个赛季"}],
+        )
+    )
+    first_gate = captured[-1]
+    assert isinstance(first_gate, CompletionGate)
+    assert first_gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
+    assert first_gate.required_changed_artifact_globs == ("output/**/*.pptx",)
+    assert first_gate.workflow_options["skill_name"] == "ppt-master"
+    state = agent._sessions[session.sessionId]
+    assert state.preloaded_skill_names == ["ppt-master"]
+    assert "# PPT MASTER RULES" in state.agent.system_prompt
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "确认制作"}],
+        )
+    )
+    resumed_gate = captured[-1]
+    assert isinstance(resumed_gate, CompletionGate)
+    assert resumed_gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
+    assert resumed_gate.workflow_options["skill_name"] == "ppt-master"
+    assert state.preloaded_skill_names == ["ppt-master"]
+
+
+@pytest.mark.asyncio
+async def test_acp_plain_skill_mention_does_not_force_external_lifecycle(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "ppt-master"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: ppt-master\n"
+        "description: Generate editable PPTX presentations.\n"
+        "---\n"
+        "# PPT MASTER RULES\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader([(skills_dir, "user")])
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    captured: dict[str, object] = {}
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured["gate"] = kwargs.get("completion_gate")
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "解释一下 ppt-master 这个 Skill 的名字"}],
+        )
+    )
+
+    gate = captured["gate"]
+    assert gate is None or not isinstance(gate, CompletionGate) or (
+        gate.workflow_checkpoint_kind != EXTERNAL_SKILL_WORKFLOW_KIND
+    )
+
+
+@pytest.mark.asyncio
 async def test_acp_generic_ppt_request_does_not_preload_matched_lark_slides(tmp_path):
     user_root = tmp_path / "user-skills"
     builtin_root = tmp_path / "builtin-skills"
@@ -2599,7 +2864,13 @@ async def test_acp_host_config_uses_matched_legacy_presentation_skill(tmp_path):
         )
     )
 
-    assert captured["gate"] is None
+    gate = captured["gate"]
+    assert isinstance(gate, CompletionGate)
+    assert gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
+    assert gate.workflow_options["skill_name"] == "legacy-slides"
+    assert gate.max_tool_calls == 64
+    assert gate.completion_reserve_tool_calls == 0
+    assert gate.required_changed_artifact_globs == ()
     assert agent._sessions[session.sessionId].preloaded_skill_names == [
         "legacy-slides"
     ]
@@ -3182,6 +3453,10 @@ async def test_acp_prompt_includes_skill_runtime_context(tmp_path, monkeypatch):
         lambda: SandboxEnvironment(base_dir=sandbox_base),
     )
     monkeypatch.setattr("box_agent.tools.runtime.DEFAULT_NODE_RUNTIME_ROOT", tmp_path / "missing-node")
+    monkeypatch.setenv(
+        "BOX_AGENT_OFFICE_NODE_RUNTIME_ROOT",
+        str(tmp_path / "missing-office-node"),
+    )
 
     config = Config(
         llm=LLMConfig(api_key="test-key"),
@@ -3200,7 +3475,7 @@ async def test_acp_prompt_includes_skill_runtime_context(tmp_path, monkeypatch):
     assert "- Node:" in prompt
     assert "不可用" in prompt
     assert "npm install -g" in prompt
-    assert "npx --yes" in prompt
+    assert "$BOX_AGENT_SKILL_TOOLS_ROOT" in prompt
 
     bash_tool = agent._sessions[session.sessionId].agent.tools["bash"]
     assert bash_tool._subprocess_env["BOX_AGENT_PYTHON"] == str(python_path)
@@ -3249,15 +3524,19 @@ async def test_acp_prompt_and_bash_env_include_self_managed_node_runtime(tmp_pat
     bash_tool = state.agent.tools["bash"]
 
     assert "- Node:" in prompt
-    assert "via `$BOX_AGENT_NODE`" in prompt
+    assert "标准 `node`/`npm`/`npx`" in prompt
     assert "box_agent" in prompt
     assert "$BOX_AGENT_NODE" in prompt
     assert bash_tool._subprocess_env["BOX_AGENT_NODE"] == str(node)
     assert bash_tool._subprocess_env["BOX_AGENT_NPM"] == str(npm)
     assert bash_tool._subprocess_env["BOX_AGENT_NPX"] == str(npx)
-    assert bash_tool._subprocess_env["NODE_PATH"] == str(node_root / "sandbox" / "node_modules")
-    assert bash_tool._subprocess_env["npm_config_cache"] == str(node_root / "sandbox" / "npm-cache")
-    assert bash_tool._subprocess_env["npm_config_prefix"] == str(node_root / "sandbox" / "npm-prefix")
+    skill_tools = Path.home() / ".box-agent" / "skill-tools"
+    assert bash_tool._subprocess_env["NODE_PATH"].split(os.pathsep) == [
+        str(skill_tools / "lib" / "node_modules"),
+        str(node_root / "sandbox" / "node_modules"),
+    ]
+    assert bash_tool._subprocess_env["NPM_CONFIG_CACHE"] == str(skill_tools / "npm-cache")
+    assert bash_tool._subprocess_env["NPM_CONFIG_PREFIX"] == str(skill_tools)
 
 
 @pytest.mark.asyncio
@@ -3358,7 +3637,10 @@ async def test_acp_host_env_context_feeds_bash_and_execute_code_runtime_env(tmp_
     assert bash_env["BOX_AGENT_NODE"] == str(node_path)
     assert bash_env["BOX_AGENT_NPM"] == str(npm_path)
     assert bash_env["BOX_AGENT_NPX"] == str(npx_path)
-    assert bash_env["NODE_PATH"] == str(node_modules)
+    assert bash_env["NODE_PATH"].split(os.pathsep)[-1] == str(node_modules)
+    assert bash_env["NPM_CONFIG_PREFIX"] == str(
+        Path.home() / ".box-agent" / "skill-tools"
+    )
     assert execute_code_env["BOX_AGENT_SANDBOX_PYTHON"] == str(python_path)
 
 

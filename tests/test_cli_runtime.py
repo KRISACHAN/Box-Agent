@@ -14,6 +14,7 @@ from box_agent.tools.skill_loader import SkillLoader
 from box_agent.tools.runtime import build_skill_runtime_context, build_skill_runtime_prompt
 from box_agent.tools.setup import add_workspace_tools
 from box_agent.tools.skill_tool import GetSkillTool
+from box_agent.workspace_registry import WorkspaceRegistry
 
 
 def _make_executable(path: Path) -> None:
@@ -48,6 +49,29 @@ def _write_skill(
         f"{content}\n",
         encoding="utf-8",
     )
+
+
+def test_cli_node_execution_env_preserves_user_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.test:8443")
+    monkeypatch.setenv("npm_config_prefix", "/system/npm")
+    monkeypatch.setenv("npm_config_cache", "/system/npm-cache")
+    monkeypatch.setattr(
+        cli,
+        "build_skill_runtime_context",
+        lambda **_kwargs: build_skill_runtime_context(
+            sandbox_mode=False,
+            node_runtime_root=tmp_path / "missing-node",
+            office_node_runtime_root=tmp_path / "missing-office-node",
+        ),
+    )
+
+    _npx, env = cli._cli_node_execution_env()
+
+    assert env["HTTPS_PROXY"] == "http://proxy.example.test:8443"
+    assert env["NPM_CONFIG_PREFIX"] == str(tmp_path / ".box-agent" / "skill-tools")
+    assert "npm_config_prefix" not in env
+    assert "npm_config_cache" not in env
 
 
 class _CaptureStreamLLM:
@@ -138,7 +162,10 @@ class _EchoTool(Tool):
         return ToolResult(success=True, content=text)
 
 
-def test_cli_workspace_tools_receive_self_managed_node_runtime(tmp_path: Path) -> None:
+def test_cli_workspace_tools_receive_self_managed_node_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
     node_root = tmp_path / ".box-agent" / "runtimes" / "node"
     node_bin = node_root / "versions" / "node-v22-test-darwin-arm64" / "bin"
     node = node_bin / "node"
@@ -183,14 +210,105 @@ def test_cli_workspace_tools_receive_self_managed_node_runtime(tmp_path: Path) -
     assert bash_tool._subprocess_env["BOX_AGENT_NODE"] == str(node)
     assert bash_tool._subprocess_env["BOX_AGENT_NPM"] == str(npm)
     assert bash_tool._subprocess_env["BOX_AGENT_NPX"] == str(npx)
-    assert bash_tool._subprocess_env["NODE_PATH"] == str(node_root / "sandbox" / "node_modules")
-    assert bash_tool._subprocess_env["npm_config_cache"] == str(node_root / "sandbox" / "npm-cache")
-    assert bash_tool._subprocess_env["npm_config_prefix"] == str(node_root / "sandbox" / "npm-prefix")
+    skill_tools = tmp_path / ".box-agent" / "skill-tools"
+    assert bash_tool._subprocess_env["NODE_PATH"].split(":") == [
+        str(skill_tools / "lib" / "node_modules"),
+        str(node_root / "sandbox" / "node_modules"),
+    ]
+    assert bash_tool._subprocess_env["NPM_CONFIG_CACHE"] == str(skill_tools / "npm-cache")
+    assert bash_tool._subprocess_env["NPM_CONFIG_PREFIX"] == str(skill_tools)
+    path_entries = bash_tool._subprocess_env["PATH"].split(":")
+    assert path_entries[0] == str(skill_tools / "bin")
+    assert path_entries.index(str(node_bin)) < path_entries.index("/usr/bin")
 
     prompt = build_skill_runtime_prompt(runtime_context)
     assert "- Node:" in prompt
-    assert "via `$BOX_AGENT_NODE`" in prompt
+    assert "标准 `node`/`npm`/`npx`" in prompt
     assert "$BOX_AGENT_NODE" in prompt
+
+
+def test_cli_uses_saved_code_workspace_mode(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    WorkspaceRegistry().set(workspace, "code")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_key: test\n", encoding="utf-8")
+    system_prompt_path = tmp_path / "system_prompt.md"
+    system_prompt_path.write_text(
+        "base system\n\n{SKILLS_METADATA}\n\n{SANDBOX_INFO}\n\n{FILE_DELIVERY_INFO}",
+        encoding="utf-8",
+    )
+    code_prompt_path = tmp_path / "code_prompt.md"
+    code_prompt_path.write_text(
+        "## Software Engineering Mode (code_agent)\nCODE MODE MARKER",
+        encoding="utf-8",
+    )
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=2,
+            workspace_dir=str(workspace),
+            enable_memory=False,
+            enable_memory_extraction=False,
+            memory_maintainer_enabled=False,
+            memory_promotion_proposal_enabled=False,
+            system_prompt_path=str(system_prompt_path),
+            code_prompt_path=str(code_prompt_path),
+        ),
+        tools=ToolsConfig(
+            enable_file_tools=False,
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_mcp=False,
+            enable_skills=False,
+            allow_full_access=True,
+        ),
+    )
+    workspace_tool_options: dict[str, object] = {}
+
+    async def fake_initialize_base_tools(*args, **kwargs):
+        return [], None, None, None
+
+    def fake_add_workspace_tools(*args, **kwargs):
+        workspace_tool_options.update(kwargs)
+
+    monkeypatch.setattr(cli.Config, "get_default_config_path", staticmethod(lambda: config_path))
+    monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
+    monkeypatch.setattr(
+        cli.Config,
+        "find_config_file",
+        staticmethod(
+            lambda name: Path(name)
+            if name in {str(system_prompt_path), str(code_prompt_path)}
+            else None
+        ),
+    )
+    monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
+    monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
+    monkeypatch.setattr(cli, "add_workspace_tools", fake_add_workspace_tools)
+    _CaptureStreamLLM.instances.clear()
+
+    exit_code = asyncio.run(
+        cli.run_agent(
+            workspace,
+            task="fix the project",
+            sandbox_mode=True,
+            verify_api=False,
+            completion_gate_enabled=False,
+            goal_autopilot_enabled=False,
+        )
+    )
+
+    assert exit_code == 0
+    assert workspace_tool_options["use_output_dir"] is False
+    system_prompt = _CaptureStreamLLM.instances[0].system_prompts[0]
+    assert "Project Workspace Mode" in system_prompt
+    assert "Software Engineering Mode (code_agent)" in system_prompt
+    assert "CODE MODE MARKER" in system_prompt
+    assert "Do not create or use an `output/` folder" in system_prompt
 
 
 def test_cli_task_preloads_pptx_even_when_filter_drops_it(tmp_path: Path, monkeypatch) -> None:
@@ -356,3 +474,74 @@ def test_cli_task_returns_failure_for_done_error(
     assert summary["ok"] is False
     assert summary["error"]
     assert summary["goalAutopilot"]["lastStopReason"] == "error"
+
+
+def test_cli_json_reports_checkpoint_pause_without_error_or_completion(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_key: test\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=3,
+            workspace_dir=str(workspace),
+            enable_memory=False,
+            enable_memory_extraction=False,
+            memory_maintainer_enabled=False,
+            memory_promotion_proposal_enabled=False,
+        ),
+        tools=ToolsConfig(
+            enable_file_tools=False,
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_mcp=False,
+            enable_skills=False,
+            allow_full_access=True,
+        ),
+    )
+
+    async def fake_initialize_base_tools(*args, **kwargs):
+        return [], None, None, None
+
+    async def fake_run(self, *args, **kwargs):
+        self.last_stop_reason = "checkpoint_paused"
+        self.last_checkpoint = {
+            "checkpointId": "checkpoint-1",
+            "workflowKind": "controlled_presentation",
+        }
+        return "Progress saved."
+
+    monkeypatch.setattr(cli.Config, "get_default_config_path", staticmethod(lambda: config_path))
+    monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
+    monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
+    monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
+    monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli.Agent, "run", fake_run)
+
+    exit_code = asyncio.run(
+        cli.run_agent(
+            workspace,
+            task="Create a deck",
+            sandbox_mode=False,
+            verify_api=False,
+            json_summary=True,
+            completion_gate_enabled=False,
+            goal_autopilot_enabled=False,
+        )
+    )
+
+    output = capsys.readouterr().out
+    summary = json.loads(output[output.rfind("\n{") + 1 :])
+    assert exit_code == 0
+    assert summary["ok"] is True
+    assert summary["error"] is None
+    assert summary["runStatus"] == "paused"
+    assert summary["completed"] is False
+    assert summary["recoverable"] is True
+    assert summary["checkpoint"]["checkpointId"] == "checkpoint-1"

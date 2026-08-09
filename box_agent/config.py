@@ -154,6 +154,9 @@ class AgentConfig(BaseModel):
     # per-request cap never exceeds ``truncated_tool_call_boost_cap``.
     max_truncated_tool_call_retries: int = 3
     truncated_tool_call_boost_cap: int = 32768
+    # Keep repeated read_file output compact only while an exact source remains
+    # in the live model context. Disable for immediate rollback.
+    context_resource_dedup_enabled: bool = True
     system_prompt_path: str = "system_prompt.md"
     analysis_prompt_path: str = "analysis_prompt.md"
     code_prompt_path: str = "code_prompt.md"
@@ -443,6 +446,9 @@ class Config(BaseModel):
             max_truncation_continuations=data.get("max_truncation_continuations", 3),
             max_truncated_tool_call_retries=data.get("max_truncated_tool_call_retries", 3),
             truncated_tool_call_boost_cap=data.get("truncated_tool_call_boost_cap", 32768),
+            context_resource_dedup_enabled=data.get(
+                "context_resource_dedup_enabled", True
+            ),
             system_prompt_path=data.get("system_prompt_path", "system_prompt.md"),
             analysis_prompt_path=data.get("analysis_prompt_path", "analysis_prompt.md"),
             code_prompt_path=data.get("code_prompt_path", "code_prompt.md"),

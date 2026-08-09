@@ -24,6 +24,7 @@ class WorkflowPolicy(Protocol):
     contract and does not import or branch on a concrete workflow.
     """
 
+    kind: str
     checkpoint_injection_id: str
     evidence_read_batch_size: int
 
