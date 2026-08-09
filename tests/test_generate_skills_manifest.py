@@ -12,9 +12,10 @@ from scripts.generate_skills_manifest import (
     [
         "city-travel-skill-developer-1.2.0",
         "city-travel-planner",
+        "storymap-generate-person",
     ],
 )
-def test_city_travel_recommendations_stay_out_of_builtin_manifest(source_dir):
+def test_recommended_skills_stay_out_of_builtin_manifest(source_dir):
     assert (SKILLS_DIR / source_dir / "SKILL.md").is_file()
     assert source_dir in EXCLUDED_SKILL_DIRS
     assert all(
