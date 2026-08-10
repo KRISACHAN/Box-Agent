@@ -61,8 +61,8 @@ def _todo_state_error(items: list[dict]) -> str | None:
     )
 
 
-def _validate_todo_items(items: Any) -> None:
-    """Validate persisted and in-memory todo records without mutating state."""
+def _validate_todo_records(items: Any) -> None:
+    """Validate todo record shapes without enforcing workflow state."""
     if not isinstance(items, list):
         raise ValueError("Todo data must be a list.")
 
@@ -96,9 +96,31 @@ def _validate_todo_items(items: Any) -> None:
         if not isinstance(created_at, str) or not created_at.strip():
             raise ValueError(f"Todo #{todo_id} has no created_at timestamp.")
 
+
+def _validate_todo_items(items: Any) -> None:
+    """Validate persisted and in-memory todo records without mutating state."""
+    _validate_todo_records(items)
     state_error = _todo_state_error(items)
     if state_error:
         raise ValueError(state_error)
+
+
+def _migrate_legacy_todo_state(items: list[dict]) -> bool:
+    """Repair active-item counts accepted by the legacy persisted format."""
+    unfinished = [item for item in items if item["status"] != "completed"]
+    if not unfinished:
+        return False
+
+    active = [item for item in unfinished if item["status"] == "in_progress"]
+    if len(active) == 1:
+        return False
+    if not active:
+        unfinished[0]["status"] = "in_progress"
+        return True
+
+    for item in active[1:]:
+        item["status"] = "pending"
+    return True
 
 
 def _context_item(item: dict) -> dict[str, Any]:
@@ -191,7 +213,7 @@ def _todo_model_context(
 
 
 class TodoStore:
-    """Lightweight todo list; invalid persisted snapshots fail during loading."""
+    """Lightweight todo list with validated, legacy-compatible persistence."""
 
     def __init__(self, persist_path: Path | None = None):
         self._items: dict[str, dict] = {}
@@ -214,14 +236,16 @@ class TodoStore:
         )
 
     def _load(self) -> None:
-        """Load a complete valid snapshot without partially mutating the store."""
+        """Load a complete snapshot and migrate legacy active-item state."""
         persist_path = self._persist_path
         if persist_path is None:
             return
         try:
             loaded = json.loads(persist_path.read_text())
-            _validate_todo_items(loaded)
+            _validate_todo_records(loaded)
             candidate_items = [dict(item) for item in loaded]
+            migrated = _migrate_legacy_todo_state(candidate_items)
+            _validate_todo_items(candidate_items)
             max_id = max((int(item["id"]) for item in candidate_items), default=0)
         except (OSError, UnicodeError, TypeError, ValueError) as exc:
             raise ValueError(
@@ -230,6 +254,8 @@ class TodoStore:
 
         self._items = {item["id"]: item for item in candidate_items}
         self._counter = count(max_id + 1)
+        if migrated:
+            self._save()
 
     def _commit(self, items: list[dict]) -> None:
         _validate_todo_items(items)
