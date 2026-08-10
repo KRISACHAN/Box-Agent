@@ -1,5 +1,6 @@
 """Test cases for Todo Tool."""
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -40,15 +41,15 @@ async def test_create(writer, reader):
     assert result.raw_output["summary"] == {
         "total": 1,
         "completed": 0,
-        "in_progress": 0,
-        "pending": 1,
+        "in_progress": 1,
+        "pending": 0,
     }
 
     result = await reader.execute()
     assert result.success
     assert "Implement feature A" in result.content
     assert result.raw_output["type"] == "todo_snapshot"
-    assert result.raw_output["summary"]["pending"] == 1
+    assert result.raw_output["summary"]["in_progress"] == 1
 
 
 @pytest.mark.asyncio
@@ -77,6 +78,14 @@ async def test_create_with_initial_status(writer, reader):
 
 
 @pytest.mark.asyncio
+async def test_create_rejects_explicit_pending_without_active_item(writer):
+    result = await writer.execute(action="create", task="Draft outline", status="pending")
+
+    assert not result.success
+    assert "exactly one in_progress" in result.error
+
+
+@pytest.mark.asyncio
 async def test_set_replaces_full_todo_list(writer, reader):
     await writer.execute(action="create", task="Old task")
 
@@ -101,19 +110,19 @@ async def test_set_replaces_full_todo_list(writer, reader):
         for item in result.raw_output["items"]
     ] == [
         {
-            "id": "1",
+            "id": "2",
             "task": "Inspect logs",
             "status": "completed",
             "priority": "high",
         },
         {
-            "id": "2",
+            "id": "3",
             "task": "Compare opencode todo tool",
             "status": "in_progress",
             "priority": "high",
         },
         {
-            "id": "3",
+            "id": "4",
             "task": "Adapt Box-Agent todo_write",
             "status": "pending",
             "priority": "medium",
@@ -134,18 +143,37 @@ async def test_set_replaces_full_todo_list(writer, reader):
 
 
 @pytest.mark.asyncio
-async def test_set_restarts_id_counter_for_follow_up_creates(writer, reader):
-    await writer.execute(action="create", task="Old A")
-    await writer.execute(action="create", task="Old B")
-    await writer.execute(action="set", todos=[{"task": "Only task"}])
+async def test_set_preserves_existing_identity_and_never_reuses_ids(writer):
+    initial = await writer.execute(
+        action="set",
+        todos=[
+            {"task": "Old A", "status": "in_progress"},
+            {"task": "Old B", "status": "pending", "priority": "high"},
+        ],
+    )
+    old_b = initial.raw_output["items"][1]
 
-    result = await writer.execute(action="create", task="Follow-up")
+    result = await writer.execute(
+        action="set",
+        todos=[
+            {
+                "id": old_b["id"],
+                "task": "Old B",
+                "status": "pending",
+            },
+            {"task": "Inserted", "status": "in_progress"},
+        ],
+    )
 
     assert result.success
-    assert result.raw_output["item"]["id"] == "2"
-    result = await reader.execute()
-    assert "#1 Only task" in result.content
-    assert "#2 Follow-up" in result.content
+    assert [item["id"] for item in result.raw_output["items"]] == ["2", "3"]
+    assert result.raw_output["items"][0]["status"] == "pending"
+    assert result.raw_output["items"][0]["priority"] == "high"
+    assert result.raw_output["items"][0]["created_at"] == old_b["created_at"]
+
+    follow_up = await writer.execute(action="create", task="Follow-up")
+    assert follow_up.success
+    assert follow_up.raw_output["item"]["id"] == "4"
 
 
 @pytest.mark.asyncio
@@ -158,9 +186,97 @@ async def test_set_requires_valid_todos(writer):
     assert not result.success
     assert "'task' is required" in result.error
 
+    result = await writer.execute(action="set", todos=[{"task": "Missing status"}])
+    assert not result.success
+    assert "'status' is required" in result.error
+
     result = await writer.execute(action="set", todos=[{"task": "Bad", "status": "cancelled"}])
     assert not result.success
     assert "Invalid status" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "todos, active_count",
+    [
+        ([{"task": "Pending only", "status": "pending"}], 0),
+        (
+            [
+                {"task": "Active A", "status": "in_progress"},
+                {"task": "Active B", "status": "in_progress"},
+            ],
+            2,
+        ),
+    ],
+)
+async def test_set_rejects_invalid_active_item_count(writer, todos, active_count):
+    result = await writer.execute(action="set", todos=todos)
+
+    assert not result.success
+    assert f"found {active_count}" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "todos",
+    [
+        [],
+        [
+            {"task": "Done A", "status": "completed"},
+            {"task": "Done B", "status": "completed"},
+        ],
+    ],
+)
+async def test_set_allows_no_active_item_when_nothing_is_unfinished(writer, todos):
+    result = await writer.execute(action="set", todos=todos)
+
+    assert result.success
+    assert result.raw_output["summary"]["in_progress"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_set_does_not_consume_ids_or_change_existing_state(writer):
+    initial = await writer.execute(action="create", task="Current")
+
+    failed = await writer.execute(
+        action="set",
+        todos=[
+            {"task": "Invalid pending", "status": "pending"},
+        ],
+    )
+
+    assert not failed.success
+    assert writer._store.list() == initial.raw_output["items"]
+
+    created = await writer.execute(action="create", task="Next")
+    assert created.success
+    assert created.raw_output["item"]["id"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_set_rejects_duplicate_and_unknown_existing_ids(writer):
+    initial = await writer.execute(action="create", task="Current")
+    current = initial.raw_output["items"][0]
+
+    duplicate = await writer.execute(
+        action="set",
+        todos=[
+            {"id": current["id"], "task": "Current", "status": "in_progress"},
+            {"id": current["id"], "task": "Duplicate", "status": "pending"},
+        ],
+    )
+    assert not duplicate.success
+    assert "Duplicate todo id" in duplicate.error
+
+    unknown = await writer.execute(
+        action="set",
+        todos=[
+            {"id": "999", "task": "Unknown", "status": "in_progress"},
+        ],
+    )
+    assert not unknown.success
+    assert "does not exist" in unknown.error
+    assert writer._store.list() == initial.raw_output["items"]
 
 
 @pytest.mark.asyncio
@@ -184,21 +300,102 @@ async def test_update_status(writer, reader):
 
 
 @pytest.mark.asyncio
-async def test_write_model_context_repeats_complete_current_list(writer):
+async def test_transition_atomically_advances_to_next_todo(writer):
     await writer.execute(action="create", task="Inspect implementation", status="in_progress")
     await writer.execute(action="create", task="Run verification")
 
-    result = await writer.execute(action="update", todo_id="1", status="completed")
+    result = await writer.execute(
+        action="transition",
+        todo_id="1",
+        next_todo_id="2",
+    )
 
     assert result.success
+    assert result.raw_output["transition"] == {
+        "completed_id": "1",
+        "in_progress_id": "2",
+    }
+    assert [item["status"] for item in result.raw_output["items"]] == [
+        "completed",
+        "in_progress",
+    ]
     assert result.model_context is not None
-    assert "complete current todo list" in result.model_context
-    assert '"task": "Inspect implementation"' in result.model_context
-    assert '"status": "completed"' in result.model_context
-    assert '"task": "Run verification"' in result.model_context
-    assert '"status": "pending"' in result.model_context
-    assert "action='set'" in result.model_context
-    assert "Run verification" not in result.content
+    assert "Changed items" in result.model_context
+    assert "Inspect implementation" in result.model_context
+    assert "Run verification" in result.model_context
+    assert "action='transition'" in result.model_context
+    assert "without next_todo_id" in result.model_context
+    assert "complete current todo list" not in result.model_context
+
+
+@pytest.mark.asyncio
+async def test_transition_completes_final_todo_without_next_id(writer):
+    await writer.execute(action="create", task="Final task")
+
+    result = await writer.execute(action="transition", todo_id="1")
+
+    assert result.success
+    assert result.raw_output["summary"] == {
+        "total": 1,
+        "completed": 1,
+        "in_progress": 0,
+        "pending": 0,
+    }
+    assert result.raw_output["transition"]["in_progress_id"] is None
+    assert "All todo items are completed" in result.model_context
+
+
+@pytest.mark.asyncio
+async def test_transition_requires_next_id_when_pending_work_remains(writer):
+    await writer.execute(action="create", task="Current")
+    await writer.execute(action="create", task="Next")
+
+    result = await writer.execute(action="transition", todo_id="1")
+
+    assert not result.success
+    assert "found 0" in result.error
+    items = writer._store.list()
+    assert [item["status"] for item in items] == ["in_progress", "pending"]
+
+
+@pytest.mark.asyncio
+async def test_update_cannot_leave_pending_work_without_active_item(writer):
+    await writer.execute(action="create", task="Current")
+    await writer.execute(action="create", task="Next")
+
+    result = await writer.execute(action="update", todo_id="1", status="completed")
+
+    assert not result.success
+    assert "found 0" in result.error
+
+
+@pytest.mark.asyncio
+async def test_delete_cannot_remove_active_item_while_pending_work_remains(writer):
+    await writer.execute(action="create", task="Current")
+    await writer.execute(action="create", task="Next")
+
+    result = await writer.execute(action="delete", todo_id="1")
+
+    assert not result.success
+    assert "found 0" in result.error
+
+
+@pytest.mark.asyncio
+async def test_set_model_context_is_bounded_for_large_lists(writer):
+    todos = [
+        {
+            "task": f"Task {index}: " + "x" * 500,
+            "status": "in_progress" if index == 0 else "pending",
+        }
+        for index in range(100)
+    ]
+
+    result = await writer.execute(action="set", todos=todos)
+
+    assert result.success
+    assert len(result.model_context) <= 12_000
+    assert "complete list was omitted" in result.model_context
+    assert "todo_read" in result.model_context
 
 
 @pytest.mark.asyncio
@@ -269,6 +466,13 @@ async def test_read_single_by_id(writer, reader):
     assert result.success
     assert "Task B" in result.content
     assert "Task A" not in result.content
+    assert [item["task"] for item in result.raw_output["items"]] == ["Task A", "Task B"]
+    assert result.raw_output["summary"] == {
+        "total": 2,
+        "completed": 0,
+        "in_progress": 1,
+        "pending": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -281,6 +485,11 @@ async def test_read_filter_by_status(writer, reader):
     assert result.success
     assert "Done task" in result.content
     assert "Pending task" not in result.content
+    assert [item["task"] for item in result.raw_output["items"]] == [
+        "Pending task",
+        "Done task",
+    ]
+    assert result.raw_output["summary"]["total"] == 2
 
 
 @pytest.mark.asyncio
@@ -298,6 +507,21 @@ async def test_read_summary_line(writer, reader):
 
 
 # ── TodoStore persistence ───────────────────────────────────
+
+
+def _persisted_item(
+    todo_id: str,
+    *,
+    status: str,
+    priority: str = "medium",
+) -> dict:
+    return {
+        "id": todo_id,
+        "task": f"Task {todo_id}",
+        "status": status,
+        "priority": priority,
+        "created_at": "2026-08-10T00:00:00",
+    }
 
 
 @pytest.mark.asyncio
@@ -322,6 +546,144 @@ async def test_persistence():
         assert item["id"] == "3"
 
 
+def test_persistence_load_does_not_rewrite_valid_file(tmp_path):
+    path = tmp_path / "todos.json"
+    items = [
+        _persisted_item("1", status="in_progress"),
+        _persisted_item("2", status="pending"),
+    ]
+    original = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+    path.write_text(original, encoding="utf-8")
+
+    store = TodoStore(persist_path=path)
+
+    assert store.list() == items
+    assert path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    "statuses, active_count",
+    [
+        (["pending", "pending"], 0),
+        (["in_progress", "in_progress"], 2),
+    ],
+)
+def test_persistence_rejects_invalid_active_item_count(
+    tmp_path,
+    statuses,
+    active_count,
+):
+    path = tmp_path / "todos.json"
+    items = [
+        _persisted_item(str(index), status=status)
+        for index, status in enumerate(statuses, start=1)
+    ]
+    path.write_text(json.dumps(items), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"found {active_count}"):
+        TodoStore(persist_path=path)
+
+
+@pytest.mark.parametrize(
+    "items, error",
+    [
+        ({"id": "1"}, "must be a list"),
+        ([42], "must be an object"),
+        (
+            [
+                _persisted_item("1", status="in_progress"),
+                _persisted_item("1", status="pending"),
+            ],
+            "Duplicate todo id",
+        ),
+        ([_persisted_item("abc", status="in_progress")], "invalid id"),
+        ([_persisted_item("01", status="in_progress")], "invalid id"),
+        ([_persisted_item("1", status="cancelled")], "Invalid status"),
+        (
+            [_persisted_item("1", status="in_progress", priority="urgent")],
+            "Invalid priority",
+        ),
+        (
+            [
+                {
+                    key: value
+                    for key, value in _persisted_item(
+                        "1",
+                        status="in_progress",
+                    ).items()
+                    if key != "created_at"
+                }
+            ],
+            "created_at",
+        ),
+    ],
+)
+def test_persistence_rejects_invalid_records(tmp_path, items, error):
+    path = tmp_path / "todos.json"
+    path.write_text(json.dumps(items), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=error):
+        TodoStore(persist_path=path)
+
+
+def test_persistence_rejects_malformed_json(tmp_path):
+    path = tmp_path / "todos.json"
+    path.write_text('[{"id": "1"}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid persisted todo state"):
+        TodoStore(persist_path=path)
+
+
+def test_failed_reload_keeps_previous_state_unchanged(tmp_path):
+    path = tmp_path / "todos.json"
+    store = TodoStore()
+    store.create("Existing task")
+    previous = store.list()
+    path.write_text(
+        json.dumps(
+            [
+                _persisted_item("2", status="in_progress"),
+                _persisted_item("3", status="cancelled"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store._persist_path = path
+
+    with pytest.raises(ValueError, match="Invalid status"):
+        store._load()
+
+    assert store.list() == previous
+
+
+@pytest.mark.parametrize(
+    "items, expected_next_id",
+    [
+        ([], "1"),
+        (
+            [
+                _persisted_item("2", status="completed"),
+                _persisted_item("5", status="completed"),
+            ],
+            "6",
+        ),
+    ],
+)
+def test_persistence_allows_state_without_unfinished_work(
+    tmp_path,
+    items,
+    expected_next_id,
+):
+    path = tmp_path / "todos.json"
+    path.write_text(json.dumps(items), encoding="utf-8")
+
+    store = TodoStore(persist_path=path)
+    created = store.create("New work")
+
+    assert created["id"] == expected_next_id
+    assert created["status"] == "in_progress"
+
+
 # ── Schema tests ────────────────────────────────────────────
 
 
@@ -330,7 +692,13 @@ def test_anthropic_schema(writer, reader):
     assert schema["name"] == "todo_write"
     assert "input_schema" in schema
     assert "set" in schema["input_schema"]["properties"]["action"]["enum"]
+    assert "transition" in schema["input_schema"]["properties"]["action"]["enum"]
     assert "todos" in schema["input_schema"]["properties"]
+    assert "id" in schema["input_schema"]["properties"]["todos"]["items"]["properties"]
+    todo_items_schema = schema["input_schema"]["properties"]["todos"]["items"]
+    assert todo_items_schema["required"] == ["task", "status"]
+    assert "exactly one in_progress" in schema["input_schema"]["properties"]["todos"]["description"]
+    assert "next_todo_id" in schema["input_schema"]["properties"]
 
     schema = reader.to_schema()
     assert schema["name"] == "todo_read"
@@ -356,5 +724,6 @@ def test_todo_write_description_keeps_todo_as_progress_tracker(writer):
     assert "call plan_read before setting todos" in description
     assert "Derive the todos from plan steps in order" in description
     assert "Revise the plan with plan_write" in description
-    assert "for every progress transition" in description
-    assert "model receive the whole current checklist" in description
+    assert "Use 'set' only" in description
+    assert "Use 'transition' for normal progress" in description
+    assert "Preserve the id" in description

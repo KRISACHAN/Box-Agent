@@ -20,6 +20,11 @@ from typing import Any
 from .base import Tool, ToolResult
 
 
+_VALID_STATUSES = ("pending", "in_progress", "completed")
+_VALID_PRIORITIES = ("high", "medium", "low")
+_MAX_TODO_MODEL_CONTEXT_CHARS = 12_000
+
+
 def _todo_snapshot(items: list[dict]) -> dict[str, Any]:
     """Return a host-friendly todo snapshot payload."""
     normalized = [dict(item) for item in items]
@@ -42,35 +47,151 @@ def _todo_snapshot(items: list[dict]) -> dict[str, Any]:
 # ── Shared store ────────────────────────────────────────────
 
 
-def _todo_model_context(items: list[dict], *, action: str) -> str:
-    """Keep the complete execution checklist salient in future model turns."""
-    current = [
-        {
-            "id": item.get("id"),
-            "task": item.get("task"),
-            "status": item.get("status"),
-            "priority": item.get("priority", "medium"),
-        }
-        for item in items
-    ]
-    if not current:
+def _todo_state_error(items: list[dict]) -> str | None:
+    """Return an error when unfinished work has no unique active item."""
+    unfinished = [item for item in items if item.get("status") != "completed"]
+    if not unfinished:
+        return None
+    active = [item for item in unfinished if item.get("status") == "in_progress"]
+    if len(active) == 1:
+        return None
+    return (
+        "Todo list must contain exactly one in_progress item while unfinished "
+        f"work remains; found {len(active)}."
+    )
+
+
+def _validate_todo_items(items: Any) -> None:
+    """Validate persisted and in-memory todo records without mutating state."""
+    if not isinstance(items, list):
+        raise ValueError("Todo data must be a list.")
+
+    seen_ids: set[str] = set()
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Todo #{index} must be an object.")
+
+        todo_id = item.get("id")
+        if (
+            not isinstance(todo_id, str)
+            or not todo_id.isdigit()
+            or int(todo_id) < 1
+            or str(int(todo_id)) != todo_id
+        ):
+            raise ValueError(f"Todo #{index} has an invalid id: {todo_id!r}.")
+        if todo_id in seen_ids:
+            raise ValueError(f"Duplicate todo id: {todo_id}.")
+        seen_ids.add(todo_id)
+
+        task = item.get("task")
+        if not isinstance(task, str) or not task.strip():
+            raise ValueError(f"Todo #{todo_id} has no task.")
+        status = item.get("status")
+        if status not in _VALID_STATUSES:
+            raise ValueError(f"Invalid status for todo #{todo_id}: {status}.")
+        priority = item.get("priority", "medium")
+        if priority not in _VALID_PRIORITIES:
+            raise ValueError(f"Invalid priority for todo #{todo_id}: {priority}.")
+        created_at = item.get("created_at")
+        if not isinstance(created_at, str) or not created_at.strip():
+            raise ValueError(f"Todo #{todo_id} has no created_at timestamp.")
+
+    state_error = _todo_state_error(items)
+    if state_error:
+        raise ValueError(state_error)
+
+
+def _context_item(item: dict) -> dict[str, Any]:
+    """Return a bounded todo representation for model-only context."""
+    task = str(item.get("task") or "")
+    if len(task) > 500:
+        task = task[:497] + "..."
+    return {
+        "id": item.get("id"),
+        "task": task,
+        "status": item.get("status"),
+        "priority": item.get("priority", "medium"),
+    }
+
+
+def _todo_next_instruction(items: list[dict]) -> str:
+    unfinished = [item for item in items if item.get("status") != "completed"]
+    if not unfinished:
+        return "All todo items are completed. Do not assume unfinished work remains."
+    active = [item for item in unfinished if item.get("status") == "in_progress"]
+    if len(active) != 1:
+        return (
+            "The persisted todo state has no unique in_progress item. Repair it with "
+            "action='set' before continuing execution."
+        )
+    current = active[0]
+    has_pending = any(item.get("status") == "pending" for item in unfinished)
+    if not has_pending:
+        return (
+            f"Continue only with todo #{current.get('id')}. After completing and verifying "
+            "it, use action='transition' without next_todo_id to complete the final "
+            "unfinished item."
+        )
+    return (
+        f"Continue only with todo #{current.get('id')}. After completing and verifying "
+        "it, use action='transition' to complete it and activate the next pending item "
+        "atomically. Use action='set' only to initialize or materially rebuild the list."
+    )
+
+
+def _todo_model_context(
+    items: list[dict],
+    *,
+    action: str,
+    changed_items: list[dict] | None = None,
+) -> str:
+    """Return bounded, state-aware context for future model turns."""
+    if not items:
         return (
             f"Todo action '{action}' succeeded. The current todo list is empty. "
             "Do not assume unfinished work remains from an older list."
         )
+
+    summary = _todo_snapshot(items)["summary"]
+    instruction = _todo_next_instruction(items)
+    if action == "set":
+        current = [_context_item(item) for item in items]
+        full_context = (
+            "Todo action 'set' succeeded. This is the complete current todo list "
+            "and execution state:\n"
+            f"{json.dumps(current, indent=2, ensure_ascii=False)}\n"
+            f"Summary: {json.dumps(summary, ensure_ascii=False)}\n"
+            f"{instruction}"
+        )
+        if len(full_context) <= _MAX_TODO_MODEL_CONTEXT_CHARS:
+            return full_context
+
+        active = [item for item in items if item.get("status") == "in_progress"]
+        preview_source = active + [
+            item for item in items if item.get("status") == "pending"
+        ][:5]
+        preview = [_context_item(item) for item in preview_source]
+        return (
+            "Todo action 'set' succeeded. The complete list was omitted from model "
+            "context because it exceeds the context limit; use todo_read when the full "
+            "list is needed.\n"
+            f"Summary: {json.dumps(summary, ensure_ascii=False)}\n"
+            f"Active and next pending preview: "
+            f"{json.dumps(preview, ensure_ascii=False)}\n"
+            f"{instruction}"
+        )
+
+    changes = [_context_item(item) for item in (changed_items or [])[:3]]
     return (
-        f"Todo action '{action}' succeeded. This is the complete current todo list "
-        "and the execution state for the task:\n"
-        f"{json.dumps(current, indent=2, ensure_ascii=False)}\n"
-        "Continue with the single in_progress item. After completing and verifying it, "
-        "call todo_write with action='set' and the complete updated list so the next "
-        "pending item becomes in_progress. Do not execute work unrelated to this list; "
-        "revise the plan and then rebuild the list if the execution scope must change."
+        f"Todo action '{action}' succeeded.\n"
+        f"Summary: {json.dumps(summary, ensure_ascii=False)}\n"
+        f"Changed items: {json.dumps(changes, ensure_ascii=False)}\n"
+        f"{instruction}"
     )
 
 
 class TodoStore:
-    """Lightweight in-memory todo list with optional JSON persistence."""
+    """Lightweight todo list; invalid persisted snapshots fail during loading."""
 
     def __init__(self, persist_path: Path | None = None):
         self._items: dict[str, dict] = {}
@@ -93,69 +214,174 @@ class TodoStore:
         )
 
     def _load(self) -> None:
+        """Load a complete valid snapshot without partially mutating the store."""
+        persist_path = self._persist_path
+        if persist_path is None:
+            return
         try:
-            items = json.loads(self._persist_path.read_text())  # type: ignore[union-attr]
-            for item in items:
-                self._items[item["id"]] = item
-            # Resume counter after highest existing id
-            if self._items:
-                max_id = max(int(i) for i in self._items)
-                self._counter = count(max_id + 1)
-        except Exception:
-            pass
+            loaded = json.loads(persist_path.read_text())
+            _validate_todo_items(loaded)
+            candidate_items = [dict(item) for item in loaded]
+            max_id = max((int(item["id"]) for item in candidate_items), default=0)
+        except (OSError, UnicodeError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid persisted todo state in {persist_path}: {exc}"
+            ) from exc
+
+        self._items = {item["id"]: item for item in candidate_items}
+        self._counter = count(max_id + 1)
+
+    def _commit(self, items: list[dict]) -> None:
+        _validate_todo_items(items)
+        self._items = {str(item["id"]): dict(item) for item in items}
+        self._save()
 
     # -- public API --------------------------------------------------------
 
-    def create(self, task: str, priority: str = "medium", status: str = "pending") -> dict:
-        todo_id = self._next_id()
-        item = {
-            "id": todo_id,
-            "task": task,
+    def create(
+        self,
+        task: str,
+        priority: str = "medium",
+        status: str | None = None,
+    ) -> dict:
+        items = [dict(item) for item in self._items.values()]
+        if status is None:
+            has_unfinished = any(item["status"] != "completed" for item in items)
+            status = "pending" if has_unfinished else "in_progress"
+        new_item = {
+            "task": task.strip(),
             "status": status,
             "priority": priority,
             "created_at": datetime.now().isoformat(),
         }
-        self._items[todo_id] = item
-        self._save()
+        state_error = _todo_state_error([*items, new_item])
+        if state_error:
+            raise ValueError(state_error)
+        todo_id = self._next_id()
+        item = {"id": todo_id, **new_item}
+        items.append(item)
+        self._commit(items)
         return item
 
     def replace(self, todos: list[dict[str, Any]]) -> list[dict]:
-        self._items = {}
-        self._counter = count(1)
+        current = self._items
+        supplied_ids = [
+            str(todo["id"]).strip() for todo in todos if todo.get("id") is not None
+        ]
+        seen_ids: set[str] = set()
+        for todo_id in supplied_ids:
+            if todo_id in seen_ids:
+                raise ValueError(f"Duplicate todo id: {todo_id}.")
+            seen_ids.add(todo_id)
+        unknown_ids = [todo_id for todo_id in supplied_ids if todo_id not in current]
+        if unknown_ids:
+            raise ValueError(
+                f"Todo #{unknown_ids[0]} does not exist; omit id for a new todo."
+            )
+
+        candidate_state = []
         for todo in todos:
-            todo_id = self._next_id()
-            self._items[todo_id] = {
+            supplied_id = todo.get("id")
+            existing = current.get(str(supplied_id).strip()) if supplied_id is not None else None
+            candidate_state.append({
+                "status": str(
+                    todo.get("status")
+                    or (existing or {}).get("status")
+                    or "pending"
+                )
+            })
+        state_error = _todo_state_error(candidate_state)
+        if state_error:
+            raise ValueError(state_error)
+
+        items: list[dict] = []
+        for todo in todos:
+            supplied_id = todo.get("id")
+            if supplied_id is None:
+                todo_id = self._next_id()
+                created_at = datetime.now().isoformat()
+                existing = None
+            else:
+                todo_id = str(supplied_id).strip()
+                existing = current[todo_id]
+                created_at = existing.get("created_at") or datetime.now().isoformat()
+            items.append({
                 "id": todo_id,
                 "task": str(todo["task"]).strip(),
-                "status": str(todo.get("status") or "pending"),
-                "priority": str(todo.get("priority") or "medium"),
-                "created_at": datetime.now().isoformat(),
-            }
-        self._save()
+                "status": str(
+                    todo.get("status")
+                    or (existing or {}).get("status")
+                    or "pending"
+                ),
+                "priority": str(
+                    todo.get("priority")
+                    or (existing or {}).get("priority")
+                    or "medium"
+                ),
+                "created_at": created_at,
+            })
+        self._commit(items)
         return self.list()
 
     def update(self, todo_id: str, *, status: str | None = None, task: str | None = None) -> dict | None:
-        item = self._items.get(todo_id)
-        if item is None:
+        if todo_id not in self._items:
             return None
+        items = [dict(item) for item in self._items.values()]
+        item = next(item for item in items if item["id"] == todo_id)
         if status is not None:
             item["status"] = status
         if task is not None:
-            item["task"] = task
-        self._save()
+            item["task"] = task.strip()
+        self._commit(items)
         return item
 
-    def delete(self, todo_id: str) -> bool:
-        removed = self._items.pop(todo_id, None) is not None
-        if removed:
-            self._save()
+    def delete(self, todo_id: str) -> dict | None:
+        removed = self._items.get(todo_id)
+        if removed is None:
+            return None
+        items = [
+            dict(item) for item in self._items.values() if item["id"] != todo_id
+        ]
+        self._commit(items)
         return removed
 
+    def transition(
+        self,
+        todo_id: str,
+        next_todo_id: str | None = None,
+    ) -> tuple[dict, dict | None] | None:
+        if todo_id not in self._items:
+            return None
+        if next_todo_id == todo_id:
+            raise ValueError("'next_todo_id' must differ from 'todo_id'.")
+
+        items = [dict(item) for item in self._items.values()]
+        current = next(item for item in items if item["id"] == todo_id)
+        if current["status"] != "in_progress":
+            raise ValueError(f"Todo #{todo_id} is not in_progress.")
+        current["status"] = "completed"
+
+        next_item = None
+        if next_todo_id is not None:
+            next_item = next(
+                (item for item in items if item["id"] == next_todo_id),
+                None,
+            )
+            if next_item is None:
+                raise ValueError(f"Todo #{next_todo_id} not found.")
+            if next_item["status"] != "pending":
+                raise ValueError(f"Todo #{next_todo_id} is not pending.")
+            next_item["status"] = "in_progress"
+
+        self._commit(items)
+        return current, next_item
+
     def get(self, todo_id: str) -> dict | None:
-        return self._items.get(todo_id)
+        item = self._items.get(todo_id)
+        return dict(item) if item is not None else None
 
     def list(self, status: str | None = None) -> list[dict]:
-        items = list(self._items.values())
+        items = [dict(item) for item in self._items.values()]
         if status:
             items = [i for i in items if i["status"] == status]
         return items
@@ -163,27 +389,37 @@ class TodoStore:
 
 # ── Tools ───────────────────────────────────────────────────
 
-_VALID_STATUSES = ("pending", "in_progress", "completed")
-_VALID_PRIORITIES = ("high", "medium", "low")
-
-
 class TodoWriteTool(Tool):
-    """Create, replace, update, or delete todo items."""
+    """Create, replace, transition, update, or delete todo items."""
 
     def __init__(self, store: TodoStore):
         self._store = store
 
-    def _result(self, *, content: str, action: str, item: dict | None = None) -> ToolResult:
+    def _result(
+        self,
+        *,
+        content: str,
+        action: str,
+        item: dict | None = None,
+        changed_items: list[dict] | None = None,
+        transition: dict[str, Any] | None = None,
+    ) -> ToolResult:
         items = self._store.list()
         snapshot = _todo_snapshot(items)
         raw_output = {**snapshot, "action": action}
         if item is not None:
             raw_output["item"] = dict(item)
+        if transition is not None:
+            raw_output["transition"] = dict(transition)
         return ToolResult(
             success=True,
             content=content,
             raw_output=raw_output,
-            model_context=_todo_model_context(items, action=action),
+            model_context=_todo_model_context(
+                items,
+                action=action,
+                changed_items=changed_items or ([item] if item is not None else None),
+            ),
         )
 
     @property
@@ -195,10 +431,11 @@ class TodoWriteTool(Tool):
         return (
             "Manage a todo list for tracking multi-step tasks. "
             "Actions: 'set' the full current list in one call, 'create' a new item, "
-            "'update' an existing item's status or text, or 'delete' an item. "
-            "For new or substantially revised multi-step work, and for every progress "
-            "transition, prefer 'set' with the complete ordered todos array so the host "
-            "and model receive the whole current checklist. "
+            "'transition' atomically completes the active item and starts the next, "
+            "'update' changes an existing item, and 'delete' removes an item. "
+            "Use 'set' only for new or substantially revised multi-step work. Preserve "
+            "the id of unchanged existing items in the complete ordered todos array. "
+            "Use 'transition' for normal progress instead of rebuilding the whole list. "
             "If a current plan exists, call plan_read before setting todos. Derive the "
             "todos from plan steps in order and keep the plan's objective, scope, and "
             "verification requirements aligned. A plan step may be split into executable "
@@ -219,23 +456,36 @@ class TodoWriteTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["set", "create", "update", "delete"],
+                    "enum": ["set", "create", "transition", "update", "delete"],
                     "description": "Operation to perform.",
                 },
                 "todos": {
                     "type": "array",
                     "description": (
                         "Complete ordered todo list for action='set'. This replaces the "
-                        "current list. Each item needs task, with optional status and priority."
+                        "current list. Each item requires task and status, with optional "
+                        "priority. When unfinished work remains, the complete list must "
+                        "contain exactly one in_progress item; an empty or fully completed "
+                        "list must contain none."
                     ),
                     "items": {
                         "type": "object",
                         "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": (
+                                    "Existing todo ID to preserve during action='set'. "
+                                    "Omit for a new todo."
+                                ),
+                            },
                             "task": {"type": "string", "description": "Task description."},
                             "status": {
                                 "type": "string",
                                 "enum": list(_VALID_STATUSES),
-                                "description": "Task status. Default: pending.",
+                                "description": (
+                                    "Required task status. Across the complete set payload, "
+                                    "unfinished work requires exactly one in_progress item."
+                                ),
                             },
                             "priority": {
                                 "type": "string",
@@ -243,7 +493,7 @@ class TodoWriteTool(Tool):
                                 "description": "Priority level. Default: medium.",
                             },
                         },
-                        "required": ["task"],
+                        "required": ["task", "status"],
                     },
                 },
                 "task": {
@@ -252,7 +502,17 @@ class TodoWriteTool(Tool):
                 },
                 "todo_id": {
                     "type": "string",
-                    "description": "ID of the todo item (required for 'update' and 'delete').",
+                    "description": (
+                        "ID of the todo item (required for 'transition', 'update', "
+                        "and 'delete')."
+                    ),
+                },
+                "next_todo_id": {
+                    "type": "string",
+                    "description": (
+                        "Pending todo to activate for action='transition'. Omit only "
+                        "when completing the final unfinished todo."
+                    ),
                 },
                 "status": {
                     "type": "string",
@@ -279,43 +539,91 @@ class TodoWriteTool(Tool):
         status: str | None = None,
         priority: str = "medium",
         todos: list[dict[str, Any]] | None = None,
+        next_todo_id: str | None = None,
     ) -> ToolResult:
-        if action == "set":
-            validation_error = self._validate_todos(todos)
-            if validation_error:
-                return ToolResult(success=False, error=validation_error)
-            items = self._store.replace(todos or [])
-            return self._result(
-                content=f"Set todo list with {len(items)} item{'s' if len(items) != 1 else ''}.",
-                action="set",
-            )
+        try:
+            if action == "set":
+                validation_error = self._validate_todos(todos)
+                if validation_error:
+                    return ToolResult(success=False, error=validation_error)
+                items = self._store.replace(todos or [])
+                return self._result(
+                    content=(
+                        f"Set todo list with {len(items)} "
+                        f"item{'s' if len(items) != 1 else ''}."
+                    ),
+                    action="set",
+                )
 
-        if action == "create":
-            if not task:
-                return ToolResult(success=False, error="'task' is required for create.")
-            item = self._store.create(task, priority, status or "pending")
-            return self._result(content=f"Created todo #{item['id']}: {task}", action="create", item=item)
+            if action == "create":
+                if not task or not task.strip():
+                    return ToolResult(success=False, error="'task' is required for create.")
+                if status is not None and status not in _VALID_STATUSES:
+                    return ToolResult(success=False, error=f"Invalid status: {status}.")
+                if priority not in _VALID_PRIORITIES:
+                    return ToolResult(success=False, error=f"Invalid priority: {priority}.")
+                item = self._store.create(task, priority, status)
+                return self._result(
+                    content=f"Created todo #{item['id']}: {item['task']}",
+                    action="create",
+                    item=item,
+                )
 
-        if action == "update":
-            if not todo_id:
-                return ToolResult(success=False, error="'todo_id' is required for update.")
-            item = self._store.update(todo_id, status=status, task=task)
-            if item is None:
-                return ToolResult(success=False, error=f"Todo #{todo_id} not found.")
-            return self._result(
-                content=f"Updated todo #{todo_id}: [{item['status']}] {item['task']}",
-                action="update",
-                item=item,
-            )
+            if action == "transition":
+                if not todo_id:
+                    return ToolResult(
+                        success=False,
+                        error="'todo_id' is required for transition.",
+                    )
+                changed = self._store.transition(todo_id, next_todo_id)
+                if changed is None:
+                    return ToolResult(success=False, error=f"Todo #{todo_id} not found.")
+                completed, next_item = changed
+                transition = {
+                    "completed_id": completed["id"],
+                    "in_progress_id": next_item["id"] if next_item else None,
+                }
+                content = f"Completed todo #{completed['id']}."
+                if next_item is not None:
+                    content += f" Started todo #{next_item['id']}: {next_item['task']}"
+                return self._result(
+                    content=content,
+                    action="transition",
+                    changed_items=[item for item in changed if item is not None],
+                    transition=transition,
+                )
 
-        if action == "delete":
-            if not todo_id:
-                return ToolResult(success=False, error="'todo_id' is required for delete.")
-            if not self._store.delete(todo_id):
-                return ToolResult(success=False, error=f"Todo #{todo_id} not found.")
-            return self._result(content=f"Deleted todo #{todo_id}.", action="delete")
+            if action == "update":
+                if not todo_id:
+                    return ToolResult(success=False, error="'todo_id' is required for update.")
+                if status is not None and status not in _VALID_STATUSES:
+                    return ToolResult(success=False, error=f"Invalid status: {status}.")
+                if task is not None and not task.strip():
+                    return ToolResult(success=False, error="'task' must not be empty.")
+                item = self._store.update(todo_id, status=status, task=task)
+                if item is None:
+                    return ToolResult(success=False, error=f"Todo #{todo_id} not found.")
+                return self._result(
+                    content=f"Updated todo #{todo_id}: [{item['status']}] {item['task']}",
+                    action="update",
+                    item=item,
+                )
 
-        return ToolResult(success=False, error=f"Unknown action: {action}")
+            if action == "delete":
+                if not todo_id:
+                    return ToolResult(success=False, error="'todo_id' is required for delete.")
+                removed = self._store.delete(todo_id)
+                if removed is None:
+                    return ToolResult(success=False, error=f"Todo #{todo_id} not found.")
+                return self._result(
+                    content=f"Deleted todo #{todo_id}.",
+                    action="delete",
+                    changed_items=[removed],
+                )
+
+            return ToolResult(success=False, error=f"Unknown action: {action}")
+        except ValueError as exc:
+            return ToolResult(success=False, error=str(exc))
 
     @staticmethod
     def _validate_todos(todos: list[dict[str, Any]] | None) -> str | None:
@@ -329,7 +637,11 @@ class TodoWriteTool(Tool):
             task = str(todo.get("task") or "").strip()
             if not task:
                 return f"'task' is required for todo #{index}."
-            status = str(todo.get("status") or "pending")
+            if "id" in todo and not str(todo.get("id") or "").strip():
+                return f"Invalid id for todo #{index}."
+            if not str(todo.get("status") or "").strip():
+                return f"'status' is required for todo #{index}."
+            status = str(todo["status"])
             if status not in _VALID_STATUSES:
                 return f"Invalid status for todo #{index}: {status}."
             priority = str(todo.get("priority") or "medium")
@@ -373,19 +685,34 @@ class TodoReadTool(Tool):
         }
 
     async def execute(self, todo_id: str | None = None, status: str | None = None) -> ToolResult:
+        all_items = self._store.list()
+        snapshot = _todo_snapshot(all_items)
+
         # Single item lookup
         if todo_id:
             item = self._store.get(todo_id)
             if item is None:
                 return ToolResult(success=False, error=f"Todo #{todo_id} not found.")
-            return ToolResult(success=True, content=self._format_items([item]), raw_output=_todo_snapshot([item]))
+            return ToolResult(
+                success=True,
+                content=self._format_items([item]),
+                raw_output=snapshot,
+            )
 
         # List (optionally filtered)
-        items = self._store.list(status)
+        items = [item for item in all_items if status is None or item["status"] == status]
         if not items:
             label = f" ({status})" if status else ""
-            return ToolResult(success=True, content=f"No todo items{label}.", raw_output=_todo_snapshot([]))
-        return ToolResult(success=True, content=self._format_items(items), raw_output=_todo_snapshot(items))
+            return ToolResult(
+                success=True,
+                content=f"No todo items{label}.",
+                raw_output=snapshot,
+            )
+        return ToolResult(
+            success=True,
+            content=self._format_items(items),
+            raw_output=snapshot,
+        )
 
     @staticmethod
     def _format_items(items: list[dict]) -> str:
