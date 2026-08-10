@@ -201,27 +201,27 @@ Todo tools emit host-friendly snapshots through tool-call result `rawOutput`:
 ```json
 {
   "type": "todo_snapshot",
-  "action": "create",
-  "item": {
-    "id": "1",
-    "task": "Plan host integration",
-    "status": "pending",
-    "priority": "medium",
-    "created_at": "..."
-  },
+  "action": "set",
   "items": [
     {
       "id": "1",
       "task": "Plan host integration",
+      "status": "in_progress",
+      "priority": "medium",
+      "created_at": "..."
+    },
+    {
+      "id": "2",
+      "task": "Verify host snapshot",
       "status": "pending",
       "priority": "medium",
       "created_at": "..."
     }
   ],
   "summary": {
-    "total": 1,
+    "total": 2,
     "completed": 0,
-    "in_progress": 0,
+    "in_progress": 1,
     "pending": 1
   }
 }
@@ -231,6 +231,10 @@ Host behavior:
 
 - Render this as a checklist/task panel.
 - Replace the current todo state with `items` for that session or message scope.
+- Treat every `todo_snapshot` as a complete snapshot, including results from filtered or single-item `todo_read` calls.
+- Use stable `items[].id` values as task identity. `set` preserves supplied existing IDs and allocates new IDs only for new tasks.
+- Every item in a non-empty `set` request must include `status`. While unfinished work remains, the complete list must contain exactly one `in_progress` item; empty or fully completed lists contain none.
+- `action: "transition"` may include an optional `transition` object with `completed_id` and `in_progress_id`; hosts do not need this field to consume the complete snapshot.
 - Do not classify `todo_write` as sub-agent work just because `rawInput.task` exists.
 - A `todo_read` result also includes `todo_snapshot`; it may omit `action` and `item`.
 

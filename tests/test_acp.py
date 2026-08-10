@@ -300,7 +300,38 @@ class TodoLLM:
                         type="function",
                         function=FunctionCall(
                             name="todo_write",
-                            arguments={"action": "create", "task": "Plan host integration"},
+                            arguments={
+                                "action": "set",
+                                "todos": [
+                                    {
+                                        "task": "Plan host integration",
+                                        "status": "in_progress",
+                                    },
+                                    {
+                                        "task": "Verify host snapshot",
+                                        "status": "pending",
+                                    },
+                                ],
+                            },
+                        ),
+                    )
+                ],
+            )
+        elif self.calls == 2:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="todo2",
+                        type="function",
+                        function=FunctionCall(
+                            name="todo_write",
+                            arguments={
+                                "action": "transition",
+                                "todo_id": "1",
+                                "next_todo_id": "2",
+                            },
                         ),
                     )
                 ],
@@ -3660,11 +3691,28 @@ async def test_acp_emits_todo_snapshot_raw_output(tmp_path):
     )
 
     assert response.stopReason == "end_turn"
-    assert any(
-        getattr(update.update, "rawOutput", None)
-        and update.update.rawOutput.get("type") == "todo_snapshot"
-        and update.update.rawOutput["items"][0]["task"] == "Plan host integration"
+    todo_snapshots = [
+        update.update.rawOutput
         for update in conn.updates
+        if getattr(update.update, "rawOutput", None)
+        and update.update.rawOutput.get("type") == "todo_snapshot"
+    ]
+    assert any(
+        snapshot["action"] == "set"
+        and [item["task"] for item in snapshot["items"]]
+        == ["Plan host integration", "Verify host snapshot"]
+        and snapshot["summary"]
+        == {"total": 2, "completed": 0, "in_progress": 1, "pending": 1}
+        for snapshot in todo_snapshots
+    )
+    assert any(
+        snapshot["action"] == "transition"
+        and [item["id"] for item in snapshot["items"]] == ["1", "2"]
+        and [item["status"] for item in snapshot["items"]]
+        == ["completed", "in_progress"]
+        and snapshot["transition"]
+        == {"completed_id": "1", "in_progress_id": "2"}
+        for snapshot in todo_snapshots
     )
 
 

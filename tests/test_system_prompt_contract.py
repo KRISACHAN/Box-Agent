@@ -9,8 +9,16 @@ def test_system_prompt_keeps_todo_separate_from_factual_evidence():
     assert "不含新任务的确认词而新建 plan" in prompt
     assert "todo_write` 只记录执行进度" in prompt
     assert "不是事实证据、检索策略或结论来源" in prompt
-    assert "完成一项立即标为 `completed`" in prompt
-    assert "开始下一项前先把下一项标为 `in_progress`" in prompt
+    assert "完成并验证后立即用 `transition` 推进" in prompt
+    assert "已有 plan，新建或重建 todo 前必须先调用 `plan_read`" in prompt
+    assert "todo 必须按 `plan.steps` 的原顺序派生" in prompt
+    assert "先用 `plan_write` 把 plan 标为 `revised`" in prompt
+    assert "初始化清单或 plan 实质修订后" in prompt
+    assert "正常推进用 `action=\"transition\"`" in prompt
+    assert "为未变化的已有 Todo 保留 `id`" in prompt
+    assert "列表为空或全部完成时允许没有 `in_progress`" in prompt
+    assert "否则必须恰好有一个 `in_progress`" in prompt
+    assert "只执行唯一的 `in_progress` 项" in prompt
     assert "任务计划显示完成只代表步骤执行完毕，不代表事实已核实" in prompt
 
 
