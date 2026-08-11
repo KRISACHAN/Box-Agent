@@ -1,6 +1,7 @@
 """Test cases for MCP tool loading and Git-based MCP servers."""
 
 import asyncio
+import inspect
 import json
 import sys
 import tempfile
@@ -28,6 +29,13 @@ from box_agent.tools.base import Tool, ToolResult
 def test_streamable_http_client_is_available():
     """The loader resolves the client exported by the installed MCP SDK."""
     assert callable(mcp_loader.streamable_http_client)
+
+
+def test_streamable_http_client_accepts_loader_options():
+    """The selected SDK client must accept every option passed by the loader."""
+    parameters = inspect.signature(mcp_loader.streamable_http_client).parameters
+
+    assert {"headers", "timeout", "sse_read_timeout", "auth"} <= parameters.keys()
 
 
 class NamedDummyTool(Tool):
