@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Final
 
 from ..artifacts import OUTPUT_SUBDIR
+from ..config import ToolLimitsConfig
 from ..delivery import strip_negated_format_clauses
 from ..loop_guards import (
-    DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
     CompletionGate,
     artifact_signatures_for_globs,
@@ -17,6 +17,7 @@ from ..loop_guards import (
 from .presentation_contract import (
     PRESENTATION_DELIVERY_KEYWORDS,
     RESEARCH_MODE_OPTION,
+    RESEARCH_ROUND_LIMIT_OPTION,
     WORKFLOW_KIND,
 )
 from .presentation_preflight import classify_presentation_request
@@ -186,6 +187,7 @@ def build_presentation_completion_gate(
     workspace_dir: str | Path,
     *,
     confirmed_presentation: bool = False,
+    tool_limits: ToolLimitsConfig | None = None,
 ) -> CompletionGate | None:
     """Build the presentation workflow gate, or return None for another router."""
     if not confirmed_presentation and classify_presentation_request(user_text) is None:
@@ -212,6 +214,8 @@ def build_presentation_completion_gate(
         )
 
     research_mode = _research_mode(user_text)
+    effective_tool_limits = tool_limits or ToolLimitsConfig()
+    limits = effective_tool_limits.presentation
     return CompletionGate(
         required_changed_artifact_globs=patterns,
         baseline_artifact_signatures=artifact_signatures_for_globs(
@@ -226,15 +230,22 @@ def build_presentation_completion_gate(
         ),
         max_continuations=3,
         deadline_seconds=900.0,
-        max_tool_calls=80 if research_mode == "deep" else 64,
+        max_tool_calls=(
+            limits.deep_research_max_tool_calls
+            if research_mode == "deep"
+            else limits.max_tool_calls
+        ),
         web_search_total_limit=(
-            DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT
+            effective_tool_limits.web_search.deep_research_total_calls
             if research_mode == "deep"
             else None
         ),
         budget_exempt_tools=_PRESENTATION_BUDGET_EXEMPT_TOOLS,
-        completion_reserve_tool_calls=10,
+        completion_reserve_tool_calls=limits.completion_reserve_calls,
         pause_tools=frozenset({"request_user_input"}),
         workflow_checkpoint_kind=WORKFLOW_KIND,
-        workflow_options={RESEARCH_MODE_OPTION: research_mode},
+        workflow_options={
+            RESEARCH_MODE_OPTION: research_mode,
+            RESEARCH_ROUND_LIMIT_OPTION: limits.research_rounds,
+        },
     )

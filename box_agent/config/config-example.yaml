@@ -63,10 +63,13 @@ retry:
   exponential_base: 2.0 # Exponential backoff base (delay = initial_delay * base^attempt)
 
 # ===== Agent Configuration =====
-max_steps: 200 # Maximum execution steps
+# Runtime defaults live in AgentConfig; uncomment only deliberate overrides so
+# packaged runtime updates can revise defaults without rewriting user config.
+# max_steps: 300 # Maximum execution steps
 max_parallel_tools: 8 # Hard cap on concurrent parallel_safe tool calls (sub_agent, generate_image) per step
 parallel_tool_timeout_seconds: 900 # Per-step wall-clock cap for one parallel_safe tool batch
-sub_agent_batch_synthesis_timeout_seconds: 300 # batch_files synthesis call; 0 disables this extra cap
+# sub_agent_token_limit: 50000 # Per-call child context budget
+# sub_agent_batch_synthesis_timeout_seconds: 600 # batch_files synthesis call; 0 disables this extra cap
 workspace_dir: "./workspace" # Working directory
 system_prompt_path: "system_prompt.md" # System prompt file (same config directory)
 analysis_prompt_path: "analysis_prompt.md" # Extra prompt for data_analysis sessions
@@ -79,6 +82,34 @@ code_prompt_path: "code_prompt.md" # Extra prompt for code_agent sessions
 retry_on_suspected_truncation: true # Auto-continue a reply cut off mid-sentence
 context_resource_dedup_enabled: true # Session-local read_file receipts and reconstructable resource shedding
 max_truncation_continuations: 1 # Max continuations per turn (loop guard)
+
+# ===== Optional Tool Execution Limit Overrides =====
+# Tool-limit defaults live only in box_agent/config.py. Keep this block absent
+# to inherit the defaults shipped by each runtime update. Uncomment only the
+# specific values that should remain user-controlled across upgrades.
+# tool_limits:
+#   general:
+#     final_summary_after_calls: 200 # 1..512; request a final summary after this many visible tool calls
+#     wrapup_remaining_steps: 15 # 0..50; start wrapping up this many steps before max_steps
+#   web_search:
+#     batch_size: 8 # 1..32; web searches allowed in one agent step
+#     total_calls: 80 # 0..512; ordinary per-turn web-search budget
+#     deep_research_total_calls: 150 # 0..512; deep-research per-turn web-search budget
+#   search_files:
+#     consecutive_empty_limit: 8 # 1..50; stop repeated file searches after empty results
+#   external_skill:
+#     max_tool_calls: 160 # 1..512; total tool-call budget
+#     completion_reserve_calls: 20 # 0..128 and <= max_tool_calls
+#   presentation:
+#     max_tool_calls: 160 # 1..512; normal presentation budget
+#     completion_reserve_calls: 20 # 0..128 and <= both presentation call budgets
+#     deep_research_max_tool_calls: 240 # 1..512; deep-research presentation budget
+#     research_rounds: 5 # 1..20; research rounds before requiring artifact handoff
+#   sub_agent:
+#     general_max_steps: 80 # 1..256; declared sub-agent step cap
+#     general_max_tool_calls: 48 # 1..256; declared sub-agent tool-call cap
+#     legacy_max_steps: 80 # 1..256; fallback sub-agent loop step cap
+#     no_progress_steps: 8 # 1..50; stop after consecutive no-progress steps
 
 # ===== Memory Configuration =====
 enable_memory: true # Enable cross-session memory system

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from ..config import ToolLimitsConfig
 from ..loop_guards import CompletionGate
 from .presentation_checkpoint import (
     CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
@@ -16,6 +17,7 @@ from .presentation_routing import build_presentation_completion_gate
 
 def recover_presentation_completion_gate(
     workspace_dir: str | Path,
+    tool_limits: ToolLimitsConfig | None = None,
 ) -> CompletionGate | None:
     """Recover an incomplete presentation gate from canonical artifacts."""
     workspace = Path(workspace_dir)
@@ -35,7 +37,11 @@ def recover_presentation_completion_gate(
     if not has_checkpoint:
         return None
 
-    gate = build_presentation_completion_gate("继续制作 PPT", workspace)
+    gate = build_presentation_completion_gate(
+        "继续制作 PPT",
+        workspace,
+        tool_limits=tool_limits,
+    )
     if gate is None:
         return None
     gate = replace(

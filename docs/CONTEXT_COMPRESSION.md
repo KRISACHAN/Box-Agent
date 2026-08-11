@@ -437,7 +437,7 @@ No provider-specific branching anywhere in the compression path.
   `ContentEvent`, etc. The model's view and the user's view diverge
   intentionally.
 - **Sub-agent.** `SubAgentTool` runs `run_agent_loop` with its own
-  `token_limit` (default `40_000`); all compression layers apply
+  `token_limit` (default `50_000`); all compression layers apply
   independently to the sub-agent's message list.
 
 ## Tests

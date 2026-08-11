@@ -35,6 +35,7 @@ from .artifacts import (
     safe_output_name,
 )
 from .cache_fingerprint import build_cache_fingerprint
+from .config import AgentConfig, ToolLimitsConfig
 from .context_resources import (
     ContextResourceLedger,
     HistoryTransformResult,
@@ -83,12 +84,8 @@ from .model_history import (
 from .loop_guards import (
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
-    SEARCH_FILES_EMPTY_RESULT_LIMIT,
     SEARCH_FILES_TOOL_NAME,
-    TOOL_CALL_LIMITS,
-    WEB_SEARCH_BATCH_SIZE,
     WEB_SEARCH_TOOL_NAME,
-    WRAPUP_REMAINING,
     STREAM_REPEAT_MIN_CHUNKS,
     CompletionGate,
     completion_budget_reserve_text,
@@ -116,6 +113,7 @@ from .loop_guards import (
 __all__ = ["run_agent_loop", "CompletionGate"]
 
 _log = logging.getLogger(__name__)
+_DEFAULT_AGENT_CONFIG = AgentConfig()
 PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import EventEmittingTool, Tool, ToolResult
@@ -195,13 +193,18 @@ _PLAN_APPROVAL_SKIP_MESSAGE = (
 
 _PLAN_APPROVAL_DONE_CONTENT = "计划已生成，等待用户确认后再执行。"
 
-FINAL_SUMMARY_TOOL_CALL_THRESHOLD: Final[int] = 50
+FINAL_SUMMARY_TOOL_CALL_THRESHOLD: Final[int] = (
+    ToolLimitsConfig().general.final_summary_after_calls
+)
 
 
-def final_summary_wrapup_text(tool_call_count: int) -> str:
+def final_summary_wrapup_text(
+    tool_call_count: int,
+    threshold: int = FINAL_SUMMARY_TOOL_CALL_THRESHOLD,
+) -> str:
     return (
         "This turn has used many visible tool calls "
-        f"({tool_call_count}, threshold {FINAL_SUMMARY_TOOL_CALL_THRESHOLD}). "
+        f"({tool_call_count}, threshold {threshold}). "
         "Stop calling tools now unless a single, clearly required verification step is impossible to skip. "
         "If a deliverable is still incomplete, state the concrete gap and next action instead of continuing tool work. "
         "The final user-visible response must be a concise conclusion, "
@@ -2381,7 +2384,8 @@ async def run_agent_loop(
     llm,
     messages: list[Message],
     tools: dict[str, Tool],
-    max_steps: int = 200,
+    max_steps: int = _DEFAULT_AGENT_CONFIG.max_steps,
+    tool_limits: ToolLimitsConfig | None = None,
     max_tool_calls: int | None = None,
     web_search_total_limit: int | None = None,
     token_limit: int = 113400,
@@ -2435,6 +2439,7 @@ async def run_agent_loop(
         messages: Message history (mutated in-place).
         tools: ``{name: Tool}`` dict.
         max_steps: Maximum LLM call iterations.
+        tool_limits: Typed product limits for search, wrap-up, and child workflows.
         max_tool_calls: Optional hard cap across all tool executions in this loop.
         web_search_total_limit: Optional per-turn web search override.
         token_limit: Token threshold for triggering summarization.
@@ -2504,6 +2509,15 @@ async def run_agent_loop(
             optimization without changing visible tool execution.
     """
     cancelled = is_cancelled or (lambda: False)
+    effective_tool_limits = tool_limits or ToolLimitsConfig()
+    web_search_batch_size = effective_tool_limits.web_search.batch_size
+    search_files_empty_result_limit = (
+        effective_tool_limits.search_files.consecutive_empty_limit
+    )
+    wrapup_remaining_steps = effective_tool_limits.general.wrapup_remaining_steps
+    final_summary_after_calls = (
+        effective_tool_limits.general.final_summary_after_calls
+    )
     resource_ledger = (
         context_resource_ledger or ContextResourceLedger()
         if context_resource_dedup_enabled
@@ -2521,7 +2535,9 @@ async def run_agent_loop(
         if completion_gate is not None
         else frozenset()
     )
-    tool_call_limits = dict(TOOL_CALL_LIMITS)
+    tool_call_limits = {
+        WEB_SEARCH_TOOL_NAME: effective_tool_limits.web_search.total_calls,
+    }
     if (
         web_search_total_limit is None
         and completion_gate is not None
@@ -2666,7 +2682,7 @@ async def run_agent_loop(
     empty_args_signature: tuple[str, ...] | None = None
     empty_args_repeats = 0
 
-    # Near-limit wrap-up: when only WRAPUP_REMAINING steps are left, inject a
+    # Near-limit wrap-up: when only the configured trailing steps are left, inject a
     # one-shot instruction telling the model to stop gathering more material
     # (tool calls / searches) and synthesize a final answer from what it
     # already has, instead of burning the last steps and exiting with a
@@ -2912,12 +2928,12 @@ async def run_agent_loop(
                 )
                 yield InjectedMessageEvent(content=budget_text, injection_id=None, user_visible=False)
         if (
-            search_files_consecutive_empty_results >= SEARCH_FILES_EMPTY_RESULT_LIMIT
+            search_files_consecutive_empty_results >= search_files_empty_result_limit
             and not search_files_empty_guidance_injected
         ):
             search_files_empty_guidance_injected = True
             guidance = search_files_empty_result_guidance(
-                SEARCH_FILES_EMPTY_RESULT_LIMIT
+                search_files_empty_result_limit
             )
             messages.append(
                 Message(role="user", content=format_injected_message(guidance))
@@ -3170,8 +3186,8 @@ async def run_agent_loop(
         # material before the step budget is exhausted.
         if (
             not wrapup_injected
-            and max_steps > WRAPUP_REMAINING
-            and step >= max_steps - WRAPUP_REMAINING
+            and max_steps > wrapup_remaining_steps
+            and step >= max_steps - wrapup_remaining_steps
         ):
             wrapup_injected = True
             wrapup_text = near_limit_wrapup_text(step, max_steps)
@@ -4129,10 +4145,10 @@ async def run_agent_loop(
             if (
                 tool_name == SEARCH_FILES_TOOL_NAME
                 and search_files_consecutive_empty_results
-                >= SEARCH_FILES_EMPTY_RESULT_LIMIT
+                >= search_files_empty_result_limit
             ):
                 return False, search_files_empty_result_message(
-                    SEARCH_FILES_EMPTY_RESULT_LIMIT
+                    search_files_empty_result_limit
                 )
             is_workflow_budget_exempt = (
                 workflow_policy is not None
@@ -4223,11 +4239,11 @@ async def run_agent_loop(
                     f"It substantially overlaps {duplicate_query!r}. Use the evidence already "
                     "returned and search a genuinely different evidence gap.",
                 )
-            if web_search_step_executed >= WEB_SEARCH_BATCH_SIZE:
+            if web_search_step_executed >= web_search_batch_size:
                 web_search_step_deferred += 1
                 return (
                     False,
-                    f"web_search deferred by runtime batching (batch size {WEB_SEARCH_BATCH_SIZE}). "
+                    f"web_search deferred by runtime batching (batch size {web_search_batch_size}). "
                     "Review the current batch results and re-issue only still-missing, non-duplicate queries.",
                 )
 
@@ -5292,7 +5308,7 @@ async def run_agent_loop(
                 (
                     f"- Executed this batch: {web_search_step_executed}; "
                     f"total executed this turn: {total_web_search_calls}/{web_search_total_limit}; "
-                    f"batch size: {WEB_SEARCH_BATCH_SIZE}."
+                    f"batch size: {web_search_batch_size}."
                 ),
             ]
             if web_search_step_deferred:
@@ -5322,14 +5338,14 @@ async def run_agent_loop(
             else:
                 guidance_lines.append(
                     f"- Before searching again, inspect the deduped evidence. If gaps remain, issue at most "
-                    f"{WEB_SEARCH_BATCH_SIZE} new, specific, non-duplicate web_search queries."
+                    f"{web_search_batch_size} new, specific, non-duplicate web_search queries."
                 )
             guidance_text = "\n".join(guidance_lines)
             messages.append(Message(role="user", content=format_injected_message(guidance_text)))
             yield InjectedMessageEvent(content=guidance_text, injection_id=None, user_visible=False)
 
         if (
-            visible_tool_call_total > FINAL_SUMMARY_TOOL_CALL_THRESHOLD
+            visible_tool_call_total > final_summary_after_calls
             and not final_summary_guidance_injected
             # Controlled presentations already have a filesystem-backed next
             # action, a total delivery budget, and a completion gate.  A generic
@@ -5342,7 +5358,10 @@ async def run_agent_loop(
             )
         ):
             final_summary_guidance_injected = True
-            summary_text = final_summary_wrapup_text(visible_tool_call_total)
+            summary_text = final_summary_wrapup_text(
+                visible_tool_call_total,
+                final_summary_after_calls,
+            )
             messages.append(Message(role="user", content=format_injected_message(summary_text)))
             yield InjectedMessageEvent(content=summary_text, injection_id=None, user_visible=False)
 

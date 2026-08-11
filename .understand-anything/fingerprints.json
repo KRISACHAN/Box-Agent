@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "3332073f57dd59a585a317d6160afaa523f0434e",
-  "generatedAt": "2026-07-28T15:58:38.763Z",
+  "gitCommitHash": "e2079027544fc540d1b2c480d10c012230fd6048",
+  "generatedAt": "2026-08-11T01:44:16.681Z",
   "files": {
     ".github/ISSUE_TEMPLATE/bug_report.md": {
       "filePath": ".github/ISSUE_TEMPLATE/bug_report.md",
@@ -75,12 +75,12 @@
     },
     "AGENTS.md": {
       "filePath": "AGENTS.md",
-      "contentHash": "c1e273adea90762a4262835d06c40f954f194874420a4a70e7367d4834740117",
+      "contentHash": "0fc7ac53cb91d85cf686dc4ba4b0f312cf5903d5f9c6aa11758783020bdd680b",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 38,
+      "totalLines": 67,
       "hasStructuralAnalysis": true
     },
     "box_agent/__init__.py": {
@@ -165,7 +165,7 @@
     },
     "box_agent/acp/__init__.py": {
       "filePath": "box_agent/acp/__init__.py",
-      "contentHash": "74f81a38eb59957cc722d525778e7bc804c6c2f1cb146e9987800a342908e725",
+      "contentHash": "aeda32d45af18021c590dedd7623007b99a492c78df312a1a761ab51f974bd5f",
       "functions": [
         {
           "name": "_artifact_envelope",
@@ -243,6 +243,15 @@
           "returnType": "str",
           "exported": true,
           "lineCount": 8
+        },
+        {
+          "name": "_normalize_llm_binding",
+          "params": [
+            "meta"
+          ],
+          "returnType": "dict[str, str] | None",
+          "exported": true,
+          "lineCount": 17
         },
         {
           "name": "_plan_approval_from_meta",
@@ -386,7 +395,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 213
+          "lineCount": 224
         },
         {
           "name": "main",
@@ -427,10 +436,12 @@
           "methods": [],
           "properties": [
             "agent",
+            "session_llm",
             "cancelled",
             "output_dir",
             "artifact_mode",
             "session_mode",
+            "llm_binding",
             "permission_engine",
             "grant_store",
             "memory_extractor",
@@ -445,6 +456,7 @@
             "skill_selector",
             "expert_context",
             "upstream_session_id",
+            "upstream_title",
             "force_plan_start",
             "require_plan_approval",
             "pending_plan_approval",
@@ -457,15 +469,19 @@
             "source_text",
             "pending_completion_gate",
             "waiting_for_user_input",
-            "last_error"
+            "last_error",
+            "last_error_code",
+            "last_error_category",
+            "last_checkpoint"
           ],
           "exported": true,
-          "lineCount": 35
+          "lineCount": 41
         },
         {
           "name": "BoxACPAgent",
           "methods": [
             "__init__",
+            "_llm_for_binding",
             "_set_agent_system_prompt",
             "_strip_auto_loaded_skills",
             "_sync_cache_fingerprint_context",
@@ -489,6 +505,7 @@
             "cancel",
             "_apply_goal_action",
             "extMethod",
+            "_presentation_preflight",
             "_llm_prompt",
             "_memory_proposal_list",
             "_memory_proposal_apply",
@@ -499,7 +516,7 @@
             "_SESSION_UPDATE_TIMEOUT_SECONDS"
           ],
           "exported": true,
-          "lineCount": 2442
+          "lineCount": 2908
         },
         {
           "name": "_PermissionNegotiator",
@@ -695,6 +712,7 @@
           "specifiers": [
             "ArtifactEvent",
             "ContentEvent",
+            "ContextCheckpointEvent",
             "DoneEvent",
             "ErrorEvent",
             "InjectedMessageEvent",
@@ -715,7 +733,8 @@
         {
           "source": "box_agent.llm",
           "specifiers": [
-            "LLMClient"
+            "LLMClient",
+            "SessionBoundLLM"
           ]
         },
         {
@@ -732,6 +751,8 @@
             "build_auto_completion_gate",
             "cancels_pending_completion_gate",
             "completion_gate_has_workflow_lifecycle",
+            "pending_completion_gate_for_storage",
+            "rebase_pending_completion_gate",
             "should_resume_pending_completion_gate"
           ]
         },
@@ -745,7 +766,17 @@
         {
           "source": "box_agent.workflows",
           "specifiers": [
-            "recover_completion_gate"
+            "CONTROLLED_PRESENTATION_WORKFLOW_KIND",
+            "EXTERNAL_SKILL_WORKFLOW_KIND",
+            "build_external_skill_completion_gate",
+            "build_presentation_preflight_analysis_text",
+            "build_presentation_preflight_result",
+            "build_presentation_recommendation_prompt",
+            "load_presentation_preflight_config",
+            "parse_host_presentation_config",
+            "recover_completion_gate",
+            "resolve_explicit_skill_invocation",
+            "resolve_presentation_skill_provider"
           ]
         },
         {
@@ -838,7 +869,15 @@
             "document_preload_skill_names",
             "host_runtime_preload_skill_names",
             "strip_auto_loaded_skills",
-            "turn_preload_skill_names"
+            "turn_preload_skill_names",
+            "web_search_total_limit_for_active_skills"
+          ]
+        },
+        {
+          "source": "box_agent.workspace_registry",
+          "specifiers": [
+            "WorkspaceRegistry",
+            "WorkspaceRegistryError"
           ]
         },
         {
@@ -859,6 +898,7 @@
         "_remove_inject_queue_item",
         "_meta_bool",
         "_meta_string",
+        "_normalize_llm_binding",
         "_plan_approval_from_meta",
         "_plan_approval_is_approved",
         "_looks_like_plan_approval_text",
@@ -880,7 +920,7 @@
         "run_acp_server",
         "main"
       ],
-      "totalLines": 3753,
+      "totalLines": 4273,
       "hasStructuralAnalysis": true
     },
     "box_agent/acp/action_hints.py": {
@@ -1127,7 +1167,7 @@
     },
     "box_agent/acp/env_context.py": {
       "filePath": "box_agent/acp/env_context.py",
-      "contentHash": "937b321260ec70d5aa98c6623971b94bf14adc3e2da611890db4d8ae6a87ec44",
+      "contentHash": "ec3d3780a48b21cdcc055b978d8e6a128697fb0ef4b9fb5b677580067d361391",
       "functions": [
         {
           "name": "_has_unsafe_chars",
@@ -1266,7 +1306,7 @@
           ],
           "returnType": "list[str]",
           "exported": true,
-          "lineCount": 67
+          "lineCount": 71
         },
         {
           "name": "_format_image_service",
@@ -1456,7 +1496,7 @@
         "_format_obsidian",
         "build_env_context_prompt"
       ],
-      "totalLines": 673,
+      "totalLines": 677,
       "hasStructuralAnalysis": true
     },
     "box_agent/acp/follow_up_suggestions.py": {
@@ -1809,7 +1849,7 @@
     },
     "box_agent/agent.py": {
       "filePath": "box_agent/agent.py",
-      "contentHash": "bd362432c30dae24a38c4ddf6c5a012d02882c9d626fc87816303412475620f8",
+      "contentHash": "683d3d28d80ddd8ffb2863f57b7bc7db21b04f4c0f85f2d400aae5d13b8c2b1e",
       "functions": [
         {
           "name": "_clean_goal_text",
@@ -1922,12 +1962,15 @@
             "memory_turn_id",
             "inject_queue",
             "session_id",
+            "turn_id",
+            "title",
             "force_plan_start",
             "require_plan_approval",
             "plan_approval",
             "plan_start_text",
             "pause_after_plan_write",
             "max_tool_calls",
+            "web_search_total_limit",
             "no_progress_limit",
             "completion_gate",
             "artifact_detection_enabled",
@@ -1938,7 +1981,7 @@
             "current_turn_text"
           ],
           "exported": true,
-          "lineCount": 33
+          "lineCount": 36
         },
         {
           "name": "Colors",
@@ -2023,7 +2066,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 640
+          "lineCount": 670
         }
       ],
       "imports": [
@@ -2097,6 +2140,7 @@
             "AgentEvent",
             "ArtifactEvent",
             "ContentEvent",
+            "ContextCheckpointEvent",
             "DoneEvent",
             "ErrorEvent",
             "InjectedMessageEvent",
@@ -2112,6 +2156,12 @@
             "TokenUsageEvent",
             "ToolCallResult",
             "ToolCallStart"
+          ]
+        },
+        {
+          "source": ".context_resources",
+          "specifiers": [
+            "ContextResourceLedger"
           ]
         },
         {
@@ -2188,7 +2238,7 @@
         "_format_size",
         "Agent"
       ],
-      "totalLines": 1093,
+      "totalLines": 1128,
       "hasStructuralAnalysis": true
     },
     "box_agent/artifacts.py": {
@@ -2315,7 +2365,7 @@
     },
     "box_agent/auth.py": {
       "filePath": "box_agent/auth.py",
-      "contentHash": "c2bbaf3ab53e2e2ffda97effe794e63fb97b7df09c4d709f1098a1e8710ffcb6",
+      "contentHash": "95e71643c5901cc7e3346a0fe3336ad2aef76dcd87f82f6e9cb3d5c8f15b4d52",
       "functions": [
         {
           "name": "_coerce_token",
@@ -2352,7 +2402,7 @@
             "existing",
             "url"
           ],
-          "returnType": "dict[str, str]",
+          "returnType": "dict[str, str | bytes]",
           "exported": true,
           "lineCount": 23
         },
@@ -2373,7 +2423,7 @@
             "existing",
             "url"
           ],
-          "returnType": "dict[str, str]",
+          "returnType": "dict[str, str | bytes]",
           "exported": true,
           "lineCount": 8
         }
@@ -2763,7 +2813,7 @@
     },
     "box_agent/cli.py": {
       "filePath": "box_agent/cli.py",
-      "contentHash": "768f78edccedcb2422c2ffa2e501ac8339e5305f36300c1bec2036c3fd43c065",
+      "contentHash": "844311ab9f1a0b8817a9d0a0e14193d6919b66c14ee12980d78eb75ba734d072",
       "functions": [
         {
           "name": "run_setup_wizard",
@@ -2858,7 +2908,7 @@
           ],
           "returnType": "dict[str, Any]",
           "exported": true,
-          "lineCount": 85
+          "lineCount": 88
         },
         {
           "name": "_print_config_summary",
@@ -2867,7 +2917,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 39
+          "lineCount": 40
         },
         {
           "name": "_json_print",
@@ -3048,7 +3098,7 @@
           "params": [],
           "returnType": "argparse.Namespace",
           "exported": true,
-          "lineCount": 215
+          "lineCount": 221
         },
         {
           "name": "cmd_setup",
@@ -3189,6 +3239,13 @@
           "lineCount": 7
         },
         {
+          "name": "_cli_node_execution_env",
+          "params": [],
+          "returnType": "tuple[str | None, dict[str, str]]",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
           "name": "_doctor_browser_status",
           "params": [],
           "returnType": "dict[str, Any]",
@@ -3256,14 +3313,14 @@
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 920
+          "lineCount": 974
         },
         {
           "name": "main",
           "params": [],
           "returnType": "int",
           "exported": true,
-          "lineCount": 94
+          "lineCount": 105
         }
       ],
       "classes": [
@@ -3475,11 +3532,11 @@
         {
           "source": "box_agent.tools.setup",
           "specifiers": [
-            "SANDBOX_INFO_PROMPT",
             "add_workspace_tools",
             "await_mcp_tools",
             "build_file_delivery_prompt",
             "build_image_generation_prompt",
+            "build_sandbox_info_prompt",
             "initialize_base_tools",
             "register_mcp_tools"
           ]
@@ -3491,13 +3548,33 @@
             "NodeRuntimeInstallError",
             "NodeRuntimeManager",
             "build_skill_runtime_context",
-            "build_skill_runtime_prompt"
+            "build_skill_runtime_prompt",
+            "resolve_cli_shell_python"
+          ]
+        },
+        {
+          "source": "box_agent.tools.skill_execution_env",
+          "specifiers": [
+            "build_skill_execution_env"
           ]
         },
         {
           "source": "box_agent.utils",
           "specifiers": [
             "calculate_display_width"
+          ]
+        },
+        {
+          "source": "box_agent.acp.project_context",
+          "specifiers": [
+            "build_project_startup_context_prompt"
+          ]
+        },
+        {
+          "source": "box_agent.workspace_registry",
+          "specifiers": [
+            "WorkspaceRegistry",
+            "WorkspaceRegistryError"
           ]
         }
       ],
@@ -3551,6 +3628,7 @@
         "cmd_doctor",
         "_default_browsers_path",
         "_playwright_env",
+        "_cli_node_execution_env",
         "_doctor_browser_status",
         "_doctor_check_browser",
         "cmd_install_browser",
@@ -3561,13 +3639,22 @@
         "run_agent",
         "main"
       ],
-      "totalLines": 2724,
+      "totalLines": 2815,
       "hasStructuralAnalysis": true
     },
     "box_agent/completion.py": {
       "filePath": "box_agent/completion.py",
-      "contentHash": "4f9f2e986d5a2772d2f487c775cbbbd5d1da4e389a7a6be68b01ced1671e4629",
+      "contentHash": "ee176ce8cbfc9d0273f1500c917aadd1a73b8909513bf49f4a7da0b4fd712638",
       "functions": [
+        {
+          "name": "_host_execution_contract",
+          "params": [
+            "user_text"
+          ],
+          "returnType": "tuple[bool, int | None]",
+          "exported": true,
+          "lineCount": 12
+        },
         {
           "name": "_is_native_image_generation_request",
           "params": [
@@ -3595,7 +3682,26 @@
           ],
           "returnType": "bool",
           "exported": true,
-          "lineCount": 18
+          "lineCount": 24
+        },
+        {
+          "name": "rebase_pending_completion_gate",
+          "params": [
+            "gate",
+            "user_text"
+          ],
+          "returnType": "CompletionGate",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "pending_completion_gate_for_storage",
+          "params": [
+            "gate"
+          ],
+          "returnType": "CompletionGate",
+          "exported": true,
+          "lineCount": 17
         },
         {
           "name": "completion_gate_has_workflow_lifecycle",
@@ -3610,15 +3716,29 @@
           "name": "build_auto_completion_gate",
           "params": [
             "user_text",
-            "workspace_dir"
+            "workspace_dir",
+            "confirmed_presentation",
+            "allow_controlled_presentation"
           ],
           "returnType": "CompletionGate | None",
           "exported": true,
-          "lineCount": 48
+          "lineCount": 97
         }
       ],
       "classes": [],
       "imports": [
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "replace"
+          ]
+        },
         {
           "source": "pathlib",
           "specifiers": [
@@ -3641,6 +3761,7 @@
           "source": ".delivery",
           "specifiers": [
             "has_deliverable_intent",
+            "is_meta_prompt_rewrite_request",
             "strip_negated_format_clauses"
           ]
         },
@@ -3658,6 +3779,16 @@
           ]
         },
         {
+          "source": ".workflows.presentation_contract",
+          "specifiers": [
+            "IMAGE_GENERATION_AUTO",
+            "IMAGE_GENERATION_EXPLICIT_RETRY",
+            "IMAGE_GENERATION_POLICY_OPTION",
+            "WORKFLOW_KIND",
+            "image_generation_policy_update"
+          ]
+        },
+        {
           "source": ".workflows.presentation_routing",
           "specifiers": [
             "build_presentation_completion_gate"
@@ -3665,18 +3796,21 @@
         }
       ],
       "exports": [
+        "_host_execution_contract",
         "_is_native_image_generation_request",
         "cancels_pending_completion_gate",
         "should_resume_pending_completion_gate",
+        "rebase_pending_completion_gate",
+        "pending_completion_gate_for_storage",
         "completion_gate_has_workflow_lifecycle",
         "build_auto_completion_gate"
       ],
-      "totalLines": 217,
+      "totalLines": 348,
       "hasStructuralAnalysis": true
     },
     "box_agent/config.py": {
       "filePath": "box_agent/config.py",
-      "contentHash": "844034ecd77e2fe9ff73064c814525056aff863cf8fac056e73bd2d5653b8bd3",
+      "contentHash": "af97fb74dcfc7aad789a9c1eaebb8bb40818c9932eb667a2e2617a0719a557fd",
       "functions": [
         {
           "name": "_is_xiaohuanxiong_api_base",
@@ -3778,6 +3912,7 @@
             "max_truncation_continuations",
             "max_truncated_tool_call_retries",
             "truncated_tool_call_boost_cap",
+            "context_resource_dedup_enabled",
             "system_prompt_path",
             "analysis_prompt_path",
             "code_prompt_path",
@@ -3802,7 +3937,7 @@
             "memory_promotion_cooldown_days"
           ],
           "exported": true,
-          "lineCount": 70
+          "lineCount": 73
         },
         {
           "name": "MCPConfig",
@@ -3912,7 +4047,7 @@
             "hooks"
           ],
           "exported": true,
-          "lineCount": 370
+          "lineCount": 373
         }
       ],
       "imports": [
@@ -3973,7 +4108,7 @@
         "HooksConfig",
         "Config"
       ],
-      "totalLines": 638,
+      "totalLines": 644,
       "hasStructuralAnalysis": true
     },
     "box_agent/config/analysis_prompt.md": {
@@ -3998,12 +4133,12 @@
     },
     "box_agent/config/config-example.yaml": {
       "filePath": "box_agent/config/config-example.yaml",
-      "contentHash": "66d64879a2f7d9e8398c65664a7349e3b7be2913db76a96ac38629172f209ada",
+      "contentHash": "a8491f23c9f6633eb21add76f491e12135e7f58804ed173264e2f7a8d44f1fa5",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 163,
+      "totalLines": 164,
       "hasStructuralAnalysis": true
     },
     "box_agent/config/mcp-example.json": {
@@ -4018,7 +4153,7 @@
     },
     "box_agent/config/system_prompt.md": {
       "filePath": "box_agent/config/system_prompt.md",
-      "contentHash": "71896f05bf4c5ab1530654d40ae330598c632df8204ab527b3df4de796c388a6",
+      "contentHash": "4489d321fecc0af31896ebc68e7f4531396a01704ca9170ca3a3df75170e68bc",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -4026,9 +4161,184 @@
       "totalLines": 89,
       "hasStructuralAnalysis": true
     },
+    "box_agent/context_resources.py": {
+      "filePath": "box_agent/context_resources.py",
+      "contentHash": "8a7c2a92bceff39ffec4f4cf6260e09d64add9a9962bdd4987f9beb66cdb3e2d",
+      "functions": [
+        {
+          "name": "classify_read_resource",
+          "params": [
+            "path",
+            "requested_path"
+          ],
+          "returnType": "ResourceClass",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "_content_hash",
+          "params": [
+            "content"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_safe_resource_label",
+          "params": [
+            "resource_id",
+            "limit"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "build_resource_receipt",
+          "params": [
+            "descriptor",
+            "source_tool_call_ids"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "build_resource_shedding_placeholder",
+          "params": [
+            "source"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 10
+        }
+      ],
+      "classes": [
+        {
+          "name": "ResourceClass",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "ResourceDescriptor",
+          "methods": [
+            "has_content",
+            "as_raw_output",
+            "from_raw_output"
+          ],
+          "properties": [
+            "resource_id",
+            "content_version",
+            "start_line",
+            "end_line",
+            "total_lines",
+            "resource_class"
+          ],
+          "exported": true,
+          "lineCount": 50
+        },
+        {
+          "name": "ContextResourceSource",
+          "methods": [],
+          "properties": [
+            "tool_call_id",
+            "descriptor",
+            "model_content_hash"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "HistoryTransformResult",
+          "methods": [],
+          "properties": [
+            "transformed_count",
+            "replaced_source_tool_call_ids",
+            "estimated_before",
+            "estimated_after"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "ContextResourceLedger",
+          "methods": [
+            "__init__",
+            "source_ids",
+            "receipt_ids",
+            "source",
+            "register_full_source",
+            "register_receipt",
+            "invalidate_source_ids",
+            "reconcile",
+            "covering_source_ids",
+            "rotate_epoch"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 119
+        }
+      ],
+      "imports": [
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "enum",
+          "specifiers": [
+            "Enum"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Iterable"
+          ]
+        },
+        {
+          "source": ".model_history",
+          "specifiers": [
+            "is_model_instruction_source_path"
+          ]
+        },
+        {
+          "source": ".schema",
+          "specifiers": [
+            "Message"
+          ]
+        }
+      ],
+      "exports": [
+        "ResourceClass",
+        "ResourceDescriptor",
+        "ContextResourceSource",
+        "HistoryTransformResult",
+        "classify_read_resource",
+        "_content_hash",
+        "ContextResourceLedger",
+        "_safe_resource_label",
+        "build_resource_receipt",
+        "build_resource_shedding_placeholder"
+      ],
+      "totalLines": 274,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/core.py": {
       "filePath": "box_agent/core.py",
-      "contentHash": "a38d1bb62de973e14f389282d8169e5a085cd340aa453664cea3454a7b6ba116",
+      "contentHash": "31e312ec7b5bdeb74e9167a74db84c21492fef8998811437fc0b8ef6b5546793",
       "functions": [
         {
           "name": "final_summary_wrapup_text",
@@ -4238,11 +4548,39 @@
             "arguments",
             "result",
             "visible_content",
-            "visible_error"
+            "visible_error",
+            "resource_receipt"
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 32
+          "lineCount": 36
+        },
+        {
+          "name": "_context_resource_history_decision",
+          "params": [
+            "tool_name",
+            "arguments",
+            "result",
+            "messages",
+            "ledger"
+          ],
+          "returnType": "_ContextResourceHistoryDecision",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "_record_context_resource_history",
+          "params": [
+            "tool_call_id",
+            "decision",
+            "result",
+            "visible_content",
+            "model_content",
+            "ledger"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 43
         },
         {
           "name": "_permission_event_kwargs",
@@ -4424,11 +4762,13 @@
             "llm",
             "messages",
             "round_num",
-            "session_id"
+            "session_id",
+            "turn_id",
+            "title"
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 31
+          "lineCount": 35
         },
         {
           "name": "_deterministic_history_fallback",
@@ -4459,13 +4799,15 @@
             "api_total_tokens",
             "skip_check",
             "session_id",
+            "turn_id",
+            "title",
             "api_prompt_tokens",
             "tools",
             "allow_llm_summary"
           ],
           "returnType": "CompactionOutcome",
           "exported": true,
-          "lineCount": 112
+          "lineCount": 121
         },
         {
           "name": "_is_summary_marker",
@@ -4599,6 +4941,95 @@
           "lineCount": 26
         },
         {
+          "name": "_search_result_list_found",
+          "params": [
+            "payload"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "_search_item_title",
+          "params": [
+            "item"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_search_item_snippet",
+          "params": [
+            "item"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "_web_search_match_terms",
+          "params": [
+            "query"
+          ],
+          "returnType": "tuple[str, ...]",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_web_search_item_rank",
+          "params": [
+            "item",
+            "query_terms",
+            "requested_site"
+          ],
+          "returnType": "tuple[int, int, int, int]",
+          "exported": true,
+          "lineCount": 49
+        },
+        {
+          "name": "_rank_web_search_items",
+          "params": [
+            "items",
+            "arguments"
+          ],
+          "returnType": "list[dict[str, Any]]",
+          "exported": true,
+          "lineCount": 29
+        },
+        {
+          "name": "_web_search_result_metadata",
+          "params": [
+            "items",
+            "arguments",
+            "status"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 42
+        },
+        {
+          "name": "_with_web_search_metadata",
+          "params": [
+            "payload",
+            "metadata"
+          ],
+          "returnType": "Any",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_log_web_search_model_results",
+          "params": [
+            "arguments",
+            "visible_content",
+            "model_content"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 31
+        },
+        {
           "name": "_web_search_urls",
           "params": [
             "content"
@@ -4616,7 +5047,7 @@
           ],
           "returnType": "tuple[str, int, int, list[str], bool]",
           "exported": true,
-          "lineCount": 76
+          "lineCount": 122
         },
         {
           "name": "_compact_web_search_result_for_model",
@@ -4632,11 +5063,24 @@
         {
           "name": "_micro_compact",
           "params": [
-            "messages"
+            "messages",
+            "context_resource_ledger"
           ],
-          "returnType": "int",
+          "returnType": "HistoryTransformResult",
           "exported": true,
-          "lineCount": 67
+          "lineCount": 86
+        },
+        {
+          "name": "_shed_reconstructable_read_resources",
+          "params": [
+            "messages",
+            "context_resource_ledger",
+            "token_limit",
+            "tools"
+          ],
+          "returnType": "HistoryTransformResult",
+          "exported": true,
+          "lineCount": 51
         },
         {
           "name": "_sanitize_dangling_tool_calls",
@@ -4664,6 +5108,7 @@
             "tools",
             "max_steps",
             "max_tool_calls",
+            "web_search_total_limit",
             "token_limit",
             "is_cancelled",
             "logger",
@@ -4679,6 +5124,8 @@
             "inject_queue",
             "thinking_enabled",
             "session_id",
+            "turn_id",
+            "title",
             "force_plan_start",
             "require_plan_approval",
             "plan_approval",
@@ -4698,14 +5145,27 @@
             "cache_fingerprint_sink",
             "active_skill_activator",
             "workflow_policy",
-            "current_turn_text"
+            "current_turn_text",
+            "context_resource_ledger",
+            "context_resource_dedup_enabled"
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 2573
+          "lineCount": 3012
         }
       ],
       "classes": [
+        {
+          "name": "_ContextResourceHistoryDecision",
+          "methods": [],
+          "properties": [
+            "descriptor",
+            "source_tool_call_ids",
+            "receipt"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
         {
           "name": "CompactionOutcome",
           "methods": [
@@ -4832,6 +5292,17 @@
           ]
         },
         {
+          "source": ".context_resources",
+          "specifiers": [
+            "ContextResourceLedger",
+            "HistoryTransformResult",
+            "ResourceClass",
+            "ResourceDescriptor",
+            "build_resource_receipt",
+            "build_resource_shedding_placeholder"
+          ]
+        },
+        {
           "source": ".evidence",
           "specifiers": [
             "_http_urls",
@@ -4844,6 +5315,7 @@
             "AgentEvent",
             "ArtifactEvent",
             "ContentEvent",
+            "ContextCheckpointEvent",
             "DoneEvent",
             "ErrorEvent",
             "InjectedMessageEvent",
@@ -4897,6 +5369,8 @@
           "specifiers": [
             "EMPTY_ARGS_LIMIT",
             "FINAL_SUMMARY_EXCLUDED_TOOLS",
+            "SEARCH_FILES_EMPTY_RESULT_LIMIT",
+            "SEARCH_FILES_TOOL_NAME",
             "TOOL_CALL_LIMITS",
             "WEB_SEARCH_BATCH_SIZE",
             "WEB_SEARCH_TOOL_NAME",
@@ -4905,6 +5379,7 @@
             "CompletionGate",
             "completion_budget_reserve_text",
             "completion_gate_gaps",
+            "completion_gate_tool_satisfies_requirements",
             "completion_gate_text",
             "format_injected_message",
             "looks_like_truncated_output",
@@ -4912,6 +5387,9 @@
             "no_progress_wrapup_text",
             "repeated_stream_pattern",
             "reply_is_substantial",
+            "search_files_empty_result_guidance",
+            "search_files_empty_result_message",
+            "search_files_result_is_empty",
             "total_tool_call_budget_message",
             "total_tool_call_budget_wrapup_text",
             "tool_call_budget_message",
@@ -4962,6 +5440,13 @@
           "specifiers": [
             "WorkflowPolicy"
           ]
+        },
+        {
+          "source": ".workflow_checkpoint_store",
+          "specifiers": [
+            "clear_workflow_checkpoint",
+            "save_workflow_checkpoint"
+          ]
         }
       ],
       "exports": [
@@ -4986,6 +5471,9 @@
         "_tool_calls_need_model_history_compaction",
         "_model_history_placeholder_argument",
         "_tool_message_content_for_model",
+        "_ContextResourceHistoryDecision",
+        "_context_resource_history_decision",
+        "_record_context_resource_history",
         "_permission_event_kwargs",
         "_approve_tool_permission",
         "_policy_decision_payload",
@@ -5021,20 +5509,30 @@
         "_url_matches_domain",
         "_with_filtered_search_items",
         "_candidate_search_items",
+        "_search_result_list_found",
+        "_search_item_title",
+        "_search_item_snippet",
+        "_web_search_match_terms",
+        "_web_search_item_rank",
+        "_rank_web_search_items",
+        "_web_search_result_metadata",
+        "_with_web_search_metadata",
+        "_log_web_search_model_results",
         "_web_search_urls",
         "_dedupe_web_search_content",
         "_compact_web_search_result_for_model",
         "_micro_compact",
+        "_shed_reconstructable_read_resources",
         "_sanitize_dangling_tool_calls",
         "_cleanup_incomplete_messages",
         "run_agent_loop"
       ],
-      "totalLines": 4470,
+      "totalLines": 5391,
       "hasStructuralAnalysis": true
     },
     "box_agent/delivery.py": {
       "filePath": "box_agent/delivery.py",
-      "contentHash": "4e25710c60025adaef1c39b39fe8d316300de2a63cfb8891b40a552fbbb267e0",
+      "contentHash": "ae9d38a0f8b6ce1e46f8819ee1c4e1fcb96d63395480b2373cb135ef51ca5e73",
       "functions": [
         {
           "name": "has_deliverable_intent",
@@ -5053,6 +5551,24 @@
           "returnType": "str",
           "exported": true,
           "lineCount": 2
+        },
+        {
+          "name": "_last_meta_rewrite_span",
+          "params": [
+            "text"
+          ],
+          "returnType": "tuple[int, int, int, int, int] | None",
+          "exported": true,
+          "lineCount": 53
+        },
+        {
+          "name": "is_meta_prompt_rewrite_request",
+          "params": [
+            "text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 43
         }
       ],
       "classes": [],
@@ -5072,14 +5588,16 @@
       ],
       "exports": [
         "has_deliverable_intent",
-        "strip_negated_format_clauses"
+        "strip_negated_format_clauses",
+        "_last_meta_rewrite_span",
+        "is_meta_prompt_rewrite_request"
       ],
-      "totalLines": 53,
+      "totalLines": 202,
       "hasStructuralAnalysis": true
     },
     "box_agent/events.py": {
       "filePath": "box_agent/events.py",
-      "contentHash": "6fd83fe4797de5fa6dff1cc6cc08bb3766df53dda553125445d5e6e41ee3b69a",
+      "contentHash": "2b9ea8e4c6ef9f290a88fbfb9326be02fc73bdfa2f0cee863713a058ee70f146",
       "functions": [],
       "classes": [
         {
@@ -5087,7 +5605,7 @@
           "methods": [],
           "properties": [],
           "exported": true,
-          "lineCount": 9
+          "lineCount": 10
         },
         {
           "name": "StepStart",
@@ -5267,10 +5785,12 @@
           "properties": [
             "message",
             "is_fatal",
-            "exception"
+            "exception",
+            "error_code",
+            "error_category"
           ],
           "exported": true,
-          "lineCount": 6
+          "lineCount": 8
         },
         {
           "name": "LogFileEvent",
@@ -5290,6 +5810,23 @@
           ],
           "exported": true,
           "lineCount": 5
+        },
+        {
+          "name": "ContextCheckpointEvent",
+          "methods": [],
+          "properties": [
+            "checkpoint_id",
+            "workflow_kind",
+            "adapter_id",
+            "schema_version",
+            "workspace_identity",
+            "path",
+            "stage",
+            "artifact_count",
+            "artifact_set_sha256"
+          ],
+          "exported": true,
+          "lineCount": 12
         },
         {
           "name": "MemoryEvent",
@@ -5426,6 +5963,7 @@
         "ErrorEvent",
         "LogFileEvent",
         "DoneEvent",
+        "ContextCheckpointEvent",
         "MemoryEvent",
         "SubAgentEvent",
         "PermissionRequestEvent",
@@ -5434,7 +5972,7 @@
         "MemoryPromotionPlan",
         "MemoryProposalEvent"
       ],
-      "totalLines": 409,
+      "totalLines": 428,
       "hasStructuralAnalysis": true
     },
     "box_agent/evidence.py": {
@@ -5843,7 +6381,7 @@
     },
     "box_agent/llm/__init__.py": {
       "filePath": "box_agent/llm/__init__.py",
-      "contentHash": "1c21c21022cb578dbba10132106f42dd9ce078478959932a2f596fb1fce227d0",
+      "contentHash": "8bf43a65079c2db020820763cbfff451f63a30d17b0ecad2628eadb0a685552e",
       "functions": [],
       "classes": [],
       "imports": [
@@ -5872,7 +6410,8 @@
         {
           "source": ".llm_wrapper",
           "specifiers": [
-            "LLMClient"
+            "LLMClient",
+            "SessionBoundLLM"
           ]
         },
         {
@@ -5888,7 +6427,7 @@
     },
     "box_agent/llm/anthropic_client.py": {
       "filePath": "box_agent/llm/anthropic_client.py",
-      "contentHash": "d71f65ef509a9d24d2a59ba981ee03d874cff1af7942601ba1ec54a3d15c00c9",
+      "contentHash": "3a0126bf1ba7401eef484cbb579b4855e5568e3f59fb2f946b159e07d7e89082",
       "functions": [
         {
           "name": "_await_if_needed",
@@ -5915,7 +6454,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 562
+          "lineCount": 577
         }
       ],
       "imports": [
@@ -5995,12 +6534,12 @@
         "_await_if_needed",
         "AnthropicClient"
       ],
-      "totalLines": 598,
+      "totalLines": 613,
       "hasStructuralAnalysis": true
     },
     "box_agent/llm/base.py": {
       "filePath": "box_agent/llm/base.py",
-      "contentHash": "bcdf196ab353aadf8056aceb0e76d9d3f6b9a1b8d3255211dc9157d03955308f",
+      "contentHash": "f8efcdb35e6af04cb10dd753d81fa2512f34f16ae23e0cb8b6e91a58b405abdd",
       "functions": [],
       "classes": [
         {
@@ -6008,6 +6547,7 @@
           "methods": [
             "__init__",
             "_auth_headers",
+            "_agent_headers",
             "_session_header",
             "generate",
             "generate_stream",
@@ -6016,7 +6556,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 149
+          "lineCount": 168
         }
       ],
       "imports": [
@@ -6063,7 +6603,7 @@
       "exports": [
         "LLMClientBase"
       ],
-      "totalLines": 168,
+      "totalLines": 187,
       "hasStructuralAnalysis": true
     },
     "box_agent/llm/debug_logging.py": {
@@ -6382,7 +6922,7 @@
     },
     "box_agent/llm/error_messages.py": {
       "filePath": "box_agent/llm/error_messages.py",
-      "contentHash": "7d604d58aa1c9fac0894cb85bb74bfe854ffcd7a4f65ac8e54bbb2e0e58b3156",
+      "contentHash": "925f5103fabc4f5156bbfd3976636f691935b7d5b5a0cb9f809b7f09534e6a0b",
       "functions": [
         {
           "name": "classify_llm_error",
@@ -6401,6 +6941,33 @@
           "returnType": "str",
           "exported": true,
           "lineCount": 9
+        },
+        {
+          "name": "extract_llm_error_code",
+          "params": [
+            "exc"
+          ],
+          "returnType": "int | str | None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "_normalize_error_code",
+          "params": [
+            "value"
+          ],
+          "returnType": "int | str | None",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_error_code_from_body",
+          "params": [
+            "body"
+          ],
+          "returnType": "int | str | None",
+          "exported": true,
+          "lineCount": 16
         },
         {
           "name": "_http_status_code",
@@ -6463,6 +7030,12 @@
       ],
       "imports": [
         {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
           "source": "typing",
           "specifiers": [
             "NamedTuple"
@@ -6473,18 +7046,21 @@
         "FriendlyError",
         "classify_llm_error",
         "humanize_llm_error",
+        "extract_llm_error_code",
+        "_normalize_error_code",
+        "_error_code_from_body",
         "_http_status_code",
         "is_retryable_llm_error",
         "_safe_str",
         "_unwrap",
         "_build_haystack"
       ],
-      "totalLines": 323,
+      "totalLines": 381,
       "hasStructuralAnalysis": true
     },
     "box_agent/llm/lightweight.py": {
       "filePath": "box_agent/llm/lightweight.py",
-      "contentHash": "c5bdbc48b8f99ec16fcd968a7d7c8e7a54c9f07fec6308445889d5c3be1bb1d9",
+      "contentHash": "1216b8c2c243d4d25ccb58f2cf5d01e98813a44ad02677e2b7ec6eab41cdef6a",
       "functions": [
         {
           "name": "run_lightweight_prompt",
@@ -6493,11 +7069,13 @@
             "prompt",
             "system_prompt",
             "session_id",
+            "turn_id",
+            "title",
             "timeout"
           ],
           "returnType": "LightweightResult",
           "exported": true,
-          "lineCount": 87
+          "lineCount": 93
         }
       ],
       "classes": [
@@ -6587,18 +7165,19 @@
         "LightweightContentFiltered",
         "run_lightweight_prompt"
       ],
-      "totalLines": 159,
+      "totalLines": 165,
       "hasStructuralAnalysis": true
     },
     "box_agent/llm/llm_wrapper.py": {
       "filePath": "box_agent/llm/llm_wrapper.py",
-      "contentHash": "7155abbf78d62739d88f4b2134c1076161e8ba734a5f56f2eec866511ff4105d",
+      "contentHash": "48f1c340e149ee389d33be3f7b05fb6f259acdd3dcaa79ebc8d482bd22c79a7d",
       "functions": [],
       "classes": [
         {
           "name": "LLMClient",
           "methods": [
             "__init__",
+            "for_model",
             "retry_callback",
             "retry_callback",
             "generate",
@@ -6606,7 +7185,21 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 147
+          "lineCount": 185
+        },
+        {
+          "name": "SessionBoundLLM",
+          "methods": [
+            "__init__",
+            "bind",
+            "set_request_context",
+            "__getattr__",
+            "generate",
+            "generate_stream"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 71
         }
       ],
       "imports": [
@@ -6620,6 +7213,12 @@
           "source": "collections.abc",
           "specifiers": [
             "AsyncIterator"
+          ]
+        },
+        {
+          "source": "copy",
+          "specifiers": [
+            "copy"
           ]
         },
         {
@@ -6670,14 +7269,15 @@
         }
       ],
       "exports": [
-        "LLMClient"
+        "LLMClient",
+        "SessionBoundLLM"
       ],
-      "totalLines": 168,
+      "totalLines": 280,
       "hasStructuralAnalysis": true
     },
     "box_agent/llm/openai_client.py": {
       "filePath": "box_agent/llm/openai_client.py",
-      "contentHash": "c4249b342db4d1eabed642da31533d07e20fb1d44166f6b3a81c03e891e68d78",
+      "contentHash": "7087929a1fbcd63d0b58d40ac1998af3a10c642034586857da7db633ff083ef1",
       "functions": [
         {
           "name": "_escape_invalid_chars_in_json_strings",
@@ -6726,7 +7326,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 641
+          "lineCount": 656
         }
       ],
       "imports": [
@@ -6820,7 +7420,7 @@
         "_await_if_needed",
         "OpenAIClient"
       ],
-      "totalLines": 810,
+      "totalLines": 825,
       "hasStructuralAnalysis": true
     },
     "box_agent/llm/think_tag_splitter.py": {
@@ -7068,7 +7668,7 @@
     },
     "box_agent/loop_guards.py": {
       "filePath": "box_agent/loop_guards.py",
-      "contentHash": "b3d800a5b19fdeca2dd8c59352a239aa1266b359dd655492f3ddef12b938881b",
+      "contentHash": "e971a49b836e27279e1b246e05b42cc0f88138aba32c0cf93f12239d5ad76af2",
       "functions": [
         {
           "name": "repeated_stream_pattern",
@@ -7110,6 +7710,33 @@
         },
         {
           "name": "total_tool_call_budget_wrapup_text",
+          "params": [
+            "limit"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "search_files_result_is_empty",
+          "params": [
+            "result"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "search_files_empty_result_message",
+          "params": [
+            "limit"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "search_files_empty_result_guidance",
           "params": [
             "limit"
           ],
@@ -7192,6 +7819,17 @@
           "returnType": "list[str]",
           "exported": true,
           "lineCount": 62
+        },
+        {
+          "name": "completion_gate_tool_satisfies_requirements",
+          "params": [
+            "gate",
+            "tool_name",
+            "arguments"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 27
         },
         {
           "name": "artifact_signatures_for_globs",
@@ -7282,6 +7920,7 @@
           "methods": [],
           "properties": [
             "required_tools",
+            "execution_result_criteria_count",
             "restrict_tools_until_required_succeed",
             "required_artifacts",
             "required_changed_artifact_globs",
@@ -7300,7 +7939,7 @@
             "workflow_options"
           ],
           "exported": true,
-          "lineCount": 77
+          "lineCount": 81
         }
       ],
       "imports": [
@@ -7349,6 +7988,9 @@
         "tool_call_budget_wrapup_text",
         "total_tool_call_budget_message",
         "total_tool_call_budget_wrapup_text",
+        "search_files_result_is_empty",
+        "search_files_empty_result_message",
+        "search_files_empty_result_guidance",
         "near_limit_wrapup_text",
         "no_progress_wrapup_text",
         "format_injected_message",
@@ -7358,6 +8000,7 @@
         "truncation_continuation_text",
         "CompletionGate",
         "completion_gate_gaps",
+        "completion_gate_tool_satisfies_requirements",
         "artifact_signatures_for_globs",
         "_iter_artifact_glob_matches",
         "_artifact_signature",
@@ -7367,7 +8010,7 @@
         "completion_gate_text",
         "completion_budget_reserve_text"
       ],
-      "totalLines": 584,
+      "totalLines": 658,
       "hasStructuralAnalysis": true
     },
     "box_agent/memory_maintainer.py": {
@@ -7534,7 +8177,7 @@
     },
     "box_agent/memory.py": {
       "filePath": "box_agent/memory.py",
-      "contentHash": "a9f04f43f04aa85e3e7a01e6fc5a78095780c34cc1fbd901d4bb95eea12dda79",
+      "contentHash": "53ce394a9d5a3066b071e2a8c3012c910cdc8c9aecc12295199ade379b81b4f2",
       "functions": [
         {
           "name": "tokens",
@@ -7969,7 +8612,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 194
+          "lineCount": 195
         }
       ],
       "imports": [
@@ -8095,12 +8738,12 @@
         "_has_high_signal_for_loop_end",
         "MemoryExtractor"
       ],
-      "totalLines": 2464,
+      "totalLines": 2465,
       "hasStructuralAnalysis": true
     },
     "box_agent/model_history.py": {
       "filePath": "box_agent/model_history.py",
-      "contentHash": "c512ec880e8bef367b8bd1111d19c4fb29ae47c8d4b6ace749a6a79818f3dc83",
+      "contentHash": "318224078e08fa3e54727e51f9866bef1fbed5e5351d1149eb0ecf5093fc476c",
       "functions": [
         {
           "name": "is_model_history_placeholder",
@@ -8118,7 +8761,7 @@
           ],
           "returnType": "bool",
           "exported": true,
-          "lineCount": 16
+          "lineCount": 20
         }
       ],
       "classes": [],
@@ -8140,7 +8783,7 @@
         "is_model_history_placeholder",
         "is_model_instruction_source_path"
       ],
-      "totalLines": 39,
+      "totalLines": 43,
       "hasStructuralAnalysis": true
     },
     "box_agent/retry.py": {
@@ -8479,22 +9122,22 @@
     },
     "box_agent/skills/document-skills/pptx/layouts/manifest.json": {
       "filePath": "box_agent/skills/document-skills/pptx/layouts/manifest.json",
-      "contentHash": "9ab69569b2bbbf07a8df5c37c837553e823edd3921d6b52c6ce1560a3a1e5746",
+      "contentHash": "a767916ed47f11ab4e01bae8a9b9b16a26694a45413159d064390e4c91f44d93",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 11258,
+      "totalLines": 14442,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/layouts/registry.js": {
       "filePath": "box_agent/skills/document-skills/pptx/layouts/registry.js",
-      "contentHash": "6dfeb558e2b7872e56efc2a2a1446152bc1e131bca88704174cb35b86b1d532d",
+      "contentHash": "c6fd38573ca09ec286b4f5fd53629b7c3e237b78f86007feedc7d2a8519d5d86",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 3102,
+      "totalLines": 3758,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/references/api-integration.md": {
@@ -8509,22 +9152,22 @@
     },
     "box_agent/skills/document-skills/pptx/references/controlled-layouts.md": {
       "filePath": "box_agent/skills/document-skills/pptx/references/controlled-layouts.md",
-      "contentHash": "da2f76ae5fdf20f8840c9daec5c3e90474bdb72b87831ecbab727512829e7098",
+      "contentHash": "66771c43f0bdaeeeed75c3a065c75a66bbf121424c537d1530ff4dd9f01dcb88",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 451,
+      "totalLines": 481,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/references/deck-spec.schema.json": {
       "filePath": "box_agent/skills/document-skills/pptx/references/deck-spec.schema.json",
-      "contentHash": "030796adeb6a6ae9c789f00fd20ccd3a4e9c9e24f37f9affc4936d576e9c3e3c",
+      "contentHash": "fc139de3d4ce808fd9ffa10c76e3c16363243ba3dda79b3b32be699c03f2e875",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 153,
+      "totalLines": 203,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/references/dependency-policy.md": {
@@ -8579,12 +9222,12 @@
     },
     "box_agent/skills/document-skills/pptx/references/outline.md": {
       "filePath": "box_agent/skills/document-skills/pptx/references/outline.md",
-      "contentHash": "1e5dd30a487182b60ddc755c730f48e28b9e8ac936304917aa168d6145ccfbbe",
+      "contentHash": "06d42cbac69df898990e2f912ced16fe3738f76b7b6b9d9ffa650cbd71cccbfa",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 251,
+      "totalLines": 285,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/references/pptxgenjs.md": {
@@ -8597,14 +9240,24 @@
       "totalLines": 185,
       "hasStructuralAnalysis": true
     },
-    "box_agent/skills/document-skills/pptx/references/qa.md": {
-      "filePath": "box_agent/skills/document-skills/pptx/references/qa.md",
-      "contentHash": "c3d3ffaf4c5fa247c78348aca3ae75acb38ee1ccf82e0ccc109869d4ce0365f2",
+    "box_agent/skills/document-skills/pptx/references/presentation-preflight.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/references/presentation-preflight.json",
+      "contentHash": "cfef7c5cadad6ecd38bdf8d704c5161c024347da1a6369bf2a6835912dbe2cb4",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 149,
+      "totalLines": 276,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/references/qa.md": {
+      "filePath": "box_agent/skills/document-skills/pptx/references/qa.md",
+      "contentHash": "3bf669c5fb004818326b7335bd40b07d8b620575f18a673fed08a1e1da7cea54",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 155,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/references/runtime-office-raccoon.md": {
@@ -8649,12 +9302,12 @@
     },
     "box_agent/skills/document-skills/pptx/runtime/composition.css": {
       "filePath": "box_agent/skills/document-skills/pptx/runtime/composition.css",
-      "contentHash": "adcc00d832b16fa57dedd9dc7a2897b4b3ad466b6832e38b03539faf310c0207",
+      "contentHash": "c5cc530dcd0c879697220341d61a8a627f22d890347004816e2daa266222298f",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 3838,
+      "totalLines": 3857,
       "hasStructuralAnalysis": false
     },
     "box_agent/skills/document-skills/pptx/runtime/deck-editor.js": {
@@ -8669,12 +9322,12 @@
     },
     "box_agent/skills/document-skills/pptx/runtime/deck.css": {
       "filePath": "box_agent/skills/document-skills/pptx/runtime/deck.css",
-      "contentHash": "3292373acab0e149bf38cd5b2b3a0ee94eb33b1e46f0473620d41cce6da14113",
+      "contentHash": "9e8cc767bcd2d22b44708b1fcb8cc9fba15debbe8a0279ed170b7b61a081e4df",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 6025,
+      "totalLines": 7542,
       "hasStructuralAnalysis": false
     },
     "box_agent/skills/document-skills/pptx/runtime/diagram-runtime.js": {
@@ -8689,7 +9342,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/apply_deck_patch.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/apply_deck_patch.js",
-      "contentHash": "4a8d16e0762193950f65a9a606ee7aa9b29c4103182a7890125a2375280a09cf",
+      "contentHash": "6548e9fd74be7b71e7253e995581890af6dff8caca9c4e5348724ae6b3500b45",
       "functions": [
         {
           "name": "usage",
@@ -8789,7 +9442,7 @@
             "fieldPath"
           ],
           "exported": false,
-          "lineCount": 52
+          "lineCount": 55
         },
         {
           "name": "normalizeValueToContract",
@@ -8812,7 +9465,7 @@
             "changes"
           ],
           "exported": false,
-          "lineCount": 89
+          "lineCount": 103
         },
         {
           "name": "restoreBoundOutlineTitles",
@@ -8838,18 +9491,18 @@
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 198
+          "lineCount": 202
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 657,
+      "totalLines": 681,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/apply_deck_redesign.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/apply_deck_redesign.js",
-      "contentHash": "cb8c68d80f1f9181154b8b51adebfb10fe67a2ceeee0ad9f427047cefa0feb7e",
+      "contentHash": "277f4de6cd415e630375aa8359b27d2669eb82a0c95ad1f92d8deee49ae07e04",
       "functions": [
         {
           "name": "usage",
@@ -8939,7 +9592,7 @@
             "redesignedSlides"
           ],
           "exported": false,
-          "lineCount": 38
+          "lineCount": 39
         },
         {
           "name": "updateImageManifestDesign",
@@ -8948,7 +9601,7 @@
             "deck"
           ],
           "exported": false,
-          "lineCount": 19
+          "lineCount": 21
         },
         {
           "name": "main",
@@ -8960,7 +9613,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 296,
+      "totalLines": 299,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/bg_capture.js": {
@@ -9148,7 +9801,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/composition_core.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/composition_core.js",
-      "contentHash": "256f6bdc02b7d92590154e864d9548e262c9258c65726b2db83525686b36a767",
+      "contentHash": "d8aa0a2160eaf1a159c6468d5adcb074679a091ddf87ca3569a365190ddafeac",
       "functions": [
         {
           "name": "isPlainObject",
@@ -9293,12 +9946,12 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 714,
+      "totalLines": 735,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/deck_spec_core.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/deck_spec_core.js",
-      "contentHash": "4ca07fe47f178584bf018b53e69736e196f796523f1de42d13c7a40e0e4a5bab",
+      "contentHash": "4807759c97519a4a02aa8f0198dfb9ee3ee69256a04b06fc79201e4919d62d3c",
       "functions": [
         {
           "name": "normalizeLayoutId",
@@ -9383,7 +10036,7 @@
             "assumptions"
           ],
           "exported": false,
-          "lineCount": 16
+          "lineCount": 17
         },
         {
           "name": "normalizeTruthTextList",
@@ -9586,7 +10239,7 @@
             "spec"
           ],
           "exported": false,
-          "lineCount": 138
+          "lineCount": 223
         },
         {
           "name": "buildManifest",
@@ -9598,7 +10251,171 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 854,
+      "totalLines": 953,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/scripts/design_contract_core.js": {
+      "filePath": "box_agent/skills/document-skills/pptx/scripts/design_contract_core.js",
+      "contentHash": "016739562e41bed3e025f59304bfd290589910a6f70c3c57cf0c58143d625177",
+      "functions": [
+        {
+          "name": "isPlainObject",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "clone",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "collectText",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "normalizeHex",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "colorRecord",
+          "params": [
+            "color",
+            "requested"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "namedColorMatches",
+          "params": [
+            "text"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "labeledHex",
+          "params": [
+            "text",
+            "labels"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "exactHexPalette",
+          "params": [
+            "text",
+            "hex"
+          ],
+          "exported": false,
+          "lineCount": 25
+        },
+        {
+          "name": "inferPaletteContract",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 35
+        },
+        {
+          "name": "inferSubjectPaletteContract",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "visualKind",
+          "params": [
+            "slide"
+          ],
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "explicitCount",
+          "params": [
+            "slide"
+          ],
+          "exported": false,
+          "lineCount": 29
+        },
+        {
+          "name": "slideContract",
+          "params": [
+            "slide"
+          ],
+          "exported": false,
+          "lineCount": 19
+        },
+        {
+          "name": "inferDesignContract",
+          "params": [
+            "context"
+          ],
+          "exported": false,
+          "lineCount": 23
+        },
+        {
+          "name": "normalizeColorRecord",
+          "params": [
+            "value",
+            "fieldPath",
+            "issues"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "validateAndNormalizeDesignContract",
+          "params": [
+            "value",
+            "issues"
+          ],
+          "exported": false,
+          "lineCount": 56
+        },
+        {
+          "name": "paletteWithOverrides",
+          "params": [
+            "themePalette",
+            "designContract"
+          ],
+          "exported": false,
+          "lineCount": 39
+        },
+        {
+          "name": "mixHex",
+          "params": [
+            "base",
+            "overlay",
+            "overlayWeight"
+          ],
+          "exported": false,
+          "lineCount": 14
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 382,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/extract_text.py": {
@@ -9675,7 +10492,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/finalize_controlled_deck.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/finalize_controlled_deck.js",
-      "contentHash": "27fb1fcb23bf91b359b3e9f27716ce1398642cf35cc601797efa8b5c1dbcb77f",
+      "contentHash": "220d167ec8a5884b0a0402489701dd600df1f2d1e0cd837fca81d53ec0e5ea14",
       "functions": [
         {
           "name": "usage",
@@ -9698,6 +10515,15 @@
           ],
           "exported": false,
           "lineCount": 3
+        },
+        {
+          "name": "writeJson",
+          "params": [
+            "filePath",
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 4
         },
         {
           "name": "reportSummary",
@@ -9735,16 +10561,27 @@
           "lineCount": 19
         },
         {
+          "name": "runAdvisoryStage",
+          "params": [
+            "stage",
+            "scriptName",
+            "args",
+            "reportPath"
+          ],
+          "exported": false,
+          "lineCount": 48
+        },
+        {
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 84
+          "lineCount": 83
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 189,
+      "totalLines": 242,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/html_self_check.js": {
@@ -9998,7 +10835,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/inspect_deck_contract.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/inspect_deck_contract.js",
-      "contentHash": "34c0d3081f3758713eec6d5d378ccae9aa46f5fa7402de2478a6169c97ac563c",
+      "contentHash": "91fddbdec3d06855d4cd83dd908f45ed62fc5299a298ae12af15281ed181ee3a",
       "functions": [
         {
           "name": "normalizeSourceText",
@@ -10099,7 +10936,7 @@
             "argv"
           ],
           "exported": false,
-          "lineCount": 105
+          "lineCount": 108
         },
         {
           "name": "buildSlide",
@@ -10108,7 +10945,15 @@
             "index"
           ],
           "exported": false,
-          "lineCount": 27
+          "lineCount": 38
+        },
+        {
+          "name": "visualCollectionLimit",
+          "params": [
+            "layoutId"
+          ],
+          "exported": false,
+          "lineCount": 8
         },
         {
           "name": "alignScaffoldVisualCardinality",
@@ -10143,7 +10988,7 @@
             "expectedSlideCount"
           ],
           "exported": false,
-          "lineCount": 78
+          "lineCount": 79
         },
         {
           "name": "normalizeOutlineDrivenLayoutIds",
@@ -10152,7 +10997,7 @@
             "outlineBinding"
           ],
           "exported": false,
-          "lineCount": 67
+          "lineCount": 114
         },
         {
           "name": "validateOutlineLayoutFit",
@@ -10161,7 +11006,7 @@
             "outlineBinding"
           ],
           "exported": false,
-          "lineCount": 32
+          "lineCount": 34
         },
         {
           "name": "imagePrompt",
@@ -10180,7 +11025,7 @@
             "imageMode"
           ],
           "exported": false,
-          "lineCount": 109
+          "lineCount": 131
         },
         {
           "name": "prepareExistingImageAssets",
@@ -10212,13 +11057,13 @@
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 473
+          "lineCount": 542
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 1383,
+      "totalLines": 1561,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/inspect_layout.js": {
@@ -10469,7 +11314,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/outline_layout_contract.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/outline_layout_contract.js",
-      "contentHash": "62f5446ae79924aeed051603d1b02a77a6dd05a8dbe7d634a4c9a6a82813b2f9",
+      "contentHash": "ef7e59383109011259f23143152c562f33782d860d8bfa625eff149a62f3ce3f",
       "functions": [
         {
           "name": "text",
@@ -10528,7 +11373,7 @@
             "slide"
           ],
           "exported": false,
-          "lineCount": 180
+          "lineCount": 264
         },
         {
           "name": "expectedVisualItemCount",
@@ -10536,7 +11381,7 @@
             "slide"
           ],
           "exported": false,
-          "lineCount": 10
+          "lineCount": 3
         },
         {
           "name": "visualCollectionForSlide",
@@ -10544,7 +11389,7 @@
             "slide"
           ],
           "exported": false,
-          "lineCount": 22
+          "lineCount": 46
         },
         {
           "name": "validateOutlineVisualCardinality",
@@ -10560,7 +11405,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 320,
+      "totalLines": 417,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/pdfjs_render.js": {
@@ -10780,7 +11625,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/query_layouts.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/query_layouts.js",
-      "contentHash": "a355584cf146073f5f9d9cbe7f6c28e9bb56e77c8ee3fef38100e36cc2382b45",
+      "contentHash": "1b61bbf470771130e7c63175ecb0948acd65ac51d0f48e20c92200a6eff922ab",
       "functions": [
         {
           "name": "parseArgs",
@@ -10788,7 +11633,7 @@
             "argv"
           ],
           "exported": false,
-          "lineCount": 35
+          "lineCount": 38
         },
         {
           "name": "scoreLayout",
@@ -10797,7 +11642,7 @@
             "opts"
           ],
           "exported": false,
-          "lineCount": 16
+          "lineCount": 21
         },
         {
           "name": "compactMediaSlots",
@@ -10811,13 +11656,89 @@
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 19
+          "lineCount": 30
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 100,
+      "totalLines": 119,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/scripts/rebase_image_policy.js": {
+      "filePath": "box_agent/skills/document-skills/pptx/scripts/rebase_image_policy.js",
+      "contentHash": "528467f194e07afe236e6024f8df4f9db61994a800e2ebe0d706d816ecdd1309",
+      "functions": [
+        {
+          "name": "usage",
+          "params": [
+            "message"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "parseArgs",
+          "params": [
+            "argv"
+          ],
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "serialize",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "writeAtomic",
+          "params": [
+            "filePath",
+            "content"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "deletePropPath",
+          "params": [
+            "target",
+            "propPath"
+          ],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "stripLayoutMedia",
+          "params": [
+            "slide",
+            "layout"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "rebaseSlide",
+          "params": [
+            "slide"
+          ],
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 59
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 171,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/render_composition_gallery.js": {
@@ -10906,7 +11827,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/render_deck_html.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/render_deck_html.js",
-      "contentHash": "144ae501230570bbf6004444d7725e3912db5f1a410ba1a79b980f5ead83a9ca",
+      "contentHash": "204b7e5ed4f1c752a368a5bdec1df33c23493792b055e8500de759188ce7d5ec",
       "functions": [
         {
           "name": "parseArgs",
@@ -10940,7 +11861,7 @@
             "theme"
           ],
           "exported": false,
-          "lineCount": 42
+          "lineCount": 43
         },
         {
           "name": "themeStyleAttributes",
@@ -11003,7 +11924,7 @@
             "theme"
           ],
           "exported": false,
-          "lineCount": 95
+          "lineCount": 100
         },
         {
           "name": "main",
@@ -11015,7 +11936,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 362,
+      "totalLines": 369,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/render_pptx.py": {
@@ -11483,7 +12404,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/sync_image_manifest_status.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/sync_image_manifest_status.js",
-      "contentHash": "bfa81d55c193eb72f0aeee649d9d7c6686a09a8ff95066b967fcfa54b5f9ef0c",
+      "contentHash": "7509d53e798ea6a45f2956ac3ba3f86d4e2f1769f1c2306a350187765a7ea83d",
       "functions": [
         {
           "name": "usage",
@@ -11504,18 +12425,18 @@
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 42
+          "lineCount": 53
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 83,
+      "totalLines": 94,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/theme_selection_core.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/theme_selection_core.js",
-      "contentHash": "8a915cb9c487881343dcb8319239c611fd426ae2815e957570143637c976f944",
+      "contentHash": "6a00abe6941eebdcf3aef894c5c5583bf2e6dfd2d21e4afeaca0288cd689059b",
       "functions": [
         {
           "name": "isPlainObject",
@@ -11609,13 +12530,21 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 559,
+      "totalLines": 733,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/validate_deck_spec.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/validate_deck_spec.js",
-      "contentHash": "94faf8f927cac331da57c80cc4ef6c8685ea22a46200830e890e2ce5ac73a1a5",
+      "contentHash": "ae6abdc11ccdd276dd07f3a48ba5effecad5ec340562f98840b51c5714c3955d",
       "functions": [
+        {
+          "name": "designContractResolution",
+          "params": [
+            "deck"
+          ],
+          "exported": false,
+          "lineCount": 41
+        },
         {
           "name": "parseArgs",
           "params": [
@@ -11666,30 +12595,38 @@
           "lineCount": 10
         },
         {
+          "name": "allowsIllustrativeQuantitative",
+          "params": [
+            "deck"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
           "name": "validateOutlineBinding",
           "params": [
             "deckPath",
             "deck"
           ],
           "exported": false,
-          "lineCount": 133
+          "lineCount": 140
         },
         {
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 23
+          "lineCount": 25
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 262,
+      "totalLines": 343,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/validate_deck_truth.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/validate_deck_truth.js",
-      "contentHash": "d732a060ebf6099f7688f5e0ebb75dcdcc229783638f46ff804013a2e6d5e3f9",
+      "contentHash": "d323e2532bb9f23b085d027a549121447bceaf79560d0b0068ae6768acac94f6",
       "functions": [
         {
           "name": "parseArgs",
@@ -11742,6 +12679,15 @@
           "lineCount": 4
         },
         {
+          "name": "isChartAssumptionDataEntry",
+          "params": [
+            "entry",
+            "slide"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
           "name": "isMediaObject",
           "params": [
             "value"
@@ -11783,6 +12729,14 @@
           ],
           "exported": false,
           "lineCount": 18
+        },
+        {
+          "name": "parseCanonicalResearchFact",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 20
         },
         {
           "name": "researchSemanticTokens",
@@ -11977,6 +12931,15 @@
           "lineCount": 138
         },
         {
+          "name": "expectedEyebrowOrdinal",
+          "params": [
+            "slides",
+            "slideIndex"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
           "name": "isStructuralNumber",
           "params": [
             "entry",
@@ -11984,7 +12947,7 @@
             "slide"
           ],
           "exported": false,
-          "lineCount": 16
+          "lineCount": 48
         },
         {
           "name": "isDiagramStructuralEntry",
@@ -12088,7 +13051,7 @@
             "changes"
           ],
           "exported": false,
-          "lineCount": 51
+          "lineCount": 62
         },
         {
           "name": "ensureGeneratedProjectMedia",
@@ -12153,7 +13116,7 @@
             "deck"
           ],
           "exported": false,
-          "lineCount": 308
+          "lineCount": 312
         },
         {
           "name": "validateSourceBoundDeck",
@@ -12161,7 +13124,7 @@
             "deck"
           ],
           "exported": false,
-          "lineCount": 169
+          "lineCount": 219
         },
         {
           "name": "writeJson",
@@ -12176,13 +13139,13 @@
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 67
+          "lineCount": 72
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 1393,
+      "totalLines": 1550,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/validate_image_layout_contract.js": {
@@ -12265,7 +13228,7 @@
     },
     "box_agent/skills/document-skills/pptx/scripts/validate_image_manifest.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/validate_image_manifest.js",
-      "contentHash": "b279d12a1f8dab4b2ca9a23c7bee82713b3299e9af5a63afa00717149ea55e27",
+      "contentHash": "10f0de0cb0c73a5c8b1041b0567f61bf5abd5e49f6baf99ecf6c1589513d668d",
       "functions": [
         {
           "name": "usage",
@@ -12362,24 +13325,48 @@
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 154
+          "lineCount": 185
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 271,
+      "totalLines": 302,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/validate_outline.js": {
       "filePath": "box_agent/skills/document-skills/pptx/scripts/validate_outline.js",
-      "contentHash": "5c02a78c9876181e2b0bfbda86bc57259dd5d0c523fca36851d4253bb2108de8",
+      "contentHash": "3bd7806a6211728106bca7211f0608d5da9b3dcb78b728a18cf6050c4f4bf22a",
       "functions": [
+        {
+          "name": "parsePageToken",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "explicitPageCountContract",
+          "params": [
+            "sourceText"
+          ],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "outlineBulletCount",
+          "params": [
+            "slide"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
         {
           "name": "usage",
           "params": [],
           "exported": false,
-          "lineCount": 7
+          "lineCount": 8
         },
         {
           "name": "parseArgs",
@@ -12387,7 +13374,7 @@
             "argv"
           ],
           "exported": false,
-          "lineCount": 28
+          "lineCount": 36
         },
         {
           "name": "readOutline",
@@ -12396,6 +13383,14 @@
           ],
           "exported": false,
           "lineCount": 11
+        },
+        {
+          "name": "readVerifiedResearchEvidence",
+          "params": [
+            "reportPath"
+          ],
+          "exported": false,
+          "lineCount": 37
         },
         {
           "name": "text",
@@ -12477,19 +13472,19 @@
             "opts"
           ],
           "exported": false,
-          "lineCount": 279
+          "lineCount": 322
         },
         {
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 14
+          "lineCount": 28
         }
       ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 421,
+      "totalLines": 582,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/scripts/validate_pptx_package.py": {
@@ -12572,12 +13567,12 @@
     },
     "box_agent/skills/document-skills/pptx/SKILL.md": {
       "filePath": "box_agent/skills/document-skills/pptx/SKILL.md",
-      "contentHash": "82e119fdaafb4fd0e05a229b3a63545cedc3ffd65b2f9de5a172450156ab53c9",
+      "contentHash": "e4d834fe6072b472733fd365f9038bd933c7c85e7dd79d368c882dfe4f6b4d1f",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 756,
+      "totalLines": 849,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/themes/block-frame-mono-blue.json": {
@@ -12608,6 +13603,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 57,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/capital-ledger.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/capital-ledger.json",
+      "contentHash": "cf399787aaaf5b281147a8296c9833a62bf59d406e1f50419c46a0e25feb58bd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/themes/catalog-dark.json": {
@@ -12650,6 +13655,26 @@
       "totalLines": 273,
       "hasStructuralAnalysis": true
     },
+    "box_agent/skills/document-skills/pptx/themes/civic-brief.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/civic-brief.json",
+      "contentHash": "86241615bc5595dc9eb5697b9f0b26d5de63fa7a5c170d7d56f444c6bdb15112",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/clinical-atlas.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/clinical-atlas.json",
+      "contentHash": "4e644b9976da27f21c35a3f1dd4ecdc85609818069fb5708f5c13e8a07a7f973",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/skills/document-skills/pptx/themes/comic-panel.json": {
       "filePath": "box_agent/skills/document-skills/pptx/themes/comic-panel.json",
       "contentHash": "fe6e16422ecdf8d1ad55ad157239f20a93a61527bdd1f59fb84a2fdd00f82e2f",
@@ -12658,6 +13683,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 80,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/commerce-pulse.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/commerce-pulse.json",
+      "contentHash": "720d4bb60a65448253e6d069938deac17a66eb78be65cd09828ab45d98f6322a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 39,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/themes/consulting-navy.json": {
@@ -12680,6 +13715,46 @@
       "totalLines": 96,
       "hasStructuralAnalysis": true
     },
+    "box_agent/skills/document-skills/pptx/themes/factory-floor.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/factory-floor.json",
+      "contentHash": "79890b01792826af76b8278df0d1d55895c2564f93217111cb1e86c308e48993",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 39,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/legal-docket.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/legal-docket.json",
+      "contentHash": "450add8dc0c8693be08220c126d6c9e54df32c9ff67fad513beef150d4c24658",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 39,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/logistics-control-tower.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/logistics-control-tower.json",
+      "contentHash": "7849b1942ba896471f2ef83c515d43ad88fc60a528716e6b0487cb42fb10f4b3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 39,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/people-handbook.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/people-handbook.json",
+      "contentHash": "f71fd59344891c4a83af0030a161eeed8dc5b573eae71e4f49d9ee0ee9b305a7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/skills/document-skills/pptx/themes/product-console.json": {
       "filePath": "box_agent/skills/document-skills/pptx/themes/product-console.json",
       "contentHash": "3237760ad7668f2c28e2a476c5739eb8fb8a025407f09528b3d24d303d6929a9",
@@ -12688,6 +13763,26 @@
       "imports": [],
       "exports": [],
       "totalLines": 88,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/property-atlas.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/property-atlas.json",
+      "contentHash": "ba9798c3a150e8d3fa4f8d4a78de4c1743463c672ae1fa6b460dc8b04cd51a42",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 39,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skills/document-skills/pptx/themes/research-notebook.json": {
+      "filePath": "box_agent/skills/document-skills/pptx/themes/research-notebook.json",
+      "contentHash": "3fd35218c766d8817fc1a1fe95ca72bb35cca4e7562afdbc2c8961f439337f7d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/themes/technical-blueprint.json": {
@@ -12871,7 +13966,7 @@
     },
     "box_agent/tools/bash_tool.py": {
       "filePath": "box_agent/tools/bash_tool.py",
-      "contentHash": "710339b9c9495cc116d8e2d66a0811b3d92592887b675127397716d2e0853fef",
+      "contentHash": "7b747b97eef62ab591064aab8ed2ecc35ccb13a51e3445ca1f40a41b97bf867c",
       "functions": [
         {
           "name": "_truncate_bash_output",
@@ -12896,6 +13991,16 @@
           "lineCount": 20
         },
         {
+          "name": "_is_shell_output_redirect_path",
+          "params": [
+            "command",
+            "path"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
           "name": "_is_temp_shell_redirect_path",
           "params": [
             "command",
@@ -12903,7 +14008,17 @@
           ],
           "returnType": "bool",
           "exported": true,
-          "lineCount": 6
+          "lineCount": 5
+        },
+        {
+          "name": "_path_requires_write_permission",
+          "params": [
+            "command",
+            "path"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 11
         },
         {
           "name": "_resolve_login_shell",
@@ -13005,6 +14120,7 @@
             "approve_permission_request",
             "_consume_safety_approval",
             "_create_subprocess",
+            "_restore_skill_path_after_login",
             "_kill_process_tree",
             "_kill_process_tree_unix",
             "_kill_process_tree_windows",
@@ -13015,7 +14131,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 705
+          "lineCount": 716
         },
         {
           "name": "BashOutputTool",
@@ -13161,7 +14277,9 @@
       "exports": [
         "_truncate_bash_output",
         "_truncate_bash_streams",
+        "_is_shell_output_redirect_path",
         "_is_temp_shell_redirect_path",
+        "_path_requires_write_permission",
         "_resolve_login_shell",
         "_detect_lark_user_mode_violation",
         "_detect_obsidian_cli_violation",
@@ -13174,12 +14292,12 @@
         "BashOutputTool",
         "BashKillTool"
       ],
-      "totalLines": 1375,
+      "totalLines": 1416,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/browser_intent.py": {
       "filePath": "box_agent/tools/browser_intent.py",
-      "contentHash": "869c859e1dfbe81088f859317aab4e2ee69f2f0910427f9adf0fb11f21610749",
+      "contentHash": "d80f75536803501f055331b181ee1cf6c55b0cb0f0190a4262d6011c4900afe7",
       "functions": [
         {
           "name": "has_explicit_current_page_intent",
@@ -13200,13 +14318,49 @@
           "lineCount": 5
         },
         {
+          "name": "has_human_browser_handoff_intent",
+          "params": [
+            "user_text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "classify_browser_backend_intent",
+          "params": [
+            "user_text"
+          ],
+          "returnType": "BrowserBackend",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "_is_playwright_browser_tool",
+          "params": [
+            "tool_name"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_recent_successful_browser_backend",
+          "params": [
+            "messages"
+          ],
+          "returnType": "BrowserBackend",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
           "name": "has_recent_successful_browser_context",
           "params": [
             "messages"
           ],
           "returnType": "bool",
           "exported": true,
-          "lineCount": 14
+          "lineCount": 3
         },
         {
           "name": "_latest_user_text",
@@ -13227,10 +14381,12 @@
             "tool_call_error"
           ],
           "properties": [
-            "allow_current_page"
+            "allow_current_page",
+            "backend",
+            "human_handoff"
           ],
           "exported": true,
-          "lineCount": 50
+          "lineCount": 79
         }
       ],
       "imports": [
@@ -13250,6 +14406,7 @@
           "source": "typing",
           "specifiers": [
             "Any",
+            "Literal",
             "Sequence"
           ]
         },
@@ -13263,16 +14420,20 @@
       "exports": [
         "has_explicit_current_page_intent",
         "is_browser_continuation",
+        "has_human_browser_handoff_intent",
+        "classify_browser_backend_intent",
+        "_is_playwright_browser_tool",
+        "_recent_successful_browser_backend",
         "has_recent_successful_browser_context",
         "_latest_user_text",
         "BrowserToolIntentPolicy"
       ],
-      "totalLines": 174,
+      "totalLines": 345,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/execution_result_tool.py": {
       "filePath": "box_agent/tools/execution_result_tool.py",
-      "contentHash": "5454d5a58c33ee277985b402d221a3ce3a281bc4670a65a7a2f2fa8f254d05b2",
+      "contentHash": "4d2c4883c980f3ecff9643e8ec43fff7a2ca8e040fb174399ea093a644331c37",
       "functions": [
         {
           "name": "_text_list",
@@ -13280,6 +14441,16 @@
             "values"
           ],
           "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_valid_text",
+          "params": [
+            "value",
+            "max_length"
+          ],
+          "returnType": "bool",
           "exported": true,
           "lineCount": 2
         }
@@ -13295,7 +14466,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 170
+          "lineCount": 311
         }
       ],
       "imports": [
@@ -13315,14 +14486,15 @@
       ],
       "exports": [
         "_text_list",
+        "_valid_text",
         "ReportExecutionResultTool"
       ],
-      "totalLines": 188,
+      "totalLines": 334,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/file_tools.py": {
       "filePath": "box_agent/tools/file_tools.py",
-      "contentHash": "97f96ffeaf604e962bc9a2af5842a9eb4b4bed46db35b96331a066beb0aa3821",
+      "contentHash": "1165fc1c7d9ed72f9d4d3db27ce7ed3046635e91876f5657ed0aa11b9649237d",
       "functions": [
         {
           "name": "_normalize_read_pagination",
@@ -13463,7 +14635,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 203
+          "lineCount": 238
         },
         {
           "name": "SearchFilesTool",
@@ -13533,6 +14705,12 @@
           ]
         },
         {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
           "source": "json",
           "specifiers": [
             "json"
@@ -13589,6 +14767,14 @@
           ]
         },
         {
+          "source": "..context_resources",
+          "specifiers": [
+            "CONTEXT_RESOURCE_RAW_KEY",
+            "ResourceDescriptor",
+            "classify_read_resource"
+          ]
+        },
+        {
           "source": "..model_history",
           "specifiers": [
             "is_model_history_placeholder",
@@ -13637,7 +14823,7 @@
         "AppendTool",
         "EditTool"
       ],
-      "totalLines": 1327,
+      "totalLines": 1368,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/image_generation_tool.py": {
@@ -14231,7 +15417,7 @@
     },
     "box_agent/tools/mcp_loader.py": {
       "filePath": "box_agent/tools/mcp_loader.py",
-      "contentHash": "44e5b3702dcd2af68aa102dffe1b408d71fb90743dc0989ee6b88a6cc3ec70e0",
+      "contentHash": "366b1d3c0daf7a9e522bf3db8facda555f917812dc9b63bc69fb76a932d89a06",
       "functions": [
         {
           "name": "_warn",
@@ -14592,12 +15778,6 @@
           ]
         },
         {
-          "source": "mcp.client.streamable_http",
-          "specifiers": [
-            "streamablehttp_client"
-          ]
-        },
-        {
           "source": "box_agent.auth",
           "specifiers": [
             "request_auth_headers",
@@ -14642,7 +15822,7 @@
         "cleanup_mcp_connections",
         "reconnect_mcp_server"
       ],
-      "totalLines": 1036,
+      "totalLines": 1041,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/memory_tool.py": {
@@ -14988,7 +16168,7 @@
     },
     "box_agent/tools/permissions.py": {
       "filePath": "box_agent/tools/permissions.py",
-      "contentHash": "a09c73a9ed9404ef41e5683fde241a17c774d2b94de5954e377ff40ecacc784b",
+      "contentHash": "b8d01dafa24803587e11b90120849544769966f819ab82002d40ac1853663133",
       "functions": [
         {
           "name": "_classify_quoted_path",
@@ -15025,7 +16205,7 @@
             "session_workspace_root"
           ],
           "exported": true,
-          "lineCount": 77
+          "lineCount": 76
         },
         {
           "name": "PermissionDecision",
@@ -15054,7 +16234,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 286
+          "lineCount": 310
         },
         {
           "name": "GrantStore",
@@ -15117,7 +16297,7 @@
         "_classify_quoted_path",
         "extract_absolute_paths"
       ],
-      "totalLines": 686,
+      "totalLines": 709,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/plan_tool.py": {
@@ -15367,7 +16547,7 @@
     },
     "box_agent/tools/runtime.py": {
       "filePath": "box_agent/tools/runtime.py",
-      "contentHash": "01acf94b95740d3222c96d0b6efd17a8064aea4717a9a581081af8ce62335c4d",
+      "contentHash": "a1af80b3ed91339803cc759e5206480df5f021e550d1fcb48f70008855a47e8e",
       "functions": [
         {
           "name": "build_skill_runtime_context",
@@ -15375,11 +16555,20 @@
             "sandbox_mode",
             "env_context",
             "sandbox_env",
-            "node_runtime_root"
+            "node_runtime_root",
+            "office_node_runtime_root",
+            "shell_python_path"
           ],
           "returnType": "SkillRuntimeContext",
           "exported": true,
-          "lineCount": 15
+          "lineCount": 26
+        },
+        {
+          "name": "resolve_cli_shell_python",
+          "params": [],
+          "returnType": "Path | None",
+          "exported": true,
+          "lineCount": 14
         },
         {
           "name": "build_skill_runtime_prompt",
@@ -15388,28 +16577,30 @@
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 33
+          "lineCount": 41
         },
         {
           "name": "_build_python_runtime",
           "params": [
             "sandbox_mode",
             "host_runtimes",
-            "sandbox_env"
+            "sandbox_env",
+            "shell_python_path"
           ],
           "returnType": "SkillRuntime",
           "exported": true,
-          "lineCount": 87
+          "lineCount": 94
         },
         {
           "name": "_build_node_runtime",
           "params": [
             "host_runtimes",
-            "node_runtime_root"
+            "node_runtime_root",
+            "office_node_runtime_root"
           ],
           "returnType": "SkillRuntime",
           "exported": true,
-          "lineCount": 31
+          "lineCount": 52
         },
         {
           "name": "_env_context_runtimes",
@@ -15457,7 +16648,7 @@
           ],
           "returnType": "str | None",
           "exported": true,
-          "lineCount": 10
+          "lineCount": 12
         },
         {
           "name": "_safe_host_executable_path",
@@ -15648,14 +16839,16 @@
             "__init__",
             "install_macos",
             "install_win",
+            "install_for_current_platform",
             "discover",
+            "_discover_from_versions",
             "_env_vars",
             "_managed_path",
             "_write_manifest"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 312
+          "lineCount": 359
         },
         {
           "name": "NodeRuntimeInstallError",
@@ -15667,12 +16860,6 @@
       ],
       "imports": [
         {
-          "source": "os",
-          "specifiers": [
-            "os"
-          ]
-        },
-        {
           "source": "hashlib",
           "specifiers": [
             "hashlib"
@@ -15682,6 +16869,12 @@
           "source": "json",
           "specifiers": [
             "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
           ]
         },
         {
@@ -15745,6 +16938,7 @@
         "SkillRuntime",
         "SkillRuntimeContext",
         "build_skill_runtime_context",
+        "resolve_cli_shell_python",
         "build_skill_runtime_prompt",
         "_build_python_runtime",
         "NodeRuntimeManager",
@@ -15774,7 +16968,7 @@
         "_safe_extract_tar",
         "_safe_extract_zip"
       ],
-      "totalLines": 795,
+      "totalLines": 907,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/safety.py": {
@@ -16015,7 +17209,7 @@
     },
     "box_agent/tools/setup.py": {
       "filePath": "box_agent/tools/setup.py",
-      "contentHash": "8603fc028a1ee3e7568a771bfb6e6e4217aba97041af0da0de8da4cb01228e36",
+      "contentHash": "947fb352d67211b731462adfb5b221cbfb8bf0864bb01aba417946071881e943",
       "functions": [
         {
           "name": "build_sandbox_info_prompt",
@@ -16262,6 +17456,12 @@
           ]
         },
         {
+          "source": "box_agent.tools.skill_execution_env",
+          "specifiers": [
+            "build_skill_execution_env"
+          ]
+        },
+        {
           "source": "box_agent.tools.mcp_config_tool",
           "specifiers": [
             "McpConfigTool"
@@ -16313,12 +17513,138 @@
         "merge_mcp_tools",
         "add_workspace_tools"
       ],
-      "totalLines": 629,
+      "totalLines": 630,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/tools/skill_execution_env.py": {
+      "filePath": "box_agent/tools/skill_execution_env.py",
+      "contentHash": "ae88d270ef6dd241bd4d817d6e9dce5c95d6d5728fa28140b109e8a81e563f0d",
+      "functions": [
+        {
+          "name": "build_skill_execution_env",
+          "params": [
+            "ctx",
+            "base_env",
+            "platform_name",
+            "home_dir"
+          ],
+          "returnType": "dict[str, str]",
+          "exported": true,
+          "lineCount": 92
+        },
+        {
+          "name": "_safe_skill_tools_root",
+          "params": [
+            "raw",
+            "default"
+          ],
+          "returnType": "Path",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_python_user_site",
+          "params": [
+            "root",
+            "is_windows"
+          ],
+          "returnType": "Path",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_split_env_paths",
+          "params": [
+            "raw",
+            "separator"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_dedupe_paths",
+          "params": [
+            "entries",
+            "is_windows"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "_resolve_skill_browser_executable",
+          "params": [
+            "env",
+            "browser_root",
+            "platform_name"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "_browser_revision",
+          "params": [
+            "name"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_browser_executable_candidates",
+          "params": [
+            "platform_name"
+          ],
+          "returnType": "tuple[Path, ...]",
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "box_agent.tools.runtime",
+          "specifiers": [
+            "SkillRuntimeContext"
+          ]
+        }
+      ],
+      "exports": [
+        "build_skill_execution_env",
+        "_safe_skill_tools_root",
+        "_python_user_site",
+        "_split_env_paths",
+        "_dedupe_paths",
+        "_resolve_skill_browser_executable",
+        "_browser_revision",
+        "_browser_executable_candidates"
+      ],
+      "totalLines": 186,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/skill_loader.py": {
       "filePath": "box_agent/tools/skill_loader.py",
-      "contentHash": "8fd6a7ff04c9d85c39fbd1dc2be182d2e68d5de84db99d8aaa9c1a4cf135611c",
+      "contentHash": "7b9380087e3e6acd7c8b40f7d30e83e44d417ec3e71c7cb6c57b2a3ced8b86a7",
       "functions": [
         {
           "name": "_warn",
@@ -16376,11 +17702,13 @@
             "keywords",
             "required_skills",
             "related_skills",
+            "capabilities",
+            "workflow",
             "broken",
             "broken_reason"
           ],
           "exported": true,
-          "lineCount": 79
+          "lineCount": 83
         },
         {
           "name": "_SourceEntry",
@@ -16402,6 +17730,7 @@
           "methods": [
             "__init__",
             "_parse_skill_name_list",
+            "_parse_skill_name",
             "skills_dir",
             "with_expert_skill_sources",
             "_default_skill_settings_path",
@@ -16425,7 +17754,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 715
+          "lineCount": 755
         },
         {
           "name": "SkillSelector",
@@ -16477,6 +17806,7 @@
         {
           "source": "typing",
           "specifiers": [
+            "Any",
             "Dict",
             "List",
             "Literal",
@@ -16502,12 +17832,12 @@
         "SkillLoader",
         "SkillSelector"
       ],
-      "totalLines": 1012,
+      "totalLines": 1056,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/skill_preload.py": {
       "filePath": "box_agent/tools/skill_preload.py",
-      "contentHash": "2a664689037fc534815dee88ef2de5c0af16fe3a1145ee53c880efc1098d7da3",
+      "contentHash": "d653265ccdc9c659af4ef4cac14a814a8f3361dc5c6db718c23b3e781a06ee39",
       "functions": [
         {
           "name": "strip_auto_loaded_skills",
@@ -16541,11 +17871,22 @@
           "name": "document_preload_skill_names",
           "params": [
             "matched_skill_names",
-            "completion_gate"
+            "completion_gate",
+            "presentation_skill_name"
           ],
           "returnType": "list[str]",
           "exported": true,
-          "lineCount": 25
+          "lineCount": 37
+        },
+        {
+          "name": "web_search_total_limit_for_active_skills",
+          "params": [
+            "matched_skill_names",
+            "preloaded_skill_names"
+          ],
+          "returnType": "int | None",
+          "exported": true,
+          "lineCount": 10
         },
         {
           "name": "has_explicit_video_deliverable_intent",
@@ -16573,11 +17914,13 @@
             "matched_skill_names",
             "completion_gate",
             "env_context",
-            "user_text"
+            "user_text",
+            "presentation_skill_name",
+            "force_presentation_skill"
           ],
           "returnType": "list[str]",
           "exported": true,
-          "lineCount": 18
+          "lineCount": 27
         },
         {
           "name": "_unique_append",
@@ -16626,7 +17969,7 @@
           ],
           "returnType": "AutoLoadedSkillsPrompt",
           "exported": true,
-          "lineCount": 78
+          "lineCount": 84
         }
       ],
       "classes": [
@@ -16686,6 +18029,7 @@
         {
           "source": "box_agent.loop_guards",
           "specifiers": [
+            "DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT",
             "CompletionGate"
           ]
         },
@@ -16709,6 +18053,7 @@
         "strip_active_skills",
         "build_active_skills_prompt",
         "document_preload_skill_names",
+        "web_search_total_limit_for_active_skills",
         "has_explicit_video_deliverable_intent",
         "host_runtime_preload_skill_names",
         "turn_preload_skill_names",
@@ -16717,7 +18062,7 @@
         "resolve_skill_preload_attributions",
         "build_auto_loaded_skills_prompt"
       ],
-      "totalLines": 375,
+      "totalLines": 417,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/skill_tool.py": {
@@ -17003,7 +18348,7 @@
     },
     "box_agent/tools/sub_agent_tool.py": {
       "filePath": "box_agent/tools/sub_agent_tool.py",
-      "contentHash": "479da5de77ddf8a7ddc46cdb5edef2869a981684fb1fd212f139cfc1b7535e01",
+      "contentHash": "bde00ee74cd93565bf0512f76f8e8266258de3cf8df615f0454b372503e52335",
       "functions": [],
       "classes": [
         {
@@ -17047,7 +18392,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 871
+          "lineCount": 870
         }
       ],
       "imports": [
@@ -17128,12 +18473,12 @@
         "_WriteScopedTool",
         "SubAgentTool"
       ],
-      "totalLines": 998,
+      "totalLines": 997,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/todo_tool.py": {
       "filePath": "box_agent/tools/todo_tool.py",
-      "contentHash": "786134b611d008423f254d6e95952f73874a099c697fef10efe7563ccb37124e",
+      "contentHash": "b1f8cc7589da426bed181e1bca0895b1b7f5e3be3915efb9835fa4a701063678",
       "functions": [
         {
           "name": "_todo_snapshot",
@@ -17143,6 +18488,71 @@
           "returnType": "dict[str, Any]",
           "exported": true,
           "lineCount": 17
+        },
+        {
+          "name": "_todo_state_error",
+          "params": [
+            "items"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_validate_todo_records",
+          "params": [
+            "items"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "_validate_todo_items",
+          "params": [
+            "items"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_migrate_legacy_todo_state",
+          "params": [
+            "items"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_context_item",
+          "params": [
+            "item"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "_todo_next_instruction",
+          "params": [
+            "items"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "_todo_model_context",
+          "params": [
+            "items",
+            "action",
+            "changed_items"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 49
         }
       ],
       "classes": [
@@ -17153,15 +18563,18 @@
             "_next_id",
             "_save",
             "_load",
+            "_commit",
             "create",
+            "replace",
             "update",
             "delete",
+            "transition",
             "get",
             "list"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 75
+          "lineCount": 199
         },
         {
           "name": "TodoWriteTool",
@@ -17171,11 +18584,12 @@
             "name",
             "description",
             "parameters",
-            "execute"
+            "execute",
+            "_validate_todos"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 99
+          "lineCount": 259
         },
         {
           "name": "TodoReadTool",
@@ -17189,7 +18603,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 66
+          "lineCount": 81
         }
       ],
       "imports": [
@@ -17233,11 +18647,18 @@
       ],
       "exports": [
         "_todo_snapshot",
+        "_todo_state_error",
+        "_validate_todo_records",
+        "_validate_todo_items",
+        "_migrate_legacy_todo_state",
+        "_context_item",
+        "_todo_next_instruction",
+        "_todo_model_context",
         "TodoStore",
         "TodoWriteTool",
         "TodoReadTool"
       ],
-      "totalLines": 295,
+      "totalLines": 760,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/vision_review_tool.py": {
@@ -17573,9 +18994,241 @@
       "totalLines": 157,
       "hasStructuralAnalysis": true
     },
+    "box_agent/workflow_checkpoint_store.py": {
+      "filePath": "box_agent/workflow_checkpoint_store.py",
+      "contentHash": "7337792a5c39f4f97ca1768e01c64b67d35df030532d16342e57f854e03cebb7",
+      "functions": [
+        {
+          "name": "_sha256_file",
+          "params": [
+            "path"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_workspace_identity",
+          "params": [
+            "workspace_dir"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_payload_sha256",
+          "params": [
+            "payload"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "_checkpoint_path",
+          "params": [
+            "workspace_dir",
+            "workflow_kind"
+          ],
+          "returnType": "Path",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_artifact_manifest",
+          "params": [
+            "root"
+          ],
+          "returnType": "tuple[list[dict[str, Any]], str]",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "save_workflow_checkpoint",
+          "params": [
+            "policy",
+            "workspace_dir",
+            "artifact_root_dir"
+          ],
+          "returnType": "WorkflowPauseCheckpoint | None",
+          "exported": true,
+          "lineCount": 72
+        },
+        {
+          "name": "load_workflow_checkpoint",
+          "params": [
+            "workspace_dir",
+            "workflow_kind"
+          ],
+          "returnType": "WorkflowPauseCheckpoint | None",
+          "exported": true,
+          "lineCount": 79
+        },
+        {
+          "name": "clear_workflow_checkpoint",
+          "params": [
+            "workspace_dir",
+            "workflow_kind"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "checkpoint_resume_instruction",
+          "params": [
+            "checkpoint"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
+      "classes": [
+        {
+          "name": "WorkflowPauseCheckpoint",
+          "methods": [
+            "as_dict"
+          ],
+          "properties": [
+            "checkpoint_id",
+            "workflow_kind",
+            "adapter_id",
+            "schema_version",
+            "workspace_identity",
+            "path",
+            "stage",
+            "artifact_count",
+            "artifact_set_sha256",
+            "workflow_options"
+          ],
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "WorkflowCheckpointAdapter",
+          "methods": [
+            "build_state"
+          ],
+          "properties": [
+            "adapter_id",
+            "workflow_kind"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_ControlledPresentationCheckpointAdapter",
+          "methods": [
+            "build_state"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "_ExternalSkillCheckpointAdapter",
+          "methods": [
+            "build_state"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 33
+        }
+      ],
+      "imports": [
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime",
+            "timezone"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Protocol"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid4"
+          ]
+        },
+        {
+          "source": ".artifacts",
+          "specifiers": [
+            "artifact_scan_root"
+          ]
+        }
+      ],
+      "exports": [
+        "WorkflowPauseCheckpoint",
+        "WorkflowCheckpointAdapter",
+        "_sha256_file",
+        "_workspace_identity",
+        "_payload_sha256",
+        "_checkpoint_path",
+        "_artifact_manifest",
+        "_ControlledPresentationCheckpointAdapter",
+        "_ExternalSkillCheckpointAdapter",
+        "save_workflow_checkpoint",
+        "load_workflow_checkpoint",
+        "clear_workflow_checkpoint",
+        "checkpoint_resume_instruction"
+      ],
+      "totalLines": 385,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/workflow_policy.py": {
       "filePath": "box_agent/workflow_policy.py",
-      "contentHash": "74d0510be422cb55a495823f076805d4cfa7a16f085dfd2762816036f5be6df5",
+      "contentHash": "6107f7109e319c4827844b284b049cd9ced88d0d0b7e60268144305c9579cc82",
       "functions": [],
       "classes": [
         {
@@ -17604,11 +19257,12 @@
             "suppresses_generic_final_summary"
           ],
           "properties": [
+            "kind",
             "checkpoint_injection_id",
             "evidence_read_batch_size"
           ],
           "exported": true,
-          "lineCount": 50
+          "lineCount": 51
         }
       ],
       "imports": [
@@ -17636,12 +19290,12 @@
         "WorkflowCheckpointUpdate",
         "WorkflowPolicy"
       ],
-      "totalLines": 70,
+      "totalLines": 71,
       "hasStructuralAnalysis": true
     },
     "box_agent/workflows/__init__.py": {
       "filePath": "box_agent/workflows/__init__.py",
-      "contentHash": "0bb1d8a4c673e7f3a29586de339a6a0284200511d4213c692425de66fb5a338e",
+      "contentHash": "26186a7815d5d8360eb4b769d9a275bbcf0165b7fed36ab434cde173b2d1db21",
       "functions": [
         {
           "name": "create_workflow_policy",
@@ -17653,7 +19307,7 @@
           ],
           "returnType": "WorkflowPolicy | None",
           "exported": true,
-          "lineCount": 18
+          "lineCount": 46
         },
         {
           "name": "recover_completion_gate",
@@ -17662,7 +19316,7 @@
           ],
           "returnType": "CompletionGate | None",
           "exported": true,
-          "lineCount": 7
+          "lineCount": 19
         }
       ],
       "classes": [],
@@ -17698,15 +19352,50 @@
           ]
         },
         {
+          "source": "..workflow_checkpoint_store",
+          "specifiers": [
+            "load_workflow_checkpoint"
+          ]
+        },
+        {
           "source": ".controlled_presentation",
           "specifiers": [
             "ControlledPresentationPolicy"
           ]
         },
         {
+          "source": ".external_skill",
+          "specifiers": [
+            "EXTERNAL_SKILL_WORKFLOW_KIND",
+            "ExternalSkillRunPolicy",
+            "build_external_skill_completion_gate",
+            "build_external_skill_completion_gate_from_options",
+            "external_skill_policy_from_options",
+            "resolve_explicit_skill_invocation"
+          ]
+        },
+        {
           "source": ".presentation_contract",
           "specifiers": [
-            "RESEARCH_MODE_OPTION"
+            "IMAGE_GENERATION_POLICY_OPTION",
+            "RESEARCH_MODE_OPTION",
+            "CONTROLLED_PRESENTATION_WORKFLOW_KIND"
+          ]
+        },
+        {
+          "source": ".presentation_preflight",
+          "specifiers": [
+            "build_presentation_preflight_analysis_text",
+            "build_presentation_preflight_result",
+            "build_presentation_recommendation_prompt",
+            "load_presentation_preflight_config"
+          ]
+        },
+        {
+          "source": ".presentation_provider",
+          "specifiers": [
+            "parse_host_presentation_config",
+            "resolve_presentation_skill_provider"
           ]
         }
       ],
@@ -17714,12 +19403,12 @@
         "create_workflow_policy",
         "recover_completion_gate"
       ],
-      "totalLines": 47,
+      "totalLines": 121,
       "hasStructuralAnalysis": true
     },
     "box_agent/workflows/controlled_presentation.py": {
       "filePath": "box_agent/workflows/controlled_presentation.py",
-      "contentHash": "cc7943380fed7664db4af1b913a1116b75f9472e736281c5497e1ad92b905498",
+      "contentHash": "c347f60e443057aee723081c7c5f8e802558747f670064058055a1cbaafbfe80",
       "functions": [
         {
           "name": "_plan_scope_error",
@@ -17840,7 +19529,7 @@
           ],
           "returnType": "str | None",
           "exported": true,
-          "lineCount": 97
+          "lineCount": 95
         },
         {
           "name": "_apply_patch_failure_signature",
@@ -17854,11 +19543,40 @@
           "lineCount": 15
         },
         {
+          "name": "_content_patch_repair_error",
+          "params": [
+            "stage",
+            "tool_name",
+            "arguments"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_image_policy_rebase_error",
+          "params": [
+            "stage",
+            "tool_name",
+            "arguments"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 51
+        },
+        {
           "name": "_repair_stalled_checkpoint",
           "params": [],
           "returnType": "str",
           "exported": true,
-          "lineCount": 12
+          "lineCount": 11
+        },
+        {
+          "name": "_image_auth_blocked_checkpoint",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 10
         },
         {
           "name": "_checkpoint_json",
@@ -17902,7 +19620,7 @@
           ],
           "returnType": "str | None",
           "exported": true,
-          "lineCount": 101
+          "lineCount": 107
         },
         {
           "name": "_scaffold_failure_signature",
@@ -17938,24 +19656,36 @@
           "lineCount": 7
         },
         {
-          "name": "_unverified_outline_evidence_error",
+          "name": "_research_result_is_empty",
           "params": [
-            "tool_name",
-            "arguments",
-            "verified_urls"
+            "result"
           ],
-          "returnType": "str | None",
+          "returnType": "bool",
           "exported": true,
-          "lineCount": 39
+          "lineCount": 15
+        },
+        {
+          "name": "_image_result_is_unauthorized",
+          "params": [
+            "result"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 13
         }
       ],
       "classes": [
         {
           "name": "ControlledPresentationPolicy",
           "methods": [
+            "attach_resume_checkpoint",
             "build_checkpoint",
+            "_persist_research_fallback_status",
+            "_persist_image_auth_blocked",
             "update_checkpoint",
             "plan_scope_error",
+            "_research_json_read_key",
+            "_research_local_read_error",
             "tool_call_error",
             "record_tool_result",
             "exempts_tool_budget",
@@ -17968,6 +19698,7 @@
             "workspace_dir",
             "artifact_root_dir",
             "research_mode",
+            "image_generation_policy",
             "stage",
             "scaffold_input",
             "image_input",
@@ -17976,16 +19707,30 @@
             "has_image_input",
             "has_repair_input",
             "repair_stalled",
+            "image_auth_blocked",
+            "research_search_exhausted",
             "apply_patch_repair_allowed",
             "apply_patch_repair_paths",
             "_last_checkpoint_text",
+            "_resume_checkpoint",
             "_step_failure_counts",
+            "_repair_failure_stage",
+            "_repair_failure_streak",
+            "_research_tool_attempts",
+            "_research_successful_attempts",
+            "_research_failed_attempts",
+            "_research_empty_attempts",
+            "_research_calls_since_checkpoint",
+            "_research_rounds_without_handoff",
+            "_research_json_reads_since_mutation",
+            "_successful_mutation_since_checkpoint",
+            "_no_progress_mutation_streak",
             "kind",
             "checkpoint_injection_id",
             "evidence_read_batch_size"
           ],
           "exported": true,
-          "lineCount": 250
+          "lineCount": 540
         }
       ],
       "imports": [
@@ -18059,6 +19804,13 @@
           ]
         },
         {
+          "source": "..workflow_checkpoint_store",
+          "specifiers": [
+            "WorkflowPauseCheckpoint",
+            "checkpoint_resume_instruction"
+          ]
+        },
+        {
           "source": ".presentation_checkpoint",
           "specifiers": [
             "build_checkpoint_text"
@@ -18085,7 +19837,10 @@
         "_patch_repair_changes_named_field",
         "_apply_patch_error",
         "_apply_patch_failure_signature",
+        "_content_patch_repair_error",
+        "_image_policy_rebase_error",
         "_repair_stalled_checkpoint",
+        "_image_auth_blocked_checkpoint",
         "_checkpoint_json",
         "_research_handoff_urls",
         "_research_handoff_error",
@@ -18093,15 +19848,266 @@
         "_scaffold_failure_signature",
         "_image_generation_error",
         "_stage",
-        "_unverified_outline_evidence_error",
+        "_research_result_is_empty",
+        "_image_result_is_unauthorized",
         "ControlledPresentationPolicy"
       ],
-      "totalLines": 1130,
+      "totalLines": 1553,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/workflows/external_skill.py": {
+      "filePath": "box_agent/workflows/external_skill.py",
+      "contentHash": "3317d90c0e6d0530d9e98bd790634fd9aab041724449b66958458476e2c7d4f8",
+      "functions": [
+        {
+          "name": "explicit_skill_invocation_name",
+          "params": [
+            "user_text"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "resolve_explicit_skill_invocation",
+          "params": [
+            "skill_loader",
+            "user_text"
+          ],
+          "returnType": "Skill | None",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "infer_skill_delivery_globs",
+          "params": [
+            "skill"
+          ],
+          "returnType": "tuple[str, ...]",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "external_skill_workflow_options",
+          "params": [
+            "skill_name",
+            "skill_source",
+            "skill_root",
+            "task_text",
+            "artifact_globs",
+            "observed_paths",
+            "last_failures"
+          ],
+          "returnType": "dict[str, str]",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "build_external_skill_completion_gate",
+          "params": [
+            "user_text",
+            "workspace_dir",
+            "skill"
+          ],
+          "returnType": "CompletionGate",
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "build_external_skill_completion_gate_from_options",
+          "params": [
+            "workspace_dir",
+            "workflow_options"
+          ],
+          "returnType": "CompletionGate",
+          "exported": true,
+          "lineCount": 41
+        },
+        {
+          "name": "external_skill_policy_from_options",
+          "params": [
+            "workspace_dir",
+            "artifact_root_dir",
+            "workflow_options"
+          ],
+          "returnType": "ExternalSkillRunPolicy",
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "_option_text",
+          "params": [
+            "options",
+            "key"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "_decode_string_tuple",
+          "params": [
+            "raw",
+            "limit"
+          ],
+          "returnType": "tuple[str, ...]",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_is_relative_to",
+          "params": [
+            "path",
+            "root"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 8
+        }
+      ],
+      "classes": [
+        {
+          "name": "ExternalSkillRunPolicy",
+          "methods": [
+            "attach_resume_checkpoint",
+            "checkpoint_options",
+            "build_checkpoint",
+            "update_checkpoint",
+            "_record_candidate_path",
+            "record_tool_result",
+            "plan_scope_error",
+            "tool_call_error",
+            "exempts_tool_budget",
+            "uses_evidence_read_budget",
+            "is_direct_evidence_read_tool",
+            "allows_completion_continuation",
+            "suppresses_generic_final_summary"
+          ],
+          "properties": [
+            "workspace_dir",
+            "artifact_root_dir",
+            "skill_name",
+            "skill_source",
+            "skill_root",
+            "task_text",
+            "artifact_globs",
+            "observed_paths",
+            "last_failures",
+            "stage",
+            "_last_checkpoint_text",
+            "_resume_checkpoint",
+            "kind",
+            "checkpoint_injection_id",
+            "evidence_read_batch_size"
+          ],
+          "exported": true,
+          "lineCount": 196
+        }
+      ],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Mapping"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "ClassVar"
+          ]
+        },
+        {
+          "source": "..artifacts",
+          "specifiers": [
+            "artifact_scan_root"
+          ]
+        },
+        {
+          "source": "..loop_guards",
+          "specifiers": [
+            "CompletionGate",
+            "artifact_signatures_for_globs"
+          ]
+        },
+        {
+          "source": "..tools.base",
+          "specifiers": [
+            "ToolResult"
+          ]
+        },
+        {
+          "source": "..tools.permissions",
+          "specifiers": [
+            "extract_absolute_paths"
+          ]
+        },
+        {
+          "source": "..tools.skill_loader",
+          "specifiers": [
+            "Skill",
+            "SkillLoader"
+          ]
+        },
+        {
+          "source": "..workflow_checkpoint_store",
+          "specifiers": [
+            "WorkflowPauseCheckpoint",
+            "checkpoint_resume_instruction"
+          ]
+        },
+        {
+          "source": "..workflow_policy",
+          "specifiers": [
+            "WorkflowCheckpointUpdate"
+          ]
+        }
+      ],
+      "exports": [
+        "explicit_skill_invocation_name",
+        "resolve_explicit_skill_invocation",
+        "infer_skill_delivery_globs",
+        "external_skill_workflow_options",
+        "build_external_skill_completion_gate",
+        "build_external_skill_completion_gate_from_options",
+        "external_skill_policy_from_options",
+        "_option_text",
+        "_decode_string_tuple",
+        "_is_relative_to",
+        "ExternalSkillRunPolicy"
+      ],
+      "totalLines": 474,
       "hasStructuralAnalysis": true
     },
     "box_agent/workflows/presentation_checkpoint.py": {
       "filePath": "box_agent/workflows/presentation_checkpoint.py",
-      "contentHash": "dfff32d7e3ed7b57b31ee1b0fc28a6ae49ea8b9c52460c4a40e89c716e4c17a6",
+      "contentHash": "2565ea651a2fe03e58ceeeeb772c570992f3f50f883d67f49d6ecb61fdd81b22",
       "functions": [
         {
           "name": "_controlled_pptx_command",
@@ -18160,13 +20166,49 @@
           "lineCount": 13
         },
         {
+          "name": "_advisory_report_warning_count",
+          "params": [
+            "report_path"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_research_fallback_available",
+          "params": [
+            "research_files"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "_validated_research_source",
+          "params": [
+            "item"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
           "name": "_presentation_research_artifacts",
           "params": [
             "workspace_dir"
           ],
           "returnType": "tuple[bool, tuple[Path, ...]]",
           "exported": true,
-          "lineCount": 83
+          "lineCount": 129
+        },
+        {
+          "name": "_verified_research_evidence",
+          "params": [
+            "research_files"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 27
         },
         {
           "name": "_manifest_generation_progress",
@@ -18177,6 +20219,24 @@
           "returnType": "tuple[int, int, int, tuple[str, ...]]",
           "exported": true,
           "lineCount": 46
+        },
+        {
+          "name": "_manifest_image_policy_state",
+          "params": [
+            "manifest_path"
+          ],
+          "returnType": "tuple[bool, bool, bool]",
+          "exported": true,
+          "lineCount": 30
+        },
+        {
+          "name": "_json_document_error",
+          "params": [
+            "path"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 13
         },
         {
           "name": "_missing_artifact_references",
@@ -18237,11 +20297,12 @@
         {
           "name": "_scaffold_input",
           "params": [
-            "outline_path"
+            "outline_path",
+            "image_generation_policy"
           ],
           "returnType": "str | None",
           "exported": true,
-          "lineCount": 67
+          "lineCount": 71
         },
         {
           "name": "_image_generation_input",
@@ -18281,11 +20342,16 @@
           "name": "build_checkpoint_text",
           "params": [
             "workspace_dir",
-            "research_mode"
+            "research_mode",
+            "image_generation_policy",
+            "research_fallback_allowed",
+            "research_fallback_reason",
+            "research_attempt_summary",
+            "research_search_exhausted"
           ],
           "returnType": "str | None",
           "exported": true,
-          "lineCount": 598
+          "lineCount": 769
         },
         {
           "name": "completion_gate_progress_text",
@@ -18295,7 +20361,7 @@
           ],
           "returnType": "str | None",
           "exported": true,
-          "lineCount": 12
+          "lineCount": 20
         }
       ],
       "classes": [],
@@ -18337,6 +20403,12 @@
           ]
         },
         {
+          "source": "urllib.parse",
+          "specifiers": [
+            "urlsplit"
+          ]
+        },
+        {
           "source": "..artifacts",
           "specifiers": [
             "OUTPUT_SUBDIR"
@@ -18352,6 +20424,9 @@
           "source": ".presentation_contract",
           "specifiers": [
             "CHECKPOINT_MARKER",
+            "IMAGE_GENERATION_EXPLICIT_RETRY",
+            "IMAGE_GENERATION_FORBIDDEN",
+            "IMAGE_GENERATION_POLICY_OPTION",
             "RESEARCH_MODE_OPTION",
             "WORKFLOW_KIND"
           ]
@@ -18364,8 +20439,14 @@
         "_report_is_ok",
         "_report_state",
         "_report_warning_count",
+        "_advisory_report_warning_count",
+        "_research_fallback_available",
+        "_validated_research_source",
         "_presentation_research_artifacts",
+        "_verified_research_evidence",
         "_manifest_generation_progress",
+        "_manifest_image_policy_state",
+        "_json_document_error",
         "_missing_artifact_references",
         "_json_field_shape",
         "_outline_title_prop_path",
@@ -18379,15 +20460,31 @@
         "build_checkpoint_text",
         "completion_gate_progress_text"
       ],
-      "totalLines": 1416,
+      "totalLines": 1783,
       "hasStructuralAnalysis": true
     },
     "box_agent/workflows/presentation_contract.py": {
       "filePath": "box_agent/workflows/presentation_contract.py",
-      "contentHash": "74fc9eaf8a0135c42d5e00773100ab652f3bdc341b0ee46f07805f88eb3effd7",
-      "functions": [],
+      "contentHash": "0b1c9a492293f4573a2d8d95330d56ab6b52969acf00c34f8ac3dfb3c51d934a",
+      "functions": [
+        {
+          "name": "image_generation_policy_update",
+          "params": [
+            "user_text"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 10
+        }
+      ],
       "classes": [],
       "imports": [
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
         {
           "source": "typing",
           "specifiers": [
@@ -18395,8 +20492,443 @@
           ]
         }
       ],
-      "exports": [],
-      "totalLines": 9,
+      "exports": [
+        "image_generation_policy_update"
+      ],
+      "totalLines": 58,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/workflows/presentation_preflight.py": {
+      "filePath": "box_agent/workflows/presentation_preflight.py",
+      "contentHash": "29ea6b60a40d36954e7fb6e7a55d6cc9f47441313589cbb5e9e70600b1aaec1a",
+      "functions": [
+        {
+          "name": "load_presentation_preflight_config",
+          "params": [],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 52
+        },
+        {
+          "name": "_is_referenced_creation",
+          "params": [
+            "text",
+            "creation_match"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "_is_presentation_prompt_authoring_request",
+          "params": [
+            "text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "classify_presentation_request",
+          "params": [
+            "user_text",
+            "has_existing_presentation"
+          ],
+          "returnType": "PresentationRequestKind | None",
+          "exported": true,
+          "lineCount": 71
+        },
+        {
+          "name": "build_presentation_preflight_analysis_text",
+          "params": [
+            "user_text",
+            "reference_context"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "is_new_presentation_request",
+          "params": [
+            "user_text",
+            "has_existing_presentation"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_option_ids_by_field",
+          "params": [
+            "config"
+          ],
+          "returnType": "dict[str, set[str]]",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_page_count_option",
+          "params": [
+            "field",
+            "count"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "_alias_matches",
+          "params": [
+            "normalized_text",
+            "alias"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "_parse_page_token",
+          "params": [
+            "token"
+          ],
+          "returnType": "int | None",
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "_extract_page_count_value",
+          "params": [
+            "normalized_text",
+            "field"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "_alias_in_context",
+          "params": [
+            "normalized_text",
+            "field_id",
+            "alias"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "_requires_contextual_match",
+          "params": [
+            "field_id",
+            "alias"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "infer_explicit_presentation_values",
+          "params": [
+            "user_text",
+            "config"
+          ],
+          "returnType": "dict[str, str]",
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "build_presentation_recommendation_prompt",
+          "params": [
+            "user_text",
+            "config",
+            "missing_fields"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "parse_presentation_recommendations",
+          "params": [
+            "raw_text",
+            "config"
+          ],
+          "returnType": "dict[str, str]",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "_is_rich_presentation_prompt",
+          "params": [
+            "user_text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "_should_show_preflight",
+          "params": [
+            "user_text",
+            "config",
+            "missing_fields"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "build_presentation_preflight_result",
+          "params": [
+            "user_text",
+            "model_text",
+            "has_existing_presentation",
+            "reference_context"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 56
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "copy",
+          "specifiers": [
+            "copy"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Final",
+            "Literal"
+          ]
+        },
+        {
+          "source": "..delivery",
+          "specifiers": [
+            "is_meta_prompt_rewrite_request",
+            "strip_negated_format_clauses"
+          ]
+        },
+        {
+          "source": ".presentation_contract",
+          "specifiers": [
+            "PRESENTATION_DELIVERY_KEYWORDS"
+          ]
+        }
+      ],
+      "exports": [
+        "load_presentation_preflight_config",
+        "_is_referenced_creation",
+        "_is_presentation_prompt_authoring_request",
+        "classify_presentation_request",
+        "build_presentation_preflight_analysis_text",
+        "is_new_presentation_request",
+        "_option_ids_by_field",
+        "_page_count_option",
+        "_alias_matches",
+        "_parse_page_token",
+        "_extract_page_count_value",
+        "_alias_in_context",
+        "_requires_contextual_match",
+        "infer_explicit_presentation_values",
+        "build_presentation_recommendation_prompt",
+        "parse_presentation_recommendations",
+        "_is_rich_presentation_prompt",
+        "_should_show_preflight",
+        "build_presentation_preflight_result"
+      ],
+      "totalLines": 719,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/workflows/presentation_provider.py": {
+      "filePath": "box_agent/workflows/presentation_provider.py",
+      "contentHash": "3f975a451e131fa7ec3cae7314924d9c459d661e7b3f53ca68f44e4a4a730fe2",
+      "functions": [
+        {
+          "name": "parse_host_presentation_config",
+          "params": [
+            "prompt_meta"
+          ],
+          "returnType": "HostPresentationConfig | None",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "_legacy_presentation_authoring_skill",
+          "params": [
+            "skill"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "_routing_tokens",
+          "params": [
+            "text"
+          ],
+          "returnType": "set[str]",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_has_provider_specific_match",
+          "params": [
+            "skill",
+            "query"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_query_explicitly_names_provider",
+          "params": [
+            "skill",
+            "query"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_is_lark_presentation_provider",
+          "params": [
+            "skill"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "_query_requests_lark",
+          "params": [
+            "query"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "presentation_provider_for_skill",
+          "params": [
+            "skill"
+          ],
+          "returnType": "PresentationSkillProvider | None",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "resolve_presentation_skill_provider",
+          "params": [
+            "skill_loader",
+            "matched_skill_names",
+            "preferred_skill",
+            "query"
+          ],
+          "returnType": "PresentationSkillProvider | None",
+          "exported": true,
+          "lineCount": 79
+        }
+      ],
+      "classes": [
+        {
+          "name": "HostPresentationConfig",
+          "methods": [],
+          "properties": [
+            "intent",
+            "confirmed_by",
+            "preferred_skill"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "PresentationSkillProvider",
+          "methods": [
+            "uses_controlled_workflow"
+          ],
+          "properties": [
+            "skill_name",
+            "workflow",
+            "declared_capability",
+            "source"
+          ],
+          "exported": true,
+          "lineCount": 9
+        }
+      ],
+      "imports": [
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Mapping"
+          ]
+        },
+        {
+          "source": "box_agent.tools.skill_loader",
+          "specifiers": [
+            "Skill",
+            "SkillLoader"
+          ]
+        },
+        {
+          "source": ".presentation_contract",
+          "specifiers": [
+            "WORKFLOW_KIND"
+          ]
+        }
+      ],
+      "exports": [
+        "HostPresentationConfig",
+        "PresentationSkillProvider",
+        "parse_host_presentation_config",
+        "_legacy_presentation_authoring_skill",
+        "_routing_tokens",
+        "_has_provider_specific_match",
+        "_query_explicitly_names_provider",
+        "_is_lark_presentation_provider",
+        "_query_requests_lark",
+        "presentation_provider_for_skill",
+        "resolve_presentation_skill_provider"
+      ],
+      "totalLines": 303,
       "hasStructuralAnalysis": true
     },
     "box_agent/workflows/presentation_recovery.py": {
@@ -18461,7 +20993,7 @@
     },
     "box_agent/workflows/presentation_routing.py": {
       "filePath": "box_agent/workflows/presentation_routing.py",
-      "contentHash": "f279f516e242e108a1bc2e5fa1b78c2791852dcfbce10cb91b5c886773355777",
+      "contentHash": "4fdd0ba86de2aceea5392993e8d33ea78848d71dcaba34d78842089bb4adfa7b",
       "functions": [
         {
           "name": "_research_mode",
@@ -18470,17 +21002,27 @@
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 32
+          "lineCount": 40
+        },
+        {
+          "name": "_explicit_pptx_delivery_requested",
+          "params": [
+            "positive_format_text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 7
         },
         {
           "name": "build_presentation_completion_gate",
           "params": [
             "user_text",
-            "workspace_dir"
+            "workspace_dir",
+            "confirmed_presentation"
           ],
           "returnType": "CompletionGate | None",
           "exported": true,
-          "lineCount": 61
+          "lineCount": 57
         }
       ],
       "classes": [],
@@ -18512,13 +21054,13 @@
         {
           "source": "..delivery",
           "specifiers": [
-            "has_deliverable_intent",
             "strip_negated_format_clauses"
           ]
         },
         {
           "source": "..loop_guards",
           "specifiers": [
+            "DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT",
             "FINAL_SUMMARY_EXCLUDED_TOOLS",
             "CompletionGate",
             "artifact_signatures_for_globs"
@@ -18527,16 +21069,166 @@
         {
           "source": ".presentation_contract",
           "specifiers": [
+            "PRESENTATION_DELIVERY_KEYWORDS",
             "RESEARCH_MODE_OPTION",
             "WORKFLOW_KIND"
+          ]
+        },
+        {
+          "source": ".presentation_preflight",
+          "specifiers": [
+            "classify_presentation_request"
           ]
         }
       ],
       "exports": [
         "_research_mode",
+        "_explicit_pptx_delivery_requested",
         "build_presentation_completion_gate"
       ],
-      "totalLines": 196,
+      "totalLines": 241,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/workspace_registry.py": {
+      "filePath": "box_agent/workspace_registry.py",
+      "contentHash": "9bd232c29ac1b74742dc66d7afa153de6d0199dd5226bee2cc3ed48bf325e91b",
+      "functions": [
+        {
+          "name": "default_workspace_registry_path",
+          "params": [
+            "home_dir"
+          ],
+          "returnType": "Path",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "normalize_workspace_path",
+          "params": [
+            "value"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_normalize_task_type",
+          "params": [
+            "value"
+          ],
+          "returnType": "WorkspaceTaskType",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "_profile_from_payload",
+          "params": [
+            "value"
+          ],
+          "returnType": "WorkspaceProfile | None",
+          "exported": true,
+          "lineCount": 15
+        }
+      ],
+      "classes": [
+        {
+          "name": "WorkspaceRegistryError",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "WorkspaceProfile",
+          "methods": [
+            "to_dict"
+          ],
+          "properties": [
+            "path",
+            "task_type",
+            "updated_at"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "WorkspaceRegistry",
+          "methods": [
+            "__init__",
+            "_read_payload",
+            "_write_payload",
+            "list",
+            "get",
+            "set"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 102
+        }
+      ],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "tempfile"
+          ]
+        },
+        {
+          "source": "threading",
+          "specifiers": [
+            "threading"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "asdict",
+            "dataclass"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime",
+            "timezone"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Literal"
+          ]
+        }
+      ],
+      "exports": [
+        "WorkspaceRegistryError",
+        "WorkspaceProfile",
+        "default_workspace_registry_path",
+        "normalize_workspace_path",
+        "_normalize_task_type",
+        "_profile_from_payload",
+        "WorkspaceRegistry"
+      ],
+      "totalLines": 176,
       "hasStructuralAnalysis": true
     },
     "CLAUDE.md": {
@@ -18571,7 +21263,7 @@
     },
     "CONTRIBUTING_CN.md": {
       "filePath": "CONTRIBUTING_CN.md",
-      "contentHash": "2c78811e8ec4c9f33095725f52ea8f135feb8c8579e04ed756578a43ed91d1e6",
+      "contentHash": "44254b7d2ec13760352ac6e82e7d5568c98ea9992145df8ca0bb0436d0f9ca0c",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -18581,7 +21273,7 @@
     },
     "CONTRIBUTING.md": {
       "filePath": "CONTRIBUTING.md",
-      "contentHash": "96a96a66defa951933e3806f01f80015578d11d63508e576453376f21974b073",
+      "contentHash": "c97bc658e038f167fc03a82faf5b1488e6d5823339cc78e3f4f63d268245a1b8",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -18691,12 +21383,12 @@
     },
     "docs/FILESYSTEM_POLICY_PROTOCOL.md": {
       "filePath": "docs/FILESYSTEM_POLICY_PROTOCOL.md",
-      "contentHash": "9cbc446fbae902a023bbba70ce87a374791a1114a7798bf7d2568250d4539b75",
+      "contentHash": "1c2c8dcc5e08f7a2e9ddfb03dc6695d7ee620b3c8c2fb85a3ef6beca2549fee4",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 224,
+      "totalLines": 223,
       "hasStructuralAnalysis": true
     },
     "docs/INTEGRATION.md": {
@@ -18711,12 +21403,12 @@
     },
     "docs/integration/host-progress-events.md": {
       "filePath": "docs/integration/host-progress-events.md",
-      "contentHash": "c34b40e3b0028d77c9a6bbb01220957101733544ddf19a004fbaae273ebe76c3",
+      "contentHash": "4c2b64aefd7b1a51a8e73136dfa3fe11d89f3a6f88ce9983830e23a1cdaf10b9",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 302,
+      "totalLines": 322,
       "hasStructuralAnalysis": true
     },
     "docs/MEMORY_INTEGRATION.md": {
@@ -18881,22 +21573,22 @@
     },
     "docs/UNDERSTAND_ANYTHING_CN.md": {
       "filePath": "docs/UNDERSTAND_ANYTHING_CN.md",
-      "contentHash": "761a7a5a686b8b6ba11f268fcc33d0ae9e6a1b0dc37bab4983e10ae7b667efc7",
+      "contentHash": "f3c96e987bc9e1d488a5b6fb2d29e672523565e877ced51d771e5c6218a4dc2c",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 49,
+      "totalLines": 73,
       "hasStructuralAnalysis": true
     },
     "docs/UNDERSTAND_ANYTHING.md": {
       "filePath": "docs/UNDERSTAND_ANYTHING.md",
-      "contentHash": "e56ba7cf0fa08ff635394023a10887425c3f6ff2e3fca0e44cb56b3e1194ec7e",
+      "contentHash": "422f9b51e67f11728938d2523a0b7fc15d0a5f83cebe9ba5184dbc3c5657419d",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 55,
+      "totalLines": 87,
       "hasStructuralAnalysis": true
     },
     "examples/01_basic_tools.py": {
@@ -19965,7 +22657,7 @@
     },
     "scripts/generate_skills_manifest.py": {
       "filePath": "scripts/generate_skills_manifest.py",
-      "contentHash": "19b042c8e0401ee67a764cb78a2fccd0106503652243dd54db6ba6607c85b00a",
+      "contentHash": "ae39362f1c55ab1b8cde71bffbd963a3a6d693adc95fc315f58647ab00d0bc1c",
       "functions": [
         {
           "name": "_parse_skill_name",
@@ -20051,7 +22743,7 @@
         "_read_box_agent_version",
         "main"
       ],
-      "totalLines": 148,
+      "totalLines": 149,
       "hasStructuralAnalysis": true
     },
     "scripts/probe_relay_tool_stream.py": {

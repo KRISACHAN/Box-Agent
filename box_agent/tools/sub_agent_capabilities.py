@@ -14,10 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from ..config import ToolLimitsConfig
 from .base import Tool
 
-GENERAL_LOOP_MAX_STEPS = 12
-GENERAL_LOOP_MAX_TOOL_CALLS = 16
+_DEFAULT_SUB_AGENT_LIMITS = ToolLimitsConfig().sub_agent
+GENERAL_LOOP_MAX_STEPS = _DEFAULT_SUB_AGENT_LIMITS.general_max_steps
+GENERAL_LOOP_MAX_TOOL_CALLS = _DEFAULT_SUB_AGENT_LIMITS.general_max_tool_calls
 BATCH_FILES_MAX_FILES = 32
 BATCH_FILES_MAX_STEPS = 1
 BATCH_FILE_MAX_CHARS = 64_000
@@ -218,6 +220,8 @@ def parse_delegation_spec(
     inputs: Any = None,
     constraints: Any = None,
     budget: Any = None,
+    general_max_steps: int = GENERAL_LOOP_MAX_STEPS,
+    general_max_tool_calls: int = GENERAL_LOOP_MAX_TOOL_CALLS,
 ) -> DelegationSpec | CapabilityFailure:
     """Validate and normalize a new-style delegation declaration."""
 
@@ -402,23 +406,23 @@ def parse_delegation_spec(
     else:
         if "max_steps" not in budget:
             defaults_applied.append("budget.max_steps")
-        raw_steps = budget.get("max_steps", GENERAL_LOOP_MAX_STEPS)
+        raw_steps = budget.get("max_steps", general_max_steps)
         if not isinstance(raw_steps, int) or isinstance(raw_steps, bool) or raw_steps < 1:
             invalid_fields.append("budget.max_steps")
-            raw_steps = GENERAL_LOOP_MAX_STEPS
-        max_steps = min(raw_steps, GENERAL_LOOP_MAX_STEPS)
+            raw_steps = general_max_steps
+        max_steps = min(raw_steps, general_max_steps)
 
         if "max_tool_calls" not in budget:
             defaults_applied.append("budget.max_tool_calls")
-        raw_tool_calls = budget.get("max_tool_calls", GENERAL_LOOP_MAX_TOOL_CALLS)
+        raw_tool_calls = budget.get("max_tool_calls", general_max_tool_calls)
         if (
             not isinstance(raw_tool_calls, int)
             or isinstance(raw_tool_calls, bool)
             or raw_tool_calls < 1
         ):
             invalid_fields.append("budget.max_tool_calls")
-            raw_tool_calls = GENERAL_LOOP_MAX_TOOL_CALLS
-        max_tool_calls = min(raw_tool_calls, GENERAL_LOOP_MAX_TOOL_CALLS)
+            raw_tool_calls = general_max_tool_calls
+        max_tool_calls = min(raw_tool_calls, general_max_tool_calls)
 
     if invalid_fields:
         return CapabilityFailure(

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from box_agent.config import ToolLimitsConfig
 from box_agent.core import _maybe_summarize
 from box_agent.loop_guards import CompletionGate
 from box_agent.schema import LLMResponse, Message
@@ -74,11 +75,17 @@ def test_controlled_presentation_gate_preloads_resolved_provider_without_builtin
 def test_research_synthesis_expands_web_search_budget() -> None:
     assert web_search_total_limit_for_active_skills(
         ("research-synthesis",),
-    ) == 36
+    ) == 100
     assert web_search_total_limit_for_active_skills(
         (),
         ("research-synthesis",),
-    ) == 36
+    ) == 100
+    assert web_search_total_limit_for_active_skills(
+        ("research-synthesis",),
+        tool_limits=ToolLimitsConfig(
+            web_search={"deep_research_total_calls": 48}
+        ),
+    ) == 48
     assert web_search_total_limit_for_active_skills(("pptx",)) is None
 
 

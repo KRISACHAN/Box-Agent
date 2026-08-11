@@ -262,21 +262,28 @@ api_key: "your-api-key"
 api_base: "https://api.anthropic.com"
 model: "claude-sonnet-4-20250514"
 provider: "anthropic" # "anthropic" or "openai"
-max_steps: 200
+max_steps: 300
 max_parallel_tools: 8
 parallel_tool_timeout_seconds: 900
-sub_agent_batch_synthesis_timeout_seconds: 300 # 0 disables the extra batch synthesis cap
+sub_agent_token_limit: 50000
+sub_agent_batch_synthesis_timeout_seconds: 600 # 0 disables the extra batch synthesis cap
 goal_autopilot_enabled: true
 goal_autopilot_max_turns: 3
 goal_autopilot_max_seconds: 14400
 goal_autopilot_no_progress_turns: 2
 ```
 
+Tool limits are omitted by default so runtime upgrades can supply updated
+defaults from `box_agent/config.py`. Add only deliberate overrides under
+`tool_limits:`; inspect the current effective values with
+`box-agent config --json`.
+
 ```bash
 box-agent config                    # show current config summary
 box-agent config --get model        # print one config value
 box-agent config --set max_steps 300
 box-agent config --set goal_autopilot_max_turns 5
+box-agent config --set tool_limits.external_skill.max_tool_calls 160
 box-agent config --json             # machine-readable config summary
 box-agent config --edit             # open in editor
 box-agent doctor                    # check environment & API connectivity
