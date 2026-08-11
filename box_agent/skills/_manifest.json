@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "box_agent_version": "0.8.85",
+  "box_agent_version": "0.8.86",
   "generated_at": "2026-07-24T10:43:50Z",
   "skills": [
     {
@@ -130,6 +130,10 @@
     {
       "name": "writing-workflow",
       "path": "writing-workflow/SKILL.md"
+    },
+    {
+      "name": "zhihu",
+      "path": "zhihu/SKILL.md"
     }
   ]
 }
