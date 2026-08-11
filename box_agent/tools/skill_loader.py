@@ -824,20 +824,27 @@ class SkillLoader:
         for skill in skill_pool.values():
             if skill.name in always_on:
                 continue
-            name_overlap = len(query_tokens & _tokenize(skill.name))
-            if skill.broken:
-                # A broken skill's description is a diagnostic string
-                # ("(SKILL.md malformed — YAML parse error: ...)") which
-                # contains generic english tokens (error, parse, scanning)
-                # that would incorrectly match unrelated user queries.
-                # Only surface it when the query hits its directory name,
-                # so the author who wrote the broken skill can still see
-                # it in ## Available Skills by asking about it by name.
-                score = name_overlap * 5
-            else:
-                kw_overlap = len(query_tokens & _tokenize(" ".join(skill.keywords or [])))
-                desc_overlap = len(query_tokens & _tokenize(skill.description))
-                score = name_overlap * 5 + kw_overlap * 3 + desc_overlap
+            try:
+                name_overlap = len(query_tokens & _tokenize(skill.name))
+                if skill.broken:
+                    # A broken skill's description is a diagnostic string
+                    # ("(SKILL.md malformed — YAML parse error: ...)") which
+                    # contains generic english tokens (error, parse, scanning)
+                    # that would incorrectly match unrelated user queries.
+                    # Only surface it when the query hits its directory name,
+                    # so the author who wrote the broken skill can still see
+                    # it in ## Available Skills by asking about it by name.
+                    score = name_overlap * 5
+                else:
+                    kw_overlap = len(query_tokens & _tokenize(" ".join(skill.keywords or [])))
+                    desc_overlap = len(query_tokens & _tokenize(skill.description))
+                    score = name_overlap * 5 + kw_overlap * 3 + desc_overlap
+            except Exception as exc:
+                _warn(
+                    "Skipped skill during query filtering: "
+                    f"name={skill.name!r}, path={skill.skill_path}, error={exc}"
+                )
+                continue
             if score > 0:
                 scored.append((score, skill))
 
