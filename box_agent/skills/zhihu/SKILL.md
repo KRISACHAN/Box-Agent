@@ -33,10 +33,10 @@ Officev3 在 Windows 和 macOS 随应用打包兼容版本的官方 CLI，并通
 
 1. `installed=false` 或 `CLI_NOT_INSTALLED`：说明内置 CLI 和用户目录中已有的兼容 CLI 均不可用；引导用户修复或重新安装 Officev3。`setup` 只返回 `HOST_MANAGED_INSTALL`，不会自行下载二进制。
 2. `compatible=false`：内置 CLI 由 Officev3 更新；回退安装的 CLI 可按官方 Skill 流程升级。
-3. `auth.configured=false` 或业务命令返回 `AUTH_REQUIRED`：引导用户打开 Officev3「第三方数据 → 其他 → 知乎」，跳转知乎开放平台获取 Access Secret，并在卡片中完成连接。不要要求用户把 Secret 发送到对话中，也不要自行执行 `auth set`。
+3. `auth.configured=false` 或业务命令返回 `AUTH_REQUIRED`：引导用户跳转知乎开放平台获取 Access Secret。用户可以在 Officev3「第三方数据 → 其他 → 知乎」卡片中完成连接，也可以在对话中提供 Secret，由 Agent 通过标准输入执行 `auth set --secret-stdin`。不要在回复、日志或命令参数中回显 Secret。
 4. 已安装并完成授权时，直接处理当前任务；同一 Session 不重复状态检查。
 
-下文 `<CLI>` 代表 `scripts/run.sh` / `scripts/run.ps1` 解析出的内置或回退 CLI 绝对路径，不要求 PATH 中存在裸命令。Officev3 内置模式通过卡片配置 Access Secret；回退模式按官方 Skill 的认证流程处理。Secret 保存到操作系统凭证库，不写入 Skill 或项目目录。安装与认证边界见 [CLI 使用文档](references/cli.md)。
+下文 `<CLI>` 代表 `scripts/run.sh` / `scripts/run.ps1` 解析出的内置或回退 CLI 绝对路径，不要求 PATH 中存在裸命令。Access Secret 可以通过 Officev3 卡片配置，也可以由 Agent 通过标准输入交给 CLI；两种方式最终都保存到操作系统凭证库，不写入 Skill 或项目目录。安装与认证边界见 [CLI 使用文档](references/cli.md)。
 
 ## 选择能力
 

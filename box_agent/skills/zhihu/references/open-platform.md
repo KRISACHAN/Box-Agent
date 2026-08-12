@@ -11,9 +11,11 @@
 1. 访问知乎开放平台个人中心：<https://developer.zhihu.com/profile>
 2. 使用知乎账号登录。
 3. 点击「申请新 Access Secret」。
-4. 获取 Access Secret 后，返回 Officev3「第三方数据 → 其他 → 知乎」卡片完成连接。
+4. 获取 Access Secret 后，任选一种方式完成连接：
+   - 返回 Officev3「第三方数据 → 其他 → 知乎」卡片配置。
+   - 在对话中提供 Secret，由 Agent 通过标准输入执行 `zhihu-cli auth set --secret-stdin`。
 
-Access Secret 只在 Officev3 卡片中输入，由 Electron IPC 在模型上下文之外传给内置 CLI。Agent 不得要求用户在对话中提供 Secret，也不得自行执行 `auth set`。
+两种方式都由 CLI 在线验证并写入操作系统密钥链。Agent 不在回复、日志或命令参数中回显完整 Secret。
 
 开放平台后台的鉴权凭证统一称为 **Access Secret**。HTTP 请求使用：
 
@@ -60,7 +62,7 @@ X-Request-Timestamp: <Unix 秒级时间戳>
 
 ### Access Secret 无效或需要更换怎么办？
 
-在个人中心申请或管理 Access Secret，然后回到 Officev3 知乎卡片重新连接。卡片会让 CLI 先在线验证新 Access Secret，再替换系统密钥链中的旧值；不要把新旧 Secret 发送给 Agent。
+在个人中心申请或管理 Access Secret，然后通过 Officev3 知乎卡片，或在对话中交给 Agent 通过标准输入重新配置。CLI 应先在线验证新 Access Secret，再替换系统密钥链中的旧值。
 
 ## 联系方式
 

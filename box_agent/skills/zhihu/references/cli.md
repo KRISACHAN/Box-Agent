@@ -58,9 +58,9 @@ Agent 用 `capabilities` 判断当前版本有哪些结构化能力，用具体�
 https://developer.zhihu.com/profile
 ```
 
-引导用户打开 Officev3「第三方数据 → 其他 → 知乎」，用卡片跳转知乎开放平台申请 Access Secret，并在卡片中连接。不要要求用户把 Secret 交给 Agent。
+引导用户跳转知乎开放平台申请 Access Secret。用户可以选择在 Officev3「第三方数据 → 其他 → 知乎」卡片中连接，也可以在对话中提供 Secret，由 Agent 通过标准输入执行 `<CLI> auth set --secret-stdin`。
 
-卡片通过 Electron IPC 调用应用内置 CLI 的 `auth set --secret-stdin`；CLI 在线验证后写入操作系统密钥链。Secret 不进入命令参数、Skill 文件、项目目录或 Officev3 的 MCP 配置文件。
+两种方式都由 CLI 在线验证后写入操作系统密钥链。Secret 不进入命令参数、Skill 文件、项目目录或 Officev3 的 MCP 配置文件，也不在回复或日志中回显。
 
 ### 查看和清除凭证
 
@@ -234,9 +234,9 @@ CLI 自身错误使用稳定 JSON：
 
 | 错误码 | 处理方式 |
 |---|---|
-| `AUTH_REQUIRED` | 打开 `action_url`，申请 Access Secret 后回到 Officev3 知乎卡片连接 |
+| `AUTH_REQUIRED` | 打开 `action_url`，申请 Access Secret 后通过 Officev3 卡片或 Agent 的标准输入完成配置 |
 | `AUTH_INVALID` | 重新检查或申请 Access Secret；不要回显旧 Access Secret |
-| `KEYCHAIN_UNAVAILABLE` | 修复系统凭证库后在 Officev3 知乎卡片重试；不要把 Secret 交给 Agent |
+| `KEYCHAIN_UNAVAILABLE` | 修复系统凭证库后，通过 Officev3 卡片或 Agent 重新配置 |
 | `ENV_SHADOWS_KEYCHAIN` | 当前环境变量覆盖了刚保存的密钥链 Access Secret |
 | 服务端 `Code: 30001` | 频率限制；停止主动重试 |
 | 服务端 `Code: 30002` | 配额耗尽；告知受影响能力和恢复条件 |

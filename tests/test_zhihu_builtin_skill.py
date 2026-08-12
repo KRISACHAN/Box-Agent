@@ -57,14 +57,16 @@ def test_zhihu_skill_uses_the_officev3_managed_cli_and_credentials() -> None:
         "host": "officev3",
     }
     assert "update_manifest_url" not in package_manifest["cli"]
-    assert "不要要求用户把 Secret 发送到对话中" in skill_text
+    assert "Officev3 卡片配置" in skill_text
+    assert "Agent 通过标准输入交给 CLI" in skill_text
     assert "第三方数据 → 其他 → 知乎" in skill_text
 
     all_docs = "\n".join(
         path.read_text(encoding="utf-8") for path in skill_root.rglob("*.md")
     )
-    assert "用户在对话中提供的 Access Secret" not in all_docs
-    assert "通过 Agent 执行" not in all_docs
+    assert "在对话中提供 Secret" in all_docs
+    assert "auth set --secret-stdin" in all_docs
+    assert "模型上下文之外" not in all_docs
 
     for script_name in ("setup.ps1", "setup.sh"):
         setup_text = (skill_root / "scripts" / script_name).read_text(encoding="utf-8")
