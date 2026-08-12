@@ -170,6 +170,22 @@ async def _await_if_needed(value: Any) -> Any:
     return value
 
 
+def _get_field(value: Any, name: str) -> Any:
+    """Read a field from an SDK model or a plain mapping."""
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _reasoning_text_from_aliases(value: Any) -> str:
+    """Return reasoning text from common OpenAI-compatible field aliases."""
+    for name in ("reasoning", "reasoning_content"):
+        reasoning = _get_field(value, name)
+        if isinstance(reasoning, str) and reasoning:
+            return reasoning
+    return ""
+
+
 class OpenAIClient(LLMClientBase):
     """LLM client using OpenAI's protocol.
 
@@ -441,13 +457,17 @@ class OpenAIClient(LLMClientBase):
         # Extract text content
         text_content = message.content or ""
 
-        # Extract thinking content from reasoning_details
-        thinking_content = ""
-        if hasattr(message, "reasoning_details") and message.reasoning_details:
+        # Extract thinking content. OpenAI-compatible providers use different
+        # aliases: SenseNova emits ``reasoning``, while other gateways expose
+        # ``reasoning_content`` or structured ``reasoning_details`` blocks.
+        thinking_content = _reasoning_text_from_aliases(message)
+        reasoning_details = _get_field(message, "reasoning_details")
+        if not thinking_content and reasoning_details:
             # reasoning_details is a list of reasoning blocks
-            for detail in message.reasoning_details:
-                if hasattr(detail, "text"):
-                    thinking_content += detail.text
+            for detail in reasoning_details:
+                detail_text = _get_field(detail, "text")
+                if isinstance(detail_text, str):
+                    thinking_content += detail_text
 
         # Extract tool calls
         tool_calls = []
@@ -667,11 +687,14 @@ class OpenAIClient(LLMClientBase):
                     if delta is None:
                         continue
 
-                    # Reasoning / thinking content (DeepSeek, o1, etc.)
-                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                        thinking_content += delta.reasoning_content
+                    # Reasoning / thinking content. SenseNova uses
+                    # ``reasoning``; DeepSeek-style gateways commonly use
+                    # ``reasoning_content``.
+                    reasoning_delta = _reasoning_text_from_aliases(delta)
+                    if reasoning_delta:
+                        thinking_content += reasoning_delta
                         any_user_yield = True
-                        yield StreamEvent(type="thinking", delta=delta.reasoning_content)
+                        yield StreamEvent(type="thinking", delta=reasoning_delta)
 
                     # Text content
                     if delta.content:

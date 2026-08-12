@@ -20,13 +20,31 @@ from box_agent.retry import RetryConfig, StreamInterrupted, is_retryable_stream_
 from box_agent.schema import Message
 
 
-def _delta(content=None, tool_calls=None):
-    return SimpleNamespace(content=content, tool_calls=tool_calls, reasoning_content=None)
+def _delta(content=None, tool_calls=None, reasoning=None, reasoning_content=None):
+    return SimpleNamespace(
+        content=content,
+        tool_calls=tool_calls,
+        reasoning=reasoning,
+        reasoning_content=reasoning_content,
+    )
 
 
-def _chunk(content=None, finish_reason=None, usage=None, tool_calls=None):
+def _chunk(
+    content=None,
+    finish_reason=None,
+    usage=None,
+    tool_calls=None,
+    reasoning=None,
+    reasoning_content=None,
+):
     choice = SimpleNamespace(
-        delta=_delta(content=content, tool_calls=tool_calls), finish_reason=finish_reason
+        delta=_delta(
+            content=content,
+            tool_calls=tool_calls,
+            reasoning=reasoning,
+            reasoning_content=reasoning_content,
+        ),
+        finish_reason=finish_reason,
     )
     return SimpleNamespace(choices=[choice], usage=usage)
 
@@ -131,6 +149,34 @@ def test_is_retryable_stream_error_matches_production_string():
 
 def test_is_retryable_stream_error_ignores_value_error():
     assert is_retryable_stream_error(ValueError("bad input")) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
+async def test_stream_emits_reasoning_alias_as_thinking(reasoning_field):
+    """Provider-specific reasoning deltas are emitted as thinking events."""
+    stream = _AsyncIter([
+        _chunk(**{reasoning_field: "private "}),
+        _chunk(
+            content="answer",
+            finish_reason="stop",
+            **{reasoning_field: "reasoning"},
+        ),
+    ])
+
+    async def factory(**kwargs):
+        return _raw_response(stream)
+
+    client, _ = _build_client(factory)
+    events = [
+        event
+        async for event in client.generate_stream([Message(role="user", content="hi")])
+    ]
+
+    assert "".join(event.delta for event in events if event.type == "thinking") == (
+        "private reasoning"
+    )
+    assert "".join(event.delta for event in events if event.type == "text") == "answer"
 
 
 @pytest.mark.asyncio
