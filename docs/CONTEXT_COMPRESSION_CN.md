@@ -396,7 +396,7 @@ incomplete）。
 - **事件流**。压缩**永远不**影响事件流 —— 所有消费者（CLI 渲染、ACP、
   子 agent）看到完整的 `ToolCallResult`、`ContentEvent` 等。模型视图与
   用户视图刻意分离。
-- **子 agent**。`SubAgentTool` 以自己的 `token_limit`（默认 `40_000`）
+- **子 agent**。`SubAgentTool` 以自己的 `token_limit`（默认 `50_000`）
   运行 `run_agent_loop`；所有压缩层都独立作用于子 agent 的消息列表。
 
 ## 测试

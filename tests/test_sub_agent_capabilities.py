@@ -83,10 +83,22 @@ def test_minimal_spec_applies_safe_defaults_and_stable_order() -> None:
     assert parsed.constraints.network is False
     assert parsed.constraints.external_side_effect is False
     assert parsed.constraints.write_scope is None
-    assert parsed.budget.max_steps == 12
-    assert parsed.budget.max_tool_calls == 16
+    assert parsed.budget.max_steps == 60
+    assert parsed.budget.max_tool_calls == 32
     assert "execution.strategy" in parsed.defaults_applied
     assert "constraints.read_only" in parsed.defaults_applied
+
+
+def test_general_loop_budget_uses_configured_caps() -> None:
+    parsed = _parse(
+        budget={"max_steps": 99, "max_tool_calls": 99},
+        general_max_steps=20,
+        general_max_tool_calls=30,
+    )
+
+    assert isinstance(parsed, DelegationSpec)
+    assert parsed.budget.max_steps == 20
+    assert parsed.budget.max_tool_calls == 30
 
 
 def test_invalid_new_style_spec_returns_retryable_field_diagnostics() -> None:

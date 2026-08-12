@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal, Mapping
 
-from box_agent.loop_guards import (
-    DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT,
-    CompletionGate,
-)
+from box_agent.config import ToolLimitsConfig
+from box_agent.loop_guards import CompletionGate
 from box_agent.tools.skill_loader import SkillLoader
 from box_agent.workflows.presentation_contract import RESEARCH_MODE_OPTION
 
@@ -161,12 +159,15 @@ def document_preload_skill_names(
 def web_search_total_limit_for_active_skills(
     matched_skill_names: tuple[str, ...],
     preloaded_skill_names: tuple[str, ...] = (),
+    tool_limits: ToolLimitsConfig | None = None,
 ) -> int | None:
     """Expand the per-turn search budget only for research synthesis."""
     if "research-synthesis" in matched_skill_names or (
         "research-synthesis" in preloaded_skill_names
     ):
-        return DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT
+        return (
+            tool_limits or ToolLimitsConfig()
+        ).web_search.deep_research_total_calls
     return None
 
 

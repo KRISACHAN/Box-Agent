@@ -29,11 +29,11 @@
   budgets. Capability resolution uses the live parent tool map, distinguishes
   MCP `loading` from `ready`, blocks recursive delegation, and returns structured
   diagnostics without silently falling back to legacy execution.
-- **Cost-aware sub-agent strategies:** `general_loop` is capped at 12 steps / 16
+- **Cost-aware sub-agent strategies:** `general_loop` is capped at 60 steps / 32
   total tool calls. `batch_files` concurrently prefetches up to 32 complete local
   text files, enforces 64,000 characters per file and 200,000 aggregate
   characters, then performs one tool-free synthesis call. The new
-  `sub_agent_batch_synthesis_timeout_seconds` setting defaults to 300 seconds.
+  `sub_agent_batch_synthesis_timeout_seconds` setting defaults to 600 seconds.
 - **Safer model history compaction:** large mutation arguments remain visible
   for one subsequent model request and are compacted afterward. Internal history
   placeholders are rejected if the model tries to reuse them as file/code

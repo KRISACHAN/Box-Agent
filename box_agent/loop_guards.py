@@ -38,14 +38,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
+from .config import ToolLimitsConfig
+
 # ── Constants ────────────────────────────────────────────────────
 
 WEB_SEARCH_TOOL_NAME: Final = "web_search"
-WEB_SEARCH_BATCH_SIZE: Final = 6
-WEB_SEARCH_TOTAL_LIMIT: Final = 24
-DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT: Final = 36
 SEARCH_FILES_TOOL_NAME: Final = "search_files"
-SEARCH_FILES_EMPTY_RESULT_LIMIT: Final = 3
+_DEFAULT_TOOL_LIMITS: Final = ToolLimitsConfig()
+
+# Backward-compatible aliases for callers/tests that inspect the shipped
+# defaults. Runtime execution reads the active ToolLimitsConfig instead.
+WEB_SEARCH_BATCH_SIZE: Final = _DEFAULT_TOOL_LIMITS.web_search.batch_size
+WEB_SEARCH_TOTAL_LIMIT: Final = _DEFAULT_TOOL_LIMITS.web_search.total_calls
+DEEP_RESEARCH_WEB_SEARCH_TOTAL_LIMIT: Final = (
+    _DEFAULT_TOOL_LIMITS.web_search.deep_research_total_calls
+)
+SEARCH_FILES_EMPTY_RESULT_LIMIT: Final = (
+    _DEFAULT_TOOL_LIMITS.search_files.consecutive_empty_limit
+)
 
 # Per-turn call caps for tools the model tends to over-request.
 TOOL_CALL_LIMITS: Final[dict[str, int]] = {
@@ -70,7 +80,9 @@ FINAL_SUMMARY_EXCLUDED_TOOLS: Final[frozenset[str]] = frozenset(
 )
 
 # Reserve this many trailing steps for synthesis (near-limit wrap-up).
-WRAPUP_REMAINING: Final[int] = 3
+WRAPUP_REMAINING: Final[int] = (
+    _DEFAULT_TOOL_LIMITS.general.wrapup_remaining_steps
+)
 
 # Abort after this many consecutive all-empty-args tool_call turns.
 EMPTY_ARGS_LIMIT: Final[int] = 2

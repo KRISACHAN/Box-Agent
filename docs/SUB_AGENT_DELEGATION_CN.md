@@ -136,13 +136,13 @@
 ```yaml
 max_parallel_tools: 8
 parallel_tool_timeout_seconds: 900
-sub_agent_token_limit: 40000
-sub_agent_batch_synthesis_timeout_seconds: 300
+sub_agent_token_limit: 50000
+sub_agent_batch_synthesis_timeout_seconds: 600
 ```
 
-`sub_agent_token_limit` 是高级 legacy/general-loop 上下文配置，因而没有放入示例
-配置。批量综合超时控制的操作与并发工具批次不同，所以已列入
-`box_agent/config/config-example.yaml`。
+这两个子 Agent 配置都以注释形式列在 `box_agent/config/config-example.yaml` 中，
+作为高级覆盖项。保持注释状态可避免新生成的用户配置固定旧值，使 runtime 升级能够
+更新默认值。
 
 ## 实现与验证
 

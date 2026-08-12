@@ -7,6 +7,7 @@ import pytest
 
 import box_agent.agent as agent_module
 from box_agent.agent import Agent
+from box_agent.config import ToolLimitsConfig
 from box_agent.context_resources import ResourceClass, ResourceDescriptor
 from box_agent.events import DoneEvent, StopReason
 from box_agent.loop_guards import CompletionGate
@@ -37,6 +38,7 @@ async def test_agent_run_forwards_core_execution_options(
         tools=[],
         workspace_dir=str(tmp_path),
         thinking_enabled=True,
+        tool_limits=ToolLimitsConfig(web_search={"total_calls": 31}),
     )
 
     result = await agent.run(
@@ -51,6 +53,7 @@ async def test_agent_run_forwards_core_execution_options(
     assert captured["completion_gate"] is gate
     assert captured["artifact_detection_enabled"] is False
     assert captured["thinking_enabled"] is True
+    assert captured["tool_limits"].web_search.total_calls == 31
     assert captured["active_skill_activator"] == agent.activate_skill_instructions
     assert captured["current_turn_text"] == "current user request"
     assert captured["context_resource_ledger"] is agent.context_resource_ledger

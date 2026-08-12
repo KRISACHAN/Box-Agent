@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from box_agent.config import ToolLimitsConfig
 from box_agent.completion import (
     build_auto_completion_gate,
     pending_completion_gate_for_storage,
@@ -610,7 +611,7 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
         "output/**/qa/runtime_probe.json",
     )
     assert gate.max_continuations == 3
-    assert gate.max_tool_calls == 64
+    assert gate.max_tool_calls == 128
     assert gate.web_search_total_limit is None
     assert gate.workflow_options["research_mode"] == "auto"
     assert gate.completion_reserve_tool_calls == 10
@@ -940,8 +941,8 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "deep"
-    assert gate.max_tool_calls == 80
-    assert gate.web_search_total_limit == 36
+    assert gate.max_tool_calls == 200
+    assert gate.web_search_total_limit == 100
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
@@ -991,6 +992,28 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     assert "do not reread the research QA report or outline.md" in checkpoint
 
 
+def test_presentation_gate_uses_configured_tool_limits(tmp_path):
+    gate = build_auto_completion_gate(
+        "制作一份 2026 世界杯商业价值分析 PPT",
+        tmp_path,
+        tool_limits=ToolLimitsConfig(
+            web_search={"deep_research_total_calls": 48},
+            presentation={
+                "max_tool_calls": 72,
+                "deep_research_max_tool_calls": 104,
+                "completion_reserve_calls": 16,
+                "research_rounds": 5,
+            },
+        ),
+    )
+
+    assert gate is not None
+    assert gate.max_tool_calls == 104
+    assert gate.web_search_total_limit == 48
+    assert gate.completion_reserve_tool_calls == 16
+    assert gate.workflow_options["research_round_limit"] == 5
+
+
 def test_explicit_research_action_overrides_large_reference_content(tmp_path):
     gate = build_auto_completion_gate(
         """
@@ -1007,8 +1030,8 @@ def test_explicit_research_action_overrides_large_reference_content(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "deep"
-    assert gate.max_tool_calls == 80
-    assert gate.web_search_total_limit == 36
+    assert gate.max_tool_calls == 200
+    assert gate.web_search_total_limit == 100
     assert document_preload_skill_names((), gate) == [
         "pptx",
         "research-synthesis",
@@ -1488,7 +1511,7 @@ def test_short_solution_design_brief_skips_research_synthesis(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "content_ready"
-    assert gate.max_tool_calls == 64
+    assert gate.max_tool_calls == 128
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
@@ -1527,7 +1550,7 @@ def test_source_first_presentation_does_not_force_public_research(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "source_first"
-    assert gate.max_tool_calls == 64
+    assert gate.max_tool_calls == 128
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint

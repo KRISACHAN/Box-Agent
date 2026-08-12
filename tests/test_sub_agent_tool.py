@@ -1170,10 +1170,13 @@ async def test_parallel_new_style_calls_do_not_leak_resolved_tools():
 
 def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
     """Sub-agent config and live capability providers flow through setup."""
-    from box_agent.config import AgentConfig, ToolsConfig
+    from box_agent.config import AgentConfig, ToolLimitsConfig, ToolsConfig
     from box_agent.tools.setup import add_workspace_tools
 
     class Config:
+        tool_limits = ToolLimitsConfig(
+            sub_agent={"legacy_max_steps": 55, "no_progress_steps": 9}
+        )
         agent = AgentConfig(
             sub_agent_token_limit=12345,
             sub_agent_batch_synthesis_timeout_seconds=234.5,
@@ -1200,6 +1203,8 @@ def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
 
     sub_agent = next(t for t in tools if t.name == "sub_agent")
     assert sub_agent._token_limit == 12345
+    assert sub_agent._max_steps == 55
+    assert sub_agent._no_progress_limit == 9
     assert sub_agent._batch_synthesis_timeout_seconds == 234.5
     assert sub_agent._resolve_skill_loader() is skill_loader
     assert sub_agent._resolve_capability_state() == "loading"

@@ -40,6 +40,7 @@ from .events import (
     ToolCallStart,
 )
 from .context_resources import ContextResourceLedger
+from .config import AgentConfig, ToolLimitsConfig
 from .llm import LLMClient
 from .logger import AgentLogger
 from .loop_guards import CompletionGate
@@ -53,6 +54,7 @@ from .workflow_policy import WorkflowPolicy
 
 _log = logging.getLogger(__name__)
 _ACTIVE_SKILL_TOKEN_BUDGET = 32_000
+_DEFAULT_AGENT_CONFIG = AgentConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,7 +465,7 @@ class Agent:
         llm_client: LLMClient,
         system_prompt: str,
         tools: list[Tool],
-        max_steps: int = 200,
+        max_steps: int = _DEFAULT_AGENT_CONFIG.max_steps,
         workspace_dir: str = "./workspace",
         token_limit: int = 113400,
         hooks: list | None = None,
@@ -478,10 +480,12 @@ class Agent:
         max_truncated_tool_call_retries: int = 3,
         truncated_tool_call_boost_cap: int = 32768,
         context_resource_dedup_enabled: bool = True,
+        tool_limits: ToolLimitsConfig | None = None,
     ):
         self.llm = llm_client
         self.tools = {tool.name: tool for tool in tools}
         self.max_steps = max_steps
+        self.tool_limits = tool_limits or ToolLimitsConfig()
         self.max_parallel_tools = max_parallel_tools
         self.parallel_tool_timeout_seconds = parallel_tool_timeout_seconds
         self.truncation_continuation_enabled = truncation_continuation_enabled
@@ -850,6 +854,7 @@ class Agent:
             messages=self.messages,
             tools=self.tools,
             max_steps=self.max_steps,
+            tool_limits=self.tool_limits,
             max_tool_calls=effective_options.max_tool_calls,
             web_search_total_limit=effective_options.web_search_total_limit,
             token_limit=self.token_limit,

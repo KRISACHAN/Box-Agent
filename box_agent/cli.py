@@ -378,6 +378,7 @@ def _config_summary(config: Config, config_path: Path, show_secrets: bool = Fals
             "auth_file": config.image_generation.auth_file,
             "timeout": config.image_generation.timeout,
         },
+        "tool_limits": config.tool_limits.model_dump(),
         "agent": {
             "max_steps": config.agent.max_steps,
             "workspace_dir": config.agent.workspace_dir,
@@ -450,6 +451,22 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
     print(f"  goal_autopilot    : {agent['goal_autopilot_enabled']} ({agent['goal_autopilot_max_turns']} turns, {agent['goal_autopilot_max_seconds']}s, no-progress {agent['goal_autopilot_no_progress_turns']})")
     print(f"  context_resources : {agent['context_resource_dedup_enabled']}")
     print(f"  enable_memory     : {agent['enable_memory']}")
+
+    tool_limits = summary["tool_limits"]
+    print(f"\n{Colors.BOLD}Tool limits{Colors.RESET}")
+    print(
+        "  general/search    : "
+        f"summary>{tool_limits['general']['final_summary_after_calls']}, "
+        f"web {tool_limits['web_search']['total_calls']}/"
+        f"{tool_limits['web_search']['deep_research_total_calls']}"
+    )
+    print(
+        "  workflows         : "
+        f"skill {tool_limits['external_skill']['max_tool_calls']}, "
+        f"presentation {tool_limits['presentation']['max_tool_calls']}/"
+        f"{tool_limits['presentation']['deep_research_max_tool_calls']}, "
+        f"sub-agent {tool_limits['sub_agent']['general_max_tool_calls']}"
+    )
 
     tools = summary["tools"]
     print(f"\n{Colors.BOLD}Tools{Colors.RESET}")
@@ -2136,6 +2153,7 @@ async def run_agent(
         system_prompt=system_prompt,
         tools=tools,
         max_steps=config.agent.max_steps,
+        tool_limits=config.tool_limits,
         workspace_dir=str(workspace_dir),
         token_limit=config.llm.context_token_limit,
         hooks=hooks,
@@ -2257,7 +2275,11 @@ async def run_agent(
         # Block on MCP only when user is actually about to run
         register_mcp_tools(agent.tools, await await_mcp_tools(mcp_task))
         completion_gate = (
-            build_auto_completion_gate(task, workspace_dir)
+            build_auto_completion_gate(
+                task,
+                workspace_dir,
+                tool_limits=config.tool_limits,
+            )
             if completion_gate_enabled
             else None
         )
@@ -2600,7 +2622,11 @@ async def run_agent(
                 f"{Colors.DIM}Thinking... (Esc to cancel){Colors.RESET}\n"
             )
             preload_gate = (
-                build_auto_completion_gate(user_input, workspace_dir)
+                build_auto_completion_gate(
+                    user_input,
+                    workspace_dir,
+                    tool_limits=config.tool_limits,
+                )
                 if completion_gate_enabled
                 else None
             )

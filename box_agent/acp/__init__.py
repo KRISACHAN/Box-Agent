@@ -1324,6 +1324,7 @@ class BoxACPAgent:
             system_prompt=system_prompt,
             tools=tools,
             max_steps=self._config.agent.max_steps,
+            tool_limits=self._config.tool_limits,
             workspace_dir=str(workspace),
             token_limit=self._config.llm.context_token_limit,
             thinking_enabled=deep_think,
@@ -1836,6 +1837,7 @@ class BoxACPAgent:
                 state.agent.workspace_dir,
                 confirmed_presentation=True,
                 allow_controlled_presentation=True,
+                tool_limits=self._config.tool_limits,
             )
             if explicit_skill is not None
             and explicit_skill.workflow == CONTROLLED_PRESENTATION_WORKFLOW_KIND
@@ -1843,12 +1845,14 @@ class BoxACPAgent:
                 user_text=plan_detection_text,
                 workspace_dir=state.agent.workspace_dir,
                 skill=explicit_skill,
+                tool_limits=self._config.tool_limits,
             )
             if explicit_skill is not None
             else build_external_skill_completion_gate(
                 user_text=plan_detection_text,
                 workspace_dir=state.agent.workspace_dir,
                 skill=presentation_provider_skill,
+                tool_limits=self._config.tool_limits,
             )
             if host_presentation_config is not None
             and presentation_provider is not None
@@ -1865,6 +1869,7 @@ class BoxACPAgent:
                     host_presentation_config is None
                     or provider_uses_controlled_workflow
                 ),
+                tool_limits=self._config.tool_limits,
             )
         )
         if (
@@ -1907,6 +1912,7 @@ class BoxACPAgent:
             )
             else recover_completion_gate(
                 state.agent.workspace_dir,
+                tool_limits=self._config.tool_limits,
             )
         )
         if resume_pending_gate:
@@ -3235,6 +3241,7 @@ class BoxACPAgent:
                     else ()
                 ),
                 tuple(state.preloaded_skill_names),
+                tool_limits=self._config.tool_limits,
             ),
             completion_gate=completion_gate,
             artifact_detection_enabled=state.artifact_mode != "project",

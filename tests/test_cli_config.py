@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 import box_agent.cli as cli
+from box_agent.config import ToolLimitsConfig
 from box_agent.workspace_registry import WorkspaceRegistry
 
 
@@ -56,6 +58,24 @@ def test_cmd_config_set_bootstraps_and_updates_raw_yaml(
     assert exit_code == 0
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert data["api_key"] == "sk-new-key"
+
+
+def test_cmd_config_set_updates_nested_tool_limit(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path)
+    monkeypatch.setattr(cli.Config, "find_config_file", lambda _name: config_path)
+
+    exit_code = cli.cmd_config(
+        set_pair=("tool_limits.external_skill.max_tool_calls", "96")
+    )
+
+    assert exit_code == 0
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert data["tool_limits"]["external_skill"]["max_tool_calls"] == 96
+    assert (
+        cli.Config.from_yaml(config_path).tool_limits.external_skill.max_tool_calls
+        == 96
+    )
 
 
 def test_cmd_config_set_rolls_back_invalid_values(
@@ -111,10 +131,12 @@ def test_config_sub_agent_token_limit_defaults_and_overrides(tmp_path: Path) -> 
     # Default when absent from yaml.
     default_path = tmp_path / "default.yaml"
     _write_config(default_path)
-    assert cli.Config.from_yaml(default_path).agent.sub_agent_token_limit == 40_000
+    defaults = cli.Config.from_yaml(default_path).agent
+    assert defaults.max_steps == 300
+    assert defaults.sub_agent_token_limit == 50_000
 
-    # Overridable for advanced/host scenarios even though it is not surfaced
-    # in config-example.yaml.
+    # Overridable for advanced/host scenarios; config-example.yaml documents it
+    # only as a comment so generated configs continue to inherit runtime updates.
     override_path = tmp_path / "override.yaml"
     _write_config(override_path)
     with override_path.open("a", encoding="utf-8") as f:
@@ -128,7 +150,7 @@ def test_config_batch_synthesis_timeout_defaults_and_overrides(tmp_path: Path) -
     _write_config(default_path)
     assert (
         cli.Config.from_yaml(default_path).agent.sub_agent_batch_synthesis_timeout_seconds
-        == 300.0
+        == 600.0
     )
 
     override_path = tmp_path / "override.yaml"
@@ -140,6 +162,128 @@ def test_config_batch_synthesis_timeout_defaults_and_overrides(tmp_path: Path) -
         cli.Config.from_yaml(override_path).agent.sub_agent_batch_synthesis_timeout_seconds
         == 123.5
     )
+
+
+def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> None:
+    default_path = tmp_path / "default.yaml"
+    _write_config(default_path)
+    defaults = cli.Config.from_yaml(default_path).tool_limits
+    assert defaults.web_search.total_calls == 50
+    assert defaults.external_skill.max_tool_calls == 128
+    assert defaults.presentation.deep_research_max_tool_calls == 200
+    assert defaults.sub_agent.general_max_tool_calls == 32
+
+    override_path = tmp_path / "override.yaml"
+    _write_config(override_path)
+    with override_path.open("a", encoding="utf-8") as f:
+        f.write(
+            "tool_limits:\n"
+            "  web_search:\n"
+            "    batch_size: 4\n"
+            "    total_calls: 40\n"
+            "  external_skill:\n"
+            "    max_tool_calls: 96\n"
+            "  presentation:\n"
+            "    research_rounds: 5\n"
+            "  sub_agent:\n"
+            "    general_max_steps: 20\n"
+            "    legacy_max_steps: 60\n"
+        )
+
+    limits = cli.Config.from_yaml(override_path).tool_limits
+    assert limits.web_search.batch_size == 4
+    assert limits.web_search.total_calls == 40
+    assert limits.web_search.deep_research_total_calls == 100
+    assert limits.external_skill.max_tool_calls == 96
+    assert limits.external_skill.completion_reserve_calls == 10
+    assert limits.presentation.research_rounds == 5
+    assert limits.sub_agent.general_max_steps == 20
+    assert limits.sub_agent.legacy_max_steps == 60
+
+
+def test_config_example_does_not_pin_tool_limit_defaults(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    example_path = cli.Config.get_package_dir() / "config" / "config-example.yaml"
+    data = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+
+    assert "tool_limits" not in data
+    assert "max_steps" not in data
+    assert "sub_agent_token_limit" not in data
+    assert "sub_agent_batch_synthesis_timeout_seconds" not in data
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    generated_path = cli.Config._ensure_user_config()
+    generated = yaml.safe_load(generated_path.read_text(encoding="utf-8"))
+    assert "tool_limits" not in generated
+    assert "max_steps" not in generated
+    assert "sub_agent_token_limit" not in generated
+    assert "sub_agent_batch_synthesis_timeout_seconds" not in generated
+
+
+def test_config_rejects_invalid_tool_limits(tmp_path: Path) -> None:
+    config_path = tmp_path / "invalid.yaml"
+    _write_config(config_path)
+    with config_path.open("a", encoding="utf-8") as f:
+        f.write("tool_limits:\n  web_search:\n    batch_size: 0\n")
+
+    with pytest.raises(ValueError):
+        cli.Config.from_yaml(config_path)
+
+
+@pytest.mark.parametrize(
+    ("path", "maximum"),
+    [
+        (("general", "final_summary_after_calls"), 512),
+        (("general", "wrapup_remaining_steps"), 50),
+        (("web_search", "batch_size"), 32),
+        (("web_search", "total_calls"), 512),
+        (("web_search", "deep_research_total_calls"), 512),
+        (("search_files", "consecutive_empty_limit"), 50),
+        (("external_skill", "max_tool_calls"), 512),
+        (("external_skill", "completion_reserve_calls"), 128),
+        (("presentation", "max_tool_calls"), 512),
+        (("presentation", "completion_reserve_calls"), 128),
+        (("presentation", "deep_research_max_tool_calls"), 512),
+        (("presentation", "research_rounds"), 20),
+        (("sub_agent", "general_max_steps"), 256),
+        (("sub_agent", "general_max_tool_calls"), 256),
+        (("sub_agent", "legacy_max_steps"), 256),
+        (("sub_agent", "no_progress_steps"), 50),
+    ],
+)
+def test_tool_limit_upper_bounds(path: tuple[str, str], maximum: int) -> None:
+    section, field = path
+    section_values = {field: maximum}
+    if field == "completion_reserve_calls":
+        section_values["max_tool_calls"] = 512
+        if section == "presentation":
+            section_values["deep_research_max_tool_calls"] = 512
+
+    accepted = ToolLimitsConfig(**{section: section_values})
+    assert getattr(getattr(accepted, section), field) == maximum
+
+    section_values[field] = maximum + 1
+    with pytest.raises(ValueError):
+        ToolLimitsConfig(**{section: section_values})
+
+
+def test_cmd_config_set_rolls_back_tool_limit_above_maximum(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path)
+    original = config_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(cli.Config, "find_config_file", lambda _name: config_path)
+
+    exit_code = cli.cmd_config(
+        set_pair=("tool_limits.external_skill.max_tool_calls", "513")
+    )
+
+    assert exit_code == 1
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 def test_config_mcp_connect_timeout_defaults_and_overrides(tmp_path: Path) -> None:
