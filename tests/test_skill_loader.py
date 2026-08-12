@@ -2,6 +2,7 @@
 Test Skill Loader
 """
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -348,6 +349,45 @@ def test_builtin_manifest_filters_orphan_skills():
         assert loader.get_skill("kept") is not None
         assert loader.get_skill("orphan") is None
         assert set(loader.list_skills()) == {"kept"}
+
+
+def test_builtin_manifest_availability_requires_platform_and_env_path(
+    tmp_path, monkeypatch
+):
+    builtin_dir = tmp_path / "builtin"
+    skill_dir = builtin_dir / "hosted"
+    skill_dir.mkdir(parents=True)
+    create_test_skill(skill_dir, "hosted", "hosted desc", "hosted content")
+    manifest = {
+        "schema_version": 1,
+        "skills": [
+            {
+                "name": "hosted",
+                "path": "hosted/SKILL.md",
+                "availability": {
+                    "platforms": ["darwin", "win32"],
+                    "required_env_paths": ["HOSTED_CLI_HOME"],
+                },
+            }
+        ],
+    }
+    (builtin_dir / "_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    cli_home = tmp_path / "cli-home"
+    cli_home.mkdir()
+    monkeypatch.setenv("HOSTED_CLI_HOME", str(cli_home))
+    monkeypatch.setattr("box_agent.tools.skill_loader.sys.platform", "linux")
+    loader = SkillLoader(sources=[(builtin_dir, "builtin")])
+    assert loader.discover_skills() == []
+
+    monkeypatch.setattr("box_agent.tools.skill_loader.sys.platform", "win32")
+    monkeypatch.setenv("HOSTED_CLI_HOME", str(tmp_path / "missing"))
+    loader = SkillLoader(sources=[(builtin_dir, "builtin")])
+    assert loader.discover_skills() == []
+
+    monkeypatch.setenv("HOSTED_CLI_HOME", str(cli_home))
+    loader = SkillLoader(sources=[(builtin_dir, "builtin")])
+    assert [skill.name for skill in loader.discover_skills()] == ["hosted"]
 
 
 def test_builtin_manifest_reload_signature_ignores_resource_files():

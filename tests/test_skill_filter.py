@@ -189,6 +189,23 @@ class TestFilterByQuery:
         names = [s.name for s in loader.filter_by_query("随便聊聊天气")]
         assert names == ["memory-guide"]
 
+    def test_malformed_skill_metadata_is_skipped(self, loader: SkillLoader, capsys):
+        loader.loaded_skills["bad-description"] = Skill(
+            name="bad-description",
+            description=360,  # type: ignore[arg-type]
+            content="",
+            source="user",
+        )
+
+        names = [s.name for s in loader.filter_by_query("mail")]
+
+        assert "lark-mail" in names
+        assert "bad-description" not in names
+        stderr = capsys.readouterr().err
+        assert "Skipped skill during query filtering" in stderr
+        assert "bad-description" in stderr
+        assert "'int' object has no attribute 'lower'" in stderr
+
     def test_max_skills_caps_results(self, loader: SkillLoader):
         # Add a few synthetic skills that all match "数据"
         for i in range(10):
