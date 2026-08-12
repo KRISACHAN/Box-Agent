@@ -136,6 +136,7 @@ class LLMClient:
         session_id: str = "",
         turn_id: str = "",
         title: str = "Box-Agent",
+        call_kind: str = "",
     ) -> LLMResponse:
         """Generate response from LLM.
 
@@ -157,6 +158,7 @@ class LLMClient:
             session_id=session_id,
             turn_id=turn_id,
             title=title,
+            call_kind=call_kind,
         )
         record_usage(response.usage)
         if response.content and "<think>" in response.content:
@@ -175,6 +177,7 @@ class LLMClient:
         session_id: str = "",
         turn_id: str = "",
         title: str = "Box-Agent",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from LLM.
 
@@ -199,6 +202,7 @@ class LLMClient:
             session_id=session_id,
             turn_id=turn_id,
             title=title,
+            call_kind=call_kind,
         )
         async for event in unwrap_think_tags(upstream):
             if event.type == "finish":
@@ -214,6 +218,7 @@ class SessionBoundLLM:
         self._session_id = ""
         self._turn_id = ""
         self._title = "Box-Agent"
+        self._call_kind = ""
 
     def bind(self, client: LLMClient) -> None:
         self._delegate = client
@@ -224,6 +229,7 @@ class SessionBoundLLM:
         session_id: str | None = None,
         turn_id: str | None = None,
         title: str | None = None,
+        call_kind: str | None = None,
     ) -> None:
         """Set defaults inherited by nested LLM calls in this ACP session."""
 
@@ -233,6 +239,8 @@ class SessionBoundLLM:
             self._turn_id = turn_id.strip()
         if title is not None:
             self._title = title.strip() or "Box-Agent"
+        if call_kind is not None:
+            self._call_kind = call_kind.strip()
 
     def __getattr__(self, name: str):
         return getattr(self._delegate, name)
@@ -246,16 +254,19 @@ class SessionBoundLLM:
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         client = self._delegate
-        return await client.generate(
-            messages,
-            tools,
-            thinking_enabled=thinking_enabled,
-            session_id=session_id.strip() or self._session_id,
-            turn_id=turn_id.strip() or self._turn_id,
-            title=title.strip() or self._title,
-        )
+        kwargs = {
+            "thinking_enabled": thinking_enabled,
+            "session_id": session_id.strip() or self._session_id,
+            "turn_id": turn_id.strip() or self._turn_id,
+            "title": title.strip() or self._title,
+        }
+        effective_call_kind = call_kind.strip() or self._call_kind
+        if effective_call_kind:
+            kwargs["call_kind"] = effective_call_kind
+        return await client.generate(messages, tools, **kwargs)
 
     async def generate_stream(
         self,
@@ -266,14 +277,17 @@ class SessionBoundLLM:
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         client = self._delegate
-        async for event in client.generate_stream(
-            messages,
-            tools,
-            thinking_enabled=thinking_enabled,
-            session_id=session_id.strip() or self._session_id,
-            turn_id=turn_id.strip() or self._turn_id,
-            title=title.strip() or self._title,
-        ):
+        kwargs = {
+            "thinking_enabled": thinking_enabled,
+            "session_id": session_id.strip() or self._session_id,
+            "turn_id": turn_id.strip() or self._turn_id,
+            "title": title.strip() or self._title,
+        }
+        effective_call_kind = call_kind.strip() or self._call_kind
+        if effective_call_kind:
+            kwargs["call_kind"] = effective_call_kind
+        async for event in client.generate_stream(messages, tools, **kwargs):
             yield event

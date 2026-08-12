@@ -88,6 +88,7 @@ class AnthropicClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> anthropic.types.Message:
         """Execute API request (core method that can be retried).
 
@@ -121,7 +122,7 @@ class AnthropicClient(LLMClientBase):
             params["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET}
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._agent_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -333,6 +334,7 @@ class AnthropicClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         """Generate response from Anthropic LLM.
 
@@ -367,6 +369,7 @@ class AnthropicClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
         else:
             # Don't use retry
@@ -378,6 +381,7 @@ class AnthropicClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
 
         # Parse and return response
@@ -392,6 +396,7 @@ class AnthropicClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from Anthropic LLM.
 
@@ -414,7 +419,7 @@ class AnthropicClient(LLMClientBase):
             params["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET}
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._agent_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers

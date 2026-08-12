@@ -47,6 +47,7 @@ class _FakeLLM:
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         self.calls.append(
             {
@@ -56,6 +57,7 @@ class _FakeLLM:
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "title": title,
+                "call_kind": call_kind,
             }
         )
         if self._delay:
@@ -93,6 +95,7 @@ async def test_lightweight_passes_no_tools_and_no_thinking():
     call = llm.calls[0]
     assert call["tools"] is None
     assert call["thinking_enabled"] is False
+    assert call["call_kind"] == "utility"
     # No system message when none supplied.
     assert [m.role for m in call["messages"]] == ["user"]
 
@@ -238,6 +241,7 @@ async def test_extmethod_llm_prompt_success():
     )
 
     assert resp["text"] == "title here"
+    assert llm.calls[0]["call_kind"] == "title_generate"
     assert resp["finishReason"] == "stop"
     assert resp["usage"] == {"inputTokens": 12, "outputTokens": 3}
     assert "durationMs" in resp

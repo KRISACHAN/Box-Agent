@@ -28,10 +28,12 @@ class FakeVisionLLM:
     def __init__(self) -> None:
         self.messages = None
         self.tools = "unset"
+        self.call_kind = None
 
-    async def generate(self, messages, tools=None, *, thinking_enabled=False):
+    async def generate(self, messages, tools=None, *, thinking_enabled=False, call_kind=""):
         self.messages = messages
         self.tools = tools
+        self.call_kind = call_kind
         return LLMResponse(
             content=(
                 "# Visual Review\n\n"
@@ -55,6 +57,7 @@ async def test_vision_review_reads_image_sends_image_content_and_writes_report(t
     result = await tool.execute(image_paths=["slide.png"])
 
     assert result.success, result.error
+    assert llm.call_kind == "utility"
     report = tmp_path / "visual_review.md"
     assert report.exists()
     assert "Overall: PASS" in report.read_text()
@@ -184,7 +187,7 @@ async def test_vision_review_times_out(tmp_path: Path, monkeypatch):
     class SlowLLM:
         provider = "openai"
 
-        async def generate(self, messages, tools=None, *, thinking_enabled=False):
+        async def generate(self, messages, tools=None, *, thinking_enabled=False, call_kind=""):
             await asyncio.sleep(1.0)
             return LLMResponse(content="never", finish_reason="stop")
 

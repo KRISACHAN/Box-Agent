@@ -76,12 +76,14 @@ class LLMClientBase(ABC):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> dict[str, str | bytes]:
         """Return non-empty agent correlation headers for one LLM request."""
         values = (
             ("X-RACCOON-Session-ID", session_id),
             ("X-RACCOON-Turn-ID", turn_id),
             ("X-RACCOON-Title", title),
+            ("X-RACCOON-Call-Kind", call_kind),
         )
         return {
             header: cleaned if cleaned.isascii() else cleaned.encode("utf-8")
@@ -104,6 +106,7 @@ class LLMClientBase(ABC):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         """Generate response from LLM.
 
@@ -134,6 +137,7 @@ class LLMClientBase(ABC):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from LLM.
 

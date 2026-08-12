@@ -1265,6 +1265,7 @@ async def _create_summary(
         session_id=session_id,
         turn_id=turn_id,
         title=title,
+        call_kind="context_summary",
     )
     return response.content[:_LOCAL_FALLBACK_CHAR_LIMIT]
 
@@ -2405,6 +2406,7 @@ async def run_agent_loop(
     session_id: str = "",
     turn_id: str = "",
     title: str = "",
+    call_kind: str = "",
     force_plan_start: bool = False,
     require_plan_approval: bool = False,
     plan_approval: dict[str, Any] | None = None,
@@ -3301,12 +3303,17 @@ async def run_agent_loop(
             text_chunk_count = 0
             thinking_chunk_count = 0
 
-            llm_stream = llm.generate_stream(
-                messages=messages, tools=tool_list, thinking_enabled=thinking_enabled,
-                session_id=session_id,
-                turn_id=turn_id,
-                title=title,
-            )
+            stream_kwargs = {
+                "messages": messages,
+                "tools": tool_list,
+                "thinking_enabled": thinking_enabled,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "title": title,
+            }
+            if call_kind:
+                stream_kwargs["call_kind"] = call_kind
+            llm_stream = llm.generate_stream(**stream_kwargs)
             async for chunk in llm_stream:
                 if cancelled():
                     break

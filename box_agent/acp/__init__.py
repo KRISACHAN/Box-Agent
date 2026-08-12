@@ -2544,6 +2544,13 @@ class BoxACPAgent:
         timeout_ms = params.get("timeoutMs")
         meta = params.get("_meta") or {}
         purpose = meta.get("purpose") or params.get("purpose") or ""
+        normalized_purpose = str(purpose).strip().lower()
+        if "title" in normalized_purpose:
+            call_kind = "title_generate"
+        elif "context_summary" in normalized_purpose:
+            call_kind = "context_summary"
+        else:
+            call_kind = "utility"
         raw_session_id = meta.get("session_id")
         session_id = raw_session_id.strip() if isinstance(raw_session_id, str) else ""
         turn_id = _meta_string(meta, "turn_id", "turnId")
@@ -2582,6 +2589,7 @@ class BoxACPAgent:
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
                 timeout=timeout,
             )
         except LightweightInvalidArgs as exc:
@@ -3192,6 +3200,7 @@ class BoxACPAgent:
                     session_id=state.upstream_session_id,
                     turn_id=state.current_turn_id,
                     title=state.upstream_title,
+                    call_kind="utility",
                     timeout=8.0,
                 )
             except LightweightPromptError as exc:

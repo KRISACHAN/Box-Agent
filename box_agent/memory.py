@@ -1218,7 +1218,8 @@ class MemoryManager:
                 messages=[
                     Msg(role="system", content="You extract structured user information from raw notes."),
                     Msg(role="user", content=prompt),
-                ]
+                ],
+                call_kind="memory_extract",
             )
             filtered = response.content.strip()
         except Exception:
@@ -1294,7 +1295,8 @@ class MemoryManager:
                 messages=[
                     Msg(role="system", content=_CONTEXT_UPDATE_SYSTEM_PROMPT),
                     Msg(role="user", content=prompt),
-                ]
+                ],
+                call_kind="memory_extract",
             )
             data = json.loads(_strip_json_fences(response.content))
         except Exception:
@@ -1595,6 +1597,7 @@ class MemoryManager:
                 ],
                 tools=[],
                 thinking_enabled=False,
+                call_kind="memory_extract",
             )
         except Exception as exc:  # noqa: BLE001 — planner is best-effort
             logger.warning("plan_promotion: LLM call failed: %s", exc)
@@ -2379,6 +2382,7 @@ class MemoryExtractor:
             ],
             session_id=self._session_id,
             turn_id=turn_id,
+            call_kind="memory_extract",
         )
 
         await asyncio.to_thread(

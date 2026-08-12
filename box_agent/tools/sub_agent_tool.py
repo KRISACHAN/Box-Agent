@@ -590,6 +590,7 @@ class SubAgentTool(EventEmittingTool):
                     "sub_agent_strategy": diagnostic.get("strategy"),
                     "resolved_skills": diagnostic.get("resolved_skills", []),
                 },
+                call_kind="subagent_step",
             ):
                 if isinstance(event, ToolCallStart):
                     pending_child_tc[event.tool_call_id] = event.tool_name
@@ -825,6 +826,7 @@ class SubAgentTool(EventEmittingTool):
                 messages=messages,
                 tools=None,
                 thinking_enabled=False,
+                call_kind="subagent_step",
             )
             if self._batch_synthesis_timeout_seconds > 0:
                 response = await asyncio.wait_for(

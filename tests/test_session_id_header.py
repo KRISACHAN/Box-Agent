@@ -21,6 +21,7 @@ from box_agent.schema import Message
 _HEADER = "X-RACCOON-Session-ID"
 _TURN_HEADER = "X-RACCOON-Turn-ID"
 _TITLE_HEADER = "X-RACCOON-Title"
+_CALL_KIND_HEADER = "X-RACCOON-Call-Kind"
 # A normal (non-hosted-placeholder) key so _auth_headers passes the session
 # header through untouched instead of swapping in bearer-token logic.
 _API_KEY = "sk-test-not-a-placeholder"
@@ -223,6 +224,12 @@ def test_agent_headers_encode_non_ascii_values_as_utf8_bytes():
     }
 
 
+def test_agent_headers_emit_internal_call_kind():
+    assert LLMClientBase._agent_headers(call_kind="context_summary") == {
+        "X-RACCOON-Call-Kind": "context_summary"
+    }
+
+
 # ── Anthropic client ─────────────────────────────────────────────────────────
 
 
@@ -240,6 +247,7 @@ async def test_anthropic_generate_emits_agent_headers():
         session_id="sess-77",
         turn_id="sess-77-turn-1",
         title="Quarterly review",
+        call_kind="memory_extract",
     )
 
     assert cap.last_params is not None
@@ -247,6 +255,7 @@ async def test_anthropic_generate_emits_agent_headers():
         _HEADER: "sess-77",
         _TURN_HEADER: "sess-77-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "memory_extract",
     }
 
 
@@ -280,6 +289,7 @@ async def test_anthropic_stream_emits_agent_headers():
         session_id="sess-stream",
         turn_id="sess-stream-turn-1",
         title="Quarterly review",
+        call_kind="context_summary",
     )
 
     assert cap.last_params is not None
@@ -287,6 +297,7 @@ async def test_anthropic_stream_emits_agent_headers():
         _HEADER: "sess-stream",
         _TURN_HEADER: "sess-stream-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "context_summary",
     }
 
 
@@ -307,6 +318,7 @@ async def test_openai_generate_emits_agent_headers():
         session_id="sess-88",
         turn_id="sess-88-turn-1",
         title="Quarterly review",
+        call_kind="title_generate",
     )
 
     assert cap.last_params is not None
@@ -314,6 +326,7 @@ async def test_openai_generate_emits_agent_headers():
         _HEADER: "sess-88",
         _TURN_HEADER: "sess-88-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "title_generate",
     }
 
 
@@ -347,6 +360,7 @@ async def test_openai_stream_emits_agent_headers():
         session_id="sess-stream",
         turn_id="sess-stream-turn-1",
         title="Quarterly review",
+        call_kind="subagent_step",
     )
 
     assert cap.last_params is not None
@@ -354,6 +368,7 @@ async def test_openai_stream_emits_agent_headers():
         _HEADER: "sess-stream",
         _TURN_HEADER: "sess-stream-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "subagent_step",
     }
 
 
@@ -462,6 +477,7 @@ async def test_session_bound_llm_inherits_request_context_for_nested_calls():
         session_id=" sess-parent ",
         turn_id=" turn-parent ",
         title=" Parent task ",
+        call_kind=" memory_extract ",
     )
 
     await wrapper.generate(messages=[Message(role="user", content="hi")])
@@ -473,6 +489,7 @@ async def test_session_bound_llm_inherits_request_context_for_nested_calls():
         "session_id": "sess-parent",
         "turn_id": "turn-parent",
         "title": "Parent task",
+        "call_kind": "memory_extract",
     }
     assert delegate.generate_kwargs == expected
     assert delegate.stream_kwargs == expected
@@ -493,6 +510,7 @@ async def test_session_bound_llm_allows_explicit_correlation_override():
         session_id="sess-explicit",
         turn_id="turn-explicit",
         title="Explicit task",
+        call_kind="utility",
     )
 
     assert delegate.generate_kwargs == {
@@ -500,4 +518,5 @@ async def test_session_bound_llm_allows_explicit_correlation_override():
         "session_id": "sess-explicit",
         "turn_id": "turn-explicit",
         "title": "Explicit task",
+        "call_kind": "utility",
     }
