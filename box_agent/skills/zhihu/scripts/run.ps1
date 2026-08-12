@@ -23,8 +23,8 @@ $FallbackCliHome = Join-Path $env:LOCALAPPDATA "ZhihuCLI"
 $CliHome = if ($HostCliHome) { $HostCliHome } else { $FallbackCliHome }
 $Binary = Join-Path $CliHome "current\zhihu-cli.exe"
 
-# System.Version 不支持 0.2.0-beta.1 这类 SemVer prerelease，
-# 因此这里使用与 setup.ps1 相同的比较规则判断当前 CLI 是否满足最低版本。
+# System.Version does not support SemVer prerelease values such as 0.2.0-beta.1.
+# Use the same comparison rules as setup.ps1.
 function Compare-SemVer([string]$A, [string]$B) {
     $Pattern = '^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$'
     if ($A -notmatch $Pattern) { throw "invalid version: $A" }
@@ -43,7 +43,7 @@ function Compare-SemVer([string]$A, [string]$B) {
     if (-not $APre) { return 1 }
     if (-not $BPre) { return -1 }
 
-    # SemVer prerelease 需要按点分段比较：数字段按数值比较，数字段低于非数字段。
+    # Compare prerelease identifiers according to SemVer precedence.
     $AParts = $APre -split '\.'
     $BParts = $BPre -split '\.'
     $PartCount = [Math]::Min($AParts.Count, $BParts.Count)
@@ -80,7 +80,7 @@ function Test-Ready {
     }
 }
 
-# 宿主内置 CLI 不可用时，直接回退官方 Skill 的用户目录方案。
+# Fall back to an existing official user installation when the host CLI is unavailable.
 if ($HostCliHome -and -not (Test-Ready)) {
     $CliHome = $FallbackCliHome
     $Binary = Join-Path $CliHome "current\zhihu-cli.exe"
@@ -91,7 +91,7 @@ if ($args.Count -gt 0 -and $args[0] -eq "status") {
         & $Binary status --skill-version $SkillVersion --min-cli-version $MinVersion
         exit $LASTEXITCODE
     } else {
-        @{ ok = $true; installed = $false; skill = @{ current_version = $SkillVersion; min_cli_version = $MinVersion }; auth = @{ configured = $false }; update_check = @{ status = "not_applicable" }; next_action = "request_install_consent" } | ConvertTo-Json -Compress -Depth 4
+        @{ ok = $true; installed = $false; skill = @{ current_version = $SkillVersion; min_cli_version = $MinVersion }; auth = @{ configured = $false }; update_check = @{ status = "host_managed" }; next_action = "repair_host_install" } | ConvertTo-Json -Compress -Depth 4
     }
     exit 0
 }
@@ -108,7 +108,7 @@ if ($args.Count -gt 0 -and $args[0] -eq "setup") {
 }
 
 if (-not (Test-Ready)) {
-    @{ ok = $false; error = @{ code = "CLI_NOT_INSTALLED"; message = "Run scripts/setup.ps1 after the user approves installation" } } | ConvertTo-Json -Compress
+    @{ ok = $false; error = @{ code = "CLI_NOT_INSTALLED"; message = "The Officev3-managed zhihu-cli is unavailable; repair or reinstall Officev3" } } | ConvertTo-Json -Compress
     exit 7
 }
 

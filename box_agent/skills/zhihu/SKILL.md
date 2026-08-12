@@ -24,11 +24,11 @@ bash <skill-dir>/scripts/run.sh status
 powershell -ExecutionPolicy Bypass -File <skill-dir>/scripts/run.ps1 status
 ```
 
-Officev3 在 Windows 和 macOS 随应用打包兼容版本的官方 CLI，并通过 `ZHIHU_CLI_HOME` 注入绝对目录。脚本优先使用该目录，不调用 PATH 中来源不明的 `zhihu-cli`。宿主未注入可用 CLI 时，脚本回退到官方默认用户目录；得到用户明确同意后可运行 `setup`，按知乎原始 Skill 方案下载、校验并安装 CLI。
+Officev3 在 Windows 和 macOS 随应用打包兼容版本的官方 CLI，并通过 `ZHIHU_CLI_HOME` 注入绝对目录。脚本优先使用该目录，不调用 PATH 中来源不明的 `zhihu-cli`。宿主未注入可用 CLI 时，脚本只回退到官方默认用户目录中已经存在的兼容 CLI；本内置 Skill 不自行下载二进制。
 
 根据返回 JSON 处理：
 
-1. `installed=false` 或 `CLI_NOT_INSTALLED`：说明内置 CLI 和用户目录 CLI 均不可用；询问用户是否安装，得到明确同意后运行同平台的 `setup`。
+1. `installed=false` 或 `CLI_NOT_INSTALLED`：说明内置 CLI 和用户目录中已有的兼容 CLI 均不可用；引导用户修复或重新安装 Officev3。`setup` 只返回 `HOST_MANAGED_INSTALL`，不会自行下载二进制。
 2. `compatible=false`：内置 CLI 由 Officev3 更新；回退安装的 CLI 可按官方 Skill 流程升级。
 3. `auth.configured=false` 或业务命令返回 `AUTH_REQUIRED`：引导用户打开 Officev3「第三方数据 → 其他 → 知乎」，跳转知乎开放平台获取 Access Secret，并在卡片中完成连接。不要要求用户把 Secret 发送到对话中，也不要自行执行 `auth set`。
 4. 已安装并完成授权时，直接处理当前任务；同一 Session 不重复状态检查。

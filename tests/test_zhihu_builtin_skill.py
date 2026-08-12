@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 from box_agent.tools.skill_loader import SkillLoader
 
@@ -43,3 +46,32 @@ def test_zhihu_skill_uses_the_officev3_managed_cli_and_credentials() -> None:
         setup_text = (skill_root / "scripts" / script_name).read_text(encoding="utf-8")
         assert "HOST_MANAGED_INSTALL" in setup_text
         assert "developer-cdn.zhihu.com" not in setup_text
+
+    for script_name in ("run.ps1", "setup.ps1"):
+        script_text = (skill_root / "scripts" / script_name).read_text(encoding="utf-8")
+        assert script_text.isascii(), "Windows PowerShell 5 requires BOM-less scripts to be ASCII"
+
+
+def test_zhihu_posix_scripts_are_syntax_valid_and_report_host_repair(tmp_path: Path) -> None:
+    shell = shutil.which("sh")
+    if shell is None:
+        return
+
+    scripts_dir = SKILLS_ROOT / "zhihu" / "scripts"
+    for script_name in ("run.sh", "setup.sh"):
+        subprocess.run([shell, "-n", str(scripts_dir / script_name)], check=True)
+
+    env = os.environ.copy()
+    env.pop("ZHIHU_CLI_HOME", None)
+    env["HOME"] = str(tmp_path)
+    result = subprocess.run(
+        [shell, str(scripts_dir / "run.sh"), "status"],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["installed"] is False
+    assert payload["update_check"]["status"] == "host_managed"
+    assert payload["next_action"] == "repair_host_install"

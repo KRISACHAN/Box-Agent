@@ -41,7 +41,7 @@ is_ready() {
   [ -n "$current" ] && version_ge "$current" "$MIN_VERSION"
 }
 
-# 宿主内置 CLI 不可用时，直接回退官方 Skill 的用户目录方案。
+# Fall back to an existing official user installation when the host CLI is unavailable.
 if [ -n "$HOST_CLI_HOME" ] && ! is_ready; then
   CLI_HOME=$FALLBACK_CLI_HOME
   BINARY="$CLI_HOME/current/zhihu-cli"
@@ -51,7 +51,7 @@ if [ "${1:-}" = "status" ]; then
   if is_ready; then
     exec "$BINARY" status --skill-version "$SKILL_VERSION" --min-cli-version "$MIN_VERSION"
   else
-    printf '{"ok":true,"installed":false,"skill":{"current_version":"%s","min_cli_version":"%s"},"auth":{"configured":false},"update_check":{"status":"not_applicable"},"next_action":"request_install_consent"}\n' "$SKILL_VERSION" "$MIN_VERSION"
+    printf '{"ok":true,"installed":false,"skill":{"current_version":"%s","min_cli_version":"%s"},"auth":{"configured":false},"update_check":{"status":"host_managed"},"next_action":"repair_host_install"}\n' "$SKILL_VERSION" "$MIN_VERSION"
   fi
   exit 0
 fi
@@ -62,7 +62,7 @@ if [ "${1:-}" = "setup" ]; then
 fi
 
 if ! is_ready; then
-  printf '%s\n' '{"ok":false,"error":{"code":"CLI_NOT_INSTALLED","message":"Run scripts/setup.sh after the user approves installation"}}'
+  printf '%s\n' '{"ok":false,"error":{"code":"CLI_NOT_INSTALLED","message":"The Officev3-managed zhihu-cli is unavailable; repair or reinstall Officev3"}}'
   exit 7
 fi
 
