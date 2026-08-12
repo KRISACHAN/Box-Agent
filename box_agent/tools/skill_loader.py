@@ -12,6 +12,7 @@ Supports:
 """
 
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -666,6 +667,8 @@ class SkillLoader:
         all_paths_known = True
         for item in raw_skills:
             if isinstance(item, dict) and isinstance(item.get("name"), str):
+                if not self._manifest_item_is_available(item):
+                    continue
                 names.add(item["name"])
                 raw_path = item.get("path")
                 if isinstance(raw_path, str) and raw_path.strip():
@@ -678,6 +681,38 @@ class SkillLoader:
         entry.manifest_names = names
         entry.manifest_paths = tuple(paths) if all_paths_known else None
         entry.manifest_loaded = True
+
+    @staticmethod
+    def _manifest_item_is_available(item: dict[str, object]) -> bool:
+        """Return whether an optional builtin host/platform contract is met."""
+
+        raw = item.get("availability")
+        if raw is None:
+            return True
+        if not isinstance(raw, dict):
+            return False
+
+        platforms = raw.get("platforms")
+        if platforms is not None:
+            if not isinstance(platforms, list) or not all(
+                isinstance(platform, str) and platform for platform in platforms
+            ):
+                return False
+            if sys.platform not in platforms:
+                return False
+
+        required_env_paths = raw.get("required_env_paths")
+        if required_env_paths is not None:
+            if not isinstance(required_env_paths, list) or not all(
+                isinstance(name, str) and name for name in required_env_paths
+            ):
+                return False
+            for name in required_env_paths:
+                value = os.environ.get(name, "").strip()
+                if not value or not Path(value).expanduser().exists():
+                    return False
+
+        return platforms is not None or required_env_paths is not None
 
     @staticmethod
     def _stat_signature(path: Path, root: Path) -> tuple[str, int, int] | None:

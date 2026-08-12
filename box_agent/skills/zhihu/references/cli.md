@@ -234,9 +234,9 @@ CLI 自身错误使用稳定 JSON：
 
 | 错误码 | 处理方式 |
 |---|---|
-| `AUTH_REQUIRED` | 打开 `action_url`，申请 Access Secret 后执行 `auth set --secret-stdin` |
+| `AUTH_REQUIRED` | 打开 `action_url`，申请 Access Secret 后回到 Officev3 知乎卡片连接 |
 | `AUTH_INVALID` | 重新检查或申请 Access Secret；不要回显旧 Access Secret |
-| `KEYCHAIN_UNAVAILABLE` | 通过宿主 Secret Store 注入 `ZHIHU_ACCESS_SECRET` |
+| `KEYCHAIN_UNAVAILABLE` | 修复系统凭证库后在 Officev3 知乎卡片重试；不要把 Secret 交给 Agent |
 | `ENV_SHADOWS_KEYCHAIN` | 当前环境变量覆盖了刚保存的密钥链 Access Secret |
 | 服务端 `Code: 30001` | 频率限制；停止主动重试 |
 | 服务端 `Code: 30002` | 配额耗尽；告知受影响能力和恢复条件 |

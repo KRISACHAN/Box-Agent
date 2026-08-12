@@ -12,12 +12,30 @@ from box_agent.tools.skill_loader import SkillLoader
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "box_agent" / "skills"
 
 
-def test_zhihu_skill_is_whitelisted_and_discoverable_as_builtin() -> None:
+def test_zhihu_skill_is_only_discoverable_with_officev3_cli(
+    tmp_path: Path, monkeypatch
+) -> None:
     manifest = json.loads((SKILLS_ROOT / "_manifest.json").read_text(encoding="utf-8"))
-    entries = {item["name"]: item["path"] for item in manifest["skills"]}
+    entries = {item["name"]: item for item in manifest["skills"]}
 
-    assert entries["zhihu"] == "zhihu/SKILL.md"
+    assert entries["zhihu"] == {
+        "name": "zhihu",
+        "path": "zhihu/SKILL.md",
+        "availability": {
+            "platforms": ["darwin", "win32"],
+            "required_env_paths": ["ZHIHU_CLI_HOME"],
+        },
+    }
 
+    monkeypatch.setattr("box_agent.tools.skill_loader.sys.platform", "win32")
+    monkeypatch.delenv("ZHIHU_CLI_HOME", raising=False)
+    loader = SkillLoader(sources=[(SKILLS_ROOT, "builtin")])
+    loader.discover_skills()
+    assert loader.get_skill("zhihu") is None
+
+    cli_home = tmp_path / "zhihu-cli"
+    cli_home.mkdir()
+    monkeypatch.setenv("ZHIHU_CLI_HOME", str(cli_home))
     loader = SkillLoader(sources=[(SKILLS_ROOT, "builtin")])
     loader.discover_skills()
     skill = loader.get_skill("zhihu")
@@ -41,6 +59,12 @@ def test_zhihu_skill_uses_the_officev3_managed_cli_and_credentials() -> None:
     assert "update_manifest_url" not in package_manifest["cli"]
     assert "不要要求用户把 Secret 发送到对话中" in skill_text
     assert "第三方数据 → 其他 → 知乎" in skill_text
+
+    all_docs = "\n".join(
+        path.read_text(encoding="utf-8") for path in skill_root.rglob("*.md")
+    )
+    assert "用户在对话中提供的 Access Secret" not in all_docs
+    assert "通过 Agent 执行" not in all_docs
 
     for script_name in ("setup.ps1", "setup.sh"):
         setup_text = (skill_root / "scripts" / script_name).read_text(encoding="utf-8")
