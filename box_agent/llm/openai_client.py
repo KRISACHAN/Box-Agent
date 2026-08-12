@@ -11,6 +11,10 @@ from openai import AsyncOpenAI
 
 from ..retry import RetryConfig, StreamInterrupted, async_retry, is_retryable_stream_error
 from ..schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
+from ..tools.argument_limits import (
+    TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS,
+    streamed_argument_limit,
+)
 from .base import LLMClientBase
 from .error_messages import is_retryable_llm_error
 from .debug_logging import (
@@ -583,7 +587,8 @@ class OpenAIClient(LLMClientBase):
         finish_reason: str | None = None
 
         # Tool call accumulators: {index: {id, name, arguments_str}}
-        tool_acc: dict[int, dict[str, str]] = {}
+        tool_acc: dict[int, dict[str, Any]] = {}
+        oversized_info: list[dict[str, Any]] = []
         provider_request_id: str | None = None
 
         async def _open_stream() -> Any:
@@ -618,6 +623,7 @@ class OpenAIClient(LLMClientBase):
             usage = None
             finish_reason = None
             tool_acc = {}
+            oversized_info = []
 
             try:
                 response_stream = await _open_stream()
@@ -682,6 +688,7 @@ class OpenAIClient(LLMClientBase):
                                     "id": tc_delta.id or "",
                                     "name": tc_delta.function.name if tc_delta.function and tc_delta.function.name else "",
                                     "arguments": "",
+                                    "activity_bucket": -1,
                                 }
                             else:
                                 if tc_delta.id:
@@ -690,6 +697,38 @@ class OpenAIClient(LLMClientBase):
                                     tool_acc[idx]["name"] = tc_delta.function.name
                             if tc_delta.function and tc_delta.function.arguments:
                                 tool_acc[idx]["arguments"] += tc_delta.function.arguments
+                                entry = tool_acc[idx]
+                                arguments_len = len(entry["arguments"])
+                                activity_bucket = (
+                                    arguments_len // TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS
+                                )
+                                if activity_bucket > entry["activity_bucket"]:
+                                    entry["activity_bucket"] = activity_bucket
+                                    yield StreamEvent(
+                                        type="activity",
+                                        activity={
+                                            "protocol": "agent_activity_v1",
+                                            "phase": "tool_arguments",
+                                            "tool_name": entry["name"] or "",
+                                            "argument_chars": arguments_len,
+                                        },
+                                    )
+                                limit = streamed_argument_limit(entry["name"])
+                                if arguments_len > limit:
+                                    oversized_info.append(
+                                        {
+                                            "name": entry["name"] or "",
+                                            "arguments_len": arguments_len,
+                                            "limit": limit,
+                                        }
+                                    )
+                                    finish_reason = "tool_argument_limit"
+                                    break
+                        if oversized_info:
+                            closer = getattr(response_stream, "aclose", None)
+                            if closer is not None:
+                                await closer()
+                            break
             except Exception as exc:
                 log_llm_error_meta(provider="openai", mode="stream", exc=exc)
                 if is_retryable_stream_error(exc):
@@ -725,6 +764,22 @@ class OpenAIClient(LLMClientBase):
             else:
                 # Successful consume — break out of the retry loop.
                 break
+
+        if oversized_info:
+            logger.warning(
+                "openai tool argument stream stopped locally: %s request_id=%s",
+                oversized_info,
+                provider_request_id,
+            )
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_argument_limit",
+                usage=usage,
+                provider_request_id=provider_request_id,
+                oversized_tool_calls=oversized_info,
+                raw_finish_reason=None,
+            )
+            return
 
         # Build tool calls. When a relay truncates output mid-arguments the
         # accumulated ``arguments_str`` is invalid JSON. First try to repair

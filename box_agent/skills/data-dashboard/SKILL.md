@@ -33,6 +33,19 @@ keywords: [dashboard, 数据看板, 看板, 仪表盘, demo, 可视化报告, ht
 | 图标 | inline SVG 或 Unicode；不引图标字体库 |
 | 数据 | 全量 inline `const D = {...}`，按页 key 组织 |
 
+### 2.1 大文件落盘契约
+
+- 预计最终 HTML / CSS / JS 正文超过 8,000 字符时，从一开始就使用
+  `staged_file_write`：`begin` → 多次 `append_text` / `append_file` → `commit`，
+  每个生成块建议不超过 6,000 字符。
+- `execute_code` 只用于数据计算、短小的文件修正和交付校验；禁止把整份 HTML、
+  CSS、JS 或模板正文放进 `execute_code`。同样禁止用 `bash` heredoc、base64 或超长
+  命令写页面正文。
+- `bash` 可以执行短小的目录准备、合并脚本和校验命令，但页面正文必须来自分块文件
+  写入，或来自已经落盘的 fragments / template 文件。
+- 如果 `begin` 已声明 `expected_chunks`，`commit` 可以省略该字段并复用声明值；如果
+  生成过程中调整了分块数，在 `commit` 显式传入最终分块数覆盖即可。
+
 ## 3. 架构骨架（每次都用这个）
 
 > 📦 **完整可运行骨架见 `assets/template.html`**——200 行左右的脚手架，已包含 ECharts CDN、主题注册占位、路由懒渲染、`fmt/ui` 工具完整版、`D = {}` / `renderers = {}` 空对象。新任务复制该模板，填数据 + 写 renderer 即可。

@@ -39,6 +39,11 @@ class StreamEvent(BaseModel):
     # ended without a ``finish_reason`` — i.e. the connection dropped mid
     # tool-call rather than the model hitting an output cap.
     stream_dropped_mid_tool: bool = False
+    # Tool calls stopped locally while their raw JSON arguments were still
+    # streaming. They were never parsed or executed.
+    oversized_tool_calls: "list[dict[str, Any]] | None" = None
+    # Structured, host-invisible liveness/progress metadata.
+    activity: "dict[str, Any] | None" = None
 
 
 class FunctionCall(BaseModel):
@@ -90,3 +95,4 @@ class LLMResponse(BaseModel):
     # so the agent loop can pick a repair strategy per truncation cause.
     raw_finish_reason: str | None = None
     stream_dropped_mid_tool: bool = False
+    oversized_tool_calls: list[dict[str, Any]] | None = None

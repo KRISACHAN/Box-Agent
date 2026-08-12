@@ -182,13 +182,12 @@ def _build_python_runtime(
         )
 
     if getattr(sys, "frozen", False):
-        # Win-only: a bundled portable Python is shipped under
-        # ``<runtime_root>/runtime/python/`` so shell skills (`$BOX_AGENT_PYTHON`)
-        # have a real interpreter. Mac/Linux frozen behavior unchanged.
+        # Windows still ships a portable Python in legacy/fat runtimes. macOS
+        # and Linux frozen ACP runtimes receive Python from their host.
         if sys.platform == "win32":
-            bundled_python = bundled_win_python()
-            if bundled_python is not None:
-                path = str(bundled_python)
+            bundled = bundled_win_python()
+            if bundled is not None:
+                path = str(bundled)
                 return SkillRuntime(
                     kind="python",
                     status="available",
@@ -438,6 +437,104 @@ class NodeRuntimeManager:
         )
         return self.discover()
 
+    def install_linux(
+        self,
+        *,
+        version: str = DEFAULT_NODE_VERSION,
+        platform_id: str | None = None,
+        downloader: Any | None = None,
+        base_url: str = NODE_DIST_BASE_URL,
+    ) -> SkillRuntime:
+        """Install the pinned official Node.js Linux runtime."""
+        target = platform_id or _detect_node_linux_platform()
+        if target not in {"linux-x64", "linux-arm64"}:
+            raise NodeRuntimeInstallError(f"Unsupported Linux Node platform: {target}")
+        if not version.startswith("v"):
+            raise NodeRuntimeInstallError("Node version must include the leading 'v'.")
+
+        archive_name = f"node-{version}-{target}.tar.gz"
+        version_dir = self.versions_dir / archive_name.removesuffix(".tar.gz")
+        node = version_dir / "bin" / "node"
+        npm = version_dir / "bin" / "npm"
+        npx = version_dir / "bin" / "npx"
+
+        if all(_is_executable_file(str(path)) for path in (node, npm, npx)):
+            self._write_manifest(
+                version=version,
+                platform_id=target,
+                node=node,
+                npm=npm,
+                npx=npx,
+                node_modules=self.node_modules_dir,
+            )
+            return self.discover()
+
+        self.downloads_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = self.downloads_dir / archive_name
+        shasums_path = self.downloads_dir / f"SHASUMS256-{version}.txt"
+        version_url = f"{base_url.rstrip('/')}/{version}"
+        fetch = downloader or _download_url
+        fetch(f"{version_url}/{archive_name}", archive_path)
+        fetch(f"{version_url}/SHASUMS256.txt", shasums_path)
+
+        expected = _checksum_for_archive(
+            shasums_path.read_text(encoding="utf-8"), archive_name
+        )
+        actual = _sha256_file(archive_path)
+        if actual != expected:
+            raise NodeRuntimeInstallError(
+                f"Checksum mismatch for {archive_name}: expected {expected}, got {actual}"
+            )
+
+        temp_dir = self.versions_dir / f".{version_dir.name}.tmp"
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            _safe_extract_tar(archive_path, temp_dir)
+            extracted = temp_dir / version_dir.name
+            if not extracted.is_dir():
+                raise NodeRuntimeInstallError(
+                    f"Node archive did not contain {version_dir.name}"
+                )
+            if version_dir.exists():
+                shutil.rmtree(version_dir)
+            version_dir.parent.mkdir(parents=True, exist_ok=True)
+            extracted.rename(version_dir)
+        except Exception as exc:
+            if version_dir.exists() and not all(
+                _is_executable_file(str(path)) for path in (node, npm, npx)
+            ):
+                shutil.rmtree(version_dir)
+            if isinstance(exc, NodeRuntimeInstallError):
+                raise
+            raise NodeRuntimeInstallError(
+                f"Failed to extract Node runtime archive: {exc}"
+            ) from exc
+        finally:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
+
+        missing = [
+            name
+            for name, path in (("node", node), ("npm", npm), ("npx", npx))
+            if not _is_executable_file(str(path))
+        ]
+        if missing:
+            raise NodeRuntimeInstallError(
+                f"Installed Node runtime is incomplete: missing {', '.join(missing)}"
+            )
+
+        self._write_manifest(
+            version=version,
+            platform_id=target,
+            node=node,
+            npm=npm,
+            npx=npx,
+            node_modules=self.node_modules_dir,
+        )
+        return self.discover()
+
     def install_for_current_platform(
         self, *, version: str = DEFAULT_NODE_VERSION
     ) -> SkillRuntime:
@@ -446,8 +543,10 @@ class NodeRuntimeManager:
             return self.install_macos(version=version)
         if sys.platform == "win32":
             return self.install_win(version=version)
+        if sys.platform.startswith("linux"):
+            return self.install_linux(version=version)
         raise NodeRuntimeInstallError(
-            f"Node auto-install currently supports macOS and Windows, got {sys.platform}."
+            f"Node auto-install does not support {sys.platform}."
         )
 
     def discover(self) -> SkillRuntime:
@@ -829,6 +928,21 @@ def _detect_node_win_platform() -> str:
     if machine in {"arm64", "aarch64"}:
         return "win-arm64"
     raise NodeRuntimeInstallError(f"Unsupported Windows CPU architecture for Node runtime: {machine}")
+
+
+def _detect_node_linux_platform() -> str:
+    if not sys.platform.startswith("linux"):
+        raise NodeRuntimeInstallError(
+            f"Node Linux install requires Linux, got {sys.platform}."
+        )
+    machine = platform.machine().lower()
+    if machine in {"x86_64", "amd64"}:
+        return "linux-x64"
+    if machine in {"arm64", "aarch64"}:
+        return "linux-arm64"
+    raise NodeRuntimeInstallError(
+        f"Unsupported Linux CPU architecture for Node runtime: {machine}"
+    )
 
 
 def _path_exists(path: Path) -> bool:
