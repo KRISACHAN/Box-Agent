@@ -16,6 +16,7 @@ from .external_skill import (
     build_external_skill_completion_gate_from_options,
     external_skill_policy_from_options,
     resolve_explicit_skill_invocation,
+    resolve_explicit_skill_reference,
 )
 from .presentation_contract import (
     IMAGE_GENERATION_POLICY_OPTION,
@@ -133,5 +134,6 @@ __all__ = [
     "parse_host_presentation_config",
     "recover_completion_gate",
     "resolve_explicit_skill_invocation",
+    "resolve_explicit_skill_reference",
     "resolve_presentation_skill_provider",
 ]

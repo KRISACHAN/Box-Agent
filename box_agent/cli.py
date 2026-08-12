@@ -75,6 +75,11 @@ from box_agent.tools.skill_execution_env import build_skill_execution_env
 from box_agent.utils import calculate_display_width
 from box_agent.acp.project_context import build_project_startup_context_prompt
 from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
+from box_agent.workflows import (
+    CONTROLLED_PRESENTATION_WORKFLOW_KIND,
+    build_external_skill_completion_gate,
+    resolve_explicit_skill_reference,
+)
 
 
 def run_setup_wizard(config_path: Path) -> bool:
@@ -2262,6 +2267,31 @@ async def run_agent(
                 f"{', '.join(result.loaded_names)}{Colors.RESET}"
             )
 
+    def _build_cli_completion_gate(user_input: str):
+        if not completion_gate_enabled:
+            return None
+        explicit_skill = resolve_explicit_skill_reference(skill_loader, user_input)
+        if (
+            explicit_skill is not None
+            and explicit_skill.workflow != CONTROLLED_PRESENTATION_WORKFLOW_KIND
+        ):
+            return build_external_skill_completion_gate(
+                user_text=user_input,
+                workspace_dir=workspace_dir,
+                skill=explicit_skill,
+                tool_limits=config.tool_limits,
+            )
+        return build_auto_completion_gate(
+            user_input,
+            workspace_dir,
+            confirmed_presentation=(
+                explicit_skill is not None
+                and explicit_skill.workflow
+                == CONTROLLED_PRESENTATION_WORKFLOW_KIND
+            ),
+            tool_limits=config.tool_limits,
+        )
+
     # 8. Display welcome information
     if not task:
         print_banner()
@@ -2274,16 +2304,8 @@ async def run_agent(
         print(f"\n{Colors.BRIGHT_BLUE}Agent{Colors.RESET} {Colors.DIM}›{Colors.RESET} {Colors.DIM}Executing task...{Colors.RESET}\n")
         # Block on MCP only when user is actually about to run
         register_mcp_tools(agent.tools, await await_mcp_tools(mcp_task))
-        completion_gate = (
-            build_auto_completion_gate(
-                task,
-                workspace_dir,
-                tool_limits=config.tool_limits,
-            )
-            if completion_gate_enabled
-            else None
-        )
         _apply_skill_filter(task)
+        completion_gate = _build_cli_completion_gate(task)
         _apply_cli_auto_loaded_skills(completion_gate, task)
         agent.add_user_message(task)
         if completion_gate is not None:
@@ -2621,16 +2643,8 @@ async def run_agent(
                 f"\n{Colors.BRIGHT_BLUE}Agent{Colors.RESET} {Colors.DIM}›{Colors.RESET} "
                 f"{Colors.DIM}Thinking... (Esc to cancel){Colors.RESET}\n"
             )
-            preload_gate = (
-                build_auto_completion_gate(
-                    user_input,
-                    workspace_dir,
-                    tool_limits=config.tool_limits,
-                )
-                if completion_gate_enabled
-                else None
-            )
             _apply_skill_filter(user_input)
+            preload_gate = _build_cli_completion_gate(user_input)
             _apply_cli_auto_loaded_skills(preload_gate, user_input)
             agent.add_user_message(user_input)
 
@@ -2714,6 +2728,14 @@ async def run_agent(
 
             # Visual separation
             print(f"\n{Colors.DIM}{'─' * 60}{Colors.RESET}\n")
+
+        except EOFError:
+            print(
+                f"\n{Colors.BRIGHT_YELLOW}👋 Goodbye! Thanks for using Box Agent"
+                f"{Colors.RESET}\n"
+            )
+            print_stats(agent, session_start)
+            break
 
         except KeyboardInterrupt:
             print(f"\n\n{Colors.BRIGHT_YELLOW}👋 Interrupt signal detected, exiting...{Colors.RESET}\n")

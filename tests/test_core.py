@@ -43,6 +43,7 @@ from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
+from box_agent.tools.sub_agent_tool import SubAgentTool
 
 
 # ── Helpers ─────────────────────────────────────────────────────
@@ -1307,6 +1308,67 @@ async def test_tool_result_preserves_raw_output_for_cli_and_hosts():
 
 
 @pytest.mark.asyncio
+async def test_repeated_sub_agent_framework_error_is_compacted_only_for_model_history():
+    malformed = {
+        "task": "Render a slide",
+        "required_tools": '["file", "terminal", "vision"]',
+        "capabilities": "",
+    }
+    messages = _msgs()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="bad-delegation-1",
+                        type="function",
+                        function=FunctionCall(name="sub_agent", arguments=malformed),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="bad-delegation-2",
+                        type="function",
+                        function=FunctionCall(name="sub_agent", arguments=malformed),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+    sub_agent = SubAgentTool(llm=MockLLM([]), parent_tools={})
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"sub_agent": sub_agent},
+            max_steps=5,
+        )
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    assert len(results) == 2
+    assert all(result.raw_output["code"] == "INVALID_DELEGATION_SPEC" for result in results)
+    assert all("Traceback" not in (result.error or "") for result in results)
+
+    third_request_results = [
+        message.content
+        for message in llm.message_calls[2]
+        if message.role == "tool" and message.name == "sub_agent"
+    ]
+    assert "minimal_valid_example" in third_request_results[0]
+    assert "REPEATED_FRAMEWORK_FAILURE" in third_request_results[1]
+    assert "minimal_valid_example" not in third_request_results[1]
+
+
+@pytest.mark.asyncio
 async def test_tool_model_context_is_used_only_for_message_history():
     msgs = _msgs()
     llm = MockLLM([
@@ -1893,6 +1955,75 @@ async def test_model_history_placeholder_write_is_hidden_and_self_heals(tmp_path
         ("drafts/slides_05_08.html", second_html),
     ]
     assert (tmp_path / "drafts/slides_05_08.html").read_text() == second_html
+
+
+@pytest.mark.asyncio
+async def test_repeated_placeholder_error_is_compacted_after_one_repair_hint(tmp_path):
+    placeholder = (
+        "[Full tool-call argument omitted from model history]\n"
+        "Tool: write_file\n"
+        "Argument: content\n"
+        "Path: drafts/slide.html"
+    )
+    messages = _msgs()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="placeholder-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={"path": "drafts/slide.html", "content": placeholder},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="placeholder-2",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={"path": "drafts/slide.html", "content": placeholder},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"write_file": WriteTool(workspace_dir=str(tmp_path))},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    assert len(results) == 2
+    assert all("INTERNAL_MODEL_HISTORY_PLACEHOLDER" in (result.error or "") for result in results)
+    repair_events = [event for event in events if isinstance(event, InjectedMessageEvent)]
+    assert sum("Regenerate the missing real content" in event.content for event in repair_events) == 1
+
+    third_request_results = [
+        message.content
+        for message in llm.message_calls[2]
+        if message.role == "tool" and message.name == "write_file"
+    ]
+    assert "INTERNAL_MODEL_HISTORY_PLACEHOLDER" in third_request_results[0]
+    assert "REPEATED_FRAMEWORK_FAILURE" in third_request_results[1]
+    assert not (tmp_path / "drafts/slide.html").exists()
 
 
 @pytest.mark.asyncio

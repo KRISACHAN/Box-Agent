@@ -18,6 +18,7 @@ from box_agent.tools.skill_preload import (
     strip_active_skills,
     web_search_total_limit_for_active_skills,
 )
+from box_agent.workflows.external_skill import EXTERNAL_SKILL_WORKFLOW_KIND
 
 
 def test_deep_presentation_preloads_research_synthesis_with_pptx() -> None:
@@ -70,6 +71,21 @@ def test_controlled_presentation_gate_preloads_resolved_provider_without_builtin
         gate,
         presentation_skill_name="custom-decks",
     ) == ["custom-decks"]
+
+
+def test_external_skill_gate_preloads_selected_skill_not_builtin_document_skill() -> None:
+    gate = CompletionGate(
+        required_changed_artifact_globs=(
+            "output/**/*.html",
+            "output/**/*.pptx",
+        ),
+        workflow_checkpoint_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
+        workflow_options={"skill_name": "sn-ppt-entry"},
+    )
+
+    assert document_preload_skill_names(("sn-ppt-entry",), gate) == [
+        "sn-ppt-entry"
+    ]
 
 
 def test_research_synthesis_expands_web_search_budget() -> None:

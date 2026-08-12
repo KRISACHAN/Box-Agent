@@ -790,6 +790,27 @@ def _tool_message_content_for_model(
     return _strip_plot_data(compacted)
 
 
+def _repeatable_framework_error(
+    *,
+    tool_name: str,
+    result: ToolResult,
+    visible_error: str | None,
+) -> tuple[str, str] | None:
+    """Return a stable signature and label for noisy framework-owned failures."""
+    if result.success or not visible_error:
+        return None
+    raw_output = result.raw_output if isinstance(result.raw_output, dict) else {}
+    if (
+        tool_name == "sub_agent"
+        and raw_output.get("type") == "sub_agent_delegation_error"
+    ):
+        code = str(raw_output.get("code") or "SUB_AGENT_DELEGATION_ERROR")
+        return f"{tool_name}:{visible_error}", code
+    if visible_error.startswith("INTERNAL_MODEL_HISTORY_PLACEHOLDER:"):
+        return f"{tool_name}:{visible_error}", "INTERNAL_MODEL_HISTORY_PLACEHOLDER"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class _ContextResourceHistoryDecision:
     descriptor: ResourceDescriptor | None = None
@@ -2858,6 +2879,7 @@ async def run_agent_loop(
     ).hexdigest()[:10]
     pending_history_compaction: Message | None = None
     model_history_placeholder_repairs = 0
+    model_history_framework_error_counts: dict[str, int] = {}
 
     def _compact_pending_tool_call_history() -> None:
         """Compact the latest large tool arguments after one LLM request saw them."""
@@ -2867,6 +2889,31 @@ async def run_agent_loop(
         if pending is None or not any(message is pending for message in messages):
             return
         pending.tool_calls = _tool_calls_for_model_history(pending.tool_calls)
+
+    def _compact_repeated_framework_error_for_model(
+        *,
+        tool_name: str,
+        result: ToolResult,
+        visible_error: str | None,
+        model_content: str,
+    ) -> str:
+        repeated = _repeatable_framework_error(
+            tool_name=tool_name,
+            result=result,
+            visible_error=visible_error,
+        )
+        if repeated is None:
+            return model_content
+        signature, label = repeated
+        count = model_history_framework_error_counts.get(signature, 0) + 1
+        model_history_framework_error_counts[signature] = count
+        if count == 1:
+            return model_content
+        return (
+            f"Error: REPEATED_FRAMEWORK_FAILURE: {label} occurrence {count}. "
+            "The first matching tool result contains the full diagnostic and repair "
+            "guidance. Do not retry the unchanged call."
+        )
 
     for step in range(max_steps):
         if resource_ledger is not None:
@@ -4793,6 +4840,12 @@ async def run_agent_loop(
                 visible_error=tc_error,
                 resource_receipt=resource_decision.receipt,
             )
+            msg_content = _compact_repeated_framework_error_for_model(
+                tool_name=fn_name,
+                result=result,
+                visible_error=tc_error,
+                model_content=msg_content,
+            )
             if result.success and fn_name == WEB_SEARCH_TOOL_NAME:
                 _log_web_search_model_results(fn_args, tc_content, msg_content)
             tool_msg = Message(
@@ -5282,6 +5335,12 @@ async def run_agent_loop(
                     visible_content=par_content,
                     visible_error=par_error,
                     resource_receipt=resource_decision.receipt,
+                )
+                msg_content = _compact_repeated_framework_error_for_model(
+                    tool_name=fn_name,
+                    result=result,
+                    visible_error=par_error,
+                    model_content=msg_content,
                 )
                 if result.success and fn_name == WEB_SEARCH_TOOL_NAME:
                     _log_web_search_model_results(
