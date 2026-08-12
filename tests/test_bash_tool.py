@@ -15,6 +15,19 @@ from box_agent.tools.bash_tool import (
     _truncate_bash_output,
     _truncate_bash_streams,
 )
+from box_agent.tools.argument_limits import MAX_BASH_COMMAND_CHARS
+
+
+@pytest.mark.asyncio
+async def test_rejects_oversized_command_before_execution():
+    bash_tool = BashTool()
+
+    result = await bash_tool.execute(command="x" * (MAX_BASH_COMMAND_CHARS + 1))
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("BASH_ARGUMENT_TOO_LARGE")
+    assert bash_tool.parameters["properties"]["command"]["maxLength"] == MAX_BASH_COMMAND_CHARS
 
 
 @pytest.mark.asyncio

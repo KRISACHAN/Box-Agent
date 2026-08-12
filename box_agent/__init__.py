@@ -10,7 +10,7 @@ from .llm import LLMClient
 from .schema import FunctionCall, LLMProvider, LLMResponse, Message, ToolCall
 from .workflow_policy import WorkflowCheckpointUpdate, WorkflowPolicy
 
-__version__ = "0.8.85"
+__version__ = "0.8.86"
 
 
 def _frozen_runtime_version(default: str) -> str:

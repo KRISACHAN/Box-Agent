@@ -94,6 +94,7 @@ from box_agent.events import (
     ErrorEvent,
     InjectedMessageEvent,
     LLMOutputEvent,
+    LLMActivityEvent,
     MemoryProposalEvent,
     PlanSnapshotEvent,
     ProgressEvent,
@@ -334,6 +335,8 @@ def _text_stream_event_like(event: Any, text: str) -> Any:
             "tool_calls": None,
             "provider_request_id": None,
             "truncated_tool_calls": None,
+            "oversized_tool_calls": None,
+            "activity": None,
         }
     )
 
@@ -3349,6 +3352,20 @@ class BoxACPAgent:
                         )
                         if _record_token_usage(usage):
                             await _send_turn_usage()
+
+                    case LLMActivityEvent(step=s, payload=activity):
+                        payload = {
+                            **activity,
+                            "type": "agent_activity_v1",
+                            "step": s,
+                        }
+                        await self._send(
+                            session_id,
+                            update_tool_call(
+                                f"agent-activity-{s}",
+                                raw_output=payload,
+                            ),
+                        )
 
                     case ToolCallStartEvent(tool_call_id=tid, tool_name=name, arguments=args, user_visible=user_visible):
                         log.info(

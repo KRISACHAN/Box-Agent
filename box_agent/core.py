@@ -57,6 +57,7 @@ from .events import (
     ErrorEvent,
     InjectedMessageEvent,
     LLMOutputEvent,
+    LLMActivityEvent,
     LogFileEvent,
     MemoryProposalEvent,
     MemoryPromotionCandidate,
@@ -115,6 +116,65 @@ __all__ = ["run_agent_loop", "CompletionGate"]
 _log = logging.getLogger(__name__)
 _DEFAULT_AGENT_CONFIG = AgentConfig()
 PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
+LLM_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
+LLM_PROVIDER_STALE_SECONDS: Final[float] = 120.0
+
+
+async def _stream_with_activity(
+    stream: AsyncIterator[StreamEvent],
+) -> AsyncIterator[StreamEvent]:
+    """Add bounded host heartbeats and stop a provider stream that is stale."""
+    iterator = stream.__aiter__()
+    next_chunk: asyncio.Task[StreamEvent] | None = None
+    last_provider_chunk = perf_counter()
+    try:
+        next_chunk = asyncio.create_task(iterator.__anext__())
+        while True:
+            done, _ = await asyncio.wait(
+                {next_chunk}, timeout=LLM_ACTIVITY_INTERVAL_SECONDS
+            )
+            if not done:
+                stale_seconds = perf_counter() - last_provider_chunk
+                if stale_seconds >= LLM_PROVIDER_STALE_SECONDS:
+                    yield StreamEvent(
+                        type="finish",
+                        finish_reason="provider_stale",
+                        activity={
+                            "protocol": "agent_activity_v1",
+                            "phase": "provider_wait",
+                            "seconds_since_provider_chunk": round(stale_seconds, 1),
+                        },
+                    )
+                    return
+                yield StreamEvent(
+                    type="activity",
+                    activity={
+                        "protocol": "agent_activity_v1",
+                        "phase": "provider_wait",
+                        "seconds_since_provider_chunk": round(stale_seconds, 1),
+                    },
+                )
+                continue
+            try:
+                chunk = next_chunk.result()
+            except StopAsyncIteration:
+                return
+            last_provider_chunk = perf_counter()
+            yield chunk
+            next_chunk = asyncio.create_task(iterator.__anext__())
+    finally:
+        if next_chunk is not None and not next_chunk.done():
+            next_chunk.cancel()
+            try:
+                await next_chunk
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+        closer = getattr(iterator, "aclose", None)
+        if closer is not None:
+            try:
+                await closer()
+            except (RuntimeError, asyncio.CancelledError):
+                pass
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import EventEmittingTool, Tool, ToolResult
 from .tools.browser_intent import BrowserToolIntentPolicy
@@ -2766,6 +2826,8 @@ async def run_agent_loop(
     # the per-request max_tokens on genuine output-cap truncations. Only
     # after exhausting the retries do we surface a user-visible error.
     truncated_tool_call_retries = 0
+    oversized_tool_argument_retries = 0
+    provider_stale_retries = 0
 
     # Per-turn guard for tools that can be repeatedly requested by the model
     # after it already has enough evidence. Once a budget is reached, later
@@ -3307,7 +3369,7 @@ async def run_agent_loop(
                 turn_id=turn_id,
                 title=title,
             )
-            async for chunk in llm_stream:
+            async for chunk in _stream_with_activity(llm_stream):
                 if cancelled():
                     break
                 if chunk.type == "thinking":
@@ -3337,6 +3399,8 @@ async def run_agent_loop(
                         break
                     text_content = candidate
                     yield ContentEvent(content=chunk.delta or "", _streaming=True)
+                elif chunk.type == "activity" and chunk.activity:
+                    yield LLMActivityEvent(step=step + 1, payload=dict(chunk.activity))
                 elif chunk.type == "finish":
                     finish_event = chunk
 
@@ -3394,6 +3458,7 @@ async def run_agent_loop(
                 truncated_tool_calls=finish_event.truncated_tool_calls,
                 raw_finish_reason=finish_event.raw_finish_reason,
                 stream_dropped_mid_tool=finish_event.stream_dropped_mid_tool,
+                oversized_tool_calls=finish_event.oversized_tool_calls,
             )
             provider_request_id = finish_event.provider_request_id
             # The request that just completed saw the previous large tool-call
@@ -3535,6 +3600,98 @@ async def run_agent_loop(
                 else None
             ),
         )
+
+        if response.finish_reason == "provider_stale":
+            if not response.content.strip() and provider_stale_retries < 1:
+                provider_stale_retries += 1
+                _log.warning(
+                    "provider stale retry %d/1 after %.0fs without chunks",
+                    provider_stale_retries,
+                    LLM_PROVIDER_STALE_SECONDS,
+                )
+                elapsed = perf_counter() - step_start
+                total = perf_counter() - run_start
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_step_end(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                yield StepEnd(
+                    step=step + 1,
+                    elapsed_seconds=elapsed,
+                    total_elapsed_seconds=total,
+                )
+                continue
+            msg = "模型服务长时间没有返回数据，已停止本轮任务。"
+            _cleanup_incomplete_messages(messages)
+            if hook_mgr.hooks:
+                await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+            yield ErrorEvent(message=msg, is_fatal=True)
+            yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+            return
+
+        # ── Deterministic streamed tool-argument budget violation ─────
+        # This is locally detected before JSON parsing or tool execution.
+        # Retrying with a larger completion budget repeats the failure, so
+        # provide one explicit authoring-protocol repair and then stop.
+        if response.finish_reason == "tool_argument_limit":
+            details = response.oversized_tool_calls or []
+            rendered = ", ".join(
+                f"{item.get('name') or '?'}={item.get('arguments_len', 0)}/"
+                f"{item.get('limit', 0)} chars"
+                for item in details
+            ) or "unknown tool"
+            if response.content.strip():
+                messages.append(assistant_msg)
+            if oversized_tool_argument_retries < 1:
+                oversized_tool_argument_retries += 1
+                repair_text = (
+                    "上一轮工具参数在流式生成阶段超过安全预算，工具没有执行。"
+                    f"超限信息：{rendered}。不要重新生成相同的大参数，也不要提高 token "
+                    "预算。bash 只执行短命令；预计超过 8,000 字符的文本文件必须使用 "
+                    "staged_file_write：begin 后用不超过 6,000 字符的 append_text 分块，"
+                    "需要复用本地文本时用 append_file，最后 commit 并校验文件。"
+                )
+                messages.append(
+                    Message(role="user", content=format_injected_message(repair_text))
+                )
+                yield InjectedMessageEvent(
+                    content=repair_text,
+                    injection_id=None,
+                    user_visible=False,
+                )
+                _log.warning(
+                    "tool argument limit repair %d/1: %s request_id=%s",
+                    oversized_tool_argument_retries,
+                    rendered,
+                    provider_request_id,
+                )
+                elapsed = perf_counter() - step_start
+                total = perf_counter() - run_start
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_step_end(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                yield StepEnd(
+                    step=step + 1,
+                    elapsed_seconds=elapsed,
+                    total_elapsed_seconds=total,
+                )
+                continue
+
+            msg = "工具参数连续超出安全预算，已停止本轮；请改为分块写入后重试。"
+            _log.error("tool argument limit repair exhausted: %s", rendered)
+            _cleanup_incomplete_messages(messages)
+            if hook_mgr.hooks:
+                await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+            yield ErrorEvent(message=msg, is_fatal=True)
+            yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+            return
 
         # ── Output truncated by provider token limit ────────
         # finish_reason="length" splits into four cases, distinguished by
@@ -3695,6 +3852,8 @@ async def run_agent_loop(
         # Reset the retry counter now that a clean turn landed — a future
         # truncation on a later step should get its own fresh budget.
         truncated_tool_call_retries = 0
+        oversized_tool_argument_retries = 0
+        provider_stale_retries = 0
 
         # ── No tool calls → done (or continue if injected) ──
         if not response.tool_calls:

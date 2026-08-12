@@ -33,12 +33,14 @@ def _chunk(
     content=None,
     finish_reason=None,
     usage=None,
+    tool_calls=None,
     reasoning=None,
     reasoning_content=None,
 ):
     choice = SimpleNamespace(
         delta=_delta(
             content=content,
+            tool_calls=tool_calls,
             reasoning=reasoning,
             reasoning_content=reasoning_content,
         ),
@@ -96,6 +98,46 @@ def _raw_response(stream):
     raw.headers = {}
     raw.parse = MagicMock(return_value=stream)
     return raw
+
+
+def _tool_delta(name: str, arguments: str, *, index: int = 0):
+    return SimpleNamespace(
+        index=index,
+        id=f"call-{index}",
+        function=SimpleNamespace(name=name, arguments=arguments),
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_stops_oversized_tool_arguments_before_json_parse(monkeypatch):
+    monkeypatch.setattr(
+        "box_agent.llm.openai_client.streamed_argument_limit", lambda _name: 12
+    )
+    stream = _AsyncIter(
+        [
+            _chunk(tool_calls=[_tool_delta("bash", '{"command":"')]),
+            _chunk(tool_calls=[_tool_delta("", "x" * 20)]),
+            _chunk(tool_calls=[_tool_delta("", '"}')], finish_reason="stop"),
+        ]
+    )
+
+    async def factory(**kwargs):
+        return _raw_response(stream)
+
+    client, _ = _build_client(factory, retries=0)
+    events = [
+        event
+        async for event in client.generate_stream([Message(role="user", content="hi")])
+    ]
+
+    finish = events[-1]
+    assert finish.type == "finish"
+    assert finish.finish_reason == "tool_argument_limit"
+    assert finish.tool_calls is None
+    assert finish.oversized_tool_calls == [
+        {"name": "bash", "arguments_len": 32, "limit": 12}
+    ]
+    assert any(event.type == "activity" for event in events)
 
 
 def test_is_retryable_stream_error_matches_production_string():

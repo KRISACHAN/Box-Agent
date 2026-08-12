@@ -129,7 +129,7 @@ wheels = [
 
 [[package]]
 name = "box-agent"
-version = "0.8.85"
+version = "0.8.86"
 source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
@@ -195,7 +195,7 @@ requires-dist = [
     { name = "jupyter-client", specifier = ">=8.6.0" },
     { name = "lxml", marker = "extra == 'runtime'" },
     { name = "matplotlib", marker = "extra == 'runtime'" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = "==1.19.0" },
     { name = "numpy", marker = "extra == 'runtime'" },
     { name = "openai", specifier = ">=1.57.4" },
     { name = "openpyxl", marker = "extra == 'runtime'" },

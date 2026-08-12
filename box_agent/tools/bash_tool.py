@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field, model_validator
 
 from .base import Tool, ToolResult
+from .argument_limits import MAX_BASH_COMMAND_CHARS
 from .pptx_safety import detect_pptx_self_check_bypass
 from .runtime import bundled_win_bash
 from .safety import (
@@ -942,6 +943,7 @@ Examples:
             "properties": {
                 "command": {
                     "type": "string",
+                    "maxLength": MAX_BASH_COMMAND_CHARS,
                     "description": cmd_desc,
                 },
                 "timeout": {
@@ -976,6 +978,20 @@ Examples:
         """
 
         try:
+            if len(command) > MAX_BASH_COMMAND_CHARS:
+                error = (
+                    "BASH_ARGUMENT_TOO_LARGE: bash.command is "
+                    f"{len(command)} characters; limit is {MAX_BASH_COMMAND_CHARS}. "
+                    "Do not put generated file bodies, heredocs, or base64 payloads in bash. "
+                    "Use staged_file_write for large text artifacts."
+                )
+                return BashOutputResult(
+                    success=False,
+                    error=error,
+                    stdout="",
+                    stderr=error,
+                    exit_code=1,
+                )
             # --- Safety checks ---
             bypass_error = detect_pptx_self_check_bypass(None, command)
             if bypass_error:
