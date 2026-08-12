@@ -148,6 +148,9 @@ def test_code_agent_prompt_includes_software_engineering_contract(tmp_path):
     assert "不要默认创建或使用 `output/`" in code_prompt
     assert "`git diff`/`git status` 失败不能当作已确认" in code_prompt
     assert "JS 引用的 id/selector 与 HTML 一致" in code_prompt
+    assert "引用具体函数或代码片段时" in code_prompt
+    assert "`file_path:line_number`" in code_prompt
+    assert "src/services/process.ts:712" in code_prompt
     assert "Project Startup Context" in code_prompt
     assert "cwd 已是 `{workspace}/output/`" not in code_prompt
     assert "不要在最终文本手写或猜测 `local-file://`" in code_prompt
