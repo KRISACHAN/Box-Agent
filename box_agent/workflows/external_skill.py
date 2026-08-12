@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar
 
 from ..artifacts import artifact_scan_root
+from ..config import ToolLimitsConfig
 from ..loop_guards import CompletionGate, artifact_signatures_for_globs
 from ..tools.base import ToolResult
 from ..tools.permissions import extract_absolute_paths
@@ -40,8 +41,11 @@ _MAX_TASK_TEXT_CHARS = 4_000
 _MAX_OBSERVED_PATHS = 12
 _MAX_FAILURES = 3
 _MAX_FAILURE_CHARS = 800
-_DEFAULT_MAX_TOOL_CALLS = 64
-_COMPLETION_RESERVE_TOOL_CALLS = 10
+_DEFAULT_EXTERNAL_SKILL_LIMITS = ToolLimitsConfig().external_skill
+_DEFAULT_MAX_TOOL_CALLS = _DEFAULT_EXTERNAL_SKILL_LIMITS.max_tool_calls
+_COMPLETION_RESERVE_TOOL_CALLS = (
+    _DEFAULT_EXTERNAL_SKILL_LIMITS.completion_reserve_calls
+)
 _EXPLICIT_SKILL_RE = re.compile(
     r"(?<![\w./:-])/(?P<name>[a-z0-9][a-z0-9._-]{0,127})"
     r"(?=$|[\s,，.。!！?？;；:：)）])",
@@ -142,10 +146,12 @@ def build_external_skill_completion_gate(
     user_text: str,
     workspace_dir: str | Path,
     skill: Skill,
+    tool_limits: ToolLimitsConfig | None = None,
 ) -> CompletionGate:
     """Build a generic lifecycle gate for one explicit Skill invocation."""
     artifact_globs = infer_skill_delivery_globs(skill)
     skill_root = str(skill.skill_path.parent) if skill.skill_path is not None else None
+    limits = (tool_limits or ToolLimitsConfig()).external_skill
     return CompletionGate(
         required_changed_artifact_globs=artifact_globs,
         baseline_artifact_signatures=artifact_signatures_for_globs(
@@ -154,9 +160,9 @@ def build_external_skill_completion_gate(
         ),
         max_continuations=3,
         deadline_seconds=900.0,
-        max_tool_calls=_DEFAULT_MAX_TOOL_CALLS,
+        max_tool_calls=limits.max_tool_calls,
         completion_reserve_tool_calls=(
-            _COMPLETION_RESERVE_TOOL_CALLS if artifact_globs else 0
+            limits.completion_reserve_calls if artifact_globs else 0
         ),
         pause_tools=frozenset({"request_user_input"}),
         workflow_checkpoint_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
@@ -174,6 +180,7 @@ def build_external_skill_completion_gate_from_options(
     *,
     workspace_dir: str | Path,
     workflow_options: Mapping[str, Any],
+    tool_limits: ToolLimitsConfig | None = None,
 ) -> CompletionGate:
     """Rebuild a generic gate from validated, data-only checkpoint options."""
     artifact_globs = _decode_string_tuple(
@@ -195,6 +202,7 @@ def build_external_skill_completion_gate_from_options(
             limit=_MAX_FAILURES,
         ),
     )
+    limits = (tool_limits or ToolLimitsConfig()).external_skill
     return CompletionGate(
         required_changed_artifact_globs=artifact_globs,
         baseline_artifact_signatures=artifact_signatures_for_globs(
@@ -203,9 +211,9 @@ def build_external_skill_completion_gate_from_options(
         ),
         max_continuations=3,
         deadline_seconds=900.0,
-        max_tool_calls=_DEFAULT_MAX_TOOL_CALLS,
+        max_tool_calls=limits.max_tool_calls,
         completion_reserve_tool_calls=(
-            _COMPLETION_RESERVE_TOOL_CALLS if artifact_globs else 0
+            limits.completion_reserve_calls if artifact_globs else 0
         ),
         pause_tools=frozenset({"request_user_input"}),
         workflow_checkpoint_kind=EXTERNAL_SKILL_WORKFLOW_KIND,

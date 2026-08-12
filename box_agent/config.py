@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from .auth import should_attach_auth_header
 
@@ -109,10 +109,87 @@ class ImageGenerationConfig(BaseModel):
     auth_file: str = ""
 
 
+class ToolLimitsModel(BaseModel):
+    """Strict base so misspelled limit keys fail instead of silently defaulting."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GeneralToolLimitsConfig(ToolLimitsModel):
+    """Limits shared by ordinary top-level agent turns."""
+
+    final_summary_after_calls: int = Field(default=150, ge=1, le=512)
+    wrapup_remaining_steps: int = Field(default=10, ge=0, le=50)
+
+
+class WebSearchLimitsConfig(ToolLimitsModel):
+    """Per-turn web-search batching and total-call budgets."""
+
+    batch_size: int = Field(default=6, ge=1, le=32)
+    total_calls: int = Field(default=50, ge=0, le=512)
+    deep_research_total_calls: int = Field(default=100, ge=0, le=512)
+
+
+class SearchFilesLimitsConfig(ToolLimitsModel):
+    """Circuit-breaker limits for repeated local file searches."""
+
+    consecutive_empty_limit: int = Field(default=6, ge=1, le=50)
+
+
+class WorkflowToolLimitsConfig(ToolLimitsModel):
+    """Total-call and completion-reserve limits for artifact workflows."""
+
+    max_tool_calls: int = Field(default=128, ge=1, le=512)
+    completion_reserve_calls: int = Field(default=10, ge=0, le=128)
+
+    @model_validator(mode="after")
+    def validate_completion_reserve(self) -> "WorkflowToolLimitsConfig":
+        if self.completion_reserve_calls > self.max_tool_calls:
+            raise ValueError("completion_reserve_calls cannot exceed max_tool_calls")
+        return self
+
+
+class PresentationToolLimitsConfig(WorkflowToolLimitsConfig):
+    """Controlled-presentation budgets, including deep research."""
+
+    deep_research_max_tool_calls: int = Field(default=200, ge=1, le=512)
+    research_rounds: int = Field(default=3, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_deep_research_reserve(self) -> "PresentationToolLimitsConfig":
+        if self.completion_reserve_calls > self.deep_research_max_tool_calls:
+            raise ValueError(
+                "completion_reserve_calls cannot exceed deep_research_max_tool_calls"
+            )
+        return self
+
+
+class SubAgentToolLimitsConfig(ToolLimitsModel):
+    """Declared sub-agent loop and stall-detection limits."""
+
+    general_max_steps: int = Field(default=60, ge=1, le=256)
+    general_max_tool_calls: int = Field(default=32, ge=1, le=256)
+    legacy_max_steps: int = Field(default=60, ge=1, le=256)
+    no_progress_steps: int = Field(default=6, ge=1, le=50)
+
+
+class ToolLimitsConfig(ToolLimitsModel):
+    """Single typed source for user-tunable tool execution limits."""
+
+    general: GeneralToolLimitsConfig = Field(default_factory=GeneralToolLimitsConfig)
+    web_search: WebSearchLimitsConfig = Field(default_factory=WebSearchLimitsConfig)
+    search_files: SearchFilesLimitsConfig = Field(default_factory=SearchFilesLimitsConfig)
+    external_skill: WorkflowToolLimitsConfig = Field(default_factory=WorkflowToolLimitsConfig)
+    presentation: PresentationToolLimitsConfig = Field(
+        default_factory=PresentationToolLimitsConfig
+    )
+    sub_agent: SubAgentToolLimitsConfig = Field(default_factory=SubAgentToolLimitsConfig)
+
+
 class AgentConfig(BaseModel):
     """Agent configuration"""
 
-    max_steps: int = 200
+    max_steps: int = 300
     workspace_dir: str = "./workspace"
     # Hard ceiling on how many parallel_safe tool calls (sub_agent,
     # generate_image) run concurrently within a single step, regardless of how
@@ -127,13 +204,14 @@ class AgentConfig(BaseModel):
     # Per-call token budget for sub-agent child contexts before they summarize.
     # The child runs in an isolated context, so this is independent of the main
     # loop's context_token_limit. Single source of truth for the value that was
-    # previously hardcoded in SubAgentTool; not surfaced in config-example.yaml.
-    sub_agent_token_limit: int = 40_000
+    # previously hardcoded in SubAgentTool; shown only as a commented advanced
+    # override in config-example.yaml so new user configs do not pin it.
+    sub_agent_token_limit: int = 50_000
     # Total wall-clock cap for the tool-free synthesis call used by
     # sub_agent execution.strategy=batch_files. Set to 0 to rely only on the
     # provider request timeout. This is intentionally separate from the
     # sub-agent parallel batch timeout above.
-    sub_agent_batch_synthesis_timeout_seconds: float = 300.0
+    sub_agent_batch_synthesis_timeout_seconds: float = 600.0
     # Continue an active durable goal after a natural end_turn, bounded so a
     # third-party outage or bad plan cannot loop forever.
     goal_autopilot_enabled: bool = True
@@ -274,6 +352,7 @@ class Config(BaseModel):
     llm: LLMConfig
     lite_llm: LiteLLMConfig = Field(default_factory=LiteLLMConfig)
     image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
+    tool_limits: ToolLimitsConfig = Field(default_factory=ToolLimitsConfig)
     agent: AgentConfig
     tools: ToolsConfig
     officev3: Officev3Config = Field(default_factory=Officev3Config)
@@ -423,55 +502,24 @@ class Config(BaseModel):
             auth_file=image_generation_data.get("auth_file") or llm_config.auth_file,
         )
 
-        # Parse Agent configuration
-        parallel_tool_timeout_raw = data.get("parallel_tool_timeout_seconds", 900.0)
-        agent_config = AgentConfig(
-            max_steps=data.get("max_steps", 200),
-            workspace_dir=data.get("workspace_dir", "./workspace"),
-            max_parallel_tools=data.get("max_parallel_tools", 8),
-            parallel_tool_timeout_seconds=float(
-                parallel_tool_timeout_raw
-                if parallel_tool_timeout_raw is not None
-                else 900.0
-            ),
-            sub_agent_token_limit=data.get("sub_agent_token_limit", 40_000),
-            sub_agent_batch_synthesis_timeout_seconds=float(
-                data.get("sub_agent_batch_synthesis_timeout_seconds", 300.0)
-            ),
-            goal_autopilot_enabled=data.get("goal_autopilot_enabled", True),
-            goal_autopilot_max_turns=data.get("goal_autopilot_max_turns", 3),
-            goal_autopilot_max_seconds=data.get("goal_autopilot_max_seconds", 14400.0),
-            goal_autopilot_no_progress_turns=data.get("goal_autopilot_no_progress_turns", 2),
-            retry_on_suspected_truncation=data.get("retry_on_suspected_truncation", True),
-            max_truncation_continuations=data.get("max_truncation_continuations", 3),
-            max_truncated_tool_call_retries=data.get("max_truncated_tool_call_retries", 3),
-            truncated_tool_call_boost_cap=data.get("truncated_tool_call_boost_cap", 32768),
-            context_resource_dedup_enabled=data.get(
-                "context_resource_dedup_enabled", True
-            ),
-            system_prompt_path=data.get("system_prompt_path", "system_prompt.md"),
-            analysis_prompt_path=data.get("analysis_prompt_path", "analysis_prompt.md"),
-            code_prompt_path=data.get("code_prompt_path", "code_prompt.md"),
-            enable_memory=data.get("enable_memory", True),
-            memory_dir=data.get("memory_dir", "~/.box-agent/memory"),
-            enable_memory_extraction=data.get("enable_memory_extraction", True),
-            memory_extraction_cooldown=data.get("memory_extraction_cooldown", 300),
-            memory_extraction_step_interval=data.get("memory_extraction_step_interval", 10),
-            memory_maintainer_enabled=data.get("memory_maintainer_enabled", True),
-            memory_maintainer_interval_hours=data.get("memory_maintainer_interval_hours", 24),
-            memory_decay_days=data.get("memory_decay_days", 30),
-            memory_archive_days=data.get("memory_archive_days", 90),
-            memory_dedup_jaccard=data.get("memory_dedup_jaccard", 0.85),
-            memory_compaction_enabled=data.get("memory_compaction_enabled", True),
-            memory_context_max_entries=data.get("memory_context_max_entries", 50),
-            memory_context_max_tokens=data.get("memory_context_max_tokens", 8000),
-            memory_conflict_resolution_enabled=data.get("memory_conflict_resolution_enabled", True),
-            memory_conflict_cluster_threshold=data.get("memory_conflict_cluster_threshold", 0.3),
-            memory_conflict_max_clusters_per_run=data.get("memory_conflict_max_clusters_per_run", 5),
-            memory_promotion_proposal_enabled=data.get("memory_promotion_proposal_enabled", True),
-            memory_promotion_hit_threshold=data.get("memory_promotion_hit_threshold", 5),
-            memory_promotion_cooldown_days=data.get("memory_promotion_cooldown_days", 14),
-        )
+        tool_limits_data = data.get("tool_limits", {})
+        if not isinstance(tool_limits_data, dict):
+            raise ValueError("tool_limits must be a mapping")
+        tool_limits_config = ToolLimitsConfig(**tool_limits_data)
+
+        # Parse top-level AgentConfig keys without duplicating their defaults.
+        # A runtime upgrade can therefore change one default in AgentConfig and
+        # users who did not explicitly override that key inherit it immediately.
+        agent_data = {
+            field_name: data[field_name]
+            for field_name in AgentConfig.model_fields
+            if field_name in data
+        }
+        # Preserve the historical behavior where an explicit YAML null for the
+        # parallel timeout means "use the runtime default".
+        if agent_data.get("parallel_tool_timeout_seconds") is None:
+            agent_data.pop("parallel_tool_timeout_seconds", None)
+        agent_config = AgentConfig(**agent_data)
 
         # Parse tools configuration
         tools_data = data.get("tools", {})
@@ -545,6 +593,7 @@ class Config(BaseModel):
             llm=llm_config,
             lite_llm=lite_llm_config,
             image_generation=image_generation_config,
+            tool_limits=tool_limits_config,
             agent=agent_config,
             tools=tools_config,
             officev3=officev3_config,

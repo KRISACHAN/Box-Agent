@@ -562,16 +562,16 @@ def test_persistence_load_does_not_rewrite_valid_file(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "statuses, active_count",
+    "statuses, expected_statuses",
     [
-        (["pending", "pending"], 0),
-        (["in_progress", "in_progress"], 2),
+        (["pending", "pending"], ["in_progress", "pending"]),
+        (["in_progress", "in_progress"], ["in_progress", "pending"]),
     ],
 )
-def test_persistence_rejects_invalid_active_item_count(
+def test_persistence_migrates_legacy_active_item_count(
     tmp_path,
     statuses,
-    active_count,
+    expected_statuses,
 ):
     path = tmp_path / "todos.json"
     items = [
@@ -580,8 +580,11 @@ def test_persistence_rejects_invalid_active_item_count(
     ]
     path.write_text(json.dumps(items), encoding="utf-8")
 
-    with pytest.raises(ValueError, match=f"found {active_count}"):
-        TodoStore(persist_path=path)
+    store = TodoStore(persist_path=path)
+
+    assert [item["status"] for item in store.list()] == expected_statuses
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert [item["status"] for item in persisted] == expected_statuses
 
 
 @pytest.mark.parametrize(

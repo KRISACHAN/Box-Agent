@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from box_agent.config import ToolLimitsConfig
 from box_agent.tools.base import ToolResult
 from box_agent.tools.skill_loader import Skill, SkillLoader
 from box_agent.workflows.external_skill import (
@@ -80,11 +81,28 @@ def test_external_skill_gate_has_bounded_host_lifecycle(tmp_path: Path) -> None:
 
     assert gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
     assert gate.required_changed_artifact_globs == ("output/**/*.pptx",)
-    assert gate.max_tool_calls == 64
+    assert gate.max_tool_calls == 128
     assert gate.completion_reserve_tool_calls == 10
     assert gate.pause_tools == frozenset({"request_user_input"})
     assert gate.workflow_options["skill_name"] == "ppt-master"
     assert gate.workflow_options["skill_source"] == "user"
+
+
+def test_external_skill_gate_uses_configured_tool_limits(tmp_path: Path) -> None:
+    gate = build_external_skill_completion_gate(
+        user_text="/ppt-master 内马尔最辉煌的赛季",
+        workspace_dir=tmp_path,
+        skill=_skill(tmp_path),
+        tool_limits=ToolLimitsConfig(
+            external_skill={
+                "max_tool_calls": 96,
+                "completion_reserve_calls": 18,
+            }
+        ),
+    )
+
+    assert gate.max_tool_calls == 96
+    assert gate.completion_reserve_tool_calls == 18
 
 
 def test_policy_tracks_only_existing_workspace_or_skill_paths(tmp_path: Path) -> None:

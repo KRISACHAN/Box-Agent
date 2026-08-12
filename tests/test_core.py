@@ -8,6 +8,7 @@ from time import monotonic
 
 import pytest
 
+from box_agent.config import ToolLimitsConfig
 from box_agent.core import (
     _detect_artifacts,
     _detect_new_files,
@@ -17,11 +18,7 @@ from box_agent.core import (
     text_requests_plan_start,
 )
 from box_agent.core import FINAL_SUMMARY_TOOL_CALL_THRESHOLD as _FS_THRESHOLD
-from box_agent.loop_guards import (
-    SEARCH_FILES_EMPTY_RESULT_LIMIT,
-    CompletionGate,
-    repeated_stream_pattern,
-)
+from box_agent.loop_guards import CompletionGate, repeated_stream_pattern
 from box_agent.runtime import run_agent_loop
 from box_agent.events import (
     ArtifactEvent,
@@ -2813,6 +2810,7 @@ async def test_web_search_budget_synthesizes_result_and_allows_final_answer():
             messages=_msgs(),
             tools={"web_search": web_search},
             max_steps=30,
+            tool_limits=ToolLimitsConfig(web_search={"total_calls": 24}),
         )
     )
 
@@ -2950,6 +2948,56 @@ async def test_explicit_web_search_budget_can_expand_the_default():
     ]
     assert len(hidden_errors) == 1
     assert "budget reached" in (hidden_errors[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_tool_limits_config_controls_web_search_batch_and_total():
+    first_batch = [
+        ToolCall(
+            id=f"configured-web-{index}",
+            type="function",
+            function=FunctionCall(
+                name="web_search",
+                arguments={"query": f"configured query {index}"},
+            ),
+        )
+        for index in range(4)
+    ]
+    second_batch = [
+        ToolCall(
+            id=f"configured-web-{index}",
+            type="function",
+            function=FunctionCall(
+                name="web_search",
+                arguments={"query": f"configured query {index}"},
+            ),
+        )
+        for index in range(4, 6)
+    ]
+    web_search = CountingWebSearchTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=MockLLM(
+                [
+                    LLMResponse(content="", tool_calls=first_batch, finish_reason="tool"),
+                    LLMResponse(content="", tool_calls=second_batch, finish_reason="tool"),
+                    LLMResponse(content="final", finish_reason="stop"),
+                ]
+            ),
+            messages=_msgs(),
+            tools={"web_search": web_search},
+            max_steps=5,
+            tool_limits=ToolLimitsConfig(
+                web_search={"batch_size": 2, "total_calls": 3}
+            ),
+        )
+    )
+
+    assert web_search.calls == 3
+    injected = [event for event in events if isinstance(event, InjectedMessageEvent)]
+    assert any("total executed this turn: 2/3; batch size: 2" in event.content for event in injected)
+    assert any("web_search 调用已达到预算上限（3 次）" in event.content for event in injected)
 
 
 @pytest.mark.asyncio
@@ -3656,10 +3704,13 @@ async def test_search_files_empty_result_breaker_blocks_more_searches():
             messages=_msgs(),
             tools={"search_files": tool},
             max_steps=10,
+            tool_limits=ToolLimitsConfig(
+                search_files={"consecutive_empty_limit": 3}
+            ),
         )
     )
 
-    assert tool.calls == SEARCH_FILES_EMPTY_RESULT_LIMIT
+    assert tool.calls == 3
     assert any(
         isinstance(event, InjectedMessageEvent) and "文件搜索熔断器已打开" in event.content
         for event in events

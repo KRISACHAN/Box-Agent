@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Final
 
 from .artifacts import OUTPUT_SUBDIR
+from .config import ToolLimitsConfig
 from .delivery import (
     has_deliverable_intent,
     is_meta_prompt_rewrite_request,
@@ -254,6 +255,7 @@ def build_auto_completion_gate(
     *,
     confirmed_presentation: bool = False,
     allow_controlled_presentation: bool = True,
+    tool_limits: ToolLimitsConfig | None = None,
 ) -> CompletionGate | None:
     """Create an evidence-backed gate for a recognized deliverable request."""
     requires_host_receipt, execution_result_criteria_count = (
@@ -280,6 +282,7 @@ def build_auto_completion_gate(
             user_text,
             workspace_dir,
             confirmed_presentation=confirmed_presentation,
+            tool_limits=tool_limits,
         )
         if allow_controlled_presentation
         else None

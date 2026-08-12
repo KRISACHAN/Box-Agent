@@ -17,6 +17,7 @@ PRESENTATION_DELIVERY_KEYWORDS: Final[tuple[str, ...]] = (
 )
 CHECKPOINT_MARKER: Final[str] = "CONTROLLED_PRESENTATION_STAGE="
 RESEARCH_MODE_OPTION: Final[str] = "research_mode"
+RESEARCH_ROUND_LIMIT_OPTION: Final[str] = "research_round_limit"
 IMAGE_GENERATION_POLICY_OPTION: Final[str] = "image_generation_policy"
 IMAGE_GENERATION_AUTO: Final[str] = "auto"
 IMAGE_GENERATION_FORBIDDEN: Final[str] = "forbidden_by_user"

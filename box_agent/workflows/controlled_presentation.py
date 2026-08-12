@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Final
 
+from ..config import ToolLimitsConfig
 from ..artifacts import artifact_scan_root
 from ..evidence import extract_http_urls
 from ..tools.base import ToolResult
@@ -40,7 +41,7 @@ RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
     DIRECT_RESEARCH_READ_TOOLS | frozenset({"web_search"})
 )
 RESEARCH_READ_BATCH_SIZE: Final[int] = 2
-RESEARCH_ROUND_LIMIT: Final[int] = 3
+RESEARCH_ROUND_LIMIT: Final[int] = ToolLimitsConfig().presentation.research_rounds
 
 _log = logging.getLogger(__name__)
 
@@ -1016,6 +1017,7 @@ class ControlledPresentationPolicy:
     workspace_dir: str | None
     artifact_root_dir: str | Path | None
     research_mode: str | None = None
+    research_round_limit: int = RESEARCH_ROUND_LIMIT
     image_generation_policy: str | None = None
     stage: str | None = None
     scaffold_input: dict[str, Any] | None = None
@@ -1063,7 +1065,7 @@ class ControlledPresentationPolicy:
             self._research_rounds_without_handoff += 1
             self._research_calls_since_checkpoint = 0
         round_limit_reached = (
-            self._research_rounds_without_handoff >= RESEARCH_ROUND_LIMIT
+            self._research_rounds_without_handoff >= self.research_round_limit
         )
         unavailable = self._research_failed_attempts + self._research_empty_attempts
         fallback_allowed = (

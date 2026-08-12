@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Mapping, Optional
 
-from box_agent.config import Config
+from box_agent.config import Config, ToolLimitsConfig
 from box_agent.tools.base import Tool
 from box_agent.tools.bash_tool import BashKillTool, BashOutputTool, BashTool
 from box_agent.tools.execution_result_tool import ReportExecutionResultTool
@@ -610,10 +610,13 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     # Sub-agent tool — must be registered last so it can reference all other tools
     if config.tools.enable_sub_agent and llm is not None:
         parent_tools = {t.name: t for t in tools}
+        tool_limits = getattr(config, "tool_limits", ToolLimitsConfig())
         sub_agent_tool = SubAgentTool(
             llm=llm,
             parent_tools=parent_tools,
             workspace_dir=str(workspace_dir),
+            tool_limits=tool_limits,
+            max_steps=tool_limits.sub_agent.legacy_max_steps,
             token_limit=config.agent.sub_agent_token_limit,
             batch_synthesis_timeout_seconds=(
                 config.agent.sub_agent_batch_synthesis_timeout_seconds

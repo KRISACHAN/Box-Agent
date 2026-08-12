@@ -30,6 +30,7 @@ from box_agent.config import (
     Officev3Config,
     Officev3Paths,
     Officev3Permissions,
+    ToolLimitsConfig,
     ToolsConfig,
 )
 from box_agent.memory import MemoryManager
@@ -2899,7 +2900,7 @@ async def test_acp_host_config_uses_matched_legacy_presentation_skill(tmp_path):
     assert isinstance(gate, CompletionGate)
     assert gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
     assert gate.workflow_options["skill_name"] == "legacy-slides"
-    assert gate.max_tool_calls == 64
+    assert gate.max_tool_calls == 128
     assert gate.completion_reserve_tool_calls == 0
     assert gate.required_changed_artifact_globs == ()
     assert agent._sessions[session.sessionId].preloaded_skill_names == [
@@ -3301,6 +3302,7 @@ async def test_acp_hides_internal_web_search_budget_injection(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=30, workspace_dir=str(tmp_path)),
+        tool_limits=ToolLimitsConfig(web_search={"total_calls": 24}),
         tools=ToolsConfig(),
     )
     conn = DummyConn()

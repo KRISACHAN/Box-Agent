@@ -157,14 +157,13 @@ parent `sub_agent` result rather than progress-card heuristics.
 ```yaml
 max_parallel_tools: 8
 parallel_tool_timeout_seconds: 900
-sub_agent_token_limit: 40000
-sub_agent_batch_synthesis_timeout_seconds: 300
+sub_agent_token_limit: 50000
+sub_agent_batch_synthesis_timeout_seconds: 600
 ```
 
-`sub_agent_token_limit` is intentionally not in the example config because it
-is an advanced legacy/general-loop context setting. The batch synthesis timeout
-is documented in `box_agent/config/config-example.yaml` because it controls a
-separate operation from parallel tool batches.
+Both sub-agent settings appear as commented advanced overrides in
+`box_agent/config/config-example.yaml`. Keeping them commented lets runtime
+upgrades revise their defaults without pinning newly generated user configs.
 
 ## Implementation and proof
 

@@ -4,10 +4,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ..config import ToolLimitsConfig
 from ..loop_guards import CompletionGate
 from ..workflow_policy import WorkflowPolicy
 from ..workflow_checkpoint_store import load_workflow_checkpoint
-from .controlled_presentation import ControlledPresentationPolicy
+from .controlled_presentation import RESEARCH_ROUND_LIMIT, ControlledPresentationPolicy
 from .external_skill import (
     EXTERNAL_SKILL_WORKFLOW_KIND,
     ExternalSkillRunPolicy,
@@ -19,6 +20,7 @@ from .external_skill import (
 from .presentation_contract import (
     IMAGE_GENERATION_POLICY_OPTION,
     RESEARCH_MODE_OPTION,
+    RESEARCH_ROUND_LIMIT_OPTION,
     WORKFLOW_KIND as CONTROLLED_PRESENTATION_WORKFLOW_KIND,
 )
 from .presentation_preflight import (
@@ -43,6 +45,9 @@ def create_workflow_policy(
     """Create a per-run policy without exposing implementations to the kernel."""
     if workflow_kind == ControlledPresentationPolicy.kind:
         research_mode = (workflow_options or {}).get(RESEARCH_MODE_OPTION)
+        research_round_limit = (workflow_options or {}).get(
+            RESEARCH_ROUND_LIMIT_OPTION
+        )
         image_generation_policy = (workflow_options or {}).get(
             IMAGE_GENERATION_POLICY_OPTION
         )
@@ -51,6 +56,13 @@ def create_workflow_policy(
             artifact_root_dir=artifact_root_dir,
             research_mode=(
                 research_mode if isinstance(research_mode, str) else None
+            ),
+            research_round_limit=(
+                research_round_limit
+                if isinstance(research_round_limit, int)
+                and not isinstance(research_round_limit, bool)
+                and research_round_limit > 0
+                else RESEARCH_ROUND_LIMIT
             ),
             image_generation_policy=(
                 image_generation_policy
@@ -83,11 +95,15 @@ def create_workflow_policy(
 
 def recover_completion_gate(
     workspace_dir: str | Path,
+    tool_limits: ToolLimitsConfig | None = None,
 ) -> CompletionGate | None:
     """Recover the first incomplete built-in workflow from durable artifacts."""
     from .presentation_recovery import recover_presentation_completion_gate
 
-    controlled = recover_presentation_completion_gate(workspace_dir)
+    controlled = recover_presentation_completion_gate(
+        workspace_dir,
+        tool_limits=tool_limits,
+    )
     if controlled is not None:
         return controlled
     checkpoint = load_workflow_checkpoint(
@@ -99,6 +115,7 @@ def recover_completion_gate(
     return build_external_skill_completion_gate_from_options(
         workspace_dir=workspace_dir,
         workflow_options=checkpoint.workflow_options,
+        tool_limits=tool_limits,
     )
 
 
