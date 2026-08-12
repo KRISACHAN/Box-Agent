@@ -181,6 +181,37 @@ def test_openai_response_parses_reasoning_aliases(reasoning_fields):
     assert parsed.thinking == "private reasoning"
 
 
+@pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
+def test_openai_reasoning_alias_round_trip_uses_canonical_details(reasoning_field):
+    """Inbound aliases normalize to the existing outbound history contract."""
+    client = OpenAIClient(api_key="k", api_base="https://x.example", model="qwen")
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="answer",
+                    tool_calls=None,
+                    **{reasoning_field: "private reasoning"},
+                ),
+            )
+        ],
+        usage=None,
+    )
+
+    parsed = client._parse_response(response)
+    _, api_messages = client._convert_messages(
+        [Message(role="assistant", content=parsed.content, thinking=parsed.thinking)]
+    )
+
+    assert api_messages == [
+        {
+            "role": "assistant",
+            "content": "answer",
+            "reasoning_details": [{"text": "private reasoning"}],
+        }
+    ]
+
+
 # ───────────────────────── Core plumbing ─────────────────────────
 
 @pytest.mark.asyncio
