@@ -18,6 +18,7 @@ from box_agent.tools import (
     add_workspace_tools,
 )
 from box_agent.tools.file_tools import MAX_SEARCH_OFFSET, MAX_SEARCH_OUTPUT_CHARS
+from box_agent.tools.bash_tool import _detect_dingtalk_workspace_violation
 from box_agent.tools.permissions import CapabilityPolicy, PermissionEngine
 
 
@@ -699,6 +700,37 @@ async def test_bash_tool_allows_setting_lark_cli_env_without_invoking_cli():
     result = await tool.execute(command='export BOX_AGENT_LARK_CLI=/tmp/lark-cli')
 
     assert result.success
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_blocks_dingtalk_dws_control_plane_and_out_of_scope_commands():
+    tool = BashTool()
+
+    for command in [
+        'dws auth login',
+        '$BOX_AGENT_DINGTALK_CLI auth reset',
+        'dws profile switch another',
+        'dws plugin install arbitrary',
+        'dws drive delete --node abc',
+        'dws api request /v1.0/anything',
+    ]:
+        result = await tool.execute(command=command)
+        assert not result.success
+        assert "Blocked:" in (result.error or "")
+
+
+def test_dingtalk_dws_policy_allows_v1_read_and_document_write_commands():
+    for command in [
+        'dws auth status',
+        'dws doc search --query "周报"',
+        'dws doc read --node doc_1',
+        'dws wiki space list',
+        'dws wiki node list --space-id space_1',
+        'dws drive download --node file_1 --output /tmp/file_1',
+        'dws doc create --name 周报 --content-file /tmp/report.md',
+        'dws doc update --node doc_1 --content-file /tmp/report.md',
+    ]:
+        assert _detect_dingtalk_workspace_violation(command) is None
 
 
 @pytest.mark.asyncio

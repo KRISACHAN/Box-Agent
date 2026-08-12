@@ -181,7 +181,7 @@ def test_prompt_renders_cli_split_by_availability() -> None:
             "cli": {
                 "lark-cli": "/usr/local/bin/lark-cli",
                 "wecom-cli": None,
-                "dingtalk-cli": None,
+                "dws": None,
             }
         }
     )
@@ -189,7 +189,7 @@ def test_prompt_renders_cli_split_by_availability() -> None:
     assert "可用 CLI" in out
     assert "`lark-cli`: `/usr/local/bin/lark-cli`" in out
     assert "未安装 CLI" in out
-    assert "`wecom-cli`" in out and "`dingtalk-cli`" in out
+    assert "`wecom-cli`" in out and "`dws`" in out
 
 
 def test_prompt_declares_lark_user_identity_policy() -> None:
@@ -201,6 +201,16 @@ def test_prompt_declares_lark_user_identity_policy() -> None:
     assert "`--as user`" in out
     assert "`--as bot`" in out
     assert "bot-only" in out
+
+
+def test_prompt_declares_dingtalk_dws_policy() -> None:
+    ctx = EnvContext.from_meta({"cli": {"dws": "/usr/local/bin/dws"}})
+
+    out = build_env_context_prompt(ctx)
+
+    assert "钉钉 DWS 策略" in out
+    assert "当前 OAuth profile" in out
+    assert "auth login/reset" in out
 
 
 def test_prompt_drops_extras_from_output() -> None:

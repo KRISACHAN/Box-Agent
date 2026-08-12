@@ -111,6 +111,14 @@ _LARK_CLI_ENV_ASSIGNMENT_RE = re.compile(
     r"^(?:export\s+|set\s+)BOX_AGENT_LARK_CLI\s*=",
     re.IGNORECASE,
 )
+_DINGTALK_DWS_RE = re.compile(
+    r"(?:\bdws(?:\.(?:cmd|exe))?\b|\$BOX_AGENT_DINGTALK_CLI\b|\$\{BOX_AGENT_DINGTALK_CLI\}|%BOX_AGENT_DINGTALK_CLI%)",
+    re.IGNORECASE,
+)
+_DINGTALK_DWS_ENV_ASSIGNMENT_RE = re.compile(
+    r"^(?:export\s+|set\s+)BOX_AGENT_DINGTALK_CLI\s*=",
+    re.IGNORECASE,
+)
 _OBSIDIAN_COMMAND_SEPARATOR_RE = re.compile(r"&&|\|\||[;\n|]")
 _OBSIDIAN_CLI_NAMES = frozenset({"obsidian", "obsidian.exe", "obsidian.cmd"})
 _OBSIDIAN_WRITE_COMMANDS = frozenset({
@@ -220,6 +228,56 @@ def _detect_lark_user_mode_violation(command: str) -> str | None:
 
         if not _LARK_USER_FLAG_RE.search(part):
             return "lark-cli business commands must pass `--as user` in officev3 local-agent sessions."
+    return None
+
+
+def _detect_dingtalk_workspace_violation(command: str) -> str | None:
+    """Allow only the officev3-supported DWS surface for the current OAuth profile.
+
+    DWS persists its own profile/configuration.  Changing that control plane or
+    invoking raw APIs would let an agent escape the desktop product's consent
+    and scope model, so the runtime—not the UI prompt—enforces this allowlist.
+    """
+    for raw_part in _LARK_COMMAND_SEPARATOR_RE.split(command):
+        part = raw_part.strip()
+        if not part or _DINGTALK_DWS_ENV_ASSIGNMENT_RE.match(part):
+            continue
+        if not _DINGTALK_DWS_RE.search(part):
+            continue
+
+        lowered = part.lower()
+        if "--help" in lowered or re.search(r"\s(?:--version|-v)\b", lowered):
+            continue
+        try:
+            tokens = shlex.split(part, posix=platform.system() != "Windows")
+        except ValueError:
+            return "DWS command could not be parsed and is blocked by the DingTalk integration policy."
+
+        dws_index = next(
+            (
+                index
+                for index, token in enumerate(tokens)
+                if _DINGTALK_DWS_RE.fullmatch(token) is not None
+            ),
+            None,
+        )
+        if dws_index is None:
+            return "DWS command must invoke the bundled `dws` binary directly."
+        args = [token.lower() for token in tokens[dws_index + 1 :] if not token.startswith("-")]
+        if not args or args == ["version"]:
+            continue
+        if args[:2] == ["auth", "status"]:
+            continue
+        if args[0] in {"auth", "profile", "config", "skill", "skills", "plugin", "plugins", "upgrade", "update", "api", "raw"}:
+            return "DWS authentication, profile/configuration, skill/plugin, upgrade, and raw API commands are managed by officev3 and cannot be run by the agent."
+
+        allowed = (
+            (args[0] == "doc" and len(args) >= 2 and args[1] in {"search", "list", "read", "create", "update"})
+            or (args[:3] in (["wiki", "space", "list"], ["wiki", "node", "list"]))
+            or (args[0] == "drive" and len(args) >= 2 and args[1] in {"list", "info", "download"})
+        )
+        if not allowed:
+            return "This DWS command is outside the officev3 DingTalk v1 scope. Only document/wiki/drive reads and `doc create`/`doc update` are allowed."
     return None
 
 
@@ -994,6 +1052,16 @@ Examples:
                     error=f"Blocked: {lark_identity_error}\nCommand: {command}",
                     stdout="",
                     stderr=f"Blocked: {lark_identity_error}",
+                    exit_code=1,
+                )
+
+            dingtalk_workspace_error = _detect_dingtalk_workspace_violation(command)
+            if dingtalk_workspace_error:
+                return BashOutputResult(
+                    success=False,
+                    error=f"Blocked: {dingtalk_workspace_error}\nCommand: {command}",
+                    stdout="",
+                    stderr=f"Blocked: {dingtalk_workspace_error}",
                     exit_code=1,
                 )
 
