@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "box_agent_version": "0.8.85",
-  "generated_at": "2026-07-24T10:43:50Z",
+  "generated_at": "2026-08-13T07:05:56Z",
   "skills": [
     {
       "name": "artifacts-builder",
@@ -14,6 +14,10 @@
     {
       "name": "data-dashboard",
       "path": "data-dashboard/SKILL.md"
+    },
+    {
+      "name": "dev-code-init",
+      "path": "dev-code-init/SKILL.md"
     },
     {
       "name": "docx",
