@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
+from time import monotonic
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -12,6 +13,7 @@ from openai import AsyncOpenAI
 from ..retry import RetryConfig, StreamInterrupted, async_retry, is_retryable_stream_error
 from ..schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
 from ..tools.argument_limits import (
+    PROVIDER_STREAM_ACTIVITY_INTERVAL_SECONDS,
     TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS,
     streamed_argument_limit,
 )
@@ -289,7 +291,7 @@ class OpenAIClient(LLMClientBase):
             params["tools"] = self._convert_tools(tools)
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title, call_kind)
+            self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -595,7 +597,7 @@ class OpenAIClient(LLMClientBase):
             params["tools"] = self._convert_tools(request_params["tools"])
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title, call_kind)
+            self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -649,6 +651,7 @@ class OpenAIClient(LLMClientBase):
             finish_reason = None
             tool_acc = {}
             oversized_info = []
+            last_provider_activity_at: float | None = None
 
             try:
                 response_stream = await _open_stream()
@@ -671,6 +674,20 @@ class OpenAIClient(LLMClientBase):
 
             try:
                 async for chunk in response_stream:
+                    now = monotonic()
+                    if (
+                        last_provider_activity_at is None
+                        or now - last_provider_activity_at
+                        >= PROVIDER_STREAM_ACTIVITY_INTERVAL_SECONDS
+                    ):
+                        last_provider_activity_at = now
+                        yield StreamEvent(
+                            type="activity",
+                            activity={
+                                "protocol": "agent_activity_v1",
+                                "phase": "provider_stream",
+                            },
+                        )
                     # Usage info (sent in the final chunk with choices=[])
                     if hasattr(chunk, "usage") and chunk.usage:
                         usage = TokenUsage(

@@ -140,6 +140,42 @@ async def test_stream_stops_oversized_tool_arguments_before_json_parse(monkeypat
     assert any(event.type == "activity" for event in events)
 
 
+@pytest.mark.asyncio
+async def test_stream_emits_bounded_provider_liveness_during_tool_arguments(
+    monkeypatch,
+):
+    clock = iter([0.0, 1.0, 6.0, 7.0])
+    monkeypatch.setattr(
+        "box_agent.llm.openai_client.monotonic", lambda: next(clock)
+    )
+    stream = _AsyncIter(
+        [
+            _chunk(tool_calls=[_tool_delta("staged_file_write", '{"content":"')]),
+            _chunk(tool_calls=[_tool_delta("", "a")]),
+            _chunk(tool_calls=[_tool_delta("", "b")]),
+            _chunk(tool_calls=[_tool_delta("", '"}')], finish_reason="stop"),
+        ]
+    )
+
+    async def factory(**kwargs):
+        return _raw_response(stream)
+
+    client, _ = _build_client(factory, retries=0)
+    events = [
+        event
+        async for event in client.generate_stream([Message(role="user", content="hi")])
+    ]
+
+    provider_liveness = [
+        event
+        for event in events
+        if event.type == "activity"
+        and event.activity
+        and event.activity.get("phase") == "provider_stream"
+    ]
+    assert len(provider_liveness) == 2
+
+
 def test_is_retryable_stream_error_matches_production_string():
     exc = httpx.RemoteProtocolError(
         "peer closed connection without sending complete message body (incomplete chunked read)"

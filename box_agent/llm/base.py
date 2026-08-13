@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ..auth import request_auth_headers
+from ..client_info import current_client_headers
 from ..retry import RetryConfig
 from ..schema import LLMResponse, Message, StreamEvent
 
@@ -95,6 +96,18 @@ class LLMClientBase(ABC):
     def _session_header(session_id: str = "") -> dict[str, str | bytes]:
         """Backward-compatible helper for callers that only have a session id."""
         return LLMClientBase._agent_headers(session_id=session_id)
+
+    def _request_headers(
+        self,
+        session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
+        call_kind: str = "",
+    ) -> dict[str, str | bytes]:
+        """Return correlation plus host client headers for one request."""
+        headers = self._agent_headers(session_id, turn_id, title, call_kind)
+        headers.update(current_client_headers(self.api_base))
+        return headers
 
     @abstractmethod
     async def generate(

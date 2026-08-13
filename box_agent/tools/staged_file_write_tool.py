@@ -337,6 +337,16 @@ class StagedFileWriteTool(Tool):
         self._writes.pop(write_id or "", None)
         return ToolResult(success=True, content="Aborted staged write.")
 
+    def cleanup_pending_writes(self) -> list[str]:
+        """Discard transactions that did not commit before the turn ended."""
+
+        cleaned: list[str] = []
+        for write_id, state in list(self._writes.items()):
+            state.temporary.unlink(missing_ok=True)
+            self._writes.pop(write_id, None)
+            cleaned.append(write_id)
+        return cleaned
+
     def _cleanup_stale_files(self) -> None:
         if not self._staging_dir.is_dir():
             return

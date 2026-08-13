@@ -12,6 +12,7 @@ import pytest
 import httpx
 from openai import AsyncOpenAI
 
+from box_agent.client_info import ClientInfo
 from box_agent.llm import AnthropicClient, OpenAIClient
 from box_agent.llm.base import LLMClientBase
 from box_agent.llm.llm_wrapper import LLMClient, LLMProvider, SessionBoundLLM
@@ -370,6 +371,65 @@ async def test_openai_stream_emits_agent_headers():
         _TITLE_HEADER: "Quarterly review",
         _CALL_KIND_HEADER: "subagent_step",
     }
+
+
+@pytest.mark.asyncio
+async def test_session_bound_llm_adds_client_headers_only_for_raccoon_backend():
+    hosted_client = AnthropicClient(
+        api_key=_API_KEY,
+        api_base="https://xiaohuanxiong.com/api/web/llm/v2",
+        model="m",
+        retry_config=RetryConfig(enabled=False),
+    )
+    hosted_capture = _install_anthropic_fake(hosted_client)
+    hosted_session = SessionBoundLLM(hosted_client)
+    hosted_session.set_request_context(
+        client_info=ClientInfo(
+            name="raccoon-ai",
+            platform="desktop-macos-arm64",
+            version="v0.21.1",
+            os_version="15.6",
+            channel="official",
+        )
+    )
+
+    await _capture_generate(
+        hosted_session,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    assert hosted_capture.last_params is not None
+    assert hosted_capture.last_params["extra_headers"] | {} == {
+        "x-client-name": "raccoon-ai",
+        "x-client-platform": "desktop-macos-arm64",
+        "x-client-version": "v0.21.1",
+        "x-client-os-version": "15.6",
+        "x-client-channel": "official",
+        _TITLE_HEADER: "Box-Agent",
+    }
+
+    third_party_client = AnthropicClient(
+        api_key=_API_KEY,
+        api_base="https://api.openai.com/v1",
+        model="m",
+        retry_config=RetryConfig(enabled=False),
+    )
+    third_party_capture = _install_anthropic_fake(third_party_client)
+    third_party_session = SessionBoundLLM(third_party_client)
+    third_party_session.set_request_context(
+        client_info=ClientInfo(name="raccoon-ai", platform="desktop-macos-arm64")
+    )
+
+    await _capture_generate(
+        third_party_session,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    assert third_party_capture.last_params is not None
+    assert not any(
+        key.lower().startswith("x-client-")
+        for key in third_party_capture.last_params.get("extra_headers", {})
+    )
 
 
 @pytest.mark.asyncio

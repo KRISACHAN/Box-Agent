@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, List, Mapping, Optional
 
 from box_agent.config import Config, ToolLimitsConfig
 from box_agent.tools.base import Tool
+from box_agent.tools.argument_limits import RECOMMENDED_GENERATED_BODY_CHARS
 from box_agent.tools.bash_tool import BashKillTool, BashOutputTool, BashTool
 from box_agent.tools.execution_result_tool import ReportExecutionResultTool
 from box_agent.tools.file_tools import (
@@ -80,7 +81,7 @@ Python 代码通过 `execute_code` 在**隔离 Jupyter kernel** 中运行，和 
 - **装新包**：仅在确认缺失时，在 `execute_code` 内用 `%pip install <pkg>` / `!pip install <pkg>`（走当前 kernel 的 pip，落沙箱 venv）。**绝对禁止** `bash` 跑 `pip install`——会装到 host，沙箱仍 `ModuleNotFoundError`。
 - **用 execute_code**：数据分析、可视化、CSV/Excel/JSON/图片读写、Word/PDF/PPT 处理、多步计算、需保留状态的脚本。
 - **单次代码大小**：每次 `execute_code(code=...)` 控制在 {MAX_EXECUTE_CODE_CHARS} 字符以内；大脚本/模板/数据要预先分段执行，最后再读取校验；不要等到 `EXECUTE_CODE_TOO_LARGE` 后才拆，也不要把大段内容塞进一个工具参数。生成静态内容（共享样式/HTML/CSS/JS/JSON manifest/base64/生成文件正文）时，除非必须用 Python 处理，否则不要把正文塞进 `execute_code`。
-- **大文件落盘**：预计超过 {MAX_FILE_TOOL_CONTENT_CHARS} 字符的共享样式/HTML/CSS/JS/JSON manifest/base64/模板/文件正文，直接使用 `staged_file_write` 的 `begin` → 多次 `append_text`/`append_file` → `commit` 流程，每个生成块建议不超过 6,000 字符。禁止把文件正文、heredoc 或 base64 载荷塞进 `bash`；短文件仍可用 `write_file` / `append_file`，最后用 `read_file` 或渲染检查校验。
+- **大文件落盘**：预计超过 {MAX_FILE_TOOL_CONTENT_CHARS} 字符的共享样式/HTML/CSS/JS/JSON manifest/base64/模板/文件正文，直接使用 `staged_file_write` 的 `begin` → 多次 `append_text`/`append_file` → `commit` 流程，每个生成块建议不超过 {RECOMMENDED_GENERATED_BODY_CHARS:,} 字符。禁止把文件正文、heredoc 或 base64 载荷塞进 `bash`；短文件仍可用 `write_file` / `append_file`，最后用 `read_file` 或渲染检查校验。
 - **必须执行**：用户要求“用/使用/运行 Python”得到一个具体结果（如生成随机数、计算数值、处理数据/文件、运行脚本）时，必须调用 `execute_code` 返回真实执行结果；不要只给代码示例。只有用户明确问“怎么写/示例代码/解释代码”时才只返回代码。
 - **用 bash**：仓库代码编辑、测试/构建、系统命令、git——与沙箱无关。
 
@@ -99,6 +100,13 @@ Excel/Word/PDF/PowerPoint 优先在沙箱内用 Python 包，避免外部 CLI：
 
 def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
     """Build file-delivery guidance for output or project workspace mode."""
+    preview_directory = '"$BOX_AGENT_OUTPUT_DIR"' if use_output_dir else '"$PWD"'
+    preview_guidance = (
+        "\n- **本地 HTML 预览**：Playwright MCP 不要打开 `file://`。用 bash 后台启动仅监听 "
+        "loopback 的动态端口预览：`${BOX_AGENT_PYTHON:-python3} -u -m http.server 0 "
+        f"--bind 127.0.0.1 --directory {preview_directory}`，从 `bash_output` 读取实际端口后访问 "
+        "`http://127.0.0.1:<port>/...`；验证后立即 `bash_kill`。任务结束时 runtime 会兜底回收仍在运行的后台进程。"
+    )
     if use_output_dir:
         return (
             "- **目录**：交付物落当前会话的 output 根目录；以沙箱 cwd 和 host 提供的工作区信息为准，"
@@ -106,10 +114,12 @@ def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
             "- **相对路径**：bash、文件工具、`generate_image` 和视觉检查的相对路径都已从当前 output 根开始；"
             "使用 `assets/generated/a.png`，不要再添加 `output/` 前缀。读取会话根的上传文件时使用 `../<name>`。\n"
             "- **桌面交付**：完成后说明文件名即可。宿主会从结构化 ArtifactEvent 渲染可打开的文件卡。"
+            + preview_guidance
         )
     return (
         "- **目录**：这是现有项目工作区。交付物可以在项目树中合适的位置；不要默认创建或使用 `output/`。\n"
         "- **桌面交付**：完成后说明文件名和项目内相对位置即可。宿主会根据文件变更渲染可验证的文件入口。"
+        + preview_guidance
     )
 
 
@@ -426,7 +436,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         skill_loader=None, capability_state_provider=None,
                         use_output_dir: bool = True,
                         artifact_root_dir: str | Path | None = None,
-                        env_context=None):
+                        env_context=None,
+                        process_owner_id: str | None = None):
     """Add workspace-dependent tools
 
     These tools need to know the workspace directory.
@@ -447,6 +458,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         capability_state_provider: Read-only callable returning MCP loading/ready state
         use_output_dir: If True, execute_code chdirs into {workspace}/output.
         artifact_root_dir: Optional host-supplied output root for this session.
+        process_owner_id: Optional ACP session identifier used to scope and
+            reclaim background shell processes.
     """
     _out = output or print
     # Ensure workspace directory exists
@@ -483,8 +496,14 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             sandbox_venv_path=sandbox_venv_path,
             permission_engine=permission_engine,
             runtime_env=runtime_env,
+            process_owner_id=process_owner_id,
         )
         tools.append(bash_tool)
+        if process_owner_id is not None:
+            # These session-scoped instances intentionally override the
+            # process-global base tools when Agent builds its name map.
+            tools.append(BashOutputTool(process_owner_id=process_owner_id))
+            tools.append(BashKillTool(process_owner_id=process_owner_id))
         _out(f"{Colors.GREEN}✅ Loaded Bash tool (cwd: {relative_root}){Colors.RESET}")
 
     # File tools resolve relative paths from relative_root and retain workspace scope.

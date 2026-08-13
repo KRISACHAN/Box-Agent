@@ -255,6 +255,9 @@ class SubAgentTool(EventEmittingTool):
             "file or content limits are exceeded. Do not create multiple children merely because there "
             "are five or more units. Use `general_loop` for heterogeneous work, independent web research, "
             "or tasks that genuinely need an iterative tool loop.\n\n"
+            "For managed Playwright tools, browser navigation/snapshot requires "
+            "`constraints.network=true`; browser interaction or `browser_run_code` also requires "
+            "`constraints.external_side_effect=true`.\n\n"
             "Give parallel calls a short distinct `title`; never assign two children to write the same "
             "path. Constraints and budgets are hard runtime boundaries, not suggestions."
         )

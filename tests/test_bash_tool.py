@@ -142,6 +142,49 @@ async def test_background_command():
 
 
 @pytest.mark.asyncio
+async def test_background_processes_are_scoped_and_cleaned_by_owner():
+    owner_a = BashTool(process_owner_id="session-a")
+    owner_b = BashTool(process_owner_id="session-b")
+    started = await owner_a.execute(command="sleep 100", run_in_background=True)
+    assert started.success
+    assert started.bash_id is not None
+
+    try:
+        hidden = await BashOutputTool(process_owner_id="session-b").execute(
+            bash_id=started.bash_id
+        )
+        assert hidden.success is False
+        assert "Available: none" in hidden.error
+
+        cleaned = await owner_a.cleanup_background_processes()
+        assert cleaned == [started.bash_id]
+        assert BackgroundShellManager.get(started.bash_id) is None
+        assert await owner_a.cleanup_background_processes() == []
+    finally:
+        await owner_a.cleanup_background_processes()
+        await owner_b.cleanup_background_processes()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="process-group assertion is POSIX-specific")
+async def test_owner_cleanup_kills_grandchild_after_shell_wrapper_exits():
+    tool = BashTool(process_owner_id="session-grandchild")
+    started = await tool.execute(command="sleep 100 &", run_in_background=True)
+    assert started.success
+    shell = BackgroundShellManager.get(started.bash_id)
+    assert shell is not None
+    process_group_id = shell.process.pid
+
+    try:
+        await asyncio.sleep(0.1)
+        assert await tool.cleanup_background_processes() == [started.bash_id]
+        with pytest.raises(ProcessLookupError):
+            os.killpg(process_group_id, 0)
+    finally:
+        await tool.cleanup_background_processes()
+
+
+@pytest.mark.asyncio
 async def test_bash_output_monitoring():
     """Test monitoring background command output."""
     print("\n=== Testing Output Monitoring ===")

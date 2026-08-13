@@ -82,6 +82,7 @@ from .model_history import (
     is_model_history_placeholder,
     is_model_instruction_source_path,
 )
+from .session_trace import emit_session_trace
 from .loop_guards import (
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
@@ -117,7 +118,11 @@ _log = logging.getLogger(__name__)
 _DEFAULT_AGENT_CONFIG = AgentConfig()
 PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
 LLM_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
-LLM_PROVIDER_STALE_SECONDS: Final[float] = 120.0
+# Long tool arguments can legitimately take more than two minutes before the
+# provider emits another SSE chunk.  Match the conservative baseline used by
+# mature long-running agents while retaining bounded recovery below.
+LLM_PROVIDER_STALE_SECONDS: Final[float] = 180.0
+MAX_PROVIDER_STALE_RECOVERIES: Final[int] = 3
 
 
 async def _stream_with_activity(
@@ -177,6 +182,7 @@ async def _stream_with_activity(
                 pass
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import EventEmittingTool, Tool, ToolResult
+from .tools.argument_limits import RECOMMENDED_GENERATED_BODY_CHARS
 from .tools.browser_intent import BrowserToolIntentPolicy
 from .tools.skill_preload import build_active_skills_prompt
 from .turn_policy import (
@@ -811,15 +817,20 @@ def _context_resource_history_decision(
     descriptor = ResourceDescriptor.from_raw_output(result.raw_output)
     if descriptor is None or not descriptor.has_content:
         return _ContextResourceHistoryDecision(descriptor=descriptor)
-    if arguments.get("refresh") is True:
-        return _ContextResourceHistoryDecision(descriptor=descriptor)
     source_ids = ledger.covering_source_ids(descriptor, messages)
     if not source_ids:
+        return _ContextResourceHistoryDecision(descriptor=descriptor)
+    refresh_requested = arguments.get("refresh") is True
+    if refresh_requested and ledger.claim_refresh_reload(descriptor):
         return _ContextResourceHistoryDecision(descriptor=descriptor)
     return _ContextResourceHistoryDecision(
         descriptor=descriptor,
         source_tool_call_ids=source_ids,
-        receipt=build_resource_receipt(descriptor, source_ids),
+        receipt=build_resource_receipt(
+            descriptor,
+            source_ids,
+            refresh_unchanged=refresh_requested,
+        ),
     )
 
 
@@ -2830,6 +2841,7 @@ async def run_agent_loop(
     truncated_tool_call_retries = 0
     oversized_tool_argument_retries = 0
     provider_stale_retries = 0
+    provider_stale_recoveries = 0
 
     # Per-turn guard for tools that can be repeatedly requested by the model
     # after it already has enough evidence. Once a budget is reached, later
@@ -3609,12 +3621,44 @@ async def run_agent_loop(
         )
 
         if response.finish_reason == "provider_stale":
-            if not response.content.strip() and provider_stale_retries < 1:
-                provider_stale_retries += 1
+            has_partial_content = bool(response.content.strip())
+            if has_partial_content:
+                provider_stale_retries = 0
+            can_retry_stale = (
+                provider_stale_recoveries < MAX_PROVIDER_STALE_RECOVERIES
+            )
+            if can_retry_stale:
+                provider_stale_recoveries += 1
+                if not has_partial_content:
+                    provider_stale_retries += 1
+                if has_partial_content:
+                    messages.append(assistant_msg)
+                    recovery_text = (
+                        "模型服务在上一轮已经输出部分内容、但尚未完成动作时长时间没有返回"
+                        "新数据。请从未完成的动作继续，不要重复已经输出的说明，也不要把"
+                        "说明误当成任务完成。若要生成长文件，请使用 staged_file_write，"
+                        "每个 append_text 不超过 "
+                        f"{RECOMMENDED_GENERATED_BODY_CHARS:,} 字符；bash 只传短命令。"
+                    )
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=format_injected_message(recovery_text),
+                        )
+                    )
+                    yield InjectedMessageEvent(
+                        content=recovery_text,
+                        injection_id=None,
+                        user_visible=False,
+                    )
                 _log.warning(
-                    "provider stale retry %d/1 after %.0fs without chunks",
-                    provider_stale_retries,
+                    "provider stale recovery %d/%d after %.0fs without new chunks "
+                    "consecutive_empty=%d partial_content_len=%d",
+                    provider_stale_recoveries,
+                    MAX_PROVIDER_STALE_RECOVERIES,
                     LLM_PROVIDER_STALE_SECONDS,
+                    provider_stale_retries,
+                    len(response.content),
                 )
                 elapsed = perf_counter() - step_start
                 total = perf_counter() - run_start
@@ -3658,7 +3702,8 @@ async def run_agent_loop(
                     "上一轮工具参数在流式生成阶段超过安全预算，工具没有执行。"
                     f"超限信息：{rendered}。不要重新生成相同的大参数，也不要提高 token "
                     "预算。bash 只执行短命令；预计超过 8,000 字符的文本文件必须使用 "
-                    "staged_file_write：begin 后用不超过 6,000 字符的 append_text 分块，"
+                    "staged_file_write：begin 后用不超过 "
+                    f"{RECOMMENDED_GENERATED_BODY_CHARS:,} 字符的 append_text 分块，"
                     "需要复用本地文本时用 append_file，最后 commit 并校验文件。"
                 )
                 messages.append(
@@ -3861,6 +3906,7 @@ async def run_agent_loop(
         truncated_tool_call_retries = 0
         oversized_tool_argument_retries = 0
         provider_stale_retries = 0
+        provider_stale_recoveries = 0
 
         # ── No tool calls → done (or continue if injected) ──
         if not response.tool_calls:
@@ -4541,6 +4587,19 @@ async def run_agent_loop(
                 fn_args = await hook_mgr.fire_tool_start(
                     tool_call_id=tc_id, tool_name=fn_name, arguments=fn_args,
                 )
+            tool_started_at = perf_counter()
+            emit_session_trace(
+                "tool.request",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc_id,
+                data={
+                    "tool_name": fn_name,
+                    "arguments": fn_args,
+                    "allowed_to_execute": allowed_to_execute,
+                    "user_visible": tool_user_visible,
+                },
+            )
 
             # Snapshot workspace before tool execution for diff-based artifact detection
             pre_files: set[Path] = set()
@@ -4818,6 +4877,24 @@ async def run_agent_loop(
                 ledger=resource_ledger,
             )
 
+            emit_session_trace(
+                "tool.response",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc_id,
+                data={
+                    "tool_name": fn_name,
+                    "success": result.success,
+                    "content": tc_content,
+                    "error": tc_error,
+                    "raw_output": result.raw_output,
+                    "model_content": msg_content,
+                    "policy_decision": policy_decision,
+                    "user_visible": tool_user_visible,
+                    "duration_ms": max(0, int((perf_counter() - tool_started_at) * 1000)),
+                },
+            )
+
             yield ToolCallResult(
                 tool_call_id=tc_id,
                 tool_name=fn_name,
@@ -4878,6 +4955,7 @@ async def run_agent_loop(
             par_budget_errors: dict[str, str] = {}
             par_user_visible: dict[str, bool] = {}
             par_browser_snapshot_targets: dict[str, Path | None] = {}
+            par_started_at: dict[str, float] = {}
             for tc in parallel_calls:
                 par_fn_args = tc.function.arguments
                 (
@@ -4947,6 +5025,20 @@ async def run_agent_loop(
                         tool_call_id=tc.id, tool_name=tc.function.name, arguments=par_fn_args,
                     )
                 par_args_map[tc.id] = par_fn_args
+                par_started_at[tc.id] = perf_counter()
+                emit_session_trace(
+                    "tool.request",
+                    turn_id=turn_id,
+                    step=step + 1,
+                    tool_call_id=tc.id,
+                    data={
+                        "tool_name": tc.function.name,
+                        "arguments": par_fn_args,
+                        "allowed_to_execute": allowed_to_execute,
+                        "user_visible": allowed_to_execute,
+                        "parallel": True,
+                    },
+                )
                 if not allowed_to_execute:
                     par_budget_errors[tc.id] = internal_skip_error or ""
 
@@ -5312,6 +5404,28 @@ async def run_agent_loop(
                     ledger=resource_ledger,
                 )
 
+                emit_session_trace(
+                    "tool.response",
+                    turn_id=turn_id,
+                    step=step + 1,
+                    tool_call_id=tc_id,
+                    data={
+                        "tool_name": fn_name,
+                        "success": result.success,
+                        "content": par_content,
+                        "error": par_error,
+                        "raw_output": result.raw_output,
+                        "model_content": msg_content,
+                        "policy_decision": policy_decision,
+                        "user_visible": tool_user_visible,
+                        "parallel": True,
+                        "duration_ms": max(
+                            0,
+                            int((perf_counter() - par_started_at[tc_id]) * 1000),
+                        ),
+                    },
+                )
+
                 yield ToolCallResult(
                     tool_call_id=tc_id,
                     tool_name=fn_name,
@@ -5376,6 +5490,7 @@ async def run_agent_loop(
         # so a compact reference is enough for the model and avoids duplicating
         # large tool output in history.
         for tc in duplicate_tool_calls:
+            duplicate_started_at = perf_counter()
             source_id = duplicate_source_by_id[tc.id]
             source_succeeded = step_tool_success_by_id.get(source_id)
             if source_succeeded is True:
@@ -5405,6 +5520,19 @@ async def run_agent_loop(
                 arguments=tc.function.arguments,
                 user_visible=False,
             )
+            emit_session_trace(
+                "tool.request",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc.id,
+                data={
+                    "tool_name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                    "allowed_to_execute": False,
+                    "user_visible": False,
+                    "duplicate_of": source_id,
+                },
+            )
             messages.append(
                 Message(
                     role="tool",
@@ -5412,6 +5540,27 @@ async def run_agent_loop(
                     tool_call_id=tc.id,
                     name=tc.function.name,
                 )
+            )
+            emit_session_trace(
+                "tool.response",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc.id,
+                data={
+                    "tool_name": tc.function.name,
+                    "success": source_succeeded is True,
+                    "content": duplicate_content,
+                    "error": duplicate_error,
+                    "raw_output": None,
+                    "model_content": duplicate_content or duplicate_error or "",
+                    "policy_decision": None,
+                    "user_visible": False,
+                    "duplicate_of": source_id,
+                    "duration_ms": max(
+                        0,
+                        int((perf_counter() - duplicate_started_at) * 1000),
+                    ),
+                },
             )
             yield ToolCallResult(
                 tool_call_id=tc.id,

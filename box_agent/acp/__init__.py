@@ -81,6 +81,13 @@ from box_agent.tools.setup import (
     merge_mcp_tools,
     register_mcp_tools,
 )
+from box_agent.tools.bash_tool import BashTool
+from box_agent.tools.staged_file_write_tool import StagedFileWriteTool
+from box_agent.tools.browser_runtime_scope import (
+    release_browser_runtime,
+    reset_browser_runtime_owner,
+    set_browser_runtime_owner,
+)
 from box_agent.config import Config
 from box_agent.turn_policy import (
     text_is_short_acknowledgement,
@@ -107,8 +114,10 @@ from box_agent.events import (
     ToolCallStart as ToolCallStartEvent,
     WebSearchEvent,
 )
+from box_agent.client_info import ClientInfo, scoped_client_info
 from box_agent.llm import LLMClient, SessionBoundLLM
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
+from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
 from box_agent.completion import (
     build_auto_completion_gate,
     cancels_pending_completion_gate,
@@ -715,6 +724,7 @@ def _tool_result_raw_output(
 @dataclass
 class SessionState:
     agent: Agent
+    trace_writer: SessionTraceWriter | None = None
     session_llm: SessionBoundLLM | None = None
     cancelled: bool = False
     output_dir: str | None = None  # ``{workspace}/output/`` — the canonical artifact root
@@ -808,6 +818,7 @@ class BoxACPAgent:
         self._base_tools = base_tools
         self._system_prompt = system_prompt
         self._sessions: dict[str, SessionState] = {}
+        self._client_info: ClientInfo | None = None
         self._memory = memory_manager
         self._hooks = hooks
         self._skill_loader = skill_loader
@@ -1049,8 +1060,11 @@ class BoxACPAgent:
             log.warn("skills/meta_error", message=f"Failed to build skills metadata: {exc}")
             return None
 
-    async def initialize(self, params: InitializeRequest) -> InitializeResponse:  # noqa: ARG002
+    async def initialize(self, params: InitializeRequest) -> InitializeResponse:
         log.info("initialize", message="ACP initialize request received")
+        meta = getattr(params, "field_meta", None) or {}
+        if isinstance(meta, dict):
+            self._client_info = ClientInfo.from_meta(meta.get("client_info"))
         kwargs: dict[str, Any] = dict(
             protocolVersion=PROTOCOL_VERSION,
             agentCapabilities=AgentCapabilities(loadSession=False),
@@ -1095,7 +1109,9 @@ class BoxACPAgent:
         # text transform, not a real user conversation.
         utility = False
         meta = getattr(params, "field_meta", None) or {}
+        client_info = self._client_info
         if isinstance(meta, dict):
+            client_info = ClientInfo.from_meta(meta.get("client_info")) or client_info
             session_mode = meta.get("session_mode")
             deep_think = bool(meta.get("deep_think", False))
             utility = bool(meta.get("utility", False))
@@ -1144,6 +1160,7 @@ class BoxACPAgent:
         session_llm.set_request_context(
             session_id=upstream_session_id or session_id,
             title=upstream_title,
+            client_info=client_info,
         )
 
         # Canonical artifact directory is only part of output mode. Existing
@@ -1317,6 +1334,7 @@ class BoxACPAgent:
                 use_output_dir=artifact_mode != "project",
                 artifact_root_dir=output_dir,
                 env_context=env_context,
+                process_owner_id=session_id,
             )
             system_prompt = (
                 f"{system_prompt.rstrip()}\n\n"
@@ -1373,8 +1391,13 @@ class BoxACPAgent:
                 step_interval=self._config.agent.memory_extraction_step_interval,
             )
 
+        trace_writer = SessionTraceWriter(
+            session_id=upstream_session_id or session_id,
+            acp_session_id=session_id,
+        )
         self._sessions[session_id] = SessionState(
             agent=agent, session_llm=session_llm,
+            trace_writer=trace_writer,
             output_dir=output_dir, session_mode=session_mode,
             llm_binding=llm_binding,
             artifact_mode=artifact_mode,
@@ -1392,6 +1415,16 @@ class BoxACPAgent:
             require_plan_approval=require_plan_approval,
             preloaded_skill_hashes=preloaded_skill_hashes,
             follow_up_suggestions_enabled=follow_up_suggestions_enabled,
+        )
+        trace_writer.write(
+            "session.start",
+            data={
+                "workspace": str(workspace),
+                "session_mode": session_mode,
+                "artifact_mode": artifact_mode,
+                "title": upstream_title,
+                "utility": utility,
+            },
         )
 
         # Skill selector: per-turn keyword-based filter on the skill catalog.
@@ -1634,6 +1667,16 @@ class BoxACPAgent:
             state.upstream_title = provided_title
         billing_session_id = state.upstream_session_id or session_id
         state.current_turn_id = turn_id
+        if state.trace_writer is not None:
+            state.trace_writer.write(
+                "turn.input",
+                turn_id=turn_id,
+                data={
+                    "content": user_text,
+                    "prompt": params.prompt,
+                    "title": state.upstream_title,
+                },
+            )
         if state.session_llm is not None:
             state.session_llm.set_request_context(
                 session_id=billing_session_id,
@@ -2010,6 +2053,8 @@ class BoxACPAgent:
         prompt_start = perf_counter()
         state.turn_active = True
         meter_token = start_token_meter()
+        browser_owner = f"{session_id}:{turn_id}"
+        browser_owner_token = set_browser_runtime_owner(browser_owner)
         auto_continuations = 0
         auto_budget_exhausted = False
         auto_no_progress_turns = 0
@@ -2080,8 +2125,69 @@ class BoxACPAgent:
                     ):
                         auto_no_progress_exhausted = True
                         break
+        except BaseException as exc:
+            if state.trace_writer is not None:
+                state.trace_writer.write(
+                    "turn.error",
+                    turn_id=turn_id,
+                    data={
+                        "message": str(exc),
+                        "error_type": type(exc).__name__,
+                        "unexpected": True,
+                    },
+                )
+            raise
         finally:
             state.turn_active = False
+            bash_tool = state.agent.tools.get("bash")
+            if isinstance(bash_tool, BashTool):
+                try:
+                    terminated_bash_ids = await bash_tool.cleanup_background_processes()
+                    if terminated_bash_ids:
+                        log.info(
+                            "bash/session_cleanup",
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            count=len(terminated_bash_ids),
+                            bash_ids=terminated_bash_ids,
+                        )
+                except Exception as cleanup_error:
+                    log.error(
+                        "bash/session_cleanup_failed",
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        error=str(cleanup_error),
+                    )
+            staged_write_tool = state.agent.tools.get("staged_file_write")
+            if isinstance(staged_write_tool, StagedFileWriteTool):
+                try:
+                    discarded_write_ids = staged_write_tool.cleanup_pending_writes()
+                    if discarded_write_ids:
+                        log.info(
+                            "staged_write/session_cleanup",
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            count=len(discarded_write_ids),
+                            write_ids=discarded_write_ids,
+                        )
+                except Exception as cleanup_error:
+                    log.error(
+                        "staged_write/session_cleanup_failed",
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        error=str(cleanup_error),
+                    )
+            try:
+                await release_browser_runtime(browser_owner)
+            except Exception as cleanup_error:
+                log.error(
+                    "browser/session_cleanup_failed",
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    error=str(cleanup_error),
+                )
+            finally:
+                reset_browser_runtime_owner(browser_owner_token)
             turn_meter = get_token_meter()
             reset_token_meter(meter_token)
         paused = stop_reason == StopReason.CHECKPOINT_PAUSED.value
@@ -2120,6 +2226,23 @@ class BoxACPAgent:
                 )
         turn_total_tokens = turn_meter.total_tokens if turn_meter else 0
         duration_ms = int((perf_counter() - prompt_start) * 1000)
+
+        if state.trace_writer is not None:
+            state.trace_writer.write(
+                "turn.end",
+                turn_id=turn_id,
+                data={
+                    "stop_reason": stop_reason,
+                    "duration_ms": duration_ms,
+                    "usage": {
+                        "input_tokens": turn_meter.prompt_tokens if turn_meter else 0,
+                        "output_tokens": turn_meter.completion_tokens if turn_meter else 0,
+                        "total_tokens": turn_total_tokens,
+                        "calls": turn_meter.calls if turn_meter else 0,
+                    },
+                    "goal_autopilot_continuations": auto_continuations,
+                },
+            )
 
         log.info(
             "session/done",
@@ -2207,6 +2330,11 @@ class BoxACPAgent:
     async def cancel(self, params: CancelNotification) -> None:
         state = self._sessions.get(params.sessionId)
         if state:
+            if state.trace_writer is not None:
+                state.trace_writer.write(
+                    "turn.cancel_requested",
+                    turn_id=state.current_turn_id,
+                )
             state.cancelled = True
             log.info("session/cancel", session_id=params.sessionId, message="Cancel requested")
 
@@ -2546,6 +2674,11 @@ class BoxACPAgent:
         system_prompt = params.get("systemPrompt") or None
         timeout_ms = params.get("timeoutMs")
         meta = params.get("_meta") or {}
+        client_info = (
+            ClientInfo.from_meta(meta.get("client_info"))
+            if isinstance(meta, dict)
+            else None
+        ) or getattr(self, "_client_info", None)
         purpose = meta.get("purpose") or params.get("purpose") or ""
         normalized_purpose = str(purpose).strip().lower()
         if "title" in normalized_purpose:
@@ -2585,16 +2718,17 @@ class BoxACPAgent:
         provider = getattr(self._lite_llm, "provider", None)
         model = getattr(self._lite_llm, "model", "")
         try:
-            result = await run_lightweight_prompt(
-                self._lite_llm,
-                prompt,
-                system_prompt=system_prompt,
-                session_id=session_id,
-                turn_id=turn_id,
-                title=title,
-                call_kind=call_kind,
-                timeout=timeout,
-            )
+            with scoped_client_info(client_info):
+                result = await run_lightweight_prompt(
+                    self._lite_llm,
+                    prompt,
+                    system_prompt=system_prompt,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    title=title,
+                    call_kind=call_kind,
+                    timeout=timeout,
+                )
         except LightweightInvalidArgs as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
         except LightweightContentFiltered as exc:
@@ -3264,7 +3398,14 @@ class BoxACPAgent:
             ),
             current_turn_text=plan_start_text,
         )
-        async for event in agent.run_events(options=run_options):
+        events = agent.run_events(options=run_options)
+        if state.trace_writer is not None:
+            events = scoped_session_trace(
+                events,
+                writer=state.trace_writer,
+                turn_id=turn_id,
+            )
+        async for event in events:
             try:
                 match event:
                     case ThinkingEvent() if event._streaming:
@@ -3503,6 +3644,16 @@ class BoxACPAgent:
                         state.last_error = msg
                         state.last_error_code = error_code
                         state.last_error_category = error_category
+                        if state.trace_writer is not None:
+                            state.trace_writer.write(
+                                "turn.error",
+                                turn_id=turn_id,
+                                data={
+                                    "message": msg,
+                                    "error_code": error_code,
+                                    "error_category": error_category,
+                                },
+                            )
                         await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))
                         # Don't return yet — let the loop consume the subsequent DoneEvent
                         # so the async generator is properly exhausted.
@@ -3552,6 +3703,15 @@ class BoxACPAgent:
 
                     case DoneEvent(stop_reason=reason, final_content=final_content):
                         log.debug("done", session_id=session_id, stop_reason=reason.value)
+                        if state.trace_writer is not None:
+                            state.trace_writer.write(
+                                "turn.output",
+                                turn_id=turn_id,
+                                data={
+                                    "content": final_content,
+                                    "stop_reason": reason.value,
+                                },
+                            )
                         suggestions = getattr(llm, "follow_up_suggestions", [])
                         if (
                             reason == StopReason.END_TURN

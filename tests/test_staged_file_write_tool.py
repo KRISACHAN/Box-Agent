@@ -93,3 +93,18 @@ async def test_staged_write_can_append_existing_utf8_file(tmp_path: Path):
 
     assert result.success and committed.success
     assert (tmp_path / "bundle.html").read_text(encoding="utf-8") == "const qr = true;"
+
+
+@pytest.mark.asyncio
+async def test_staged_write_cleanup_discards_uncommitted_transactions(tmp_path: Path):
+    tool = StagedFileWriteTool(workspace_dir=str(tmp_path))
+    first = await tool.execute(action="begin", path="first.html")
+    second = await tool.execute(action="begin", path="second.html")
+
+    cleaned = tool.cleanup_pending_writes()
+
+    assert set(cleaned) == {
+        first.raw_output["write_id"],
+        second.raw_output["write_id"],
+    }
+    assert list((tmp_path / ".box-agent-staging").glob("*.part")) == []

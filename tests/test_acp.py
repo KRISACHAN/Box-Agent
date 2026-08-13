@@ -37,10 +37,15 @@ from box_agent.memory import MemoryManager
 from box_agent.loop_guards import CompletionGate
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import Tool, ToolResult
+from box_agent.tools.bash_tool import BackgroundShellManager
 from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS
 from box_agent.tools.skill_loader import SKILL_SLOT_SENTINEL, SkillLoader
 from box_agent.tools.skill_tool import create_skill_tools
-from box_agent.tools.setup import SANDBOX_INFO_PROMPT, build_sandbox_info_prompt
+from box_agent.tools.setup import (
+    SANDBOX_INFO_PROMPT,
+    build_file_delivery_prompt,
+    build_sandbox_info_prompt,
+)
 from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND, recover_completion_gate
 from box_agent.workspace_registry import WorkspaceRegistry
 
@@ -164,6 +169,67 @@ class CorrelationCaptureLLM:
         yield StreamEvent(type="finish", finish_reason="stop")
 
 
+class BackgroundBashLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def generate_stream(self, messages, tools, **_):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="background-bash",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={
+                                "command": "sleep 100",
+                                "run_in_background": True,
+                            },
+                        ),
+                    )
+                ],
+            )
+        else:
+            yield StreamEvent(type="text", delta="done")
+            yield StreamEvent(type="finish", finish_reason="stop")
+
+    async def generate(self, messages, tools=None, **_):
+        return LLMResponse(content="done", finish_reason="stop")
+
+
+class StagedBeginLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def generate_stream(self, messages, tools, **_):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="staged-begin",
+                        type="function",
+                        function=FunctionCall(
+                            name="staged_file_write",
+                            arguments={"action": "begin", "path": "unfinished.html"},
+                        ),
+                    )
+                ],
+            )
+        else:
+            yield StreamEvent(type="text", delta="done")
+            yield StreamEvent(type="finish", finish_reason="stop")
+
+    async def generate(self, messages, tools=None, **_):
+        return LLMResponse(content="done", finish_reason="stop")
+
+
 class PointsInsufficientLLM:
     async def generate_stream(self, messages, tools=None, **kwargs):
         if False:
@@ -251,6 +317,16 @@ def test_project_sandbox_prompt_does_not_point_at_output_dir():
     assert "当前工作区/代码项目根目录" in prompt
     assert "不要默认创建或使用 `output/`" in prompt
     assert "cwd 已是 `{workspace}/output/`" not in prompt
+
+
+def test_file_delivery_prompt_uses_dynamic_loopback_preview_and_reclaims_it():
+    prompt = build_file_delivery_prompt(use_output_dir=True)
+
+    assert "Playwright MCP 不要打开 `file://`" in prompt
+    assert "http.server 0 --bind 127.0.0.1" in prompt
+    assert "bash_output" in prompt
+    assert "bash_kill" in prompt
+    assert "任务结束时 runtime 会兜底回收" in prompt
 
 
 def test_acp_plan_approval_text_accepts_short_confirmations():
@@ -1147,6 +1223,46 @@ async def test_acp_binds_cumulative_real_user_text_to_bash_env(tmp_path):
     bash_env = agent._sessions[session.sessionId].agent.tools["bash"]._subprocess_env
     source_text = base64.b64decode(bash_env["BOX_AGENT_SOURCE_TEXT_B64"]).decode("utf-8")
     assert source_text == "原始事实 A\n\n补充事实 B"
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_reclaims_background_bash_at_turn_end(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, BackgroundBashLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "run server"}])
+    )
+
+    assert response.stopReason == "end_turn"
+    assert BackgroundShellManager.get_available_ids(session.sessionId) == []
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_discards_uncommitted_staged_writes_at_turn_end(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, StagedBeginLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "start write"}])
+    )
+
+    assert response.stopReason == "end_turn"
+    assert list(tmp_path.rglob("*.part")) == []
 
 
 @pytest.mark.asyncio

@@ -328,11 +328,19 @@ class BackgroundShell:
     IO operations are managed externally by BackgroundShellManager.
     """
 
-    def __init__(self, bash_id: str, command: str, process: "asyncio.subprocess.Process", start_time: float):
+    def __init__(
+        self,
+        bash_id: str,
+        command: str,
+        process: "asyncio.subprocess.Process",
+        start_time: float,
+        owner_id: str | None = None,
+    ):
         self.bash_id = bash_id
         self.command = command
         self.process = process
         self.start_time = start_time
+        self.owner_id = owner_id
         self.output_lines: list[str] = []
         self.last_read_index = 0
         self.status = "running"
@@ -375,8 +383,10 @@ class BackgroundShell:
         stdout pipe alive after ``bash_kill``; on Unix ``terminate()`` alone
         (SIGTERM to the wrapper) misses grandchildren the same way.
         """
-        if self.process.returncode is None:
-            await BashTool._kill_process_tree(self.process)
+        # Always target the process group. The shell wrapper may already have
+        # exited while a backgrounded grandchild still owns the group and its
+        # stdout pipe; checking only ``returncode`` would miss that orphan.
+        await BashTool._kill_process_tree(self.process)
         self.status = "terminated"
         self.exit_code = self.process.returncode
 
@@ -393,14 +403,23 @@ class BackgroundShellManager:
         cls._shells[shell.bash_id] = shell
 
     @classmethod
-    def get(cls, bash_id: str) -> BackgroundShell | None:
+    def get(
+        cls, bash_id: str, owner_id: str | None = None
+    ) -> BackgroundShell | None:
         """Get a background shell by ID."""
-        return cls._shells.get(bash_id)
+        shell = cls._shells.get(bash_id)
+        if shell is not None and owner_id is not None and shell.owner_id != owner_id:
+            return None
+        return shell
 
     @classmethod
-    def get_available_ids(cls) -> list[str]:
+    def get_available_ids(cls, owner_id: str | None = None) -> list[str]:
         """Get all available bash IDs."""
-        return list(cls._shells.keys())
+        return [
+            bash_id
+            for bash_id, shell in cls._shells.items()
+            if owner_id is None or shell.owner_id == owner_id
+        ]
 
     @classmethod
     def _remove(cls, bash_id: str) -> None:
@@ -474,7 +493,9 @@ class BackgroundShellManager:
             del cls._monitor_tasks[bash_id]
 
     @classmethod
-    async def terminate(cls, bash_id: str) -> BackgroundShell:
+    async def terminate(
+        cls, bash_id: str, owner_id: str | None = None
+    ) -> BackgroundShell:
         """Terminate a background shell and clean up all resources.
 
         Args:
@@ -486,7 +507,7 @@ class BackgroundShellManager:
         Raises:
             ValueError: If shell not found
         """
-        shell = cls.get(bash_id)
+        shell = cls.get(bash_id, owner_id)
         if not shell:
             raise ValueError(f"Shell not found: {bash_id}")
 
@@ -498,6 +519,30 @@ class BackgroundShellManager:
         cls._remove(bash_id)
 
         return shell
+
+    @classmethod
+    async def terminate_owner(cls, owner_id: str) -> list[str]:
+        """Terminate and forget every background process owned by one session."""
+        bash_ids = cls.get_available_ids(owner_id)
+        if not bash_ids:
+            return []
+
+        results = await asyncio.gather(
+            *(cls.terminate(bash_id, owner_id) for bash_id in bash_ids),
+            return_exceptions=True,
+        )
+        terminated: list[str] = []
+        for bash_id, result in zip(bash_ids, results):
+            if isinstance(result, BaseException):
+                log.warning(
+                    "bash/session_cleanup_failed owner_id=%s bash_id=%s error=%s",
+                    owner_id,
+                    bash_id,
+                    result,
+                )
+                continue
+            terminated.append(bash_id)
+        return terminated
 
 
 class BashTool(Tool):
@@ -517,6 +562,7 @@ class BashTool(Tool):
         sandbox_venv_path: str | None = None,
         permission_engine: PermissionEngine | None = None,
         runtime_env: dict[str, str] | None = None,
+        process_owner_id: str | None = None,
     ):
         """Initialize BashTool with OS-specific shell detection.
 
@@ -588,6 +634,7 @@ class BashTool(Tool):
         self.allow_full_access = allow_full_access
         self.non_interactive = non_interactive
         self._perm = permission_engine
+        self.process_owner_id = process_owner_id
         self._approved_safety_commands: set[str] = set()
         self._subprocess_env = None
         self._use_login_shell = True
@@ -621,6 +668,12 @@ class BashTool(Tool):
                 self._subprocess_env.pop(key, None)
             elif isinstance(value, str):
                 self._subprocess_env[key] = value
+
+    async def cleanup_background_processes(self) -> list[str]:
+        """Reclaim background processes created by this ACP session."""
+        if self.process_owner_id is None:
+            return []
+        return await BackgroundShellManager.terminate_owner(self.process_owner_id)
 
     def approve_permission_request(self, permission_request: dict[str, Any]) -> None:
         """Record a one-shot approval before core retries a safety-gated command."""
@@ -905,7 +958,7 @@ Tips:
 Examples:
   - git status
   - npm test
-  - python -m http.server 8080 (with run_in_background=true)""",
+  - python -u -m http.server 0 --bind 127.0.0.1 (with run_in_background=true; read the dynamic port with bash_output)""",
             "Unix": """Execute bash commands in foreground or background.
 
 Do NOT use cat/head/tail to read files; use read_file instead.
@@ -926,7 +979,7 @@ Tips:
 Examples:
   - git status
   - npm test
-  - python3 -m http.server 8080 (with run_in_background=true)""",
+  - ${BOX_AGENT_PYTHON:-python3} -u -m http.server 0 --bind 127.0.0.1 (with run_in_background=true; read the dynamic port with bash_output)""",
         }
         # When the bundled Git-for-Windows bash is active on Win, the shell is
         # POSIX bash with coreutils — use the Unix description so the LLM
@@ -1136,7 +1189,13 @@ Examples:
                 process = await self._create_subprocess(command, merge_stderr=True)
 
                 # Create background shell and add to manager
-                bg_shell = BackgroundShell(bash_id=bash_id, command=command, process=process, start_time=time.time())
+                bg_shell = BackgroundShell(
+                    bash_id=bash_id,
+                    command=command,
+                    process=process,
+                    start_time=time.time(),
+                    owner_id=self.process_owner_id,
+                )
                 BackgroundShellManager.add(bg_shell)
 
                 # Start monitoring task
@@ -1236,6 +1295,9 @@ Examples:
 class BashOutputTool(Tool):
     """Retrieve output from background bash shells."""
 
+    def __init__(self, process_owner_id: str | None = None):
+        self.process_owner_id = process_owner_id
+
     @property
     def name(self) -> str:
         return "bash_output"
@@ -1294,9 +1356,11 @@ class BashOutputTool(Tool):
 
         try:
             # Get background shell from manager
-            bg_shell = BackgroundShellManager.get(bash_id)
+            bg_shell = BackgroundShellManager.get(bash_id, self.process_owner_id)
             if not bg_shell:
-                available_ids = BackgroundShellManager.get_available_ids()
+                available_ids = BackgroundShellManager.get_available_ids(
+                    self.process_owner_id
+                )
                 return BashOutputResult(
                     success=False,
                     error=f"Shell not found: {bash_id}. Available: {available_ids or 'none'}",
@@ -1349,6 +1413,9 @@ class BashOutputTool(Tool):
 class BashKillTool(Tool):
     """Terminate a running background bash shell."""
 
+    def __init__(self, process_owner_id: str | None = None):
+        self.process_owner_id = process_owner_id
+
     @property
     def name(self) -> str:
         return "bash_kill"
@@ -1391,14 +1458,16 @@ class BashKillTool(Tool):
 
         try:
             # Get remaining output before termination
-            bg_shell = BackgroundShellManager.get(bash_id)
+            bg_shell = BackgroundShellManager.get(bash_id, self.process_owner_id)
             if bg_shell:
                 remaining_lines = bg_shell.get_new_output()
             else:
                 remaining_lines = []
 
             # Terminate through manager (handles all cleanup)
-            bg_shell = await BackgroundShellManager.terminate(bash_id)
+            bg_shell = await BackgroundShellManager.terminate(
+                bash_id, self.process_owner_id
+            )
 
             # Get remaining output
             stdout = "\n".join(remaining_lines) if remaining_lines else ""

@@ -78,6 +78,39 @@ BUILTIN_TOOL_CAPABILITIES: dict[str, ToolCapabilityMetadata] = {
     "obsidian_daily_note": ToolCapabilityMetadata(write=True, external_side_effect=True),
 }
 
+_PLAYWRIGHT_READ_ONLY_TOOLS = frozenset(
+    {
+        "browser_console_messages",
+        "browser_navigate",
+        "browser_navigate_back",
+        "browser_network_requests",
+        "browser_snapshot",
+        "browser_wait_for",
+    }
+)
+
+
+def _tool_capability_metadata(name: str, tool: Tool) -> ToolCapabilityMetadata | None:
+    metadata = BUILTIN_TOOL_CAPABILITIES.get(name)
+    if metadata is not None:
+        return metadata
+
+    # MCP tool names alone are not a trustworthy security boundary. The live
+    # wrapper also records the server that supplied them, so recognize the
+    # managed Playwright server explicitly. Navigation/inspection remains
+    # read-only from the user's resource perspective; interaction, arbitrary
+    # browser code, uploads, and screenshots require an external-side-effect
+    # grant rather than falling through as unknown metadata.
+    if getattr(tool, "server_name", "") == "playwright":
+        if name in _PLAYWRIGHT_READ_ONLY_TOOLS:
+            return ToolCapabilityMetadata(read=True, network=True)
+        return ToolCapabilityMetadata(
+            read=True,
+            network=True,
+            external_side_effect=True,
+        )
+    return None
+
 
 @dataclass(frozen=True)
 class DelegationConstraints:
@@ -462,6 +495,7 @@ def _mcp_state(value: Any) -> str:
 
 def _tool_denial_reason(
     name: str,
+    tool: Tool,
     *,
     strategy: str,
     constraints: DelegationConstraints,
@@ -469,7 +503,7 @@ def _tool_denial_reason(
     if strategy == "batch_files" and name not in _BATCH_FILES_ALLOWED_TOOLS:
         return "not_allowed_by_strategy"
 
-    metadata = BUILTIN_TOOL_CAPABILITIES.get(name)
+    metadata = _tool_capability_metadata(name, tool)
     if metadata is None:
         if (
             constraints.read_only
@@ -581,6 +615,7 @@ class CapabilityResolver:
 
             reason = _tool_denial_reason(
                 name,
+                tool,
                 strategy=spec.strategy,
                 constraints=spec.constraints,
             )

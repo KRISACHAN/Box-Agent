@@ -588,7 +588,7 @@ def _format_hyperframes(state: HyperFramesState) -> list[str]:
             "`--composition` 文件路径；项目根只保留一个带 `data-composition-id` 的 HTML。不要使用 `npx --yes` 或临时安装。"
         )
         lines.append(
-            "  - 生成 HyperFrames HTML 时，单次 `write_file`/`append_file` 的 content 控制在 7600 字符以内；"
+            "  - 生成 HyperFrames HTML 时，单次 `write_file`/`append_file` 的 content 控制在 5500 字符以内；"
             "首版优先写一个完整、紧凑、可严格渲染的小 composition，并保留根节点 "
             "`data-composition-id`、`data-start`、`data-duration`、`data-width`、`data-height` "
             "和匹配的 `window.__timelines[...]` 注册，再迭代丰富。"
