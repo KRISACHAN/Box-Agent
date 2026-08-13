@@ -2710,6 +2710,7 @@ async def run_agent(
                 agent_task = asyncio.create_task(
                     agent.run(
                         force_plan_start=force_plan_next_turn,
+                        completion_gate=preload_gate,
                         current_turn_text=user_input,
                     )
                 )

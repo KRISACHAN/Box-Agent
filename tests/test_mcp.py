@@ -33,11 +33,14 @@ def test_streamable_http_client_is_available():
     assert callable(mcp_loader.streamable_http_client)
 
 
-def test_streamable_http_client_accepts_loader_options():
-    """The selected SDK client must accept every option passed by the loader."""
+def test_streamable_http_client_has_supported_signature():
+    """The installed SDK must expose either the MCP 1.x or 2.x client API."""
     parameters = inspect.signature(mcp_loader.streamable_http_client).parameters
 
-    assert {"headers", "timeout", "sse_read_timeout", "auth"} <= parameters.keys()
+    legacy_options = {"headers", "timeout", "sse_read_timeout", "auth"}
+    assert legacy_options <= parameters.keys() or (
+        "http_client" in parameters and "headers" not in parameters
+    )
 
 
 @pytest.mark.asyncio
