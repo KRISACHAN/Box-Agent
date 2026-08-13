@@ -530,6 +530,42 @@ def test_install_for_current_platform_dispatches_to_windows(monkeypatch, tmp_pat
     assert calls == ["v24.1.0"]
 
 
+def test_install_for_current_platform_dispatches_to_linux(monkeypatch, tmp_path: Path) -> None:
+    manager = NodeRuntimeManager(root=tmp_path / "node-runtime")
+    expected = manager.discover()
+    calls: list[str] = []
+
+    monkeypatch.setattr("box_agent.tools.runtime.sys.platform", "linux")
+    monkeypatch.setattr(
+        manager,
+        "install_linux",
+        lambda *, version: calls.append(version) or expected,
+    )
+
+    assert manager.install_for_current_platform(version="v24.1.0") is expected
+    assert calls == ["v24.1.0"]
+
+
+def test_install_linux_downloads_verifies_extracts_and_writes_manifest(tmp_path: Path) -> None:
+    root = tmp_path / ".box-agent" / "runtimes" / "node"
+    archive_name = f"node-{DEFAULT_NODE_VERSION}-linux-arm64.tar.gz"
+    archive, checksum = _make_node_archive(tmp_path, platform_id="linux-arm64")
+
+    runtime = NodeRuntimeManager(root=root).install_linux(
+        platform_id="linux-arm64",
+        downloader=_fake_node_downloader(
+            archive=archive,
+            checksum=checksum,
+            archive_name=archive_name,
+        ),
+    )
+
+    active = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["active"]
+    assert runtime.status == "available"
+    assert active["platform"] == "linux-arm64"
+    assert Path(active["node"]).is_file()
+
+
 def test_install_macos_failure_preserves_existing_manifest(tmp_path: Path) -> None:
     root = tmp_path / "node-runtime"
     old_bin = root / "versions" / "old-node" / "bin"

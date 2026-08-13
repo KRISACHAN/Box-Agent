@@ -96,7 +96,7 @@ _RULES: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "server_error",
         ("internal server error", "internal_error", "500", "502", "503", "504",
          "bad gateway", "service unavailable", "overloaded", "server_error"),
-        "模型服务商暂时不可用（服务端错误）。这是对方临时故障，请稍后重试。",
+        "当前服务暂时不可用（服务端错误）。请稍后重试。",
     ),
     (
         "timeout",

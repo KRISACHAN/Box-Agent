@@ -102,6 +102,35 @@ def test_bundled_stable_runtime_components_empty_for_external_python_mode() -> N
     ) == ()
 
 
+@pytest.mark.parametrize("arch", ["arm64", "x64"])
+def test_linux_uses_host_stable_runtimes_in_external_sandbox_mode(arch: str) -> None:
+    assert build_runtime.bundled_stable_runtime_components(
+        plat="linux",
+        arch=arch,
+        external_python_sandbox=True,
+    ) == ()
+
+
+def test_verify_entry_binary_arch_accepts_linux_x64(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    entry = tmp_path / "box-agent-acp"
+    entry.write_bytes(b"ELF")
+    monkeypatch.setattr(
+        build_runtime.subprocess,
+        "run",
+        lambda *args, **kwargs: CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=f"{entry}: ELF 64-bit LSB pie executable, x86-64",
+            stderr="",
+        ),
+    )
+
+    build_runtime.verify_entry_binary_arch(entry, plat="linux", arch="x64")
+
+
 def test_pyinstaller_args_keep_bundled_sandbox_by_default() -> None:
     hidden = build_runtime.pyinstaller_hidden_imports()
     collect = build_runtime.pyinstaller_collect_args()

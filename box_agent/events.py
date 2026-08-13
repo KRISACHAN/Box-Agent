@@ -105,6 +105,14 @@ class LLMOutputEvent:
     provider_request_id: str | None = None
 
 
+@dataclass(frozen=True)
+class LLMActivityEvent:
+    """Host-invisible liveness and monotonic LLM/tool-argument progress."""
+
+    step: int
+    payload: dict[str, Any]
+
+
 # ── Tool execution ──────────────────────────────────────────────
 
 
@@ -409,6 +417,7 @@ AgentEvent = Union[
     PlanSnapshotEvent,
     TokenUsageEvent,
     LLMOutputEvent,
+    LLMActivityEvent,
     ToolCallStart,
     ToolCallResult,
     WebSearchEvent,

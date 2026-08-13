@@ -82,6 +82,7 @@ class _ScriptedLLM:
             truncated_tool_calls=entry.get("truncated_tool_calls"),
             raw_finish_reason=entry.get("raw_finish_reason", entry.get("finish_reason")),
             stream_dropped_mid_tool=entry.get("stream_dropped_mid_tool", False),
+            oversized_tool_calls=entry.get("oversized_tool_calls"),
         )
 
 
@@ -246,6 +247,50 @@ async def test_output_cap_truncation_without_visible_text_boosts_max_tokens():
     assert llm.ephemeral_max_tokens_history[0] is None
     boosted = llm.ephemeral_max_tokens_history[1]
     assert boosted is not None and boosted > llm.max_output_tokens
+
+
+async def test_tool_argument_limit_injects_one_staged_write_repair_without_boost():
+    llm = _ScriptedLLM(
+        [
+            {
+                "finish_reason": "tool_argument_limit",
+                "oversized_tool_calls": [
+                    {"name": "bash", "arguments_len": 10001, "limit": 10000}
+                ],
+            },
+            {"text": "done.", "finish_reason": "stop"},
+        ]
+    )
+
+    events = await _collect(
+        run_agent_loop(llm=llm, messages=_msgs(), tools={}, max_steps=5)
+    )
+
+    assert [e for e in events if isinstance(e, DoneEvent)][-1].stop_reason == StopReason.END_TURN
+    injected = [e for e in events if isinstance(e, InjectedMessageEvent)]
+    assert len(injected) == 1
+    assert "staged_file_write" in injected[0].content
+    assert "工具没有执行" in injected[0].content
+    assert llm.ephemeral_max_tokens_history == [None, None]
+
+
+async def test_repeated_tool_argument_limit_stops_after_one_repair():
+    oversized = {
+        "finish_reason": "tool_argument_limit",
+        "oversized_tool_calls": [
+            {"name": "write_file", "arguments_len": 16001, "limit": 16000}
+        ],
+    }
+    llm = _ScriptedLLM([oversized, oversized])
+
+    events = await _collect(
+        run_agent_loop(llm=llm, messages=_msgs(), tools={}, max_steps=5)
+    )
+
+    assert llm.calls == 2
+    assert [e for e in events if isinstance(e, DoneEvent)][-1].stop_reason == StopReason.ERROR
+    assert len([e for e in events if isinstance(e, InjectedMessageEvent)]) == 1
+    assert llm.ephemeral_max_tokens_history == [None, None]
 
 
 # ── Case 3 bound: continuation budget is respected ──

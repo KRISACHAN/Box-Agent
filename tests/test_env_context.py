@@ -376,7 +376,7 @@ def test_prompt_renders_hyperframes_available_policy() -> None:
     assert "contact sheet 做视觉验收" in out
     assert "不要用 `rm -rf` 清理帧目录" in out
     assert "npx --yes" in out
-    assert "7600 字符以内" in out
+    assert "5500 字符以内" in out
     assert "Full tool-call argument omitted from model history" in out
 
 

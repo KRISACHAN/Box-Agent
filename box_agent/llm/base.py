@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ..auth import request_auth_headers
+from ..client_info import current_client_headers
 from ..retry import RetryConfig
 from ..schema import LLMResponse, Message, StreamEvent
 
@@ -76,12 +77,14 @@ class LLMClientBase(ABC):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> dict[str, str | bytes]:
         """Return non-empty agent correlation headers for one LLM request."""
         values = (
             ("X-RACCOON-Session-ID", session_id),
             ("X-RACCOON-Turn-ID", turn_id),
             ("X-RACCOON-Title", title),
+            ("X-RACCOON-Call-Kind", call_kind),
         )
         return {
             header: cleaned if cleaned.isascii() else cleaned.encode("utf-8")
@@ -94,6 +97,18 @@ class LLMClientBase(ABC):
         """Backward-compatible helper for callers that only have a session id."""
         return LLMClientBase._agent_headers(session_id=session_id)
 
+    def _request_headers(
+        self,
+        session_id: str = "",
+        turn_id: str = "",
+        title: str = "",
+        call_kind: str = "",
+    ) -> dict[str, str | bytes]:
+        """Return correlation plus host client headers for one request."""
+        headers = self._agent_headers(session_id, turn_id, title, call_kind)
+        headers.update(current_client_headers(self.api_base))
+        return headers
+
     @abstractmethod
     async def generate(
         self,
@@ -104,6 +119,7 @@ class LLMClientBase(ABC):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         """Generate response from LLM.
 
@@ -134,6 +150,7 @@ class LLMClientBase(ABC):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from LLM.
 

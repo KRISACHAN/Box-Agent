@@ -150,7 +150,8 @@ def test_code_agent_prompt_includes_software_engineering_contract(tmp_path):
     assert "JS 引用的 id/selector 与 HTML 一致" in code_prompt
     assert "引用具体函数或代码片段时" in code_prompt
     assert "`file_path:line_number`" in code_prompt
-    assert "src/services/process.ts:712" in code_prompt
+    assert "无法确认精确行号时应明确说明" in code_prompt
+    assert "不得猜测" in code_prompt
     assert "Project Startup Context" in code_prompt
     assert "cwd 已是 `{workspace}/output/`" not in code_prompt
     assert "不要在最终文本手写或猜测 `local-file://`" in code_prompt

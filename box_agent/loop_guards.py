@@ -579,8 +579,30 @@ def _iter_artifact_glob_matches(
             candidates = list(base.glob(pattern))
         else:
             candidates = []
-        matches.extend(path for path in candidates if path.is_file())
+        matches.extend(
+            path
+            for path in candidates
+            if path.is_file() and not _is_internal_or_dependency_artifact(path)
+        )
     return matches
+
+
+def _is_internal_or_dependency_artifact(path: Path) -> bool:
+    """Exclude staging, caches, and package fixtures from delivery evidence."""
+    parts = tuple(part.casefold() for part in path.parts)
+    excluded_parts = {
+        ".box-agent-staging",
+        ".cache",
+        "__pycache__",
+        "node_modules",
+    }
+    if any(part in excluded_parts for part in parts):
+        return True
+    fixture_dirs = {"test", "tests", "example", "examples", "demo", "demos"}
+    return any(
+        parts[index] == "package" and parts[index + 1] in fixture_dirs
+        for index in range(len(parts) - 1)
+    )
 
 
 def _artifact_signature(path: Path) -> tuple[int, int] | None:

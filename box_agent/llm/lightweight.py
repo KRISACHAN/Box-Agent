@@ -77,6 +77,7 @@ async def run_lightweight_prompt(
     session_id: str = "",
     turn_id: str = "",
     title: str = "Box-Agent",
+    call_kind: str = "utility",
     timeout: float = 30.0,
 ) -> LightweightResult:
     """Run a single tool-free LLM completion.
@@ -124,6 +125,7 @@ async def run_lightweight_prompt(
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             ),
             timeout=timeout,
         )

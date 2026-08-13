@@ -34,6 +34,16 @@ class NamedTool(Tool):
         return ToolResult(success=True, content=self._name)
 
 
+class NamedMcpTool(NamedTool):
+    def __init__(self, name: str, server_name: str):
+        super().__init__(name)
+        self._server_name = server_name
+
+    @property
+    def server_name(self) -> str:
+        return self._server_name
+
+
 def _parse(**overrides) -> DelegationSpec | CapabilityFailure:
     values = {
         "task": "Inspect the files",
@@ -215,6 +225,46 @@ def test_constraints_reject_required_writes_and_network_tools() -> None:
     )
     assert isinstance(network_result, CapabilityFailure)
     assert network_result.details["denied_reason"] == "network_disabled"
+
+
+def test_playwright_capabilities_are_explicit_and_constraint_aware() -> None:
+    navigate = NamedMcpTool("browser_navigate", "playwright")
+    navigate_spec = _parse(
+        capabilities={"required_tools": ["browser_navigate"]},
+        constraints={"network": True},
+    )
+    assert isinstance(navigate_spec, DelegationSpec)
+    navigate_result = CapabilityResolver().resolve(
+        navigate_spec,
+        parent_tools={"browser_navigate": navigate},
+    )
+    assert isinstance(navigate_result, ResolvedCapabilityBundle)
+    assert navigate_result.resolved_tool_names == ("browser_navigate",)
+
+    run_code = NamedMcpTool("browser_run_code", "playwright")
+    guarded_spec = _parse(
+        capabilities={"required_tools": ["browser_run_code"]},
+        constraints={"network": True},
+    )
+    assert isinstance(guarded_spec, DelegationSpec)
+    guarded_result = CapabilityResolver().resolve(
+        guarded_spec,
+        parent_tools={"browser_run_code": run_code},
+    )
+    assert isinstance(guarded_result, CapabilityFailure)
+    assert guarded_result.details["denied_reason"] == "external_side_effect_disabled"
+
+    granted_spec = _parse(
+        capabilities={"required_tools": ["browser_run_code"]},
+        constraints={"network": True, "external_side_effect": True},
+    )
+    assert isinstance(granted_spec, DelegationSpec)
+    granted_result = CapabilityResolver().resolve(
+        granted_spec,
+        parent_tools={"browser_run_code": run_code},
+    )
+    assert isinstance(granted_result, ResolvedCapabilityBundle)
+    assert granted_result.resolved_tool_names == ("browser_run_code",)
 
 
 def test_required_sub_agent_is_always_rejected() -> None:

@@ -12,6 +12,7 @@ import pytest
 import httpx
 from openai import AsyncOpenAI
 
+from box_agent.client_info import ClientInfo
 from box_agent.llm import AnthropicClient, OpenAIClient
 from box_agent.llm.base import LLMClientBase
 from box_agent.llm.llm_wrapper import LLMClient, LLMProvider, SessionBoundLLM
@@ -21,6 +22,7 @@ from box_agent.schema import Message
 _HEADER = "X-RACCOON-Session-ID"
 _TURN_HEADER = "X-RACCOON-Turn-ID"
 _TITLE_HEADER = "X-RACCOON-Title"
+_CALL_KIND_HEADER = "X-RACCOON-Call-Kind"
 # A normal (non-hosted-placeholder) key so _auth_headers passes the session
 # header through untouched instead of swapping in bearer-token logic.
 _API_KEY = "sk-test-not-a-placeholder"
@@ -223,6 +225,12 @@ def test_agent_headers_encode_non_ascii_values_as_utf8_bytes():
     }
 
 
+def test_agent_headers_emit_internal_call_kind():
+    assert LLMClientBase._agent_headers(call_kind="context_summary") == {
+        "X-RACCOON-Call-Kind": "context_summary"
+    }
+
+
 # ── Anthropic client ─────────────────────────────────────────────────────────
 
 
@@ -240,6 +248,7 @@ async def test_anthropic_generate_emits_agent_headers():
         session_id="sess-77",
         turn_id="sess-77-turn-1",
         title="Quarterly review",
+        call_kind="memory_extract",
     )
 
     assert cap.last_params is not None
@@ -247,6 +256,7 @@ async def test_anthropic_generate_emits_agent_headers():
         _HEADER: "sess-77",
         _TURN_HEADER: "sess-77-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "memory_extract",
     }
 
 
@@ -280,6 +290,7 @@ async def test_anthropic_stream_emits_agent_headers():
         session_id="sess-stream",
         turn_id="sess-stream-turn-1",
         title="Quarterly review",
+        call_kind="context_summary",
     )
 
     assert cap.last_params is not None
@@ -287,6 +298,7 @@ async def test_anthropic_stream_emits_agent_headers():
         _HEADER: "sess-stream",
         _TURN_HEADER: "sess-stream-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "context_summary",
     }
 
 
@@ -307,6 +319,7 @@ async def test_openai_generate_emits_agent_headers():
         session_id="sess-88",
         turn_id="sess-88-turn-1",
         title="Quarterly review",
+        call_kind="title_generate",
     )
 
     assert cap.last_params is not None
@@ -314,6 +327,7 @@ async def test_openai_generate_emits_agent_headers():
         _HEADER: "sess-88",
         _TURN_HEADER: "sess-88-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "title_generate",
     }
 
 
@@ -347,6 +361,7 @@ async def test_openai_stream_emits_agent_headers():
         session_id="sess-stream",
         turn_id="sess-stream-turn-1",
         title="Quarterly review",
+        call_kind="subagent_step",
     )
 
     assert cap.last_params is not None
@@ -354,7 +369,67 @@ async def test_openai_stream_emits_agent_headers():
         _HEADER: "sess-stream",
         _TURN_HEADER: "sess-stream-turn-1",
         _TITLE_HEADER: "Quarterly review",
+        _CALL_KIND_HEADER: "subagent_step",
     }
+
+
+@pytest.mark.asyncio
+async def test_session_bound_llm_adds_client_headers_only_for_raccoon_backend():
+    hosted_client = AnthropicClient(
+        api_key=_API_KEY,
+        api_base="https://xiaohuanxiong.com/api/web/llm/v2",
+        model="m",
+        retry_config=RetryConfig(enabled=False),
+    )
+    hosted_capture = _install_anthropic_fake(hosted_client)
+    hosted_session = SessionBoundLLM(hosted_client)
+    hosted_session.set_request_context(
+        client_info=ClientInfo(
+            name="raccoon-ai",
+            platform="desktop-macos-arm64",
+            version="v0.21.1",
+            os_version="15.6",
+            channel="official",
+        )
+    )
+
+    await _capture_generate(
+        hosted_session,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    assert hosted_capture.last_params is not None
+    assert hosted_capture.last_params["extra_headers"] | {} == {
+        "x-client-name": "raccoon-ai",
+        "x-client-platform": "desktop-macos-arm64",
+        "x-client-version": "v0.21.1",
+        "x-client-os-version": "15.6",
+        "x-client-channel": "official",
+        _TITLE_HEADER: "Box-Agent",
+    }
+
+    third_party_client = AnthropicClient(
+        api_key=_API_KEY,
+        api_base="https://api.openai.com/v1",
+        model="m",
+        retry_config=RetryConfig(enabled=False),
+    )
+    third_party_capture = _install_anthropic_fake(third_party_client)
+    third_party_session = SessionBoundLLM(third_party_client)
+    third_party_session.set_request_context(
+        client_info=ClientInfo(name="raccoon-ai", platform="desktop-macos-arm64")
+    )
+
+    await _capture_generate(
+        third_party_session,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    assert third_party_capture.last_params is not None
+    assert not any(
+        key.lower().startswith("x-client-")
+        for key in third_party_capture.last_params.get("extra_headers", {})
+    )
 
 
 @pytest.mark.asyncio
@@ -462,6 +537,7 @@ async def test_session_bound_llm_inherits_request_context_for_nested_calls():
         session_id=" sess-parent ",
         turn_id=" turn-parent ",
         title=" Parent task ",
+        call_kind=" memory_extract ",
     )
 
     await wrapper.generate(messages=[Message(role="user", content="hi")])
@@ -473,6 +549,7 @@ async def test_session_bound_llm_inherits_request_context_for_nested_calls():
         "session_id": "sess-parent",
         "turn_id": "turn-parent",
         "title": "Parent task",
+        "call_kind": "memory_extract",
     }
     assert delegate.generate_kwargs == expected
     assert delegate.stream_kwargs == expected
@@ -493,6 +570,7 @@ async def test_session_bound_llm_allows_explicit_correlation_override():
         session_id="sess-explicit",
         turn_id="turn-explicit",
         title="Explicit task",
+        call_kind="utility",
     )
 
     assert delegate.generate_kwargs == {
@@ -500,4 +578,5 @@ async def test_session_bound_llm_allows_explicit_correlation_override():
         "session_id": "sess-explicit",
         "turn_id": "turn-explicit",
         "title": "Explicit task",
+        "call_kind": "utility",
     }

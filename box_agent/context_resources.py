@@ -124,6 +124,7 @@ class ContextResourceLedger:
         self.epoch = 0
         self._sources: dict[str, ContextResourceSource] = {}
         self._receipts: dict[str, tuple[str, ...]] = {}
+        self._refreshed_versions: set[tuple[str, str]] = set()
 
     @property
     def source_ids(self) -> tuple[str, ...]:
@@ -231,11 +232,27 @@ class ContextResourceLedger:
                 return tuple(selected)
         return ()
 
+    def claim_refresh_reload(self, descriptor: ResourceDescriptor) -> bool:
+        """Allow one forced reload for an unchanged resource version.
+
+        ``read_file(refresh=true)`` must still verify the file on disk, but
+        repeatedly placing the same covered bytes back into model history can
+        create unbounded read loops. The first refresh for a resource version
+        remains a full reload; later covered refreshes use a receipt until the
+        content version changes or the context epoch is rotated.
+        """
+        key = (descriptor.resource_id, descriptor.content_version)
+        if key in self._refreshed_versions:
+            return False
+        self._refreshed_versions.add(key)
+        return True
+
     def rotate_epoch(self) -> None:
         """Invalidate all coverage after a whole-history rewrite."""
         self.epoch += 1
         self._sources.clear()
         self._receipts.clear()
+        self._refreshed_versions.clear()
 
 
 def _safe_resource_label(resource_id: str, limit: int = 112) -> str:
@@ -248,15 +265,23 @@ def _safe_resource_label(resource_id: str, limit: int = 112) -> str:
 def build_resource_receipt(
     descriptor: ResourceDescriptor,
     source_tool_call_ids: Iterable[str],
+    *,
+    refresh_unchanged: bool = False,
 ) -> str:
     """Build a bounded receipt that never claims to be a coverage source."""
     sources = ",".join(tuple(source_tool_call_ids)[:3])
+    guidance = (
+        "Refresh checked the file and its content version is unchanged. "
+        "Reuse the sources above; reread only after the file changes."
+        if refresh_unchanged
+        else "Use refresh=true once if exact content must be reloaded."
+    )
     text = (
         "[Resource already available in current model context]\n"
         f"Path: {_safe_resource_label(descriptor.resource_id)}\n"
         f"Version: {descriptor.content_version[:12]} Lines: "
         f"{descriptor.start_line}-{descriptor.end_line}\n"
-        f"Sources: {sources}\nUse refresh=true to reload exact content."
+        f"Sources: {sources}\n{guidance}"
     )
     return text[:MAX_RESOURCE_RECEIPT_CHARS]
 

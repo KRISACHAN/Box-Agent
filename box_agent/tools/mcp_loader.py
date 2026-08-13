@@ -45,6 +45,7 @@ except ImportError:
 from box_agent.auth import request_auth_headers, resolve_auth_token, should_attach_auth_header
 
 from .base import Tool, ToolResult
+from .browser_runtime_scope import acquire_browser_runtime_for_current_turn
 
 
 def _warn(msg: str) -> None:
@@ -287,6 +288,8 @@ class MCPTool(Tool):
         timeout = self._execute_timeout or _default_timeout_config.execute_timeout
 
         try:
+            if self._server_name == "playwright":
+                await acquire_browser_runtime_for_current_turn()
             # Wrap call_tool with timeout
             async with _timeout(timeout):
                 result = await self._session.call_tool(self._name, arguments=kwargs)

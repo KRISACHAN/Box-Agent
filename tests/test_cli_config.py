@@ -352,6 +352,24 @@ def test_cmd_doctor_json_returns_structured_status(monkeypatch, capsys) -> None:
     assert payload["checks"]["api"]["message"] == "api ok"
 
 
+def test_cli_api_probe_is_classified_as_utility() -> None:
+    class CapturingClient:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        async def generate(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(content="ok")
+
+    client = CapturingClient()
+    response = asyncio.run(cli._probe_llm_api(client))
+
+    assert response.content == "ok"
+    assert client.kwargs["call_kind"] == "utility"
+    assert client.kwargs["messages"][0].role == "user"
+    assert client.kwargs["messages"][0].content == "hi"
+
+
 def test_cmd_doctor_json_returns_nonzero_on_error(monkeypatch, capsys) -> None:
     async def fake_api_status(_config):
         return cli._doctor_check("skipped", "no config")

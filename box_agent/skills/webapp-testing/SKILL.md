@@ -19,7 +19,8 @@ To test local web applications, write native Python Playwright scripts.
 ```
 User task → Is it static HTML?
     ├─ Yes → Read HTML file directly to identify selectors
-    │         ├─ Success → Write Playwright script using selectors
+    │         ├─ Success → Serve its directory on a dynamic loopback port
+    │         │            and use the browser tools with the HTTP URL
     │         └─ Fails/Incomplete → Treat as dynamic (below)
     │
     └─ No (dynamic webapp) → Is the server already running?
@@ -81,6 +82,9 @@ with sync_playwright() as p:
 ❌ **Don't** inspect the DOM before waiting for `networkidle` on dynamic apps
 ✅ **Do** wait for `page.wait_for_load_state('networkidle')` before inspection
 
+❌ **Don't** open local pages with `file://` or reserve a fixed preview port
+✅ **Do** start `${BOX_AGENT_PYTHON:-python3} -u -m http.server 0 --bind 127.0.0.1 --directory <dir>` with the background bash tool, read the selected port with `bash_output`, use the browser tools with `http://127.0.0.1:<port>/...`, and stop the shell with `bash_kill` in the same turn. The runtime also performs owner-scoped cleanup if the turn is cancelled.
+
 ## Best Practices
 
 - **Use bundled scripts as black boxes** - To accomplish a task, consider whether one of the scripts available in `scripts/` can help. These scripts handle common, complex workflows reliably without cluttering the context window. Use `--help` to see usage, then invoke directly. 
@@ -93,5 +97,5 @@ with sync_playwright() as p:
 
 - **examples/** - Examples showing common patterns:
   - `element_discovery.py` - Discovering buttons, links, and inputs on a page
-  - `static_html_automation.py` - Using file:// URLs for local HTML
+  - `static_html_automation.py` - Serving local HTML on an ephemeral loopback port with guaranteed cleanup
   - `console_logging.py` - Capturing console logs during automation

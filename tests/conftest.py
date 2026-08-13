@@ -17,6 +17,13 @@ import yaml
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.fixture(autouse=True)
+def _disable_session_trace_unless_test_enables_it(monkeypatch):
+    """Keep ordinary tests from writing durable diagnostics into the real home."""
+
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_ENABLED", "0")
+
+
 def _load_yaml_or_skip(rel_path: str) -> dict[str, Any]:
     config_path = _REPO_ROOT / rel_path
     if not config_path.exists():

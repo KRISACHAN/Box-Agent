@@ -255,6 +255,9 @@ class SubAgentTool(EventEmittingTool):
             "file or content limits are exceeded. Do not create multiple children merely because there "
             "are five or more units. Use `general_loop` for heterogeneous work, independent web research, "
             "or tasks that genuinely need an iterative tool loop.\n\n"
+            "For managed Playwright tools, browser navigation/snapshot requires "
+            "`constraints.network=true`; browser interaction or `browser_run_code` also requires "
+            "`constraints.external_side_effect=true`.\n\n"
             "Give parallel calls a short distinct `title`; never assign two children to write the same "
             "path. Constraints and budgets are hard runtime boundaries, not suggestions."
         )
@@ -590,6 +593,7 @@ class SubAgentTool(EventEmittingTool):
                     "sub_agent_strategy": diagnostic.get("strategy"),
                     "resolved_skills": diagnostic.get("resolved_skills", []),
                 },
+                call_kind="subagent_step",
             ):
                 if isinstance(event, ToolCallStart):
                     pending_child_tc[event.tool_call_id] = event.tool_name
@@ -825,6 +829,7 @@ class SubAgentTool(EventEmittingTool):
                 messages=messages,
                 tools=None,
                 thinking_enabled=False,
+                call_kind="subagent_step",
             )
             if self._batch_synthesis_timeout_seconds > 0:
                 response = await asyncio.wait_for(

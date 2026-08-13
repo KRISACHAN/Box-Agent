@@ -57,6 +57,7 @@ from .events import (
     ErrorEvent,
     InjectedMessageEvent,
     LLMOutputEvent,
+    LLMActivityEvent,
     LogFileEvent,
     MemoryProposalEvent,
     MemoryPromotionCandidate,
@@ -81,6 +82,7 @@ from .model_history import (
     is_model_history_placeholder,
     is_model_instruction_source_path,
 )
+from .session_trace import emit_session_trace
 from .loop_guards import (
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
@@ -115,8 +117,72 @@ __all__ = ["run_agent_loop", "CompletionGate"]
 _log = logging.getLogger(__name__)
 _DEFAULT_AGENT_CONFIG = AgentConfig()
 PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
+LLM_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
+# Long tool arguments can legitimately take more than two minutes before the
+# provider emits another SSE chunk.  Match the conservative baseline used by
+# mature long-running agents while retaining bounded recovery below.
+LLM_PROVIDER_STALE_SECONDS: Final[float] = 180.0
+MAX_PROVIDER_STALE_RECOVERIES: Final[int] = 3
+
+
+async def _stream_with_activity(
+    stream: AsyncIterator[StreamEvent],
+) -> AsyncIterator[StreamEvent]:
+    """Add bounded host heartbeats and stop a provider stream that is stale."""
+    iterator = stream.__aiter__()
+    next_chunk: asyncio.Task[StreamEvent] | None = None
+    last_provider_chunk = perf_counter()
+    try:
+        next_chunk = asyncio.create_task(iterator.__anext__())
+        while True:
+            done, _ = await asyncio.wait(
+                {next_chunk}, timeout=LLM_ACTIVITY_INTERVAL_SECONDS
+            )
+            if not done:
+                stale_seconds = perf_counter() - last_provider_chunk
+                if stale_seconds >= LLM_PROVIDER_STALE_SECONDS:
+                    yield StreamEvent(
+                        type="finish",
+                        finish_reason="provider_stale",
+                        activity={
+                            "protocol": "agent_activity_v1",
+                            "phase": "provider_wait",
+                            "seconds_since_provider_chunk": round(stale_seconds, 1),
+                        },
+                    )
+                    return
+                yield StreamEvent(
+                    type="activity",
+                    activity={
+                        "protocol": "agent_activity_v1",
+                        "phase": "provider_wait",
+                        "seconds_since_provider_chunk": round(stale_seconds, 1),
+                    },
+                )
+                continue
+            try:
+                chunk = next_chunk.result()
+            except StopAsyncIteration:
+                return
+            last_provider_chunk = perf_counter()
+            yield chunk
+            next_chunk = asyncio.create_task(iterator.__anext__())
+    finally:
+        if next_chunk is not None and not next_chunk.done():
+            next_chunk.cancel()
+            try:
+                await next_chunk
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+        closer = getattr(iterator, "aclose", None)
+        if closer is not None:
+            try:
+                await closer()
+            except (RuntimeError, asyncio.CancelledError):
+                pass
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import EventEmittingTool, Tool, ToolResult
+from .tools.argument_limits import RECOMMENDED_GENERATED_BODY_CHARS
 from .tools.browser_intent import BrowserToolIntentPolicy
 from .tools.skill_preload import build_active_skills_prompt
 from .turn_policy import (
@@ -751,15 +817,20 @@ def _context_resource_history_decision(
     descriptor = ResourceDescriptor.from_raw_output(result.raw_output)
     if descriptor is None or not descriptor.has_content:
         return _ContextResourceHistoryDecision(descriptor=descriptor)
-    if arguments.get("refresh") is True:
-        return _ContextResourceHistoryDecision(descriptor=descriptor)
     source_ids = ledger.covering_source_ids(descriptor, messages)
     if not source_ids:
+        return _ContextResourceHistoryDecision(descriptor=descriptor)
+    refresh_requested = arguments.get("refresh") is True
+    if refresh_requested and ledger.claim_refresh_reload(descriptor):
         return _ContextResourceHistoryDecision(descriptor=descriptor)
     return _ContextResourceHistoryDecision(
         descriptor=descriptor,
         source_tool_call_ids=source_ids,
-        receipt=build_resource_receipt(descriptor, source_ids),
+        receipt=build_resource_receipt(
+            descriptor,
+            source_ids,
+            refresh_unchanged=refresh_requested,
+        ),
     )
 
 
@@ -1265,6 +1336,7 @@ async def _create_summary(
         session_id=session_id,
         turn_id=turn_id,
         title=title,
+        call_kind="context_summary",
     )
     return response.content[:_LOCAL_FALLBACK_CHAR_LIMIT]
 
@@ -2405,6 +2477,7 @@ async def run_agent_loop(
     session_id: str = "",
     turn_id: str = "",
     title: str = "",
+    call_kind: str = "",
     force_plan_start: bool = False,
     require_plan_approval: bool = False,
     plan_approval: dict[str, Any] | None = None,
@@ -2766,6 +2839,9 @@ async def run_agent_loop(
     # the per-request max_tokens on genuine output-cap truncations. Only
     # after exhausting the retries do we surface a user-visible error.
     truncated_tool_call_retries = 0
+    oversized_tool_argument_retries = 0
+    provider_stale_retries = 0
+    provider_stale_recoveries = 0
 
     # Per-turn guard for tools that can be repeatedly requested by the model
     # after it already has enough evidence. Once a budget is reached, later
@@ -3301,13 +3377,18 @@ async def run_agent_loop(
             text_chunk_count = 0
             thinking_chunk_count = 0
 
-            llm_stream = llm.generate_stream(
-                messages=messages, tools=tool_list, thinking_enabled=thinking_enabled,
-                session_id=session_id,
-                turn_id=turn_id,
-                title=title,
-            )
-            async for chunk in llm_stream:
+            stream_kwargs = {
+                "messages": messages,
+                "tools": tool_list,
+                "thinking_enabled": thinking_enabled,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "title": title,
+            }
+            if call_kind:
+                stream_kwargs["call_kind"] = call_kind
+            llm_stream = llm.generate_stream(**stream_kwargs)
+            async for chunk in _stream_with_activity(llm_stream):
                 if cancelled():
                     break
                 if chunk.type == "thinking":
@@ -3337,6 +3418,8 @@ async def run_agent_loop(
                         break
                     text_content = candidate
                     yield ContentEvent(content=chunk.delta or "", _streaming=True)
+                elif chunk.type == "activity" and chunk.activity:
+                    yield LLMActivityEvent(step=step + 1, payload=dict(chunk.activity))
                 elif chunk.type == "finish":
                     finish_event = chunk
 
@@ -3391,9 +3474,11 @@ async def run_agent_loop(
                 tool_calls=finish_event.tool_calls,
                 finish_reason=finish_event.finish_reason or "stop",
                 usage=finish_event.usage,
+                provider_response_id=finish_event.provider_response_id,
                 truncated_tool_calls=finish_event.truncated_tool_calls,
                 raw_finish_reason=finish_event.raw_finish_reason,
                 stream_dropped_mid_tool=finish_event.stream_dropped_mid_tool,
+                oversized_tool_calls=finish_event.oversized_tool_calls,
             )
             provider_request_id = finish_event.provider_request_id
             # The request that just completed saw the previous large tool-call
@@ -3535,6 +3620,131 @@ async def run_agent_loop(
                 else None
             ),
         )
+
+        if response.finish_reason == "provider_stale":
+            has_partial_content = bool(response.content.strip())
+            if has_partial_content:
+                provider_stale_retries = 0
+            can_retry_stale = (
+                provider_stale_recoveries < MAX_PROVIDER_STALE_RECOVERIES
+            )
+            if can_retry_stale:
+                provider_stale_recoveries += 1
+                if not has_partial_content:
+                    provider_stale_retries += 1
+                if has_partial_content:
+                    messages.append(assistant_msg)
+                    recovery_text = (
+                        "模型服务在上一轮已经输出部分内容、但尚未完成动作时长时间没有返回"
+                        "新数据。请从未完成的动作继续，不要重复已经输出的说明，也不要把"
+                        "说明误当成任务完成。若要生成长文件，请使用 staged_file_write，"
+                        "每个 append_text 不超过 "
+                        f"{RECOMMENDED_GENERATED_BODY_CHARS:,} 字符；bash 只传短命令。"
+                    )
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=format_injected_message(recovery_text),
+                        )
+                    )
+                    yield InjectedMessageEvent(
+                        content=recovery_text,
+                        injection_id=None,
+                        user_visible=False,
+                    )
+                _log.warning(
+                    "provider stale recovery %d/%d after %.0fs without new chunks "
+                    "consecutive_empty=%d partial_content_len=%d",
+                    provider_stale_recoveries,
+                    MAX_PROVIDER_STALE_RECOVERIES,
+                    LLM_PROVIDER_STALE_SECONDS,
+                    provider_stale_retries,
+                    len(response.content),
+                )
+                elapsed = perf_counter() - step_start
+                total = perf_counter() - run_start
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_step_end(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                yield StepEnd(
+                    step=step + 1,
+                    elapsed_seconds=elapsed,
+                    total_elapsed_seconds=total,
+                )
+                continue
+            msg = "模型服务长时间没有返回数据，已停止本轮任务。"
+            _cleanup_incomplete_messages(messages)
+            if hook_mgr.hooks:
+                await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+            yield ErrorEvent(message=msg, is_fatal=True)
+            yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+            return
+
+        # ── Deterministic streamed tool-argument budget violation ─────
+        # This is locally detected before JSON parsing or tool execution.
+        # Retrying with a larger completion budget repeats the failure, so
+        # provide one explicit authoring-protocol repair and then stop.
+        if response.finish_reason == "tool_argument_limit":
+            details = response.oversized_tool_calls or []
+            rendered = ", ".join(
+                f"{item.get('name') or '?'}={item.get('arguments_len', 0)}/"
+                f"{item.get('limit', 0)} chars"
+                for item in details
+            ) or "unknown tool"
+            if response.content.strip():
+                messages.append(assistant_msg)
+            if oversized_tool_argument_retries < 1:
+                oversized_tool_argument_retries += 1
+                repair_text = (
+                    "上一轮工具参数在流式生成阶段超过安全预算，工具没有执行。"
+                    f"超限信息：{rendered}。不要重新生成相同的大参数，也不要提高 token "
+                    "预算。bash 只执行短命令；预计超过 8,000 字符的文本文件必须使用 "
+                    "staged_file_write：begin 后用不超过 "
+                    f"{RECOMMENDED_GENERATED_BODY_CHARS:,} 字符的 append_text 分块，"
+                    "需要复用本地文本时用 append_file，最后 commit 并校验文件。"
+                )
+                messages.append(
+                    Message(role="user", content=format_injected_message(repair_text))
+                )
+                yield InjectedMessageEvent(
+                    content=repair_text,
+                    injection_id=None,
+                    user_visible=False,
+                )
+                _log.warning(
+                    "tool argument limit repair %d/1: %s request_id=%s",
+                    oversized_tool_argument_retries,
+                    rendered,
+                    provider_request_id,
+                )
+                elapsed = perf_counter() - step_start
+                total = perf_counter() - run_start
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_step_end(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                yield StepEnd(
+                    step=step + 1,
+                    elapsed_seconds=elapsed,
+                    total_elapsed_seconds=total,
+                )
+                continue
+
+            msg = "工具参数连续超出安全预算，已停止本轮；请改为分块写入后重试。"
+            _log.error("tool argument limit repair exhausted: %s", rendered)
+            _cleanup_incomplete_messages(messages)
+            if hook_mgr.hooks:
+                await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+            yield ErrorEvent(message=msg, is_fatal=True)
+            yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+            return
 
         # ── Output truncated by provider token limit ────────
         # finish_reason="length" splits into four cases, distinguished by
@@ -3695,6 +3905,9 @@ async def run_agent_loop(
         # Reset the retry counter now that a clean turn landed — a future
         # truncation on a later step should get its own fresh budget.
         truncated_tool_call_retries = 0
+        oversized_tool_argument_retries = 0
+        provider_stale_retries = 0
+        provider_stale_recoveries = 0
 
         # ── No tool calls → done (or continue if injected) ──
         if not response.tool_calls:
@@ -4375,6 +4588,19 @@ async def run_agent_loop(
                 fn_args = await hook_mgr.fire_tool_start(
                     tool_call_id=tc_id, tool_name=fn_name, arguments=fn_args,
                 )
+            tool_started_at = perf_counter()
+            emit_session_trace(
+                "tool.request",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc_id,
+                data={
+                    "tool_name": fn_name,
+                    "arguments": fn_args,
+                    "allowed_to_execute": allowed_to_execute,
+                    "user_visible": tool_user_visible,
+                },
+            )
 
             # Snapshot workspace before tool execution for diff-based artifact detection
             pre_files: set[Path] = set()
@@ -4652,6 +4878,24 @@ async def run_agent_loop(
                 ledger=resource_ledger,
             )
 
+            emit_session_trace(
+                "tool.response",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc_id,
+                data={
+                    "tool_name": fn_name,
+                    "success": result.success,
+                    "content": tc_content,
+                    "error": tc_error,
+                    "raw_output": result.raw_output,
+                    "model_content": msg_content,
+                    "policy_decision": policy_decision,
+                    "user_visible": tool_user_visible,
+                    "duration_ms": max(0, int((perf_counter() - tool_started_at) * 1000)),
+                },
+            )
+
             yield ToolCallResult(
                 tool_call_id=tc_id,
                 tool_name=fn_name,
@@ -4712,6 +4956,7 @@ async def run_agent_loop(
             par_budget_errors: dict[str, str] = {}
             par_user_visible: dict[str, bool] = {}
             par_browser_snapshot_targets: dict[str, Path | None] = {}
+            par_started_at: dict[str, float] = {}
             for tc in parallel_calls:
                 par_fn_args = tc.function.arguments
                 (
@@ -4781,6 +5026,20 @@ async def run_agent_loop(
                         tool_call_id=tc.id, tool_name=tc.function.name, arguments=par_fn_args,
                     )
                 par_args_map[tc.id] = par_fn_args
+                par_started_at[tc.id] = perf_counter()
+                emit_session_trace(
+                    "tool.request",
+                    turn_id=turn_id,
+                    step=step + 1,
+                    tool_call_id=tc.id,
+                    data={
+                        "tool_name": tc.function.name,
+                        "arguments": par_fn_args,
+                        "allowed_to_execute": allowed_to_execute,
+                        "user_visible": allowed_to_execute,
+                        "parallel": True,
+                    },
+                )
                 if not allowed_to_execute:
                     par_budget_errors[tc.id] = internal_skip_error or ""
 
@@ -5146,6 +5405,28 @@ async def run_agent_loop(
                     ledger=resource_ledger,
                 )
 
+                emit_session_trace(
+                    "tool.response",
+                    turn_id=turn_id,
+                    step=step + 1,
+                    tool_call_id=tc_id,
+                    data={
+                        "tool_name": fn_name,
+                        "success": result.success,
+                        "content": par_content,
+                        "error": par_error,
+                        "raw_output": result.raw_output,
+                        "model_content": msg_content,
+                        "policy_decision": policy_decision,
+                        "user_visible": tool_user_visible,
+                        "parallel": True,
+                        "duration_ms": max(
+                            0,
+                            int((perf_counter() - par_started_at[tc_id]) * 1000),
+                        ),
+                    },
+                )
+
                 yield ToolCallResult(
                     tool_call_id=tc_id,
                     tool_name=fn_name,
@@ -5210,6 +5491,7 @@ async def run_agent_loop(
         # so a compact reference is enough for the model and avoids duplicating
         # large tool output in history.
         for tc in duplicate_tool_calls:
+            duplicate_started_at = perf_counter()
             source_id = duplicate_source_by_id[tc.id]
             source_succeeded = step_tool_success_by_id.get(source_id)
             if source_succeeded is True:
@@ -5239,6 +5521,19 @@ async def run_agent_loop(
                 arguments=tc.function.arguments,
                 user_visible=False,
             )
+            emit_session_trace(
+                "tool.request",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc.id,
+                data={
+                    "tool_name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                    "allowed_to_execute": False,
+                    "user_visible": False,
+                    "duplicate_of": source_id,
+                },
+            )
             messages.append(
                 Message(
                     role="tool",
@@ -5246,6 +5541,27 @@ async def run_agent_loop(
                     tool_call_id=tc.id,
                     name=tc.function.name,
                 )
+            )
+            emit_session_trace(
+                "tool.response",
+                turn_id=turn_id,
+                step=step + 1,
+                tool_call_id=tc.id,
+                data={
+                    "tool_name": tc.function.name,
+                    "success": source_succeeded is True,
+                    "content": duplicate_content,
+                    "error": duplicate_error,
+                    "raw_output": None,
+                    "model_content": duplicate_content or duplicate_error or "",
+                    "policy_decision": None,
+                    "user_visible": False,
+                    "duplicate_of": source_id,
+                    "duration_ms": max(
+                        0,
+                        int((perf_counter() - duplicate_started_at) * 1000),
+                    ),
+                },
             )
             yield ToolCallResult(
                 tool_call_id=tc.id,
