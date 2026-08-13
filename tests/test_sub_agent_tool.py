@@ -713,6 +713,7 @@ async def test_batch_files_reads_twenty_files_once_and_calls_generate_once(tmp_p
     assert llm.stream_calls == 0
     assert llm.tools is None
     assert "session_id" not in llm.generate_kwargs
+    assert llm.generate_kwargs["call_kind"] == "subagent_step"
     assert "<<<UNTRUSTED_FILE" in llm.messages[-1].content
     assert llm.messages[-1].content.count("<<<UNTRUSTED_FILE") == 20
     assert result.raw_output["model_calls"] == 1

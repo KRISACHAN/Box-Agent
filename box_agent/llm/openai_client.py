@@ -262,6 +262,7 @@ class OpenAIClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> Any:
         """Execute API request (core method that can be retried).
 
@@ -288,7 +289,7 @@ class OpenAIClient(LLMClientBase):
             params["tools"] = self._convert_tools(tools)
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._agent_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -513,6 +514,7 @@ class OpenAIClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         """Generate response from OpenAI LLM.
 
@@ -546,6 +548,7 @@ class OpenAIClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
         else:
             # Don't use retry
@@ -556,6 +559,7 @@ class OpenAIClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
 
         # Parse and return response
@@ -570,6 +574,7 @@ class OpenAIClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from OpenAI LLM.
 
@@ -590,7 +595,7 @@ class OpenAIClient(LLMClientBase):
             params["tools"] = self._convert_tools(request_params["tools"])
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._agent_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers

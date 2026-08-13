@@ -407,7 +407,8 @@ class MemoryMaintainer_Compact:  # placeholder so the file parses; will be inlin
                 messages=[
                     Msg(role="system", content=_COMPACT_SYSTEM_PROMPT),
                     Msg(role="user", content=user_prompt),
-                ]
+                ],
+                call_kind="memory_extract",
             )
         except Exception:
             logger.exception("MemoryMaintainer: compact LLM call failed; keeping original")
@@ -654,7 +655,8 @@ class MemoryMaintainer_Conflict:  # placeholder — bound onto MemoryMaintainer 
                     messages=[
                         Msg(role="system", content=_CONFLICT_SYSTEM_PROMPT),
                         Msg(role="user", content=user_prompt),
-                    ]
+                    ],
+                    call_kind="memory_extract",
                 )
             except Exception:
                 logger.exception("MemoryMaintainer: conflict LLM call failed; skipping cluster")

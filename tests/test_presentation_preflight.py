@@ -35,6 +35,7 @@ class _FakeLLM:
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         self.calls.append(
             {
@@ -43,6 +44,7 @@ class _FakeLLM:
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "title": title,
+                "call_kind": call_kind,
             }
         )
         return LLMResponse(content=self.content, finish_reason="stop")
@@ -58,8 +60,9 @@ class _FailingLLM(_FakeLLM):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
-        self.calls.append({"messages": messages, "tools": tools})
+        self.calls.append({"messages": messages, "tools": tools, "call_kind": call_kind})
         raise RuntimeError("provider unavailable")
 
 
@@ -73,8 +76,9 @@ class _SlowLLM(_FakeLLM):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
-        self.calls.append({"messages": messages, "tools": tools})
+        self.calls.append({"messages": messages, "tools": tools, "call_kind": call_kind})
         await asyncio.sleep(0.05)
         return LLMResponse(content=self.content, finish_reason="stop")
 
@@ -589,6 +593,7 @@ async def test_acp_preflight_uses_lightweight_model_without_session():
     assert result["values"]["page_count"] == "page_count_auto"
     assert result["sources"]["page_count"] == "default"
     assert len(llm.calls) == 1
+    assert llm.calls[0]["call_kind"] == "utility"
     assert not hasattr(agent, "_sessions")
 
 
@@ -665,6 +670,7 @@ async def test_acp_preflight_forwards_host_correlation_metadata():
     assert llm.calls[0]["session_id"] == "session-1"
     assert llm.calls[0]["turn_id"] == "turn-1"
     assert llm.calls[0]["title"] == "人工智能基础课程"
+    assert llm.calls[0]["call_kind"] == "utility"
 
 
 @pytest.mark.asyncio

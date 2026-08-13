@@ -1446,12 +1446,20 @@ def _doctor_config_status() -> tuple[dict[str, Any], Config | None]:
         return _doctor_check("error", f"parse error: {e}", config_file=str(config_path)), None
 
 
+async def _probe_llm_api(client: LLMClient):
+    """Run one tool-free connectivity probe classified as an internal helper call."""
+    return await client.generate(
+        messages=[Message(role="user", content="hi")],
+        call_kind="utility",
+    )
+
+
 async def _doctor_api_status(config: Config | None) -> dict[str, Any]:
     if config is None:
         return _doctor_check("skipped", "skipped (no valid config)")
     try:
         from box_agent.retry import RetryConfig as DoctorRetryConfig
-        from box_agent.schema import LLMProvider as LP, Message
+        from box_agent.schema import LLMProvider as LP
 
         provider = LP.ANTHROPIC if config.llm.provider.lower() == "anthropic" else LP.OPENAI
         no_retry = DoctorRetryConfig(enabled=False, max_retries=0)
@@ -1465,8 +1473,7 @@ async def _doctor_api_status(config: Config | None) -> dict[str, Any]:
             auth_file=config.llm.auth_file,
             timeout=config.llm.timeout,
         )
-        messages = [Message(role="user", content="hi")]
-        response = await client.generate(messages)
+        response = await _probe_llm_api(client)
         if response and response.content:
             return _doctor_check(
                 "ok",
@@ -1861,7 +1868,6 @@ async def run_agent(
         print(f"{Colors.DIM}Verifying API connection...{Colors.RESET}", end=" ", flush=True)
         try:
             from box_agent.retry import RetryConfig as VerifyRetryConfig
-            from box_agent.schema import Message as Msg
             # Use a temporary client with retry disabled to avoid long waits
             _verify_client = LLMClient(
                 api_key=config.llm.api_key,
@@ -1873,9 +1879,7 @@ async def run_agent(
                 auth_file=config.llm.auth_file,
                 timeout=config.llm.timeout,
             )
-            await _verify_client.generate(
-                messages=[Msg(role="user", content="hi")],
-            )
+            await _probe_llm_api(_verify_client)
             print(f"{Colors.GREEN}OK{Colors.RESET}")
         except Exception as e:
             err_str = str(e)
@@ -1925,7 +1929,7 @@ async def run_agent(
                             auth_file=config.llm.auth_file,
                             timeout=config.llm.timeout,
                         )
-                        await _verify_client2.generate(messages=[Msg(role="user", content="hi")])
+                        await _probe_llm_api(_verify_client2)
                         print(f"{Colors.GREEN}OK{Colors.RESET}")
                     except Exception as e2:
                         print(f"{Colors.RED}FAILED{Colors.RESET}")
