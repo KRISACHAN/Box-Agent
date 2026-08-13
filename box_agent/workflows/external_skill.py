@@ -96,30 +96,6 @@ def resolve_explicit_skill_invocation(
     return skill
 
 
-def resolve_explicit_skill_reference(
-    skill_loader: SkillLoader | None,
-    user_text: str,
-) -> Skill | None:
-    """Resolve a slash invocation or an explicit natural-language Skill choice."""
-    slash_skill = resolve_explicit_skill_invocation(skill_loader, user_text)
-    if slash_skill is not None or skill_loader is None:
-        return slash_skill
-
-    action = r"(?:use|using|run|invoke|with|使用|用|调用|通过)"
-    for name in sorted(skill_loader.list_skills(), key=len, reverse=True):
-        escaped = re.escape(name)
-        named = rf"(?<![a-z0-9._-]){escaped}(?![a-z0-9._-])"
-        if not (
-            re.search(rf"{action}[^\n]{{0,40}}{named}", user_text, re.IGNORECASE)
-            or re.search(rf"{named}[^\n]{{0,40}}{action}", user_text, re.IGNORECASE)
-        ):
-            continue
-        skill = skill_loader.get_skill(name)
-        if skill is not None and not skill.broken:
-            return skill
-    return None
-
-
 def infer_skill_delivery_globs(skill: Skill) -> tuple[str, ...]:
     """Infer a conservative file contract from static Skill metadata only."""
     routing_text = " ".join(

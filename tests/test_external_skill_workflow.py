@@ -12,7 +12,6 @@ from box_agent.workflows.external_skill import (
     explicit_skill_invocation_name,
     infer_skill_delivery_globs,
     resolve_explicit_skill_invocation,
-    resolve_explicit_skill_reference,
 )
 
 
@@ -49,29 +48,6 @@ def test_resolve_explicit_skill_requires_an_installed_nonbroken_skill(tmp_path: 
     assert resolve_explicit_skill_invocation(loader, "/PPT-MASTER topic") is not None
     assert resolve_explicit_skill_invocation(loader, "/missing topic") is None
     assert resolve_explicit_skill_invocation(loader, "/broken topic") is None
-
-
-def test_resolve_explicit_skill_reference_accepts_natural_language_choice(
-    tmp_path: Path,
-) -> None:
-    loader = SkillLoader(tmp_path)
-    loader.loaded_skills["sn-ppt-entry"] = _skill(
-        tmp_path,
-        name="sn-ppt-entry",
-    )
-
-    assert (
-        resolve_explicit_skill_reference(
-            loader,
-            "Use sn-ppt-entry to create a two-page presentation.",
-        ).name
-        == "sn-ppt-entry"
-    )
-    assert (
-        resolve_explicit_skill_reference(loader, "请使用 sn-ppt-entry 做一份演示").name
-        == "sn-ppt-entry"
-    )
-    assert resolve_explicit_skill_reference(loader, "Explain sn-ppt-entry") is None
 
 
 def test_delivery_contract_is_inferred_only_from_static_authoring_metadata(

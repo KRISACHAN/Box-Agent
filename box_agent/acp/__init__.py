@@ -131,7 +131,7 @@ from box_agent.workflows import (
     load_presentation_preflight_config,
     parse_host_presentation_config,
     recover_completion_gate,
-    resolve_explicit_skill_reference,
+    resolve_explicit_skill_invocation,
     resolve_presentation_skill_provider,
 )
 from box_agent.acp.action_hints import (
@@ -1765,7 +1765,7 @@ class BoxACPAgent:
             if state.skill_loader is not None and plan_detection_text.strip()
             else ()
         )
-        explicit_skill = resolve_explicit_skill_reference(
+        explicit_skill = resolve_explicit_skill_invocation(
             state.skill_loader,
             plan_detection_text,
         )

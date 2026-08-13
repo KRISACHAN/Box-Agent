@@ -78,7 +78,7 @@ from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryErr
 from box_agent.workflows import (
     CONTROLLED_PRESENTATION_WORKFLOW_KIND,
     build_external_skill_completion_gate,
-    resolve_explicit_skill_reference,
+    resolve_explicit_skill_invocation,
 )
 
 
@@ -2270,7 +2270,7 @@ async def run_agent(
     def _build_cli_completion_gate(user_input: str):
         if not completion_gate_enabled:
             return None
-        explicit_skill = resolve_explicit_skill_reference(skill_loader, user_input)
+        explicit_skill = resolve_explicit_skill_invocation(skill_loader, user_input)
         if (
             explicit_skill is not None
             and explicit_skill.workflow != CONTROLLED_PRESENTATION_WORKFLOW_KIND
