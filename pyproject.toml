@@ -1,6 +1,6 @@
 [project]
 name = "box-agent"
-version = "0.8.85"
+version = "0.8.86"
 description = "AI agent framework with Jupyter sandbox, data analysis, MCP tools, ACP protocol, multi-provider LLM, and standalone runtime packaging"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,7 +23,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pyyaml>=6.0.0",
     "httpx[socks]>=0.27.0",
-    "mcp>=1.0.0",
+    "mcp==1.19.0",
     "requests>=2.31.0",
     "tiktoken>=0.5.0",
     "prompt-toolkit>=3.0.0",

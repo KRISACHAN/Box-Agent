@@ -150,6 +150,68 @@ async def test_openai_raw_response_parse_may_be_sync():
     assert await client._make_api_request([{"role": "user", "content": "go"}]) is parsed
 
 
+@pytest.mark.parametrize(
+    "reasoning_fields",
+    [
+        {"reasoning": "private reasoning"},
+        {"reasoning_content": "private reasoning"},
+        {"reasoning_details": [SimpleNamespace(text="private reasoning")]},
+    ],
+    ids=["reasoning", "reasoning_content", "reasoning_details"],
+)
+def test_openai_response_parses_reasoning_aliases(reasoning_fields):
+    """Provider-specific response reasoning fields are preserved as thinking."""
+    client = OpenAIClient(api_key="k", api_base="https://x.example", model="qwen")
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="answer",
+                    tool_calls=None,
+                    **reasoning_fields,
+                ),
+            )
+        ],
+        usage=None,
+    )
+
+    parsed = client._parse_response(response)
+
+    assert parsed.content == "answer"
+    assert parsed.thinking == "private reasoning"
+
+
+@pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
+def test_openai_reasoning_alias_round_trip_uses_canonical_details(reasoning_field):
+    """Inbound aliases normalize to the existing outbound history contract."""
+    client = OpenAIClient(api_key="k", api_base="https://x.example", model="qwen")
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="answer",
+                    tool_calls=None,
+                    **{reasoning_field: "private reasoning"},
+                ),
+            )
+        ],
+        usage=None,
+    )
+
+    parsed = client._parse_response(response)
+    _, api_messages = client._convert_messages(
+        [Message(role="assistant", content=parsed.content, thinking=parsed.thinking)]
+    )
+
+    assert api_messages == [
+        {
+            "role": "assistant",
+            "content": "answer",
+            "reasoning_details": [{"text": "private reasoning"}],
+        }
+    ]
+
+
 # ───────────────────────── Core plumbing ─────────────────────────
 
 @pytest.mark.asyncio

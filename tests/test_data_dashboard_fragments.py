@@ -12,7 +12,16 @@ import pytest
 SKILL_DIR = Path(__file__).resolve().parents[1] / "box_agent" / "skills" / "data-dashboard"
 MERGER = SKILL_DIR / "scripts" / "merge_dashboard_fragments.js"
 TEMPLATE = SKILL_DIR / "assets" / "template.html"
+SKILL_INSTRUCTIONS = SKILL_DIR / "SKILL.md"
 NODE = os.environ.get("BOX_AGENT_NODE") or shutil.which("node")
+
+
+def test_dashboard_skill_routes_large_html_to_staged_writer() -> None:
+    instructions = SKILL_INSTRUCTIONS.read_text(encoding="utf-8")
+
+    assert "staged_file_write" in instructions
+    assert "禁止把整份 HTML" in instructions
+    assert "禁止用 `bash` heredoc" in instructions
 
 
 def _run_merger(tmp_path: Path, contract: dict, fragments: list[dict]) -> subprocess.CompletedProcess[str]:

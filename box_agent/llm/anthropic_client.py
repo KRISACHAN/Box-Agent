@@ -9,6 +9,10 @@ import anthropic
 
 from ..retry import RetryConfig, StreamInterrupted, async_retry, is_retryable_stream_error
 from ..schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
+from ..tools.argument_limits import (
+    TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS,
+    streamed_argument_limit,
+)
 from .base import LLMClientBase
 from .error_messages import is_retryable_llm_error
 from .debug_logging import (
@@ -442,6 +446,8 @@ class AnthropicClient(LLMClientBase):
         current_tool_id: str | None = None
         current_tool_name: str | None = None
         current_tool_json = ""
+        current_activity_bucket = -1
+        oversized_info: list[dict[str, Any]] = []
         provider_request_id: str | None = None
 
         import asyncio as _asyncio
@@ -462,6 +468,8 @@ class AnthropicClient(LLMClientBase):
             current_tool_id = None
             current_tool_name = None
             current_tool_json = ""
+            current_activity_bucket = -1
+            oversized_info = []
 
             try:
                 stream_context = self.client.messages.stream(**params)
@@ -503,6 +511,7 @@ class AnthropicClient(LLMClientBase):
                                 current_tool_id = block.id
                                 current_tool_name = block.name
                                 current_tool_json = ""
+                                current_activity_bucket = -1
 
                         # ── Content block delta ──
                         elif event.type == "content_block_delta":
@@ -517,6 +526,32 @@ class AnthropicClient(LLMClientBase):
                                 yield StreamEvent(type="text", delta=delta.text)
                             elif delta.type == "input_json_delta":
                                 current_tool_json += delta.partial_json
+                                arguments_len = len(current_tool_json)
+                                activity_bucket = (
+                                    arguments_len // TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS
+                                )
+                                if activity_bucket > current_activity_bucket:
+                                    current_activity_bucket = activity_bucket
+                                    yield StreamEvent(
+                                        type="activity",
+                                        activity={
+                                            "protocol": "agent_activity_v1",
+                                            "phase": "tool_arguments",
+                                            "tool_name": current_tool_name or "",
+                                            "argument_chars": arguments_len,
+                                        },
+                                    )
+                                limit = streamed_argument_limit(current_tool_name)
+                                if arguments_len > limit:
+                                    oversized_info.append(
+                                        {
+                                            "name": current_tool_name or "",
+                                            "arguments_len": arguments_len,
+                                            "limit": limit,
+                                        }
+                                    )
+                                    finish_reason = "tool_argument_limit"
+                                    break
 
                         # ── Content block stop ──
                         elif event.type == "content_block_stop":
@@ -610,8 +645,10 @@ class AnthropicClient(LLMClientBase):
 
         yield StreamEvent(
             type="finish",
-            finish_reason=finish_reason,
+            finish_reason=("tool_argument_limit" if oversized_info else finish_reason),
             usage=usage,
-            tool_calls=tool_calls if tool_calls else None,
+            tool_calls=None if oversized_info else (tool_calls if tool_calls else None),
             provider_request_id=provider_request_id,
+            oversized_tool_calls=oversized_info or None,
+            raw_finish_reason=None if oversized_info else finish_reason,
         )
