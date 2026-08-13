@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "box_agent_version": "0.8.85",
+  "box_agent_version": "0.8.87",
   "generated_at": "2026-08-13T07:38:17Z",
   "skills": [
     {
@@ -134,6 +134,19 @@
     {
       "name": "writing-workflow",
       "path": "writing-workflow/SKILL.md"
+    },
+    {
+      "name": "zhihu",
+      "path": "zhihu/SKILL.md",
+      "availability": {
+        "platforms": [
+          "darwin",
+          "win32"
+        ],
+        "required_env_paths": [
+          "ZHIHU_CLI_HOME"
+        ]
+      }
     }
   ]
 }
