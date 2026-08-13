@@ -359,6 +359,7 @@ class SubAgentTool(EventEmittingTool):
                 },
             },
             "required": ["task"],
+            "additionalProperties": False,
         }
 
     # Event types worth surfacing to the parent.
@@ -911,7 +912,7 @@ class SubAgentTool(EventEmittingTool):
 
     async def execute(  # type: ignore[override]
         self,
-        task: str,
+        task: Any = None,
         title: str | None = None,
         execution: dict[str, Any] | None = None,
         capabilities: Any = _CAPABILITIES_UNSET,
@@ -921,7 +922,38 @@ class SubAgentTool(EventEmittingTool):
         *,
         _event_queue: asyncio.Queue | None = None,
         _parent_tool_call_id: str | None = None,
+        **unexpected: Any,
     ) -> ToolResult:
+        invalid_top_level = sorted(unexpected)
+        if not isinstance(task, str) or not task.strip():
+            invalid_top_level.append("task")
+        if title is not None and not isinstance(title, str):
+            invalid_top_level.append("title")
+        for field_name, value in (
+            ("execution", execution),
+            ("inputs", inputs),
+            ("constraints", constraints),
+            ("budget", budget),
+        ):
+            if value is not None and not isinstance(value, dict):
+                invalid_top_level.append(field_name)
+        if capabilities is not _CAPABILITIES_UNSET and not isinstance(
+            capabilities, dict
+        ):
+            invalid_top_level.append("capabilities")
+        if invalid_top_level:
+            return self._failure_result(
+                CapabilityFailure(
+                    code="INVALID_DELEGATION_SPEC",
+                    message=(
+                        "The sub-agent delegation contains invalid top-level fields; "
+                        "fix the listed fields and retry at most once."
+                    ),
+                    retryable=True,
+                    invalid_fields=tuple(sorted(set(invalid_top_level))),
+                )
+            )
+
         queue = _event_queue if _event_queue is not None else self._event_queue
         parent_tool_call_id = (
             _parent_tool_call_id

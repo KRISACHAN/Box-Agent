@@ -1,6 +1,7 @@
 """MCP tool loader with real MCP client integration and timeout handling."""
 
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -37,10 +38,15 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
 try:
-    from mcp.client.streamable_http import streamable_http_client
+    from mcp.client.streamable_http import (
+        create_mcp_http_client,
+        streamable_http_client,
+    )
 except ImportError:
     # MCP <= 1.19 exports the same client without the separator.
     from mcp.client.streamable_http import streamablehttp_client as streamable_http_client
+
+    create_mcp_http_client = None
 
 from box_agent.auth import request_auth_headers, resolve_auth_token, should_attach_auth_header
 
@@ -622,16 +628,64 @@ class MCPServerConnection:
         connect_timeout = self._get_connect_timeout()
         sse_read_timeout = self._get_sse_read_timeout()
 
-        # streamable_http_client returns (read, write, get_session_id)
-        read_stream, write_stream, _ = await self.exit_stack.enter_async_context(
-            streamable_http_client(
-                url=self.url,
+        parameters = inspect.signature(streamable_http_client).parameters
+        if "http_client" in parameters and "headers" not in parameters:
+            # MCP 2.x moved headers/auth/timeouts onto a caller-owned httpx2
+            # client and changed the transport result from three values to two.
+            if create_mcp_http_client is None:
+                raise RuntimeError(
+                    "MCP streamable HTTP requires create_mcp_http_client"
+                )
+            import httpx2
+
+            transport_auth = self.auth
+            if isinstance(self.auth, DynamicBearerAuth):
+                dynamic_auth = self.auth
+
+                class Httpx2DynamicBearerAuth(httpx2.Auth):
+                    """MCP 2.x auth hook retaining per-request token refresh."""
+
+                    async def async_auth_flow(self, request):
+                        if "authorization" not in request.headers:
+                            token = resolve_auth_token(
+                                dynamic_auth.explicit_token,
+                                dynamic_auth.auth_file,
+                            )
+                            if token and should_attach_auth_header(str(request.url)):
+                                request.headers["Authorization"] = f"Bearer {token}"
+                        yield request
+
+                transport_auth = Httpx2DynamicBearerAuth()
+
+            http_client_context = create_mcp_http_client(
                 headers=self.headers if self.headers else None,
-                timeout=connect_timeout,
-                sse_read_timeout=sse_read_timeout,
-                auth=self.auth,
+                timeout=httpx2.Timeout(
+                    connect=connect_timeout,
+                    read=sse_read_timeout,
+                    write=connect_timeout,
+                    pool=connect_timeout,
+                ),
+                auth=transport_auth,
             )
-        )
+            http_client = await self.exit_stack.enter_async_context(
+                http_client_context
+            )
+            streams = await self.exit_stack.enter_async_context(
+                streamable_http_client(url=self.url, http_client=http_client)
+            )
+        else:
+            # MCP 1.x accepts transport configuration directly and returns
+            # (read, write, get_session_id).
+            streams = await self.exit_stack.enter_async_context(
+                streamable_http_client(
+                    url=self.url,
+                    headers=self.headers if self.headers else None,
+                    timeout=connect_timeout,
+                    sse_read_timeout=sse_read_timeout,
+                    auth=self.auth,
+                )
+            )
+        read_stream, write_stream = streams[:2]
         return read_stream, write_stream
 
     async def disconnect(self):
