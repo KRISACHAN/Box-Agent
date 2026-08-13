@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "box_agent_version": "0.8.85",
-  "generated_at": "2026-08-13T07:05:56Z",
+  "generated_at": "2026-08-13T07:38:17Z",
   "skills": [
     {
       "name": "artifacts-builder",
@@ -14,10 +14,6 @@
     {
       "name": "data-dashboard",
       "path": "data-dashboard/SKILL.md"
-    },
-    {
-      "name": "dev-code-init",
-      "path": "dev-code-init/SKILL.md"
     },
     {
       "name": "docx",
@@ -86,6 +82,10 @@
     {
       "name": "dev-branch-isolation",
       "path": "superpowers/dev-branch-isolation/SKILL.md"
+    },
+    {
+      "name": "dev-code-init",
+      "path": "superpowers/dev-code-init/SKILL.md"
     },
     {
       "name": "dev-code-review",

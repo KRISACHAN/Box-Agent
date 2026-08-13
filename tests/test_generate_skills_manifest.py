@@ -27,7 +27,7 @@ def test_recommended_skills_stay_out_of_builtin_manifest(source_dir):
 
 def test_dev_code_init_is_builtin_and_matches_slash_init():
     entries = dict(_collect_skills())
-    assert entries["dev-code-init"] == "dev-code-init/SKILL.md"
+    assert entries["dev-code-init"] == "superpowers/dev-code-init/SKILL.md"
 
     loader = SkillLoader(SKILLS_DIR)
     loader.discover_skills()
