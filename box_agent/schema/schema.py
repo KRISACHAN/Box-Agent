@@ -27,6 +27,10 @@ class StreamEvent(BaseModel):
     finish_reason: str | None = None
     usage: "TokenUsage | None" = None
     tool_calls: "list[ToolCall] | None" = None
+    # Response object id from the provider payload (for example
+    # ``chatcmpl-...`` for OpenAI-compatible APIs or ``msg_...`` for Anthropic).
+    provider_response_id: str | None = None
+    # HTTP/gateway request correlation id from response metadata/headers.
     provider_request_id: str | None = None
     # Tool calls dropped because their streamed arguments were truncated
     # mid-flight (relay/provider hit max_tokens). Each entry: {"name", "arguments_len"}.
@@ -88,6 +92,7 @@ class LLMResponse(BaseModel):
     tool_calls: list[ToolCall] | None = None
     finish_reason: str
     usage: TokenUsage | None = None  # Token usage from API response
+    provider_response_id: str | None = None
     # See StreamEvent.truncated_tool_calls — propagated for diagnostics on
     # finish_reason in ("length", "max_tokens").
     truncated_tool_calls: list[dict[str, Any]] | None = None

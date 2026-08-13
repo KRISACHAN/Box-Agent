@@ -143,6 +143,7 @@ async def test_llm_wrapper_records_request_response_tokens_and_ttfb(tmp_path):
                 type="finish",
                 finish_reason="stop",
                 usage=TokenUsage(prompt_tokens=7, completion_tokens=2, total_tokens=9),
+                provider_response_id="chatcmpl-provider-response-1",
                 provider_request_id="provider-request-1",
             )
 
@@ -177,6 +178,8 @@ async def test_llm_wrapper_records_request_response_tokens_and_ttfb(tmp_path):
     assert response["event"] == "llm.response"
     assert response["llm_call_id"] == request["llm_call_id"]
     assert response["data"]["content"] == "hello"
+    assert response["data"]["provider_response_id"] == "chatcmpl-provider-response-1"
+    assert response["data"]["provider_request_id"] == "provider-request-1"
     assert response["data"]["usage"] == {
         "prompt_tokens": 7,
         "completion_tokens": 2,

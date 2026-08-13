@@ -308,6 +308,7 @@ class LLMClient:
                 "tool_calls": response.tool_calls,
                 "finish_reason": response.finish_reason,
                 "usage": response.usage,
+                "provider_response_id": response.provider_response_id,
                 "timing": timing,
             },
         )
@@ -396,6 +397,7 @@ class LLMClient:
                             "tool_calls": event.tool_calls,
                             "finish_reason": event.finish_reason,
                             "raw_finish_reason": event.raw_finish_reason,
+                            "provider_response_id": event.provider_response_id,
                             "provider_request_id": event.provider_request_id,
                             "usage": event.usage,
                             "timing": _trace_timing(

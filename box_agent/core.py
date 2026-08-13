@@ -3474,6 +3474,7 @@ async def run_agent_loop(
                 tool_calls=finish_event.tool_calls,
                 finish_reason=finish_event.finish_reason or "stop",
                 usage=finish_event.usage,
+                provider_response_id=finish_event.provider_response_id,
                 truncated_tool_calls=finish_event.truncated_tool_calls,
                 raw_finish_reason=finish_event.raw_finish_reason,
                 stream_dropped_mid_tool=finish_event.stream_dropped_mid_tool,

@@ -505,6 +505,7 @@ class OpenAIClient(LLMClientBase):
             tool_calls=tool_calls if tool_calls else None,
             finish_reason="stop",  # OpenAI doesn't provide finish_reason in the message
             usage=usage,
+            provider_response_id=str(response.id) if getattr(response, "id", None) else None,
         )
 
     async def generate(
@@ -617,6 +618,7 @@ class OpenAIClient(LLMClientBase):
         tool_acc: dict[int, dict[str, Any]] = {}
         oversized_info: list[dict[str, Any]] = []
         provider_request_id: str | None = None
+        provider_response_id: str | None = None
 
         async def _open_stream() -> Any:
             nonlocal provider_request_id
@@ -651,6 +653,7 @@ class OpenAIClient(LLMClientBase):
             finish_reason = None
             tool_acc = {}
             oversized_info = []
+            provider_response_id = None
             last_provider_activity_at: float | None = None
 
             try:
@@ -674,6 +677,8 @@ class OpenAIClient(LLMClientBase):
 
             try:
                 async for chunk in response_stream:
+                    if provider_response_id is None and getattr(chunk, "id", None):
+                        provider_response_id = str(chunk.id)
                     now = monotonic()
                     if (
                         last_provider_activity_at is None
@@ -820,6 +825,7 @@ class OpenAIClient(LLMClientBase):
                 type="finish",
                 finish_reason="tool_argument_limit",
                 usage=usage,
+                provider_response_id=provider_response_id,
                 provider_request_id=provider_request_id,
                 oversized_tool_calls=oversized_info,
                 raw_finish_reason=None,
@@ -917,6 +923,7 @@ class OpenAIClient(LLMClientBase):
             finish_reason=finish_reason,
             usage=usage,
             tool_calls=tool_calls if tool_calls else None,
+            provider_response_id=provider_response_id,
             provider_request_id=provider_request_id,
             truncated_tool_calls=truncated_info or None,
             raw_finish_reason=raw_finish_reason,

@@ -329,6 +329,7 @@ class AnthropicClient(LLMClientBase):
             tool_calls=tool_calls if tool_calls else None,
             finish_reason=response.stop_reason or "stop",
             usage=usage,
+            provider_response_id=str(response.id) if getattr(response, "id", None) else None,
         )
 
     async def generate(
@@ -451,6 +452,7 @@ class AnthropicClient(LLMClientBase):
         current_activity_bucket = -1
         oversized_info: list[dict[str, Any]] = []
         provider_request_id: str | None = None
+        provider_response_id: str | None = None
 
         import asyncio as _asyncio
 
@@ -472,6 +474,7 @@ class AnthropicClient(LLMClientBase):
             current_tool_json = ""
             current_activity_bucket = -1
             oversized_info = []
+            provider_response_id = None
             last_provider_activity_at: float | None = None
 
             try:
@@ -516,6 +519,8 @@ class AnthropicClient(LLMClientBase):
                         # ── Message start (input token usage) ──
                         if event.type == "message_start":
                             msg = event.message
+                            if provider_response_id is None and getattr(msg, "id", None):
+                                provider_response_id = str(msg.id)
                             if hasattr(msg, "usage") and msg.usage:
                                 input_tokens = msg.usage.input_tokens or 0
                                 cache_read_tokens = getattr(msg.usage, "cache_read_input_tokens", 0) or 0
@@ -665,6 +670,7 @@ class AnthropicClient(LLMClientBase):
             finish_reason=("tool_argument_limit" if oversized_info else finish_reason),
             usage=usage,
             tool_calls=None if oversized_info else (tool_calls if tool_calls else None),
+            provider_response_id=provider_response_id,
             provider_request_id=provider_request_id,
             oversized_tool_calls=oversized_info or None,
             raw_finish_reason=None if oversized_info else finish_reason,
