@@ -308,6 +308,7 @@ function main() {
   const opts = parseArgs(process.argv.slice(2));
   const deckPath = resolveArtifactPath(opts.deck);
   const result = validateAndNormalizeDeck(readJson(opts.deck));
+  const structuralIssues = [...result.issues];
   const outlineBinding = validateOutlineBinding(deckPath, result.normalized);
   result.issues.push(...outlineBinding.issues);
   const designContract = designContractResolution(result.normalized);
@@ -316,6 +317,7 @@ function main() {
     deck: deckPath,
     slideCount: result.normalized ? result.normalized.slides.length : 0,
     issues: result.issues,
+    structuralIssues,
     warnings: result.warnings,
     outlineBinding,
     designContract,

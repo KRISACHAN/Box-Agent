@@ -100,6 +100,74 @@ function runStage(stage, scriptName, args, reportPath = null) {
   );
 }
 
+function runDeckSpecStage(deckPath, reportPath) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "validate_deck_spec.js"),
+      deckPath,
+      "--report",
+      reportPath,
+    ],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    }
+  );
+  let report = null;
+  try {
+    report = readJson(reportPath);
+  } catch (_error) {
+    report = null;
+  }
+  if (!result.error && result.status === 0 && report && report.ok === true) {
+    console.log(
+      `FINALIZE_PASS stage=deck_spec warnings=${Array.isArray(report.warnings) ? report.warnings.length : 0}`
+    );
+    return report;
+  }
+
+  const structuralIssues = report && Array.isArray(report.structuralIssues)
+    ? report.structuralIssues
+    : null;
+  const outlineIssues = report
+    && report.outlineBinding
+    && Array.isArray(report.outlineBinding.issues)
+      ? report.outlineBinding.issues
+      : [];
+  const semanticOnly = Boolean(
+    !result.error
+    && result.status === 1
+    && report
+    && structuralIssues
+    && structuralIssues.length === 0
+    && outlineIssues.length > 0
+    && (!report.designContract || report.designContract.ok !== false)
+  );
+  if (!semanticOnly) fail("deck_spec", result, reportPath);
+
+  const normalized = {
+    ...report,
+    ok: true,
+    advisory: true,
+    degraded_reason: "outline_binding",
+    issues: [],
+    warnings: [
+      ...new Set([
+        ...(Array.isArray(report.warnings) ? report.warnings : []),
+        ...outlineIssues,
+      ]),
+    ],
+  };
+  writeJson(reportPath, normalized);
+  console.log(
+    `FINALIZE_ADVISORY stage=deck_spec warnings=${normalized.warnings.length}`
+  );
+  return normalized;
+}
+
 function runAdvisoryStage(stage, scriptName, args, reportPath) {
   let previousMtime = null;
   try {
@@ -136,7 +204,7 @@ function runAdvisoryStage(stage, scriptName, args, reportPath) {
     ...(summary ? summary.issues : []),
   ];
   if ((result.error || result.status !== 0 || !summary) && diagnostic) {
-    warnings.push(`Truth advisory could not complete cleanly: ${diagnostic}`);
+    warnings.push(`${stage} advisory could not complete cleanly: ${diagnostic}`);
   }
   const normalized = {
     ...(report && typeof report === "object" && !Array.isArray(report) ? report : {}),
@@ -147,6 +215,7 @@ function runAdvisoryStage(stage, scriptName, args, reportPath) {
   };
   writeJson(reportPath, normalized);
   console.log(`FINALIZE_ADVISORY stage=${stage} warnings=${normalized.warnings.length}`);
+  return normalized;
 }
 
 function main() {
@@ -167,12 +236,7 @@ function main() {
   };
   fs.mkdirSync(reportDir, { recursive: true });
 
-  runStage(
-    "deck_spec",
-    "validate_deck_spec.js",
-    [deckPath, "--report", reports.spec],
-    reports.spec
-  );
+  const deckSpecReport = runDeckSpecStage(deckPath, reports.spec);
   let manifestMode = "auto";
   try {
     const manifest = readJson(manifestPath);
@@ -187,7 +251,12 @@ function main() {
     imageArgs.push("--mode", "creative_image_mode", "--min-generated", "1");
   }
   imageArgs.push("--deck", deckPath, "--report", reports.image);
-  runStage("image_manifest", "validate_image_manifest.js", imageArgs, reports.image);
+  const imageReport = runAdvisoryStage(
+    "image_manifest",
+    "validate_image_manifest.js",
+    imageArgs,
+    reports.image
+  );
 
   runStage("render", "render_deck_html.js", [deckPath, "--out", outputPath]);
   if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
@@ -222,6 +291,7 @@ function main() {
     .map(reportSummary)
     .filter(Boolean)
     .reduce((total, report) => total + report.warnings.length, 0);
+  const degraded = deckSpecReport.advisory === true || imageReport.warnings.length > 0;
   console.log(
     JSON.stringify({
       ok: true,
@@ -229,6 +299,8 @@ function main() {
       html: outputPath,
       qa_reports: Object.values(reports),
       warnings: warningCount,
+      degraded,
+      delivery_status: degraded ? "degraded" : "complete",
     })
   );
 }

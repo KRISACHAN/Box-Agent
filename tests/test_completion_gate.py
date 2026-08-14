@@ -30,6 +30,8 @@ from box_agent.loop_guards import (
 from box_agent.workflows.presentation_checkpoint import (
     CONTROLLED_PRESENTATION_CHECKPOINT_MARKER,
     _content_patch_input,
+    _deck_spec_failure_is_degradable,
+    _image_manifest_failure_is_degradable,
     _outline_repair_input,
     completion_gate_progress_text,
 )
@@ -1744,6 +1746,37 @@ def test_outline_repair_input_normalizes_markdown_link_delimiters(tmp_path):
     ]
 
 
+def test_legacy_semantic_and_image_reports_can_resume_through_finalizer(
+    tmp_path: Path,
+) -> None:
+    spec_report = tmp_path / "deck_spec.json"
+    outline_issue = "slides.slide-01.props: must preserve outline message"
+    spec_report.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "issues": [outline_issue],
+                "outlineBinding": {"ok": False, "issues": [outline_issue]},
+                "designContract": {"ok": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    image_report = tmp_path / "image_manifest.json"
+    image_report.write_text(
+        json.dumps({"ok": False, "issues": ["required image is unresolved"]}),
+        encoding="utf-8",
+    )
+
+    assert _deck_spec_failure_is_degradable(spec_report) is True
+    assert _image_manifest_failure_is_degradable(image_report) is True
+
+    payload = json.loads(spec_report.read_text(encoding="utf-8"))
+    payload["issues"].append("slides.slide-01.layout_id: unknown layout")
+    spec_report.write_text(json.dumps(payload), encoding="utf-8")
+    assert _deck_spec_failure_is_degradable(spec_report) is False
+
+
 def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     gate = CompletionGate(workflow_checkpoint_kind="controlled_presentation")
 
@@ -1850,7 +1883,8 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     generated = output / "assets" / "generated"
     generated.mkdir(parents=True)
     (generated / "manifest.json").write_text(
-        '{"image_plan":[{"decision":"generate",'
+        '{"image_plan":[{"slide_id":"slide-01","prop_path":"background",'
+        '"decision":"generate",'
         '"output_path":"assets/generated/hero.png"}]}',
         encoding="utf-8",
     )
@@ -1877,17 +1911,19 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert "edit/read manifest.json manually" in checkpoint
 
     (generated / "manifest.json").write_text(
-        '{"image_plan":[{"decision":"generate","status":"generated",'
+        '{"image_plan":[{"slide_id":"slide-01","prop_path":"background",'
+        '"decision":"generate","status":"generated",'
         '"output_path":"assets/generated/hero.png"}]}',
         encoding="utf-8",
     )
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}media_patch" in checkpoint
-    assert "Never use an ad-hoc script to rewrite deck.json" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}apply_patch" in checkpoint
+    assert "manifest.json as authoritative" in checkpoint
+    assert "Do not rewrite the patch or deck first" in checkpoint
 
     patch_path.write_text(
-        '{"slides":{"slide-01":{"props":{"hero":'
+        '{"slides":{"slide-01":{"props":{"media":'
         '"assets/generated/hero.png"}}}}',
         encoding="utf-8",
     )
@@ -1898,8 +1934,9 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert str(FINALIZER_SCRIPT.parent / "apply_deck_patch.js") in checkpoint
 
     deck_path.write_text(
-        '{"slides":[{"id":"slide-04","source_outline_page":1,'
-        '"props":{"title":"NOON","hero":"assets/generated/hero.png"}}]}',
+        '{"slides":[{"id":"slide-01","source_outline_page":1,'
+        '"props":{"title":"NOON"},"background":'
+        '{"src":"assets/generated/hero.png","origin":"generated"}}]}',
         encoding="utf-8",
     )
     deck_mtime = max(deck_path.stat().st_mtime_ns, patch_path.stat().st_mtime_ns + 1)

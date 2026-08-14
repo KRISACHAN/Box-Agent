@@ -170,7 +170,13 @@ async function readEditorState(page, viewport) {
   return page.evaluate(({ width, height }) => {
     function rgb(value) {
       const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value || "");
-      return match ? match.slice(1, 4).map(Number) : null;
+      if (match) return match.slice(1, 4).map(Number);
+      const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(value || "").trim());
+      if (!hex) return null;
+      const normalized = hex[1].length === 3
+        ? hex[1].split("").map(channel => channel + channel).join("")
+        : hex[1];
+      return [0, 2, 4].map(index => parseInt(normalized.slice(index, index + 2), 16));
     }
     function luminance(color) {
       if (!color) return null;
@@ -263,13 +269,28 @@ async function readEditorState(page, viewport) {
     const toolbarRect = toolbar && toolbar.getBoundingClientRect();
     const statementStyle = statement && getComputedStyle(statement);
     const rootStyle = getComputedStyle(document.documentElement);
+    const coreColors = {
+      background: rootStyle.getPropertyValue("--deck-bg").trim(),
+      text: rootStyle.getPropertyValue("--deck-text").trim(),
+      primary: rootStyle.getPropertyValue("--deck-primary").trim(),
+      inverse: rootStyle.getPropertyValue("--deck-inverse").trim(),
+    };
+    const normalizedCoreColors = Object.values(coreColors)
+      .map(value => rgb(value))
+      .filter(Boolean)
+      .map(value => value.join(","));
     return {
       viewport: { width, height },
       bodyOverflowX: getComputedStyle(document.body).overflowX,
       thumbnailsVisible: document.body.classList.contains("deck-thumbnails-visible"),
       editorScale: Number(rootStyle.getPropertyValue("--deck-editor-scale")) || 1,
-      primary: rootStyle.getPropertyValue("--deck-primary").trim(),
-      inverse: rootStyle.getPropertyValue("--deck-inverse").trim(),
+      primary: coreColors.primary,
+      inverse: coreColors.inverse,
+      palette: {
+        ...coreColors,
+        distinctCoreColors: new Set(normalizedCoreColors).size,
+        textOnBackgroundContrast: contrast(coreColors.text, coreColors.background),
+      },
       firstSlide: firstRect ? {
         left: firstRect.left,
         right: firstRect.right,
@@ -429,6 +450,14 @@ async function main() {
     });
     if (editor.statement && editor.statement.contrast < 4.5) {
       issues.push(`Statement contrast is too low: ${editor.statement.contrast.toFixed(2)}`);
+    }
+    if (editor.palette && editor.palette.distinctCoreColors === 1) {
+      issues.push("Core deck colors collapse to one value");
+    }
+    if (editor.palette && editor.palette.textOnBackgroundContrast < 4.5) {
+      issues.push(
+        `Deck text/background contrast is too low: ${editor.palette.textOnBackgroundContrast.toFixed(2)}`
+      );
     }
     if (editor.diagram && (
       editor.diagram.state !== "ready" ||

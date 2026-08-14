@@ -64,11 +64,16 @@ Normal generation finalizes with one command:
 ${BOX_AGENT_NODE:-node} scripts/finalize_controlled_deck.js deck.json --out index.html
 ```
 
-The helper validates deck spec and image media as blocking prerequisites,
-renders `index.html`, runs HTML self-check and the 1440x900 runtime probe, then
-records source/truth findings as a non-blocking advisory. It stops at the first
-actionable structural, media, HTML, or runtime failure, but source, URL, and
-private-fact findings never prevent HTML generation or trigger a repair loop.
+The patch compiler first reconciles every existing manifest asset to its exact
+slide id and `prop_path`. The helper validates the core deck schema as a hard prerequisite,
+records image-manifest findings as a delivery advisory, renders `index.html`,
+runs HTML self-check and the 1440x900 runtime probe, then records source/truth
+findings as another non-blocking advisory. It stops at the first actionable
+structural, HTML, or runtime failure. Image, source, URL, and private-fact
+findings never prevent a structurally valid HTML artifact from being written;
+unmet required images make that artifact degraded rather than complete. Exact
+outline title/message binding drift is also preserved as degraded semantic QA
+when the core deck schema still passes.
 Do not split a successful finalization into separate model-directed commands;
 after a focused blocking repair, rerun the finalizer so every downstream report
 is refreshed together.
@@ -142,9 +147,10 @@ they never block the HTML or require a repair pass.
 4. Fill only `layouts[].fields`; start from `deck_skeleton` or
    `layouts[].editor.defaultProps`. There is no `.props` or `.required_fields`
    contract path.
-5. Validate blocking copy budgets, array capacities, media objects, and paths.
-6. Render after blocking structural/media validation passes; run source/truth
-   review afterward as an advisory.
+5. Validate blocking copy budgets, array capacities, and media object shapes.
+6. Reconcile existing manifest assets deterministically, record unresolved media
+   paths as a delivery advisory, render after structural validation passes, and
+   run source/truth review afterward as another advisory.
 
 High-frequency professional visuals have dedicated editable contracts. Use
 `factory-process-line-v1` for production stations and quality metrics,

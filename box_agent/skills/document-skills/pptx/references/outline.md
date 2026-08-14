@@ -123,8 +123,8 @@ research**. Pick the branch that fits:
    researched/supplied content into a slide plan; it does not itself perform
    deep research, fact-checking, or source-credibility judgement.
 
-Reserve a hard `BLOCKED` for the `creative_image_mode` image requirement only. A
-normal deck that is merely under-specified is handled by a structural-choice
+Reserve `BLOCKED` for the `creative_image_mode` image-complete requirement only;
+still deliver structurally valid degraded HTML. A normal deck that is merely under-specified is handled by a structural-choice
 question, bounded research, omission, or an explicit placeholder — never by a
 cold "I can't do this".
 

@@ -144,6 +144,47 @@ def _advisory_report_warning_count(report_path: Path) -> int:
     return max(1, count)
 
 
+def _deck_spec_failure_is_degradable(report_path: Path) -> bool:
+    """Return whether a failed spec report contains only outline binding drift."""
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    structural_issues = payload.get("structuralIssues")
+    outline_binding = payload.get("outlineBinding")
+    design_contract = payload.get("designContract")
+    outline_issues = (
+        outline_binding.get("issues")
+        if isinstance(outline_binding, dict)
+        else None
+    )
+    if not isinstance(outline_issues, list) or not outline_issues:
+        return False
+    if isinstance(design_contract, dict) and design_contract.get("ok") is False:
+        return False
+    if isinstance(structural_issues, list):
+        return not structural_issues
+    # Backward compatibility for reports written before structuralIssues was
+    # added: degrade only when every top-level issue is also an outline issue.
+    issues = payload.get("issues")
+    return bool(
+        isinstance(issues, list)
+        and issues
+        and all(issue in outline_issues for issue in issues)
+    )
+
+
+def _image_manifest_failure_is_degradable(report_path: Path) -> bool:
+    """Return whether a current image QA failure can be normalized by finalizer."""
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("ok") is False
+
+
 def _research_fallback_available(research_files: tuple[Path, ...]) -> bool:
     """Return whether an earlier policy run explicitly allowed fallback."""
     for path in research_files:
@@ -439,17 +480,77 @@ def _json_document_error(path: Path) -> str | None:
     return None
 
 
-def _missing_artifact_references(
-    artifact_path: Path,
+def _nested_json_value(payload: object, prop_path: str) -> object:
+    current = payload
+    for part in (item for item in prop_path.split(".") if item):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _json_contains_exact_value(payload: object, expected: str) -> bool:
+    if payload == expected:
+        return True
+    if isinstance(payload, dict):
+        return any(
+            _json_contains_exact_value(value, expected)
+            for value in payload.values()
+        )
+    if isinstance(payload, list):
+        return any(_json_contains_exact_value(value, expected) for value in payload)
+    return False
+
+
+def _missing_manifest_media_bindings(
+    deck_path: Path,
+    manifest_path: Path,
     references: tuple[str, ...] | list[str],
 ) -> list[str]:
+    """Return ready media paths not bound at their declared slide/prop path."""
     if not references:
         return []
     try:
-        text = artifact_path.read_text(encoding="utf-8")
-    except OSError:
+        deck = json.loads(deck_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return list(references)
-    return [reference for reference in references if reference not in text]
+    slides = deck.get("slides") if isinstance(deck, dict) else None
+    image_plan = manifest.get("image_plan") if isinstance(manifest, dict) else None
+    if not isinstance(slides, list) or not isinstance(image_plan, list):
+        return list(references)
+    slides_by_id = {
+        slide.get("id"): slide
+        for slide in slides
+        if isinstance(slide, dict) and isinstance(slide.get("id"), str)
+    }
+    entries_by_path = {
+        entry.get("output_path"): entry
+        for entry in image_plan
+        if isinstance(entry, dict)
+        and isinstance(entry.get("output_path"), str)
+    }
+    missing: list[str] = []
+    for reference in references:
+        entry = entries_by_path.get(reference)
+        slide = slides_by_id.get(entry.get("slide_id")) if entry else None
+        prop_path = entry.get("prop_path") if entry else None
+        if not isinstance(slide, dict) or not isinstance(prop_path, str):
+            if not _json_contains_exact_value(deck, reference):
+                missing.append(reference)
+            continue
+        normalized_prop_path = prop_path.removeprefix("props.")
+        if normalized_prop_path in {"background", "slide.background"}:
+            value = slide.get("background")
+        else:
+            value = _nested_json_value(
+                slide.get("props"),
+                normalized_prop_path,
+            )
+        src = value.get("src") if isinstance(value, dict) else value
+        if src != reference:
+            missing.append(reference)
+    return missing
 
 
 def _json_field_shape(value: object) -> object:
@@ -1161,6 +1262,24 @@ def build_checkpoint_text(
         )
         for name in _CONTROLLED_PRESENTATION_REPORTS
     }
+    deck_spec_degradable = (
+        report_states["deck_spec.json"] == "failed"
+        and _deck_spec_failure_is_degradable(report_dir / "deck_spec.json")
+    )
+    if deck_spec_degradable:
+        # The deterministic renderer validates the same core deck schema. Exact
+        # outline-title/content drift is important delivery QA, but it does not
+        # make a structurally valid deck unrenderable. Let the finalizer preserve
+        # it as a degraded warning instead of forcing another model repair loop.
+        report_states["deck_spec.json"] = "degradable"
+    image_manifest_degradable = (
+        report_states["image_manifest.json"] == "failed"
+        and _image_manifest_failure_is_degradable(
+            report_dir / "image_manifest.json"
+        )
+    )
+    if image_manifest_degradable:
+        report_states["image_manifest.json"] = "degradable"
     truth_report_advisory = report_states["truth_check.json"] == "failed"
     if truth_report_advisory:
         # Source/truth QA is advisory. Missing, invalid, and stale reports still
@@ -1174,7 +1293,14 @@ def build_checkpoint_text(
     qa_warnings = sum(
         (
             _advisory_report_warning_count(report_dir / name)
-            if name == "truth_check.json" and truth_report_advisory
+            if (
+                (name == "truth_check.json" and truth_report_advisory)
+                or (name == "deck_spec.json" and deck_spec_degradable)
+                or (
+                    name == "image_manifest.json"
+                    and image_manifest_degradable
+                )
+            )
             else _report_warning_count(report_dir / name)
         )
         for name in _CONTROLLED_PRESENTATION_REPORTS
@@ -1278,6 +1404,18 @@ def build_checkpoint_text(
             "Validate the existing outline.json with `"
             f"{validate_outline_command}` and repair only reported outline issues. Do not "
             "recreate or rewrite the existing deck or HTML."
+        )
+    elif (
+        html_path is not None
+        and html_current
+        and (deck_spec_degradable or image_manifest_degradable)
+    ):
+        stage = "finalize"
+        next_action = (
+            f"Keep the existing HTML and run exactly `{finalize_command}` once. "
+            "The prior deck-spec or image report contains only degradable findings; "
+            "the finalizer will preserve them as warnings, refresh downstream QA, "
+            "and keep a usable HTML artifact instead of starting another repair loop."
         )
     elif html_path is not None and html_current:
         missing_reports = [
@@ -1434,14 +1572,10 @@ def build_checkpoint_text(
         patch_exists = patch_path.is_file() and patch_path.stat().st_size > 0
         patch_json_error = _json_document_error(patch_path) if patch_exists else None
         patch_is_valid_json = patch_exists and patch_json_error is None
-        missing_deck_media = _missing_artifact_references(
+        missing_deck_media = _missing_manifest_media_bindings(
             deck_path,
+            manifest_path,
             generated_paths,
-        )
-        missing_patch_media = (
-            _missing_artifact_references(patch_path, missing_deck_media)
-            if patch_exists
-            else missing_deck_media
         )
         patch_needs_apply = False
         if patch_is_valid_json:
@@ -1552,19 +1686,16 @@ def build_checkpoint_text(
                 "existing manifest image_plan array schema; "
                 "never replace manifest.json or rewrite deck.json directly."
             )
-        elif missing_deck_media and missing_patch_media:
-            stage = "media_patch"
-            next_action = (
-                "Add the ready generated media paths missing from deck.patch.json "
-                f"({', '.join(missing_patch_media)}) to their declared props or "
-                f"backgrounds, then apply that patch with `{apply_patch_command}`. Never use "
-                "an ad-hoc script to rewrite deck.json."
-            )
         elif missing_deck_media:
             stage = "apply_patch"
             next_action = (
-                "The existing deck.patch.json already references the ready generated "
-                f"media. Apply it now with `{apply_patch_command}`."
+                "The compiled deck is missing ready media at one or more exact "
+                "manifest slide/prop bindings. Run `"
+                f"{apply_patch_command}` now. The deterministic compiler treats "
+                "manifest.json as authoritative and binds each existing asset to "
+                "its declared props path or top-level background even when the "
+                "model patch omitted or misplaced it. Do not rewrite the patch or "
+                "deck first."
             )
         elif patch_needs_apply:
             stage = "apply_patch"
@@ -1627,8 +1758,9 @@ def build_checkpoint_text(
             next_action = (
                 f"Run exactly one bash tool call: `{finalize_command}`. "
                 "The deterministic helper refreshes stale/missing checks in order, "
-                "stops at the first actionable failure, compiles HTML only after "
-                "hard spec/media checks while retaining advisory truth warnings, and "
+                "stops at the first actionable failure, compiles HTML after the "
+                "hard core deck-schema check while retaining advisory outline-binding, "
+                "image, and truth warnings, and "
                 "then runs self-check plus runtime probe. "
                 "Do not split it into individual validators or add another command."
             )
@@ -1637,7 +1769,7 @@ def build_checkpoint_text(
             next_action = (
                 f"Run exactly one bash tool call: `{finalize_command}`. "
                 "It refreshes the missing or stale advisory truth report, then "
-                "continues through the hard media/render/runtime checks. Do not run "
+                "continues through image advisory, render, and hard runtime checks. Do not run "
                 "a validator separately."
             )
         elif report_states["image_manifest.json"] == "failed":
@@ -1654,7 +1786,7 @@ def build_checkpoint_text(
             next_action = (
                 f"Run exactly one bash tool call: `{finalize_command}`. "
                 "This is the only authorized finalization command: it validates "
-                "hard spec and media requirements, records advisory truth warnings, "
+                "hard deck structure, records advisory image/truth warnings, "
                 "renders editable HTML, then runs self-check and the 1440x900 runtime "
                 "probe. It stops at "
                 "the first actionable failure and suppresses large successful "

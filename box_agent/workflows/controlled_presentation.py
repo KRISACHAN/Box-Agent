@@ -125,8 +125,9 @@ _FINALIZE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_FINALIZE_REQUIRED: run the single deterministic "
     "finalizer now with bash using the absolute finalize_controlled_deck.js path "
     "from the latest checkpoint, followed by deck.json --out "
-    "index.html. It enforces hard spec/media checks, records advisory truth warnings, "
-    "compiles HTML, runs self-check, and probes the editor in dependency order. Do "
+    "index.html. It enforces the hard deck-spec check, records advisory image/truth "
+    "warnings, compiles HTML, runs self-check, and probes the editor in dependency "
+    "order. Do "
     "not split that chain into separate validator/render commands or add another "
     "shell command."
 )

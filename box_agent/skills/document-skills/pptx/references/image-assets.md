@@ -26,7 +26,7 @@ Rules:
 1. The manifest must include `"mode": "creative_image_mode"`.
 2. At least one slide, normally the cover, must use `decision: "generate"` and must finish with a real generated file under `assets/generated/`.
 3. A generated image counts only when `generate_image` succeeds, `output_path` exists, and the final HTML/PPT references that asset.
-4. If no generated image succeeds, the deck status is `blocked`; do not mark the PPT as completed and do not replace the required generated asset with `draw_in_html`, `skip`, or a decorative CSS-only visual.
+4. If no generated image succeeds, the image requirement is `blocked`; do not mark the PPT as completed and do not replace the required generated asset with `draw_in_html`, `skip`, or a decorative CSS-only visual. If the deck structure remains valid, still render and deliver a degraded editable `index.html` with the image failure preserved as an advisory warning.
 5. Preserve the scaffolded `decision: "generate"` and record failures with `status: "blocked"`, an updated `decision_reason`, `tool: "generate_image"`, and the attempted prompt/slide role so the user can retry after configuration or service recovery.
 6. Full-slide/background generated images must still follow the `layout_contract` rules below. Fixed-frame hero images may satisfy the mandatory generation requirement without a layout contract if they do not sit behind text.
 
@@ -124,4 +124,4 @@ Rules:
 1. Reference files with artifact-root-relative paths inside `index.html`/`deck.json`.
 1. Always call `generate_image` with `watermark: false` for PPT assets. The deck supplies its own branding/watermark and the `avoid` field already steers the model away from in-image watermarks, so the tool's default "AI 生成" stamp must be suppressed.
 1. If generation tooling is unavailable, mark required image-plan entries as `blocked`; on a non-creative controlled deck, an optional slot may use `skip` only when its layout contract permits it. `draw_in_html` remains a legacy-route choice, not a controlled fallback.
-1. In `creative_image_mode`, the previous fallback rule is stricter: if the required generated image is unavailable, the overall deck is blocked even if some slides can be drawn in HTML.
+1. In `creative_image_mode`, the previous fallback rule is stricter: if the required generated image is unavailable, the image-complete delivery is blocked. Preserve and deliver any structurally valid HTML as a degraded draft; do not claim that it satisfies the requested image-rich result.

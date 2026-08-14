@@ -150,6 +150,117 @@ function generatedMedia(value, fallbackAlt, changes, fieldPath) {
   return media;
 }
 
+function setNestedProp(target, propPath, value) {
+  const parts = String(propPath || "")
+    .split(".")
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (parts[0] === "props") parts.shift();
+  if (!parts.length) return false;
+  let current = target;
+  for (const part of parts.slice(0, -1)) {
+    if (!isPlainObject(current[part])) current[part] = {};
+    current = current[part];
+  }
+  current[parts[parts.length - 1]] = value;
+  return true;
+}
+
+function reconcileReadyManifestMedia(deck, deckPath, changes) {
+  const artifactRoot = path.dirname(deckPath);
+  const manifestPath = path.join(
+    artifactRoot,
+    "assets",
+    "generated",
+    "manifest.json"
+  );
+  if (!fs.existsSync(manifestPath)) return;
+
+  let manifest;
+  try {
+    manifest = readJson(manifestPath);
+  } catch (_error) {
+    // The final image-manifest validator owns malformed-manifest diagnostics.
+    return;
+  }
+  const imagePlan = isPlainObject(manifest) ? manifest.image_plan : null;
+  if (!Array.isArray(imagePlan)) return;
+
+  const slidesById = new Map(deck.slides.map(slide => [slide.id, slide]));
+  for (const entry of imagePlan) {
+    if (!isPlainObject(entry)) continue;
+    if (!["generate", "use_existing"].includes(entry.decision)) continue;
+    const status = typeof entry.status === "string"
+      ? entry.status.trim().toLowerCase()
+      : "";
+    if (["blocked", "failed", "error", "skipped"].includes(status)) continue;
+    const outputPath = typeof entry.output_path === "string"
+      ? entry.output_path.trim()
+      : "";
+    if (!outputPath) continue;
+    const absoluteAssetPath = path.resolve(artifactRoot, outputPath);
+    const relativeAssetPath = path.relative(artifactRoot, absoluteAssetPath);
+    if (
+      !relativeAssetPath
+      || relativeAssetPath.startsWith(`..${path.sep}`)
+      || relativeAssetPath === ".."
+      || path.isAbsolute(relativeAssetPath)
+    ) {
+      continue;
+    }
+    try {
+      const assetStat = fs.statSync(absoluteAssetPath);
+      if (!assetStat.isFile() || assetStat.size <= 0) continue;
+    } catch (_error) {
+      continue;
+    }
+
+    const slide = slidesById.get(entry.slide_id);
+    if (!slide) continue;
+    const propPath = typeof entry.prop_path === "string"
+      ? entry.prop_path.trim()
+      : "";
+    if (!propPath) continue;
+    const origin = entry.decision === "use_existing" ? "asset" : "generated";
+    const media = generatedMedia(
+      {
+        src: outputPath,
+        alt: entry.decision === "use_existing"
+          ? "用户提供的演示文稿视觉"
+          : propPath === "background"
+            ? "AI 生成的演示文稿背景概念视觉"
+            : "AI 生成的演示文稿概念视觉",
+        origin,
+      },
+      "演示文稿视觉",
+      changes,
+      `manifest.${slide.id}.${propPath}`
+    );
+    if (propPath === "background" || propPath === "slide.background") {
+      slide.background = media;
+      recordChange(
+        changes,
+        `manifest.${slide.id}.${propPath}: bound ready media to slide background`
+      );
+      continue;
+    }
+
+    const normalizedPropPath = propPath.startsWith("props.")
+      ? propPath.slice("props.".length)
+      : propPath;
+    const rootProp = normalizedPropPath.split(".", 1)[0];
+    const layout = getLayout(slide.layout_id);
+    if (!layout || !layout.fields || !layout.fields[rootProp]) continue;
+    if (!isPlainObject(slide.props)) slide.props = {};
+    if (setNestedProp(slide.props, normalizedPropPath, media)) {
+      recordChange(
+        changes,
+        `manifest.${slide.id}.${propPath}: bound ready media to slide props`
+      );
+    }
+  }
+}
+
 function applyAlias(target, destination, aliases, changes, fieldPath) {
   if (target[destination] !== undefined) return;
   const source = aliases.find(alias => target[alias] !== undefined);
@@ -605,6 +716,8 @@ function main() {
     }
     patchedSlides.push(slideId);
   }
+
+  reconcileReadyManifestMedia(deck, deckPath, normalizationChanges);
 
   restoreBoundOutlineTitles(deck, deckPath, normalizationChanges);
 

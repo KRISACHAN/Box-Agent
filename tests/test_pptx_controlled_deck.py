@@ -6641,6 +6641,71 @@ def test_controlled_batch_patch_preserves_layout_contract_and_scaffolded_facts(
     )
 
 
+def test_batch_patch_reconciles_ready_manifest_background_at_declared_path(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--image-mode",
+        "creative_image_mode",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    manifest_path = tmp_path / "assets" / "generated" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    cover = manifest["image_plan"][0]
+    assert cover["prop_path"] == "background"
+    asset_path = tmp_path / cover["output_path"]
+    asset_path.write_bytes(b"generated-cover")
+    cover["status"] = "generated"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "media": {
+                                "src": cover["output_path"],
+                                "origin": "generated",
+                            }
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    slide = deck["slides"][0]
+    assert "media" not in slide["props"]
+    assert slide["background"]["src"] == cover["output_path"]
+    assert slide["background"]["origin"] == "generated"
+    payload = json.loads(result.stdout)
+    assert any(
+        "dropped unknown field for cover-editorial-v1" in change
+        for change in payload["normalization_changes"]
+    )
+    assert any(
+        "bound ready media to slide background" in change
+        for change in payload["normalization_changes"]
+    )
+
+
 def test_batch_patch_normalizes_nested_architecture_module_capacity(
     tmp_path: Path,
 ) -> None:
@@ -8535,7 +8600,8 @@ def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.count("FINALIZE_PASS stage=") == 5
+    assert result.stdout.count("FINALIZE_PASS stage=") == 4
+    assert "FINALIZE_ADVISORY stage=image_manifest warnings=0" in result.stdout
     assert "FINALIZE_ADVISORY stage=truth" in result.stdout
     assert (
         result.stdout.index("FINALIZE_PASS stage=html_self_check")
@@ -8556,6 +8622,138 @@ def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> Non
     truth_report = json.loads((tmp_path / "qa" / "truth_check.json").read_text())
     assert truth_report["advisory"] is True
     assert truth_report["warnings"]
+
+
+def test_controlled_finalizer_delivers_degraded_html_for_image_manifest_failure(
+    tmp_path: Path,
+) -> None:
+    deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    deck_path = tmp_path / "deck.json"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    manifest_path = tmp_path / "assets" / "generated" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "mode": "creative_image_mode",
+                "image_plan": [
+                    {
+                        "slide": 1,
+                        "slide_id": deck["slides"][0]["id"],
+                        "layout_id": deck["slides"][0]["layout_id"],
+                        "prop_path": "background",
+                        "required": True,
+                        "decision": "generate",
+                        "status": "blocked",
+                        "output_path": "assets/generated/missing-cover.png",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    html_path = tmp_path / "index.html"
+
+    result = _run(
+        "finalize_controlled_deck.js",
+        str(deck_path),
+        "--out",
+        str(html_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert html_path.is_file()
+    assert "FINALIZE_ADVISORY stage=image_manifest" in result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["ok"] is True
+    assert payload["degraded"] is True
+    assert payload["delivery_status"] == "degraded"
+    image_report = json.loads(
+        (tmp_path / "qa" / "image_manifest.json").read_text(encoding="utf-8")
+    )
+    assert image_report["ok"] is True
+    assert image_report["advisory"] is True
+    assert image_report["issues"] == []
+    assert image_report["warnings"]
+
+
+def test_controlled_finalizer_delivers_degraded_html_for_outline_binding_drift(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "主题页",
+            "message": "必须保留的原始核心信息",
+            "bullets": ["必须保留的原始支持点"],
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "title": "主题页",
+                            "items": [
+                                {
+                                    "kicker": "A",
+                                    "title": "重新表述",
+                                    "body": "没有逐字复用大纲消息",
+                                }
+                            ],
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    applied = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    html_path = tmp_path / "index.html"
+
+    result = _run(
+        "finalize_controlled_deck.js",
+        str(deck_path),
+        "--out",
+        str(html_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert html_path.is_file()
+    assert "FINALIZE_ADVISORY stage=deck_spec" in result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["delivery_status"] == "degraded"
+    spec_report = json.loads(
+        (tmp_path / "qa" / "deck_spec.json").read_text(encoding="utf-8")
+    )
+    assert spec_report["ok"] is True
+    assert spec_report["advisory"] is True
+    assert spec_report["degraded_reason"] == "outline_binding"
+    assert spec_report["warnings"]
 
 
 def test_truth_validator_keeps_unapproved_illustrative_mode_blocking(
@@ -8732,6 +8930,44 @@ def test_toolbar_groups_fit_embedded_editor_viewport(tmp_path: Path) -> None:
         "design": {"available": True, "open": True, "expanded": True},
         "page": {"available": True, "open": True, "expanded": True},
     }
+
+
+def test_runtime_probe_rejects_collapsed_core_palette(tmp_path: Path) -> None:
+    deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    cream = {
+        "value": "#F4EFE4",
+        "requested": "cream",
+        "source": "explicit",
+    }
+    deck["design_contract"] = {
+        "version": 1,
+        "palette": {
+            "source": "explicit",
+            "background": cream,
+            "primary": cream,
+            "requested": ["#F4EFE4"],
+        },
+    }
+    deck_path = tmp_path / "deck.json"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    render = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert render.returncode == 0, render.stderr
+
+    probe = _run("probe_deck_runtime.js", str(html_path))
+    if probe.returncode != 0 and (
+        "Cannot find module 'playwright'" in probe.stderr
+        or "Executable doesn't exist" in probe.stderr
+    ):
+        pytest.skip("Managed Playwright browser is unavailable")
+
+    assert probe.returncode == 1, probe.stderr or probe.stdout
+    runtime = json.loads(probe.stdout)
+    assert runtime["ok"] is False
+    assert runtime["editor"]["palette"]["distinctCoreColors"] == 1
+    assert runtime["editor"]["palette"]["textOnBackgroundContrast"] == 1
+    assert "Core deck colors collapse to one value" in runtime["issues"]
+    assert "Deck text/background contrast is too low: 1.00" in runtime["issues"]
 
 
 def test_project_case_layout_renders_metrics_and_two_compositions(tmp_path: Path) -> None:
