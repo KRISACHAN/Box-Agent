@@ -726,11 +726,40 @@ def test_dingtalk_dws_policy_allows_v1_read_and_document_write_commands():
         'dws doc read --node doc_1',
         'dws wiki space list',
         'dws wiki node list --space-id space_1',
+        'dws drive list-spaces --space-type orgSpace',
         'dws drive download --node file_1 --output /tmp/file_1',
+        'dws drive upload --file /tmp/report.md --folder folder_1',
+        'dws drive mkdir --name 项目资料 --folder folder_1',
         'dws doc create --name 周报 --content-file /tmp/report.md',
         'dws doc update --node doc_1 --content-file /tmp/report.md',
     ]:
         assert _detect_dingtalk_workspace_violation(command) is None
+
+
+def test_dingtalk_dws_policy_allows_officev3_bundled_absolute_binary_path():
+    assert _detect_dingtalk_workspace_violation(
+        '/Applications/办公小浣熊.app/Contents/Resources/cli-bundle/dws doc read --node doc_1'
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dws auth login -v",
+        "dws drive delete --node abc -v",
+        "dws drive upload-info --file-name report.md --file-size 1",
+        "dws drive commit --upload-id upload_1 --file-name report.md --file-size 1",
+        "dws doc read --node doc_1 & dws auth login",
+        'dws doc read --node "$(dws auth login)"',
+        "dws doc read --node doc_1 --profile another",
+        "dws doc read --node doc_1 --client-id another",
+        "dws doc read --node doc_1 --client-secret secret",
+        "DWS_PROFILE=another dws doc read --node doc_1",
+        "PATH=/tmp dws doc read --node doc_1",
+    ],
+)
+def test_dingtalk_dws_policy_blocks_control_plane_bypasses(command: str):
+    assert _detect_dingtalk_workspace_violation(command) is not None
 
 
 @pytest.mark.asyncio

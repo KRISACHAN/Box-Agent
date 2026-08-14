@@ -119,6 +119,20 @@ _DINGTALK_DWS_ENV_ASSIGNMENT_RE = re.compile(
     r"^(?:export\s+|set\s+)BOX_AGENT_DINGTALK_CLI\s*=",
     re.IGNORECASE,
 )
+_DINGTALK_DWS_EXECUTABLE_NAMES = frozenset({"dws", "dws.exe", "dws.cmd"})
+_DINGTALK_SHELL_OPERATORS = frozenset({";", "&&", "||", "|", "&"})
+_DINGTALK_SHELL_SUBSTITUTION_RE = re.compile(r"\$\(|`|<\(|>\(")
+_DINGTALK_CONTROL_FLAGS = frozenset({
+    "--profile",
+    "--client-id",
+    "--client-secret",
+    "--client_id",
+    "--client_secret",
+})
+_DINGTALK_CONTROL_ENV_ASSIGNMENT_RE = re.compile(
+    r"^(?:DWS|DINGTALK)_(?:PROFILE|CLIENT_ID|CLIENT_SECRET)=",
+    re.IGNORECASE,
+)
 _OBSIDIAN_COMMAND_SEPARATOR_RE = re.compile(r"&&|\|\||[;\n|]")
 _OBSIDIAN_CLI_NAMES = frozenset({"obsidian", "obsidian.exe", "obsidian.cmd"})
 _OBSIDIAN_WRITE_COMMANDS = frozenset({
@@ -238,46 +252,86 @@ def _detect_dingtalk_workspace_violation(command: str) -> str | None:
     invoking raw APIs would let an agent escape the desktop product's consent
     and scope model, so the runtime—not the UI prompt—enforces this allowlist.
     """
-    for raw_part in _LARK_COMMAND_SEPARATOR_RE.split(command):
-        part = raw_part.strip()
-        if not part or _DINGTALK_DWS_ENV_ASSIGNMENT_RE.match(part):
-            continue
-        if not _DINGTALK_DWS_RE.search(part):
-            continue
+    if _DINGTALK_DWS_ENV_ASSIGNMENT_RE.match(command.strip()):
+        return None
+    if not _DINGTALK_DWS_RE.search(command):
+        return None
 
-        lowered = part.lower()
-        if "--help" in lowered or re.search(r"\s(?:--version|-v)\b", lowered):
-            continue
-        try:
-            tokens = shlex.split(part, posix=platform.system() != "Windows")
-        except ValueError:
-            return "DWS command could not be parsed and is blocked by the DingTalk integration policy."
+    try:
+        tokens = shlex.split(command, posix=platform.system() != "Windows")
+    except ValueError:
+        return "DWS command could not be parsed and is blocked by the DingTalk integration policy."
 
-        dws_index = next(
-            (
-                index
-                for index, token in enumerate(tokens)
-                if _DINGTALK_DWS_RE.fullmatch(token) is not None
-            ),
-            None,
+    def is_dws_executable(token: str) -> bool:
+        if token in {"$BOX_AGENT_DINGTALK_CLI", "${BOX_AGENT_DINGTALK_CLI}", "%BOX_AGENT_DINGTALK_CLI%"}:
+            return True
+        # `os.path.basename` does not understand the opposite platform's path
+        # separator, so normalize first. OfficeV3 deliberately passes the
+        # bundled absolute path here on macOS/Windows.
+        base = token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        return base in _DINGTALK_DWS_EXECUTABLE_NAMES
+
+    dws_index = next(
+        (index for index, token in enumerate(tokens) if is_dws_executable(token)),
+        None,
+    )
+    if dws_index is None:
+        return "DWS command must invoke the bundled `dws` binary directly."
+
+    # A policy check must never try to interpret a compound shell expression.
+    # In particular, `dws doc read … & dws auth login` and command substitution
+    # would otherwise be parsed as an allowed `doc read` prefix.
+    if any(token in _DINGTALK_SHELL_OPERATORS for token in tokens) or any(
+        _DINGTALK_SHELL_SUBSTITUTION_RE.search(token) for token in tokens
+    ):
+        return "Shell chaining and command substitution are disabled for DWS commands. Run one allowed DWS command directly."
+
+    prefix = tokens[:dws_index]
+    if any(_DINGTALK_CONTROL_ENV_ASSIGNMENT_RE.match(token) for token in prefix):
+        return "DWS OAuth profile and client credentials are managed by officev3 and cannot be overridden by the agent."
+    if prefix:
+        # Do not let a shell prefix replace PATH or otherwise turn a bare `dws`
+        # invocation into an arbitrary binary. OfficeV3 supplies either `dws`,
+        # its absolute bundled path, or $BOX_AGENT_DINGTALK_CLI directly.
+        return "DWS command must invoke the bundled `dws` binary directly."
+
+    raw_args = tokens[dws_index + 1 :]
+    if any(
+        token.split("=", 1)[0].lower() in _DINGTALK_CONTROL_FLAGS
+        for token in raw_args
+    ):
+        return "DWS OAuth profile and client credentials are managed by officev3 and cannot be overridden by the agent."
+
+    # `-v` is DWS verbose mode, not a version query. Only standalone version
+    # invocations bypass the command allowlist.
+    if raw_args in (["--version"], ["version"]):
+        return None
+    # Help does not perform a business operation, including e.g. `auth login --help`.
+    if "--help" in raw_args or "-h" in raw_args:
+        return None
+
+    args = [token.lower() for token in raw_args if not token.startswith("-")]
+    if not args:
+        return None
+    if args[:2] == ["auth", "status"]:
+        return None
+    if args[0] in {"auth", "profile", "config", "skill", "skills", "plugin", "plugins", "upgrade", "update", "api", "raw"}:
+        return "DWS authentication, profile/configuration, skill/plugin, upgrade, and raw API commands are managed by officev3 and cannot be run by the agent."
+
+    allowed = (
+        (args[0] == "doc" and len(args) >= 2 and args[1] in {"search", "list", "read", "create", "update"})
+        or (args[:3] in (["wiki", "space", "list"], ["wiki", "node", "list"]))
+        or (
+            args[0] == "drive"
+            and len(args) >= 2
+            and args[1] in {"list", "list-spaces", "info", "download", "upload", "mkdir"}
         )
-        if dws_index is None:
-            return "DWS command must invoke the bundled `dws` binary directly."
-        args = [token.lower() for token in tokens[dws_index + 1 :] if not token.startswith("-")]
-        if not args or args == ["version"]:
-            continue
-        if args[:2] == ["auth", "status"]:
-            continue
-        if args[0] in {"auth", "profile", "config", "skill", "skills", "plugin", "plugins", "upgrade", "update", "api", "raw"}:
-            return "DWS authentication, profile/configuration, skill/plugin, upgrade, and raw API commands are managed by officev3 and cannot be run by the agent."
-
-        allowed = (
-            (args[0] == "doc" and len(args) >= 2 and args[1] in {"search", "list", "read", "create", "update"})
-            or (args[:3] in (["wiki", "space", "list"], ["wiki", "node", "list"]))
-            or (args[0] == "drive" and len(args) >= 2 and args[1] in {"list", "info", "download"})
+    )
+    if not allowed:
+        return (
+            "This DWS command is outside the officev3 DingTalk v1 scope. Only document/wiki/drive "
+            "reads, `doc create`/`doc update`, and `drive upload`/`drive mkdir` are allowed."
         )
-        if not allowed:
-            return "This DWS command is outside the officev3 DingTalk v1 scope. Only document/wiki/drive reads and `doc create`/`doc update` are allowed."
     return None
 
 

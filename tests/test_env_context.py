@@ -210,6 +210,8 @@ def test_prompt_declares_dingtalk_dws_policy() -> None:
 
     assert "钉钉 DWS 策略" in out
     assert "当前 OAuth profile" in out
+    assert "drive upload" in out
+    assert "drive mkdir" in out
     assert "auth login/reset" in out
 
 

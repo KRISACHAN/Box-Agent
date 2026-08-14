@@ -415,8 +415,9 @@ def _format_cli_section(cli: dict[str, str | None]) -> list[str]:
             )
         if cli.get("dws"):
             lines.append(
-                "- 钉钉 DWS 策略：当前 OAuth profile 由 officev3 管理；只可读取文档、知识库和钉盘，或使用 "
-                "`doc create` / `doc update` 写入。不要执行 `auth login/reset`、profile/config、skills/plugins、升级或 raw API 命令。"
+                "- 钉钉 DWS 策略：当前 OAuth profile 由 officev3 管理；可读取文档、知识库和钉盘，使用 "
+                "`doc create` / `doc update` 写入钉钉文档，或使用 `drive upload` / `drive mkdir` 上传文件、创建钉盘文件夹。"
+                "不要执行 `drive upload-info` / `drive commit`、删除、移动、共享/权限、`auth login/reset`、profile/config、skills/plugins、升级或 raw API 命令。"
             )
     if missing:
         lines.append("- 未安装 CLI（不要假装能调用）：" + ", ".join(missing))
