@@ -130,6 +130,8 @@ def browser_runtime_env():
         "用真实浏览器打开百度",
         "读取当前标签页并帮我翻页",
         "后台抓取这个网页",
+        "用爬虫批量抓取这些公开网页",
+        "填写这个表单，填好让我检查，最后我点击提交",
         "请使用无头浏览器测试 https://example.com",
         "use my current Chrome login to open the website",
     ],

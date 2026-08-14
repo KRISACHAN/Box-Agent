@@ -35,7 +35,8 @@ _BROWSER_OPERATION_SIGNAL_RE = re.compile(
     r"\b(?:browser|chrome|cookie|current[\s-]+tab|headless|headed|playwright|"
     r"scrape|crawl|webpage|website)\b|"
     r"(?:浏览器|网页|网站|页面|标签页|当前页|网址|登录态|无头|有头|带头|"
-    r"真实浏览器|系统浏览器|默认浏览器|网页抓取|网页自动化|内网)",
+    r"真实浏览器|系统浏览器|默认浏览器|网页抓取|网页自动化|公开检索|批量抓取|"
+    r"爬虫|表单|人工接管|让我检查|我最后提交|内网)",
     re.IGNORECASE,
 )
 _VIDEO_DELIVERABLE_SIGNAL_RE = re.compile(

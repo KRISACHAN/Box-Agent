@@ -40,6 +40,8 @@ def test_browser_use_skill_is_packaged_as_builtin() -> None:
         "用系统浏览器打开这个网址",
         "读取当前页面",
         "后台抓取这个网页",
+        "用爬虫批量抓取这些公开网页",
+        "填写这个表单，填好让我检查，最后我点击提交",
         "use my current browser login",
     ],
 )
@@ -83,3 +85,31 @@ def test_browser_intent_preloads_full_builtin_instructions() -> None:
     assert "默认固定无头" not in rendered.system_prompt
     assert "不要把两者视为同义词" in rendered.system_prompt
     assert "不要仅凭“看到窗口”断言使用了真实浏览器" in rendered.system_prompt
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_instruction"),
+    [
+        (
+            "用爬虫批量抓取这些公开网页",
+            "不要打开或操作用户的真实浏览器",
+        ),
+        (
+            "填写这个表单，填好让我检查，最后我点击提交",
+            "不要在受管浏览器中代填后再声称用户可以接管",
+        ),
+    ],
+)
+def test_high_priority_browser_scenarios_preload_routing_guidance(
+    query: str,
+    expected_instruction: str,
+) -> None:
+    loader = SkillLoader(sources=[(SKILLS_ROOT, "builtin")])
+    loader.discover_skills()
+    matched_names = tuple(skill.name for skill in loader.filter_by_query(query))
+
+    preload_names = host_runtime_preload_skill_names(matched_names, SimpleNamespace(), query)
+    rendered = build_auto_loaded_skills_prompt(loader, "base system", preload_names)
+
+    assert rendered.loaded_names == ("browser-use",)
+    assert expected_instruction in rendered.system_prompt

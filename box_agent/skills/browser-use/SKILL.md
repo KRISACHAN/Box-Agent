@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: Route browser tasks by user intent between a visible browser with the user's current tabs and login state, and managed browser automation that can be switched between headed and headless with hot reload. Use for opening URLs or websites, current-page interaction, logged-in or intranet tasks, forms, screenshots, scraping, crawling, web testing, visible or background browsing, headed/headless requests, and browser runtime configuration.
+description: Route browser tasks by user intent between a visible browser with the user's current tabs and login state, and managed browser automation that can be switched between headed and headless with hot reload. Use for opening URLs or websites, current-page interaction, logged-in or intranet tasks, forms, screenshots, scraping, crawling, web testing, visible or background browsing, headed/headless requests, and browser runtime configuration. Public web retrieval, crawling, and bulk collection should prefer managed automation without touching the user's real browser; forms that the user wants to review, take over, or submit personally should prefer the visible real browser from the start.
 keywords:
   - 浏览器
   - 网页
@@ -22,6 +22,13 @@ keywords:
   - 内网
   - 网页抓取
   - 网页自动化
+  - 公开检索
+  - 批量抓取
+  - 爬虫
+  - 表单
+  - 人工接管
+  - 让我检查
+  - 我最后提交
   - browser
   - current tab
   - headed
@@ -38,6 +45,8 @@ keywords:
 
 ## 选择浏览器
 
+- 高优先级：明确的公开网页检索、爬取、批量抓取或采集始终优先使用受管浏览器自动化，不要打开或操作用户的真实浏览器，即使真实浏览器工具当前可见。
+- 高优先级：用户要求“填好让我检查”、亲自接管或最后提交时，从任务开始就优先使用用户的可见真实浏览器，不要在受管浏览器中代填后再声称用户可以接管。填写完成后保留页面并停在提交之前；真实浏览器未连接时引导用户连接，不要静默回退。
 - 当前页、现有登录/Cookie/扩展/内网、系统或默认浏览器、需要用户看见或接管：使用用户正在使用的可见浏览器。
 - 公开网页、后台抓取、批量采集、测试、截图、DOM/网络检查：使用受管浏览器自动化。
 - “有头/无头”只描述受管浏览器是否显示窗口，不代表继承用户 Chrome 登录态。不要把两者视为同义词，也不要仅凭“看到窗口”断言使用了真实浏览器；需要现有登录态时仍使用可见真实浏览器。
