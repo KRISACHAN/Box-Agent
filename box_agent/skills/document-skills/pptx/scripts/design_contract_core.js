@@ -7,11 +7,11 @@ const NAMED_COLORS = Object.freeze([
   { id: "blue", value: "#2563EB", pattern: /(?:蓝色|blue)/i },
   { id: "green", value: "#15803D", pattern: /(?:绿色|green)/i },
   { id: "red", value: "#B91C1C", pattern: /(?:红色|red)/i },
-  { id: "black", value: "#111111", pattern: /(?:黑色|black)/i },
+  { id: "black", value: "#111111", pattern: /(?:黑色|纯黑|黑字|black)/i },
   { id: "white", value: "#FFFFFF", pattern: /(?:白色|white)/i },
 ]);
 
-const PALETTE_REQUEST_RE = /(?:配色|色彩|颜色|色系|主色|背景色|底色|点缀色|palette|color\s*(?:palette|scheme)|accent)/i;
+const PALETTE_REQUEST_RE = /(?:配色|色彩|颜色|色系|主色|背景色|底色|点缀色|米白底|纯黑字|palette|color\s*(?:palette|scheme)|accent)/i;
 const SPARSE_ACCENT_RE = /(?:少量|少许|小面积|克制|仅作|只作|点缀|sparse|restrained|limited|small\s+amount)/i;
 const HEX_COLOR_RE = /#[0-9a-f]{6}\b/ig;
 
@@ -57,6 +57,32 @@ function collectText(value, output = []) {
 function normalizeHex(value) {
   const text = String(value || "").trim().toUpperCase();
   return /^#[0-9A-F]{6}$/.test(text) ? text : null;
+}
+
+function contrastRatio(left, right) {
+  const luminance = value => {
+    const hex = normalizeHex(value);
+    if (!hex) return null;
+    const channels = [1, 3, 5].map(index => {
+      const normalized = parseInt(hex.slice(index, index + 2), 16) / 255;
+      return normalized <= 0.03928
+        ? normalized / 12.92
+        : ((normalized + 0.055) / 1.055) ** 2.4;
+    });
+    return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
+  };
+  const leftLuminance = luminance(left);
+  const rightLuminance = luminance(right);
+  if (leftLuminance == null || rightLuminance == null) return null;
+  return (
+    (Math.max(leftLuminance, rightLuminance) + 0.05)
+    / (Math.min(leftLuminance, rightLuminance) + 0.05)
+  );
+}
+
+function readableForeground(background, preferred) {
+  return [...new Set([preferred, "#111111", "#FFFFFF"].map(normalizeHex).filter(Boolean))]
+    .sort((left, right) => contrastRatio(right, background) - contrastRatio(left, background))[0];
 }
 
 function colorRecord(color, requested, source = "explicit") {
@@ -115,19 +141,22 @@ function inferPaletteContract(value) {
 
   const byId = new Map(named.map(item => [item.id, item]));
   const cream = byId.get("cream") || byId.get("white");
-  const navy = byId.get("deep-navy") || byId.get("blue") || byId.get("black");
+  const blackIsText = /(?:纯黑|黑色?|black)\s*(?:字|文字|正文|text)/i.test(text);
+  const navy = byId.get("deep-navy")
+    || byId.get("blue")
+    || (blackIsText ? null : byId.get("black"));
   const accent = byId.get("orange") || byId.get("green") || byId.get("red");
   const values = [...named.map(item => item.value), ...hex];
   const background = cream || (hex[0] ? { id: hex[0], value: hex[0] } : null);
-  const primary = navy || (hex[1] ? { id: hex[1], value: hex[1] } : null) || background;
+  const primary = navy || (hex[1] ? { id: hex[1], value: hex[1] } : null);
   const accentColor = accent || (hex[2] ? { id: hex[2], value: hex[2] } : null);
-  if (!background || !primary) return null;
+  if (!background) return null;
 
   return {
     source: "explicit",
     requested: values,
     background: colorRecord(background.value, background.id),
-    primary: colorRecord(primary.value, primary.id),
+    ...(primary ? { primary: colorRecord(primary.value, primary.id) } : {}),
     ...(accentColor
       ? {
         accent: colorRecord(accentColor.value, accentColor.id),
@@ -321,12 +350,19 @@ function paletteWithOverrides(themePalette, designContract) {
   if (!requested) return palette;
   const background = requested.background && requested.background.value;
   const surface = requested.surface && requested.surface.value;
-  const primary = requested.primary && requested.primary.value;
+  const requestedPrimary = requested.primary && requested.primary.value;
+  const primaryIsReadable = !(background
+    && requestedPrimary
+    && contrastRatio(background, requestedPrimary) < 4.5);
+  const primary = primaryIsReadable ? requestedPrimary : null;
   const accent = requested.accent && requested.accent.value;
   if (background) palette.background = background;
   if (surface) palette.surface = surface;
   if (background) {
-    const foreground = primary || palette.text || "#111111";
+    const foreground = contrastRatio(background, palette.text) >= 4.5
+      ? palette.text
+      : readableForeground(background, palette.text);
+    palette.text = foreground;
     palette.surface = surface || mixHex(background, foreground, 0.06);
     palette.surface_strong = mixHex(background, foreground, 0.12);
     palette.border = mixHex(background, foreground, 0.24);

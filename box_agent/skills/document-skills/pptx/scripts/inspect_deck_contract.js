@@ -823,14 +823,24 @@ function buildImagePlanEntry(
     && !generationForbidden
     && explicitOptionalVisual
     && strategies.includes("generate");
+  const creativeOptional = imageMode === "creative_image_mode"
+    && index > 0
+    && !generationForbidden
+    && explicitOptionalVisual
+    && strategies.includes("generate");
   const useExisting = !generationForbidden && Boolean(existingAsset)
     && !creativeCover
     && strategies.includes("use_existing");
+  const plannedGeneration = (slot && slot.required)
+    || creativeCover
+    || creativeOptional
+    || autoCover
+    || autoOptional;
   const generate = !generationForbidden && !useExisting && Boolean(
-    (slot && slot.required) || creativeCover || autoCover || autoOptional
+    plannedGeneration
   );
   const required = !generationForbidden && Boolean(
-    (slot && slot.required) || creativeCover || autoCover || autoOptional
+    plannedGeneration
   );
   const decision = useExisting ? "use_existing" : generate ? "generate" : "skip";
   const status = useExisting ? "ready" : generate ? "pending" : "skipped";
@@ -855,7 +865,7 @@ function buildImagePlanEntry(
     } else {
       decisionReason = "visual story brief benefits from a generated cover visual";
     }
-  } else if (autoOptional) {
+  } else if (creativeOptional || autoOptional) {
     decisionReason = "the page visual intent explicitly requests a generative visual medium";
   } else if (index === 0) {
     decisionReason = "the outline supports a typography-led cover and does not request a concrete bitmap visual";

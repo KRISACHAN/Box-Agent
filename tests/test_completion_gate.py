@@ -1471,6 +1471,8 @@ def test_controlled_successful_mutations_without_progress_stop_after_two(tmp_pat
 
     assert policy.repair_stalled is True
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled" in update.text
+    assert "return it as a degraded draft" in update.text
+    assert "do not claim that no deliverable was produced" in update.text
     assert policy.allows_completion_continuation() is False
 
 

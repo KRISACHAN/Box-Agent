@@ -189,7 +189,8 @@ function runAdvisoryStage(stage, scriptName, args, reportPath) {
   let reportIsFresh = false;
   try {
     report = readJson(reportPath);
-    reportIsFresh = previousMtime === null || fs.statSync(reportPath).mtimeMs !== previousMtime;
+    reportIsFresh = previousMtime === null
+      || fs.statSync(reportPath).mtimeMs !== previousMtime;
   } catch (_error) {
     report = null;
   }
@@ -210,6 +211,64 @@ function runAdvisoryStage(stage, scriptName, args, reportPath) {
     ...(report && typeof report === "object" && !Array.isArray(report) ? report : {}),
     ok: true,
     advisory: true,
+    issues: [],
+    warnings: [...new Set(warnings)],
+  };
+  writeJson(reportPath, normalized);
+  console.log(`FINALIZE_ADVISORY stage=${stage} warnings=${normalized.warnings.length}`);
+  return normalized;
+}
+
+function runPostRenderStage(stage, scriptName, args, reportPath) {
+  let previousMtime = null;
+  try {
+    previousMtime = fs.statSync(reportPath).mtimeMs;
+  } catch (_error) {
+    // The post-render check may be running for the first time.
+  }
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, scriptName), ...args],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    }
+  );
+  let report = null;
+  let reportIsFresh = false;
+  try {
+    report = readJson(reportPath);
+    reportIsFresh = previousMtime === null || fs.statSync(reportPath).mtimeMs !== previousMtime;
+  } catch (_error) {
+    report = null;
+  }
+  const summary = reportIsFresh ? reportSummary(reportPath) : null;
+  if (!result.error && result.status === 0 && summary && summary.ok) {
+    console.log(`FINALIZE_PASS stage=${stage} warnings=${summary.warnings.length}`);
+    return report;
+  }
+
+  const diagnostic = tail(
+    result.error
+      ? result.error.message
+      : `${result.stdout || ""}\n${result.stderr || ""}`
+  );
+  const warnings = [
+    ...(summary ? summary.warnings : []),
+    ...(summary ? summary.issues : []),
+  ];
+  if (!summary) {
+    warnings.push(
+      diagnostic || `${stage} did not produce a fresh QA report`
+    );
+  }
+  const normalized = {
+    ...(report && typeof report === "object" && !Array.isArray(report) ? report : {}),
+    ok: true,
+    advisory: true,
+    degraded_reason: stage,
     issues: [],
     warnings: [...new Set(warnings)],
   };
@@ -262,7 +321,7 @@ function main() {
   if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
     fail("render", { status: 1, stdout: "", stderr: `Missing output: ${outputPath}` });
   }
-  runStage(
+  const htmlReport = runPostRenderStage(
     "html_self_check",
     "html_self_check.js",
     [
@@ -280,7 +339,7 @@ function main() {
     [deckPath, "--report", reports.truth],
     reports.truth
   );
-  runStage(
+  const runtimeReport = runPostRenderStage(
     "runtime_probe",
     "probe_deck_runtime.js",
     [outputPath, "--viewport", "1440x900", "--report", reports.runtime],
@@ -291,7 +350,13 @@ function main() {
     .map(reportSummary)
     .filter(Boolean)
     .reduce((total, report) => total + report.warnings.length, 0);
-  const degraded = deckSpecReport.advisory === true || imageReport.warnings.length > 0;
+  const degradedStages = [
+    deckSpecReport.advisory === true ? "deck_spec" : null,
+    imageReport.warnings.length > 0 ? "image_manifest" : null,
+    htmlReport.advisory === true ? "html_self_check" : null,
+    runtimeReport.advisory === true ? "runtime_probe" : null,
+  ].filter(Boolean);
+  const degraded = degradedStages.length > 0;
   console.log(
     JSON.stringify({
       ok: true,
@@ -300,6 +365,7 @@ function main() {
       qa_reports: Object.values(reports),
       warnings: warningCount,
       degraded,
+      degraded_stages: degradedStages,
       delivery_status: degraded ? "degraded" : "complete",
     })
   );

@@ -727,8 +727,10 @@ def _repair_stalled_checkpoint() -> str:
         f"{CHECKPOINT_MARKER}repair_stalled\n"
         "NEXT_ACTION=Do not call another write/apply/finalize or validation tool. "
         "Do not ask for missing facts; they must already have been represented by "
-        "explicit placeholders or omitted when optional. End the turn and state that "
-        "delivery is incomplete because of a repeated internal validation conflict."
+        "explicit placeholders or omitted when optional. If index.html already exists, "
+        "return it as a degraded draft and name the failed QA check; do not claim that "
+        "no deliverable was produced. Only state that delivery is incomplete when no "
+        "HTML artifact exists."
     )
 
 

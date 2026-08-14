@@ -3851,6 +3851,174 @@ body:not(.deck-editing) .layout-cover.no-hero .cover-visual {
   display: none !important;
 }
 
+/* --------------------------------------------------------------------------
+   Shared collection-capacity guards.
+
+   cards-grid-v1 advertises three to six editable cards. Composition families
+   may change the visual rhythm, but they must not make a valid collection
+   depend on hidden overflow or unusually short placeholder copy. Four cards
+   use a stable two-by-two frame; five and six use two rows of three.
+   -------------------------------------------------------------------------- */
+
+body[data-deck-composition="editorial-spread"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="playful-collage"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="retro-interface"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="literary-minimal"][data-deck-composition-variant="asymmetric-column"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .cards-grid {
+  min-height: 0;
+  align-content: stretch;
+  align-items: stretch;
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+body[data-deck-composition="editorial-spread"] .cards-count-4 .cards-grid,
+body[data-deck-composition="playful-collage"] .cards-count-4 .cards-grid,
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .cards-count-4 .cards-grid,
+body[data-deck-composition="retro-interface"] .cards-count-4 .cards-grid,
+body[data-deck-composition="literary-minimal"][data-deck-composition-variant="asymmetric-column"] .cards-count-4 .cards-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body[data-deck-composition="editorial-spread"] :is(.cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="playful-collage"] :is(.cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] :is(.cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="retro-interface"] :is(.cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="literary-minimal"][data-deck-composition-variant="asymmetric-column"] :is(.cards-count-5, .cards-count-6) .cards-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+body[data-deck-composition="editorial-spread"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card,
+body[data-deck-composition="playful-collage"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card,
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card,
+body[data-deck-composition="retro-interface"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card,
+body[data-deck-composition="literary-minimal"][data-deck-composition-variant="asymmetric-column"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card {
+  min-height: 0;
+}
+
+/* Dense editorial cards keep their original asymmetric rule and hierarchy,
+   but cannot retain the single-row 330px minimum once the collection wraps. */
+body[data-deck-composition="editorial-spread"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card {
+  padding: 20px 24px;
+}
+
+body[data-deck-composition="editorial-spread"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card:first-child h3,
+body[data-deck-composition="editorial-spread"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card h3 {
+  margin-top: 8px;
+  font-size: 28px;
+  line-height: 1.08;
+}
+
+body[data-deck-composition="editorial-spread"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .card-body {
+  max-width: none;
+  margin-top: 10px;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+/* Ledger/capsule/terminal variants are compact records rather than miniature
+   posters. Keep their visual stack, but place label, title, and explanation on
+   one horizontal row so all supported collection sizes remain readable. */
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] :is(.cards-count-3, .cards-count-4, .cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] :is(.cards-count-3, .cards-count-4, .cards-count-5, .cards-count-6) .cards-grid,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="terminal-stack"] :is(.cards-count-3, .cards-count-4, .cards-count-5, .cards-count-6) .cards-grid {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .content-card,
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] .content-card,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="terminal-stack"] .content-card {
+  align-items: center;
+  min-height: 0;
+}
+
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .card-copy,
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] .card-copy,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="terminal-stack"] .card-copy {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.42fr) minmax(220px, 0.58fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+}
+
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .card-kicker,
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .content-card h3,
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] .card-body,
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] .card-kicker,
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] .content-card h3,
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] .card-body,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="terminal-stack"] .card-kicker,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="terminal-stack"] .content-card h3,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="terminal-stack"] .card-body {
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+body[data-deck-composition="brutalist-frame"][data-deck-composition-variant="ledger-frame"] :is(.content-card h3, .card-body),
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] :is(.content-card h3, .card-body),
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="terminal-stack"] :is(.content-card h3, .card-body) {
+  padding: 2px 14px 14px 0;
+}
+
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] :is(.cards-count-5, .cards-count-6) .content-card {
+  padding: 10px 30px;
+}
+
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="capsule"] :is(.cards-count-5, .cards-count-6) :is(.content-card h3, .card-body) {
+  padding-bottom: 11px;
+}
+
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="staggered"] :is(.cards-count-5, .cards-count-6) .content-card:nth-child(even) {
+  margin-top: 12px;
+}
+
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="staggered"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card {
+  padding: 22px 24px;
+}
+
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="staggered"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card h3 {
+  margin-top: 8px;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+body[data-deck-composition="playful-collage"][data-deck-composition-variant="staggered"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .card-body {
+  max-width: none;
+  margin-top: 10px;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+/* Window and pixel variants reserve a chrome strip at the top of each card.
+   Tighten only wrapped collections so the chrome remains visible and content
+   retains normal Chinese copy without crossing the fixed canvas. */
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="window-grid"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="pixel-panels"] :is(.cards-count-3, .cards-count-4, .cards-count-5, .cards-count-6) .content-card {
+  padding: 42px 22px 14px;
+}
+
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="window-grid"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .content-card h3,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="pixel-panels"] :is(.cards-count-3, .cards-count-4, .cards-count-5, .cards-count-6) .content-card h3 {
+  margin-top: 6px;
+  font-size: 27px;
+  line-height: 1.08;
+}
+
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="window-grid"] :is(.cards-count-4, .cards-count-5, .cards-count-6) .card-body,
+body[data-deck-composition="retro-interface"][data-deck-composition-variant="pixel-panels"] :is(.cards-count-3, .cards-count-4, .cards-count-5, .cards-count-6) .card-body {
+  max-width: none;
+  margin-top: 8px;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+body[data-deck-composition="product-showcase"][data-deck-composition-variant="annotated-flow"] .cards-count-3 .card-index {
+  padding-top: 0;
+}
+
 body.deck-editing .layout-cover.no-hero {
   grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr) !important;
 }

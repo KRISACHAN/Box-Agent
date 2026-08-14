@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -1554,6 +1556,29 @@ def test_explicit_palette_outranks_named_subject_palette(tmp_path: Path) -> None
     assert palette["background"]["value"] == "#F4EFE4"
     assert palette["primary"]["value"] == "#173B63"
     assert palette["accent"]["value"] == "#D97706"
+
+
+def test_explicit_cream_background_and_black_text_stay_distinct(
+    tmp_path: Path,
+) -> None:
+    prompt = "作品集采用米白底、纯黑字，并用高饱和色少量点缀。"
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--title",
+        prompt,
+        "--fact",
+        prompt,
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    palette = json.loads(deck_path.read_text(encoding="utf-8"))["design_contract"]["palette"]
+    assert palette["background"]["value"] == "#F4EFE4"
+    assert "#111111" in palette["requested"]
+    assert "primary" not in palette
 
 
 def test_software_product_does_not_match_soft_style_by_substring(
@@ -4797,6 +4822,54 @@ def test_creative_image_mode_scaffolds_a_required_cover_generation(
     assert manifest["image_plan"][0]["output_path"].endswith(
         f"slide-01-{expected_slot}.png"
     )
+
+
+def test_creative_image_mode_generates_only_explicit_inner_page_visuals(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=3,
+        source_mode="user_provided",
+    )
+    outline["slides"][0]["visual"] = "高饱和抽象封面主视觉"
+    outline["slides"][1]["visual"] = "数字产品界面截图与设备样机"
+    outline["slides"][2]["visual"] = "结构化信息卡"
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "project-case-study-v1",
+        "project-case-study-v1",
+        "--outline",
+        str(outline_path),
+        "--image-mode",
+        "creative_image_mode",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads(
+        (tmp_path / "assets" / "generated" / "manifest.json").read_text()
+    )
+    cover, explicit_visual, text_led = manifest["image_plan"]
+    assert cover["decision"] == "generate"
+    assert explicit_visual["slot"] == "image"
+    assert explicit_visual["required"] is True
+    assert explicit_visual["decision"] == "generate"
+    assert explicit_visual["status"] == "pending"
+    assert explicit_visual["output_path"].endswith("slide-02-image.png")
+    assert "explicitly requests" in explicit_visual["decision_reason"]
+    assert text_led["required"] is False
+    assert text_led["decision"] == "skip"
+    assert text_led["status"] == "skipped"
 
 
 def test_auto_image_mode_promotes_investor_pitch_cover_to_generation(
@@ -8678,6 +8751,95 @@ def test_controlled_finalizer_delivers_degraded_html_for_image_manifest_failure(
     assert image_report["warnings"]
 
 
+def test_controlled_finalizer_delivers_degraded_html_for_runtime_probe_failure(
+    tmp_path: Path,
+) -> None:
+    deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    deck_path = tmp_path / "deck.json"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    manifest_path = tmp_path / "assets" / "generated" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "mode": "auto",
+                "image_plan": [
+                    {
+                        "slide": index,
+                        "slide_id": slide["id"],
+                        "layout_id": slide["layout_id"],
+                        "required": False,
+                        "decision": "skip",
+                        "status": "skipped",
+                        "output_path": None,
+                    }
+                    for index, slide in enumerate(deck["slides"], start=1)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    preload_path = tmp_path / "force-runtime-probe-failure.js"
+    preload_path.write_text(
+        """
+const childProcess = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const originalSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = function(command, args, options) {
+  const script = Array.isArray(args) && args.length ? String(args[0]) : "";
+  if (script.endsWith("probe_deck_runtime.js")) {
+    const reportIndex = args.indexOf("--report");
+    const reportPath = args[reportIndex + 1];
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(reportPath, JSON.stringify({
+      ok: false,
+      issues: [
+        "Core deck colors collapse to one value",
+        "Deck text/background contrast is too low: 1.00",
+      ],
+      warnings: [],
+    }));
+    return { status: 1, stdout: "", stderr: "forced runtime probe failure" };
+  }
+  return originalSpawnSync.call(this, command, args, options);
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["NODE_OPTIONS"] = f"--require={preload_path}"
+    html_path = tmp_path / "index.html"
+
+    result = _run(
+        "finalize_controlled_deck.js",
+        str(deck_path),
+        "--out",
+        str(html_path),
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert html_path.is_file()
+    assert "FINALIZE_ADVISORY stage=runtime_probe warnings=2" in result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["ok"] is True
+    assert payload["degraded"] is True
+    assert payload["delivery_status"] == "degraded"
+    assert payload["degraded_stages"] == ["runtime_probe"]
+    runtime_report = json.loads(
+        (tmp_path / "qa" / "runtime_probe.json").read_text(encoding="utf-8")
+    )
+    assert runtime_report["ok"] is True
+    assert runtime_report["advisory"] is True
+    assert runtime_report["degraded_reason"] == "runtime_probe"
+    assert runtime_report["issues"] == []
+    assert runtime_report["warnings"] == [
+        "Core deck colors collapse to one value",
+        "Deck text/background contrast is too low: 1.00",
+    ]
+
+
 def test_controlled_finalizer_delivers_degraded_html_for_outline_binding_drift(
     tmp_path: Path,
 ) -> None:
@@ -8932,7 +9094,9 @@ def test_toolbar_groups_fit_embedded_editor_viewport(tmp_path: Path) -> None:
     }
 
 
-def test_runtime_probe_rejects_collapsed_core_palette(tmp_path: Path) -> None:
+def test_palette_self_heals_before_probe_and_gate_catches_html_corruption(
+    tmp_path: Path,
+) -> None:
     deck = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     cream = {
         "value": "#F4EFE4",
@@ -8954,6 +9118,26 @@ def test_runtime_probe_rejects_collapsed_core_palette(tmp_path: Path) -> None:
     render = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
     assert render.returncode == 0, render.stderr
 
+    repaired_probe = _run("probe_deck_runtime.js", str(html_path))
+    if repaired_probe.returncode != 0 and (
+        "Cannot find module 'playwright'" in repaired_probe.stderr
+        or "Executable doesn't exist" in repaired_probe.stderr
+    ):
+        pytest.skip("Managed Playwright browser is unavailable")
+
+    assert repaired_probe.returncode == 0, repaired_probe.stderr or repaired_probe.stdout
+    repaired_runtime = json.loads(repaired_probe.stdout)
+    assert repaired_runtime["editor"]["palette"]["distinctCoreColors"] > 1
+    assert repaired_runtime["editor"]["palette"]["textOnBackgroundContrast"] >= 4.5
+    assert repaired_runtime["editor"]["palette"]["primary"] == "#1E2BFA"
+
+    html = html_path.read_text(encoding="utf-8")
+    html = re.sub(
+        r"(--deck-(?:bg|text|primary|inverse):\s*)#[0-9A-Fa-f]{6};",
+        r"\1#F4EFE4;",
+        html,
+    )
+    html_path.write_text(html, encoding="utf-8")
     probe = _run("probe_deck_runtime.js", str(html_path))
     if probe.returncode != 0 and (
         "Cannot find module 'playwright'" in probe.stderr
@@ -9792,6 +9976,118 @@ def test_brutalist_ledger_three_card_layout_preserves_slide_bounds(
     assert json.loads(report_path.read_text(encoding="utf-8"))["issues"] == []
     html = html_path.read_text(encoding="utf-8")
     assert "grid-auto-rows: minmax(0, 1fr)" in html
+
+
+def test_every_composition_variant_preserves_card_capacity_contract(
+    tmp_path: Path,
+) -> None:
+    variants_by_family = {
+        "institutional-grid": ["balanced-grid", "rail-grid", "ledger-grid"],
+        "editorial-spread": ["split-spread", "feature-spread", "banded-spread"],
+        "poster-asymmetric": ["offset-hero", "stacked-poster", "split-poster"],
+        "playful-collage": ["mosaic", "staggered", "capsule"],
+        "brutalist-frame": ["block-grid", "offset-frame", "ledger-frame"],
+        "retro-interface": ["window-grid", "terminal-stack", "pixel-panels"],
+        "literary-minimal": ["margin-note", "quiet-center", "asymmetric-column"],
+        "product-showcase": ["device-stage", "browser-story", "annotated-flow"],
+        "cinematic-canvas": ["full-bleed", "split-film", "chapter-cut"],
+        "analytical-exhibit": ["exhibit-grid", "evidence-rail", "decision-board"],
+        "technical-schematic": ["blueprint-canvas", "annotated-system", "spec-sheet"],
+    }
+    theme_by_family = {
+        "institutional-grid": "blue-professional",
+        "editorial-spread": "biennale-yellow",
+        "poster-asymmetric": "studio",
+        "playful-collage": "daisy-days",
+        "brutalist-frame": "block-frame",
+        "retro-interface": "8-bit-orbit",
+        "literary-minimal": "soft-editorial",
+        "product-showcase": "product-console",
+        "cinematic-canvas": "studio",
+        "analytical-exhibit": "data-intelligence",
+        "technical-schematic": "technical-blueprint",
+    }
+
+    def seed_for_variant(family: str, variant: str) -> str:
+        variants = variants_by_family[family]
+        for index in range(10_000):
+            seed = f"capacity-{family}-{index:03d}"
+            digest = hashlib.sha256(
+                f"controlled-deck-composition-v1:{family}:{seed}".encode()
+            ).digest()
+            if variants[int.from_bytes(digest[:4], "big") % len(variants)] == variant:
+                return seed
+        raise AssertionError(f"Unable to find seed for {family}/{variant}")
+
+    failures: list[str] = []
+    for family, variants in variants_by_family.items():
+        for variant in variants:
+            case_dir = tmp_path / family / variant
+            deck_path = case_dir / "deck.json"
+            scaffold = _run(
+                "inspect_deck_contract.js",
+                "cards-grid-v1",
+                "cards-grid-v1",
+                "cards-grid-v1",
+                "cards-grid-v1",
+                "--theme",
+                theme_by_family[family],
+                "--family",
+                family,
+                "--design-seed",
+                seed_for_variant(family, variant),
+                "--out",
+                str(deck_path),
+            )
+            assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+            deck = json.loads(deck_path.read_text(encoding="utf-8"))
+            assert deck["design"]["variant"] == variant
+            for slide_index, slide in enumerate(deck["slides"]):
+                item_count = slide_index + 3
+                slide["props"].update(
+                    {
+                        "eyebrow": "CAPACITY CONTRACT",
+                        "title": f"{item_count} 个并列信息单元",
+                        "subtitle": "每张卡片使用正常长度的中文标题和说明，验证模板容量而不是极短占位文案。",
+                        "variant": "balanced",
+                        "items": [
+                            {
+                                "kicker": f"阶段 {item_index + 1}",
+                                "title": "清晰说明这一项的核心结论",
+                                "body": "补充必要的背景、动作和结果信息，保持完整可读，不依赖裁切或隐藏溢出内容。",
+                            }
+                            for item_index in range(item_count)
+                        ],
+                    }
+                )
+            deck_path.write_text(
+                json.dumps(deck, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            html_path = case_dir / "index.html"
+            report_path = case_dir / "html_self_check.json"
+            rendered = _run(
+                "render_deck_html.js",
+                str(deck_path),
+                "--out",
+                str(html_path),
+            )
+            assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+            self_check = _run(
+                "html_self_check.js",
+                str(html_path),
+                "--dom-to-pptx",
+                "--report",
+                str(report_path),
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            if self_check.returncode != 0 or report["issues"] or report["warnings"]:
+                failures.append(
+                    f"{family}/{variant}: "
+                    + "; ".join(report["issues"] + report["warnings"])
+                )
+
+    assert not failures, "\n".join(failures)
 
 
 def test_comic_panel_theme_renders_story_panels_and_clean_diagrams(
