@@ -1070,13 +1070,20 @@ class LongAnswerLLM:
 
 class MalformedActionHintLLM:
     async def generate_stream(self, messages, tools=None, **_):
-        for chunk in [
-            "好的。",
-            "```action",
-            '_hint { "action": "open_settings", "params": {"tab": "onboarding"}, ',
-            '"display_text": "去个人记忆页完善偏好，我会更懂你的工作方式。\n" } ```',
-        ]:
-            yield StreamEvent(type="text", delta=chunk)
+        yield StreamEvent(type="text", delta="好的。")
+        yield StreamEvent(type="text", delta="```action")
+        yield StreamEvent(
+            type="text",
+            delta='_hint { "action": "open_settings", "params": {"tab": "onboarding"}, ',
+        )
+        yield StreamEvent(
+            type="activity",
+            activity={"protocol": "agent_activity_v1", "phase": "provider_stream"},
+        )
+        yield StreamEvent(
+            type="text",
+            delta='"display_text": "去个人记忆页完善偏好，我会更懂你的工作方式。\n" } ```',
+        )
         yield StreamEvent(type="finish", finish_reason="stop")
 
     async def generate(self, messages, tools=None):
@@ -2113,7 +2120,7 @@ async def test_acp_streams_long_plain_answer_chunks(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_normalizes_malformed_action_hint_chunks(tmp_path):
+async def test_acp_normalizes_action_hint_chunks_across_activity(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),

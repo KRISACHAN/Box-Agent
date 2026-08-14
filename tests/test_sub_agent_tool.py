@@ -94,6 +94,59 @@ def test_parallel_safe():
     assert tool.parallel_safe is True
 
 
+def test_automatic_child_routing_selects_from_host_allowlist():
+    class RoutingLLM:
+        auto_model_candidates = (
+            {
+                "model": "model-general",
+                "tags": ["general", "code"],
+                "abilityLevel": 2,
+            },
+            {
+                "model": "model-html",
+                "tags": ["html", "frontend"],
+                "abilityLevel": 2,
+                "maxTokens": 50000,
+            },
+        )
+
+        def __init__(self):
+            self.bound = None
+
+        def for_model(self, model, *, max_output_tokens=None):
+            self.bound = (model, max_output_tokens)
+            return f"bound:{model}"
+
+    llm = RoutingLLM()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+
+    child_llm, diagnostic = tool._resolve_task_llm(
+        task="制作一个 HTML 前端页面",
+        strategy="general_loop",
+    )
+
+    assert child_llm == "bound:model-html"
+    assert llm.bound == ("model-html", 50000)
+    assert diagnostic["selected_model"] == "model-html"
+    assert diagnostic["task_tags"] == ["frontend", "html"]
+
+
+def test_manual_child_routing_inherits_parent_model():
+    class ManualLLM:
+        pass
+
+    llm = ManualLLM()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+
+    child_llm, diagnostic = tool._resolve_task_llm(
+        task="制作一个 HTML 前端页面",
+        strategy="general_loop",
+    )
+
+    assert child_llm is llm
+    assert diagnostic == {"mode": "inherit", "reason": "no_auto_model_pool"}
+
+
 def test_default_parallel_safe_is_false():
     """Other tools should have parallel_safe == False by default."""
     dummy = DummyTool()

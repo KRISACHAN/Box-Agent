@@ -419,6 +419,8 @@ class ExternalSkillRunPolicy:
         tool_name: str,
         arguments: dict[str, Any],
         result: ToolResult,
+        *,
+        executed: bool = True,
     ) -> None:
         for key, value in arguments.items():
             if not isinstance(value, str):

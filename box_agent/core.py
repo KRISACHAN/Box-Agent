@@ -1387,7 +1387,11 @@ def _protected_tail_start(
     remaining = min(_PROTECTED_TAIL_TOKEN_BUDGET, max(0, token_limit // 3))
     start = len(messages)
     for idx in range(len(messages) - 1, latest_user_idx, -1):
-        cost = _approx_tokens_for_content(messages[idx].content)
+        # The request estimator includes content, thinking, and tool calls.
+        # Use the same complete message cost here; otherwise a message with
+        # tiny visible content but a large reasoning/tool payload is wrongly
+        # protected and compaction can remain above the safe limit.
+        cost = _estimate_tokens([messages[idx]])
         if cost > remaining:
             break
         start = idx
@@ -1403,7 +1407,7 @@ def _protected_tail_start(
             assistant_idx > latest_user_idx
             and messages[assistant_idx].role == "assistant"
             and messages[assistant_idx].tool_calls
-            and _approx_tokens_for_content(messages[assistant_idx].content) <= remaining
+            and _estimate_tokens([messages[assistant_idx]]) <= remaining
         ):
             start = assistant_idx
         else:
@@ -4825,7 +4829,12 @@ async def run_agent_loop(
             result = _activate_skill_result(fn_name, fn_args, result)
             _record_nested_tool_budget(fn_name, result)
             if workflow_policy is not None:
-                workflow_policy.record_tool_result(fn_name, fn_args, result)
+                workflow_policy.record_tool_result(
+                    fn_name,
+                    fn_args,
+                    result,
+                    executed=allowed_to_execute,
+                )
             _record_search_files_result(fn_name, result)
             step_tool_success_by_id[tc_id] = result.success
 
@@ -5358,7 +5367,12 @@ async def run_agent_loop(
                 )
                 _record_nested_tool_budget(fn_name, result)
                 if workflow_policy is not None:
-                    workflow_policy.record_tool_result(fn_name, fn_args, result)
+                    workflow_policy.record_tool_result(
+                        fn_name,
+                        fn_args,
+                        result,
+                        executed=tc_id not in par_budget_errors,
+                    )
                 _record_search_files_result(fn_name, result)
                 step_tool_success_by_id[tc_id] = result.success
 

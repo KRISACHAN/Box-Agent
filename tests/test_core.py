@@ -5199,6 +5199,38 @@ async def test_maybe_summarize_preserves_latest_user_and_recent_tail_exactly():
 
 
 @pytest.mark.asyncio
+async def test_maybe_summarize_counts_thinking_when_selecting_protected_tail():
+    from box_agent.core import _maybe_summarize
+
+    latest_user = Message(role="user", content="keep this request")
+    oversized_reasoning = Message(
+        role="assistant",
+        content="",
+        thinking="large hidden reasoning " * 8_000,
+    )
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old request"),
+        Message(role="assistant", content="old execution"),
+        latest_user,
+        oversized_reasoning,
+    ]
+
+    outcome = await _maybe_summarize(
+        _FakeSummaryLLM("complete execution summary"),
+        msgs,
+        token_limit=5_000,
+        api_total_tokens=0,
+        skip_check=False,
+    )
+
+    assert outcome.mode == "summary"
+    assert outcome.messages is not None
+    assert outcome.messages[-1] is latest_user
+    assert oversized_reasoning not in outcome.messages
+
+
+@pytest.mark.asyncio
 async def test_maybe_summarize_uses_prompt_tokens_not_total_tokens_when_provided():
     from box_agent.core import _maybe_summarize
 

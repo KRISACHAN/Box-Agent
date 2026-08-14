@@ -1038,6 +1038,26 @@ def test_explicit_research_action_overrides_large_reference_content(tmp_path):
     ]
 
 
+def test_implementation_research_milestone_does_not_trigger_deep_research(
+    tmp_path,
+):
+    gate = build_auto_completion_gate(
+        (
+            '<presentation_config schema_version="1" confirmed_by="implicit">\n'
+            '{"role":{"label":"市场","source":"default"}}\n'
+            "</presentation_config>\n"
+            "用户问题：请生成一份客户评标用解决方案 PPT。"
+            "实施计划使用甘特图，包含启动、调研、知识库建设、AI 配置训练、"
+            "系统集成、联调测试、试点上线、全量推广和运营优化。"
+        ),
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.workflow_options["research_mode"] == "content_ready"
+    assert document_preload_skill_names((), gate) == ["pptx"]
+
+
 @pytest.mark.parametrize(
     "research_action",
     [
@@ -1452,6 +1472,134 @@ def test_controlled_successful_mutations_without_progress_stop_after_two(tmp_pat
     assert policy.allows_completion_continuation() is False
 
 
+def test_controlled_repeated_execution_failures_must_be_consecutive(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+        stage="finalize",
+    )
+    arguments = {
+        "command": f"cd output && node {FINALIZER_SCRIPT} deck.json --out index.html"
+    }
+
+    for error in ("failure A", "failure B", "failure A"):
+        policy.record_tool_result(
+            "bash",
+            arguments,
+            ToolResult(success=False, error=error),
+        )
+
+    assert policy.repair_stalled is False
+
+    policy.record_tool_result(
+        "bash",
+        arguments,
+        ToolResult(success=False, error="failure A"),
+    )
+
+    assert policy.repair_stalled is True
+
+
+def test_controlled_repair_execution_failures_reset_when_error_changes(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+        stage="deck_spec_repair",
+    )
+
+    for error in ("write failure A", "write failure B"):
+        policy.record_tool_result(
+            "write_file",
+            {"path": "deck.patch.json", "content": "{}"},
+            ToolResult(success=False, error=error),
+        )
+
+    assert policy.repair_stalled is False
+
+    policy.record_tool_result(
+        "write_file",
+        {"path": "deck.patch.json", "content": "{}"},
+        ToolResult(success=False, error="write failure B"),
+    )
+
+    assert policy.repair_stalled is True
+
+
+def test_controlled_policy_rejections_must_be_consecutive(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+        stage="deck_spec_repair",
+    )
+
+    for error in (
+        "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: violation A",
+        "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: violation B",
+        "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: violation A",
+    ):
+        policy.record_tool_result(
+            "read_file",
+            {"path": "qa/deck_spec.json"},
+            ToolResult(success=False, error=error),
+            executed=False,
+        )
+
+    assert policy.repair_stalled is False
+
+    for _ in range(2):
+        policy.record_tool_result(
+            "read_file",
+            {"path": "qa/deck_spec.json"},
+            ToolResult(
+                success=False,
+                error="CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: violation A",
+            ),
+            executed=False,
+        )
+
+    assert policy.repair_stalled is True
+
+
+def test_controlled_parallel_calls_obey_repair_stage_guards(tmp_path):
+    stalled = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        stage="repair_stalled",
+        repair_stalled=True,
+    )
+    repairing = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        stage="deck_spec_repair",
+        has_repair_input=True,
+    )
+    arguments = {
+        "output_path": "assets/generated/probe.png",
+        "watermark": False,
+    }
+
+    stalled_error = stalled.tool_call_error(
+        "generate_image",
+        arguments,
+        verified_evidence_urls=set(),
+        parallel=True,
+    )
+    repair_error = repairing.tool_call_error(
+        "generate_image",
+        arguments,
+        verified_evidence_urls=set(),
+        parallel=True,
+    )
+
+    assert stalled_error is not None
+    assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in stalled_error
+    assert repair_error is not None
+    assert "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY" in repair_error
+
+
 def test_deep_research_checkpoint_does_not_fail_open_without_progress(tmp_path):
     policy = ControlledPresentationPolicy(
         workspace_dir=str(tmp_path),
@@ -1797,6 +1945,66 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}complete" in checkpoint
     assert "qa_warnings=2" in checkpoint
     assert "pass-with-warnings" in checkpoint
+
+
+def test_controlled_checkpoint_does_not_reapply_older_patch_for_honest_placeholder(
+    tmp_path,
+):
+    output = tmp_path / "output"
+    qa = output / "qa"
+    qa.mkdir(parents=True)
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "精选项目",
+                        "message": "展示项目定位与成果。",
+                        "bullets": ["项目名称待客户确认"],
+                        "layout": "project case",
+                        "visual": "thumbnail and metrics",
+                        "evidence": [],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    patch_path = output / "deck.patch.json"
+    patch_path.write_text(
+        '{"slides":{"slide-01":{"props":{"title":"品牌项目 A（待补充）"}}}}',
+        encoding="utf-8",
+    )
+    deck_path = output / "deck.json"
+    deck_path.write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "id": "slide-01",
+                        "source_outline_page": 1,
+                        "props": {"title": "品牌项目 A（待补充）"},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    deck_mtime = patch_path.stat().st_mtime_ns + 10_000_000
+    os.utime(deck_path, ns=(deck_mtime, deck_mtime))
+
+    checkpoint = completion_gate_progress_text(
+        CompletionGate(workflow_checkpoint_kind="controlled_presentation"),
+        str(tmp_path),
+    )
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}apply_patch" not in checkpoint
 
 
 def test_controlled_checkpoint_completes_with_current_failed_truth_report(tmp_path):
@@ -4187,7 +4395,7 @@ async def test_controlled_repair_input_blocks_fresh_report_reread(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path):
+async def test_controlled_repair_stalls_after_three_identical_policy_rejections(tmp_path):
     _write_deck_spec_repair_fixture(tmp_path)
     llm = MockLLM(
         [
@@ -4205,9 +4413,9 @@ async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path
                 ],
                 finish_reason="tool",
             )
-            for attempt in range(1, 4)
+            for attempt in range(1, 5)
         ]
-        + [_final("Stopped after two no-progress repair attempts.")]
+        + [_final("Stopped after repeated no-progress repair attempts.")]
     )
     read_tool = CountingReadTool()
 
@@ -4216,7 +4424,7 @@ async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path
             llm=llm,
             messages=_msgs(),
             tools={"read_file": read_tool},
-            max_steps=6,
+            max_steps=7,
             completion_gate=CompletionGate(
                 workflow_checkpoint_kind="controlled_presentation",
                 max_continuations=0,
@@ -4226,14 +4434,6 @@ async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path
     )
 
     assert read_tool.calls == 0
-    second = next(
-        event
-        for event in events
-        if isinstance(event, ToolCallResult)
-        and event.tool_call_id == "read-truth-2"
-    )
-    assert second.success is False
-    assert "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY" in (second.error or "")
     third = next(
         event
         for event in events
@@ -4241,7 +4441,15 @@ async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path
         and event.tool_call_id == "read-truth-3"
     )
     assert third.success is False
-    assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in (third.error or "")
+    assert "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY" in (third.error or "")
+    fourth = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "read-truth-4"
+    )
+    assert fourth.success is False
+    assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in (fourth.error or "")
     assert any(
         isinstance(event, InjectedMessageEvent)
         and f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled"
@@ -4250,7 +4458,7 @@ async def test_controlled_repair_stalls_after_two_blocked_tool_attempts(tmp_path
     )
     assert any(
         isinstance(event, DoneEvent)
-        and event.final_content == "Stopped after two no-progress repair attempts."
+        and event.final_content == "Stopped after repeated no-progress repair attempts."
         for event in events
     )
 

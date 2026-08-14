@@ -5,9 +5,10 @@ This module provides a unified interface for different LLM providers
 """
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from copy import copy
 from time import perf_counter
+from typing import Any
 from uuid import uuid4
 
 from ..client_info import ClientInfo, scoped_client_info
@@ -184,7 +185,7 @@ class LLMClient:
 
         logger.info("Initialized LLM client with provider: %s, api_base: %s", provider, api_base)
 
-    def for_model(self, model: str) -> "LLMClient":
+    def for_model(self, model: str, *, max_output_tokens: int | None = None) -> "LLMClient":
         """Return a client with the same endpoint/auth settings for ``model``.
 
         ACP conversation sessions use this to bind an app-owned session to a
@@ -202,6 +203,11 @@ class LLMClient:
         client._client = copy(self._client)
         client.model = normalized_model
         client._client.model = normalized_model
+        if max_output_tokens is not None:
+            if max_output_tokens <= 0:
+                raise ValueError("max_output_tokens must be positive")
+            client.max_output_tokens = max_output_tokens
+            client._client.max_output_tokens = max_output_tokens
         if hasattr(client._client, "_ephemeral_max_output_tokens"):
             client._client._ephemeral_max_output_tokens = None
         return client
@@ -459,9 +465,40 @@ class SessionBoundLLM:
         self._title = "Box-Agent"
         self._call_kind = ""
         self._client_info: ClientInfo | None = None
+        self._auto_model_candidates: tuple[dict[str, Any], ...] = ()
 
     def bind(self, client: LLMClient) -> None:
         self._delegate = client
+
+    @property
+    def auto_model_candidates(self) -> tuple[dict[str, Any], ...]:
+        return self._auto_model_candidates
+
+    def set_auto_model_candidates(self, candidates: Iterable[dict[str, Any]]) -> None:
+        self._auto_model_candidates = tuple(dict(candidate) for candidate in candidates)
+
+    def for_model(
+        self,
+        model: str,
+        *,
+        max_output_tokens: int | None = None,
+    ) -> "SessionBoundLLM":
+        """Clone this session reference for an isolated child-agent model."""
+
+        clone_for_model = getattr(self._delegate, "for_model", None)
+        if not callable(clone_for_model):
+            raise ValueError("configured LLM client does not support child model binding")
+        child = SessionBoundLLM(
+            clone_for_model(model, max_output_tokens=max_output_tokens)
+        )
+        child.set_request_context(
+            session_id=self._session_id,
+            turn_id=self._turn_id,
+            title=self._title,
+            call_kind=self._call_kind,
+            client_info=self._client_info,
+        )
+        return child
 
     def set_request_context(
         self,
