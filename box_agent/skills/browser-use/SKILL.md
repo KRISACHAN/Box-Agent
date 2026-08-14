@@ -41,35 +41,35 @@ keywords:
 
 # Browser Use
 
-按用户想获得的体验选择能力，不要求用户理解内部组件。两种浏览器可在同一 turn 分步骤使用，但 snapshot/ref 不得跨通道复用。
+Choose the capability by the experience the user expects. Do not require the user to understand internal components. Both browser types may be used in separate steps of one turn, but never reuse a snapshot or ref across them.
 
-## 选择浏览器
+## Choose the browser
 
-- 高优先级：明确的公开网页检索、爬取、批量抓取或采集始终优先使用受管浏览器自动化，不要打开或操作用户的真实浏览器，即使真实浏览器工具当前可见。
-- 高优先级：用户要求“填好让我检查”、亲自接管或最后提交时，从任务开始就优先使用用户的可见真实浏览器，不要在受管浏览器中代填后再声称用户可以接管。填写完成后保留页面并停在提交之前；真实浏览器未连接时引导用户连接，不要静默回退。
-- 当前页、现有登录/Cookie/扩展/内网、系统或默认浏览器、需要用户看见或接管：使用用户正在使用的可见浏览器。
-- 公开网页、后台抓取、批量采集、测试、截图、DOM/网络检查：使用受管浏览器自动化。
-- “有头/无头”只描述受管浏览器是否显示窗口，不代表继承用户 Chrome 登录态。不要把两者视为同义词，也不要仅凭“看到窗口”断言使用了真实浏览器；需要现有登录态时仍使用可见真实浏览器。
-- 意图确实不清时只问一次：“我可以用独立浏览器自动完成，也可以操作你当前登录的浏览器。你希望哪一种？”
+- High priority: For explicit public-web search, retrieval, crawling, or bulk collection (for example, “公开检索”, “爬取”, or “批量抓取”), prefer managed browser automation. Do not open or manipulate the user's real browser even when its tools are visible.
+- High priority: If the user says “填好让我检查”, wants to take over, or wants to submit personally, prefer the user's visible real browser from the start. Do not fill the form in a managed browser and then claim the user can take over. Leave the page open and stop before submission. If the real browser is not connected, guide the user to connect it instead of silently falling back.
+- Use the user's visible browser for the current page, existing login state, cookies, extensions, intranet access, system/default-browser requests, or any task the user must see or take over.
+- Use managed browser automation for public pages, background extraction, bulk collection, testing, screenshots, DOM inspection, and network inspection.
+- Treat headed/headless only as the managed browser's window visibility. It does not inherit the user's Chrome login state. Do not treat a visible managed window as proof that the real browser is in use.
+- When the intent is genuinely ambiguous, ask once in the user's language whether they want an independent automated browser or their currently logged-in browser.
 
-## 切换受管浏览器窗口
+## Switch the managed browser window
 
-仅当用户关心是否出现窗口或明确要求有头/无头时修改配置；普通浏览任务不得静默切换。
+Change this configuration only when the user cares whether a window appears or explicitly requests headed/headless mode. Never switch it silently for an ordinary browser task.
 
-1. 调用 `mcp_config(action="inspect_browser")` 查看当前 `mode`、`isolated`、`profile` 和 `enabled`。
-2. 当前模式符合要求时直接使用现有 Playwright 工具。
-3. 模式不符且用户已明确要求切换时调用：
-   - 有头/带头/显示窗口：`mcp_config(action="update", name="playwright", config={"args_remove":["--headless"]})`
-   - 无头/后台/不显示窗口：`mcp_config(action="update", name="playwright", config={"args_add":["--headless"]})`
-4. 该操作只增删现有 `playwright` 的 `--headless`，保留 `--isolated`、浏览器路径、环境变量和超时；宿主监听配置并热重连。禁止新增 `playwright-headed`、`playwright-headless` 等重复实例。
-5. 修改后重新 inspect，并发起一次新的浏览器操作。配置写入成功不等于新进程已经切换；只有热重连成功及实际窗口/运行结果才能证明生效。没有宿主热重连时提示用户重启 Box-Agent。
+1. Call `mcp_config(action="inspect_browser")` and inspect `mode`, `isolated`, `profile`, and `enabled`.
+2. If the current mode already matches the request, use the existing Playwright tools.
+3. If the mode does not match and the user explicitly requested a switch, call:
+   - Headed / visible window (`有头`, `带头`): `mcp_config(action="update", name="playwright", config={"args_remove":["--headless"]})`
+   - Headless / background (`无头`, `后台`): `mcp_config(action="update", name="playwright", config={"args_add":["--headless"]})`
+4. Change only `--headless` on the existing `playwright` entry. Preserve `--isolated`, the executable path, environment variables, and timeouts. Let the host watch the file and hot-reconnect. Never add duplicate instances such as `playwright-headed` or `playwright-headless`.
+5. Inspect again and start a new browser operation. A successful file write does not prove that the new process is active; only a successful hot reconnect and the actual window/runtime result prove the switch. If no host performs hot reconnects, tell the user to restart Box-Agent.
 
-受管配置可能在 Officev3 重启或重新同步后恢复默认。即使 `mode=headed`，只要 `isolated=true`，它仍是独立的受管 Chromium，不继承用户 Chrome 登录态。
+Officev3 may restore the managed configuration to its default after restart or resynchronization. Even with `mode=headed`, `isolated=true` still means an independent managed Chromium that does not inherit the user's Chrome login state.
 
-## 工具与安全
+## Tools and safety
 
-- 可见真实浏览器用于打开 URL、读取当前页、snapshot、点击、填写和经确认的提交。
-- 受管浏览器用于导航、snapshot、点击、填写、截图、脚本和网络检查；不要用 Gateway 内部的 Playwright fallback 替代 standalone Playwright 工具。
-- 依赖当前页或登录态而真实浏览器未连接时，引导用户连接，不能静默换成独立浏览器并假装状态仍在。
-- 默认对用户只说“独立浏览器”“你当前登录的浏览器”“显示/隐藏窗口”；除非用户询问架构，不暴露 MCP 和内部组件名。
-- 填写不等于提交。发送、发布、购买、删除等外部副作用操作必须按现有策略获得明确确认。
+- Use the visible real browser to open URLs, read the current page, take snapshots, click, fill, and perform confirmed submissions.
+- Use the managed browser for navigation, snapshots, clicks, filling, screenshots, scripts, and network inspection. Do not substitute the Gateway's internal Playwright fallback for standalone Playwright tools.
+- When a task depends on the current page or login state and the real browser is disconnected, guide the user to connect it. Never silently switch to an independent browser and pretend the state remains available.
+- By default, describe the choices to the user as “independent browser”, “your currently logged-in browser”, and “show/hide the window”. Do not expose MCP or internal component names unless the user asks about the architecture.
+- Filling is not submitting. Sending, publishing, purchasing, deleting, and other external side effects require explicit confirmation under the existing policy.

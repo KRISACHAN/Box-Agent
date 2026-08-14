@@ -77,14 +77,14 @@ def test_browser_intent_preloads_full_builtin_instructions() -> None:
     )
 
     assert rendered.loaded_names == ("browser-use",)
-    assert "受管浏览器自动化" in rendered.system_prompt
-    assert "可见真实浏览器" in rendered.system_prompt
+    assert "managed browser automation" in rendered.system_prompt
+    assert "visible real browser" in rendered.system_prompt
     assert 'mcp_config(action="update", name="playwright"' in rendered.system_prompt
-    assert "禁止新增 `playwright-headed`" in rendered.system_prompt
+    assert "Never add duplicate instances such as `playwright-headed`" in rendered.system_prompt
     assert 'mcp_config(action="inspect_browser")' in rendered.system_prompt
-    assert "默认固定无头" not in rendered.system_prompt
-    assert "不要把两者视为同义词" in rendered.system_prompt
-    assert "不要仅凭“看到窗口”断言使用了真实浏览器" in rendered.system_prompt
+    assert "fixed headless by default" not in rendered.system_prompt
+    assert "Treat headed/headless only as the managed browser's window visibility" in rendered.system_prompt
+    assert "Do not treat a visible managed window as proof" in rendered.system_prompt
 
 
 @pytest.mark.parametrize(
@@ -92,11 +92,11 @@ def test_browser_intent_preloads_full_builtin_instructions() -> None:
     [
         (
             "用爬虫批量抓取这些公开网页",
-            "不要打开或操作用户的真实浏览器",
+            "Do not open or manipulate the user's real browser",
         ),
         (
             "填写这个表单，填好让我检查，最后我点击提交",
-            "不要在受管浏览器中代填后再声称用户可以接管",
+            "Do not fill the form in a managed browser and then claim the user can take over",
         ),
     ],
 )
