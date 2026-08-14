@@ -1,7 +1,7 @@
 """Environment-context injection for ACP sessions.
 
 The Electron host knows things the runtime cannot easily probe — bundled
-CLI paths (lark-cli, wecom-cli, dingtalk-cli), whether the browser-tools
+CLI paths (lark-cli, wecom-cli, dws), whether the browser-tools
 shortcut has been completed, the user's platform. Hosts pass this through
 ``session/new._meta.env_context`` so the model stops claiming "you don't
 have lark-cli installed" when in fact a bundled binary is sitting at a
@@ -412,6 +412,12 @@ def _format_cli_section(cli: dict[str, str | None]) -> list[str]:
                 "- 飞书/Lark CLI 策略：officev3 本地会话只允许用户身份；业务命令必须显式加 "
                 "`--as user`，不要使用 `--as bot`、`config bind --identity bot-only` 或 "
                 "`config strict-mode`。"
+            )
+        if cli.get("dws"):
+            lines.append(
+                "- 钉钉 DWS 策略：当前 OAuth profile 由 officev3 管理；可读取文档、知识库和钉盘，使用 "
+                "`doc create` / `doc update` 写入钉钉文档，或使用 `drive upload` / `drive mkdir` 上传文件、创建钉盘文件夹。"
+                "不要执行 `drive upload-info` / `drive commit`、删除、移动、共享/权限、`auth login/reset`、profile/config、skills/plugins、升级或 raw API 命令。"
             )
     if missing:
         lines.append("- 未安装 CLI（不要假装能调用）：" + ", ".join(missing))
