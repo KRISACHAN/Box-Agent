@@ -27,6 +27,7 @@ class _DummyLLM:
         self.model = f"model-{label}"
         self.last_messages = None
         self.last_kwargs = None
+        self.max_output_tokens = 80000
 
     async def generate(self, messages, tools=None, **kwargs):
         self.last_messages = messages
@@ -44,9 +45,11 @@ class _DummyLLM:
         yield StreamEvent(type="text", delta=f"reply-from-{self.label}")
         yield StreamEvent(type="finish", finish_reason="stop")
 
-    def for_model(self, model: str):
+    def for_model(self, model: str, *, max_output_tokens: int | None = None):
         client = _DummyLLM(f"bound-{model}")
         client.model = model
+        if max_output_tokens is not None:
+            client.max_output_tokens = max_output_tokens
         return client
 
 
@@ -125,6 +128,11 @@ def test_llm_client_for_model_preserves_endpoint_auth_and_default(tmp_path):
     assert bound._client.client is client._client.client
     assert client.for_model("model-main") is not client
 
+    capped = client.for_model("model-session", max_output_tokens=63999)
+    assert capped.max_output_tokens == 63999
+    assert capped._client.max_output_tokens == 63999
+    assert client.max_output_tokens == 1234
+
 
 @pytest.mark.asyncio
 async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp_path):
@@ -142,7 +150,11 @@ async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp
         SimpleNamespace(
             cwd=str(tmp_path),
             field_meta={
-                "llm_binding": {"source": "builtin", "model": "model-lite"}
+                "llm_binding": {
+                    "source": "builtin",
+                    "model": "model-lite",
+                    "maxTokens": 63999,
+                }
             },
         )
     )
@@ -154,7 +166,125 @@ async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp
     assert second_state.agent.llm.model == "model-lite"
     assert first_state.agent.llm is not second_state.agent.llm
     assert first_state.llm_binding == {"source": "builtin", "model": "model-normal"}
-    assert second_state.llm_binding == {"source": "builtin", "model": "model-lite"}
+    assert second_state.llm_binding == {
+        "source": "builtin",
+        "model": "model-lite",
+        "maxTokens": 63999,
+    }
+    assert second_state.agent.llm.max_output_tokens == 63999
+
+
+@pytest.mark.asyncio
+async def test_session_binding_rejects_invalid_max_tokens(tmp_path):
+    agent, _main, _lite = _make_agent(tmp_path, lite=True)
+
+    with pytest.raises(ValueError, match="llm_binding.maxTokens is invalid"):
+        await agent.newSession(
+            SimpleNamespace(
+                cwd=str(tmp_path),
+                field_meta={
+                    "llm_binding": {
+                        "source": "builtin",
+                        "model": "model-lite",
+                        "maxTokens": 0,
+                    }
+                },
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_auto_session_exposes_allowlisted_models_to_sub_agent(tmp_path):
+    agent, _main, _lite = _make_agent(tmp_path, lite=True)
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {
+                    "source": "builtin",
+                    "model": "model-normal",
+                    "autoRouting": {
+                        "models": [
+                            {
+                                "model": "model-normal",
+                                "tags": ["code", "image"],
+                                "abilityLevel": 2,
+                                "contextWindow": 180000,
+                            },
+                            {
+                                "model": "model-fast",
+                                "tags": ["general", "fast"],
+                                "abilityLevel": 1,
+                                "maxTokens": 63999,
+                            },
+                        ]
+                    },
+                }
+            },
+        )
+    )
+    state = agent._sessions[session.sessionId]
+    sub_agent = state.agent.tools["sub_agent"]
+
+    assert state.session_llm.auto_model_candidates[0]["tags"] == ["code", "vision"]
+    assert sub_agent._llm is state.session_llm
+    assert len(sub_agent._llm.auto_model_candidates) == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_session_keeps_sub_agent_on_parent_model(tmp_path):
+    agent, _main, _lite = _make_agent(tmp_path, lite=True)
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {"source": "builtin", "model": "model-normal"}
+            },
+        )
+    )
+    state = agent._sessions[session.sessionId]
+
+    assert state.session_llm.auto_model_candidates == ()
+    assert state.agent.tools["sub_agent"]._llm is state.session_llm
+
+
+@pytest.mark.asyncio
+async def test_switching_to_manual_binding_clears_child_auto_routing(tmp_path):
+    agent, _main, _lite = _make_agent(tmp_path, lite=True)
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {
+                    "source": "builtin",
+                    "model": "model-normal",
+                    "autoRouting": {
+                        "models": [
+                            {
+                                "model": "model-normal",
+                                "tags": ["general"],
+                                "abilityLevel": 2,
+                            }
+                        ]
+                    },
+                }
+            },
+        )
+    )
+    state = agent._sessions[session.sessionId]
+    assert len(state.session_llm.auto_model_candidates) == 1
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "manual now"}],
+            field_meta={
+                "llm_binding": {"source": "builtin", "model": "model-normal"}
+            },
+        )
+    )
+
+    assert state.session_llm.auto_model_candidates == ()
 
 
 @pytest.mark.asyncio
@@ -177,7 +307,11 @@ async def test_session_switches_model_between_turns_without_recreating_agent(tmp
             sessionId=session.sessionId,
             prompt=[{"text": "hello"}],
             field_meta={
-                "llm_binding": {"source": "builtin", "model": "model-lite"}
+                "llm_binding": {
+                    "source": "builtin",
+                    "model": "model-lite",
+                    "maxTokens": 63999,
+                }
             },
         )
     )
@@ -187,7 +321,12 @@ async def test_session_switches_model_between_turns_without_recreating_agent(tmp
     assert state.session_llm is original_session_llm
     assert state.agent.llm is original_session_llm
     assert state.agent.llm.model == "model-lite"
-    assert state.llm_binding == {"source": "builtin", "model": "model-lite"}
+    assert state.llm_binding == {
+        "source": "builtin",
+        "model": "model-lite",
+        "maxTokens": 63999,
+    }
+    assert state.agent.llm.max_output_tokens == 63999
     assert main.model == "model-main"
 
 

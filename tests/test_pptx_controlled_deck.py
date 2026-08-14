@@ -3223,7 +3223,7 @@ def test_scaffold_keeps_project_media_and_metrics_as_project_case_study(
                             "关键数字：待补充",
                         ],
                         "layout": "cards",
-                        "visual": "项目缩略图 + 一句话定位 + 2-3 个关键数字指标卡",
+                        "visual": "项目缩略图 + 一句话定位 + 2-3 个数字指标卡",
                         "evidence": [],
                     }
                 ],
@@ -3262,6 +3262,56 @@ def test_scaffold_keeps_project_media_and_metrics_as_project_case_study(
     assert deck["slides"][0]["layout_id"] == "project-case-study-v1"
     report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
     assert report["required_fields"] == [{"slide": 1, "field": "metrics"}]
+
+
+def test_scaffold_normalizes_metrics_field_when_project_page_falls_back_to_kpi(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(
+        json.dumps(
+            {
+                "deck_goal": "制作设计工作室年终作品集",
+                "audience": "潜在客户",
+                "source_mode": "user_provided",
+                "storyline": "用年度成果展示工作室能力。",
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "年度成果",
+                        "message": "用一组结果指标概括今年的交付。",
+                        "bullets": ["28 个交付项目"],
+                        "layout": "project-case-study-v1",
+                        "visual": "KPI 指标卡",
+                        "evidence": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "project-case-study-v1",
+        "--outline",
+        str(outline_path),
+        "--require-field",
+        "1:metrics",
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "kpi-grid-v1"
+    report = json.loads((tmp_path / "qa" / "deck_contract.json").read_text())
+    assert report["required_fields"] == [{"slide": 1, "field": "items"}]
+    assert report["required_field_normalizations"] == [
+        {"slide": 1, "from": "metrics", "to": "items"}
+    ]
 
 
 def test_scaffold_persists_visual_intent_and_normalizes_strong_layout_mismatches(

@@ -12,6 +12,16 @@ from scripts import build_runtime
 from scripts.build_runtime import _relativize_node_manifest
 
 
+def test_linux_runtime_pins_openai_to_utf8_header_compatible_version() -> None:
+    project = (build_runtime.PROJECT_ROOT / "pyproject.toml").read_text()
+    dockerfile = (
+        build_runtime.PROJECT_ROOT / "docker" / "linux-runtime" / "Dockerfile"
+    ).read_text()
+
+    assert '"openai==2.8.0"' in project
+    assert 'openai.__version__ == "2.8.0"' in dockerfile
+
+
 def test_relativize_node_manifest_rewrites_paths_under_node_root(tmp_path: Path) -> None:
     node_root = tmp_path / "box-agent-runtime" / "runtimes" / "node"
     bin_dir = node_root / "versions" / "node-v24-test-darwin-arm64" / "bin"

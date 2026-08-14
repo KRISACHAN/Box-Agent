@@ -1446,12 +1446,13 @@ def build_checkpoint_text(
         patch_needs_apply = False
         if patch_is_valid_json:
             try:
-                patch_needs_apply = (
-                    patch_path.stat().st_mtime_ns > deck_path.stat().st_mtime_ns
-                    or has_placeholders
-                )
+                # An applied patch is older than the deck. Honest placeholders
+                # may remain, so their presence cannot prove the patch is stale.
+                patch_mtime = patch_path.stat().st_mtime_ns
+                deck_mtime = deck_path.stat().st_mtime_ns
+                patch_needs_apply = patch_mtime > deck_mtime
             except OSError:
-                patch_needs_apply = has_placeholders
+                patch_needs_apply = False
 
         if (
             effective_image_generation_forbidden

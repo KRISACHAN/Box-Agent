@@ -31,8 +31,16 @@ class _FollowUpLLM:
             type="text",
             delta=(
                 "已完成方案。\n```follow_up_suggestions\n"
-                '{"suggestions":["把方案拆成今日待办", "给我一份风险清单"]}\n```'
+                '{"suggestions":["把方案拆成'
             ),
+        )
+        yield StreamEvent(
+            type="activity",
+            activity={"protocol": "agent_activity_v1", "phase": "provider_stream"},
+        )
+        yield StreamEvent(
+            type="text",
+            delta='今日待办", "给我一份风险清单"]}\n```',
         )
         yield StreamEvent(type="finish", finish_reason="stop")
 
@@ -98,7 +106,7 @@ def test_prompt_requires_a_structured_follow_up_block_only_after_completion() ->
 
 
 @pytest.mark.asyncio
-async def test_acp_strips_model_metadata_and_emits_structured_suggestions(tmp_path) -> None:
+async def test_acp_strips_model_metadata_across_activity_and_emits_suggestions(tmp_path) -> None:
     conn = _RecordingConn()
     agent = BoxACPAgent(
         conn,

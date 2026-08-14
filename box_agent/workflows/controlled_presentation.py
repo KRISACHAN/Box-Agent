@@ -96,6 +96,8 @@ _MUTATION_TOOLS: Final[frozenset[str]] = frozenset(
 _REPAIR_STAGES: Final[frozenset[str]] = frozenset(
     {"outline_repair", "deck_spec_repair"}
 )
+_REPEATED_EXECUTION_FAILURE_LIMIT: Final[int] = 2
+_REPEATED_POLICY_REJECTION_LIMIT: Final[int] = 3
 _REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_REPAIR_INPUT_READY: REPAIR_INPUT in the latest "
     "checkpoint already contains the fresh hard deck-spec issues, affected current "
@@ -148,8 +150,8 @@ _APPLY_PATCH_FIELD_MISMATCH = (
     "Change one of these exact fields and leave unrelated slide content unchanged: {paths}."
 )
 _REPAIR_STALLED_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_REPAIR_STALLED: two consecutive repair tool attempts "
-    "failed to make progress. Do not repeat the call or bypass the stage guard with "
+    "CONTROLLED_PRESENTATION_REPAIR_STALLED: the bounded repair path exhausted "
+    "consecutive no-progress attempts. Do not repeat the call or bypass the stage guard with "
     "a compound shell command, and do not ask for missing facts. End this turn and "
     "report the unresolved internal validation conflict."
 )
@@ -718,9 +720,9 @@ def _image_policy_rebase_error(
 
 def _repair_stalled_checkpoint() -> str:
     return (
-        "Internal controlled-presentation checkpoint; the same deterministic "
-        "controlled-deck step failed twice with the same error, so filesystem writes are now "
-        "stopped to prevent an unbounded repair loop.\n"
+        "Internal controlled-presentation checkpoint; the bounded repair path "
+        "exhausted consecutive no-progress attempts, so filesystem writes are now "
+        "stopped to prevent an unbounded loop.\n"
         f"{CHECKPOINT_MARKER}repair_stalled\n"
         "NEXT_ACTION=Do not call another write/apply/finalize or validation tool. "
         "Do not ask for missing facts; they must already have been represented by "
@@ -1010,6 +1012,13 @@ def _image_result_is_unauthorized(result: ToolResult) -> bool:
     return re.search(r"(?<!\d)401(?!\d)", payload) is not None
 
 
+def _tool_failure_signature(result: ToolResult) -> str:
+    payload = "\n".join(
+        part for part in (result.error, result.content) if isinstance(part, str) and part
+    )
+    return re.sub(r"\s+", " ", payload).strip()[:4000] or "empty-tool-failure"
+
+
 @dataclass(slots=True)
 class ControlledPresentationPolicy:
     """Stateful policy for one controlled-presentation agent run."""
@@ -1033,9 +1042,14 @@ class ControlledPresentationPolicy:
     apply_patch_repair_paths: tuple[str, ...] = ()
     _last_checkpoint_text: str | None = None
     _resume_checkpoint: WorkflowPauseCheckpoint | None = None
-    _step_failure_counts: dict[str, int] = field(default_factory=dict)
+    _last_step_failure_signature: str | None = None
+    _step_failure_streak: int = 0
     _repair_failure_stage: str | None = None
+    _repair_failure_signature: str | None = None
     _repair_failure_streak: int = 0
+    _policy_rejection_stage: str | None = None
+    _policy_rejection_signature: str | None = None
+    _policy_rejection_streak: int = 0
     _research_tool_attempts: int = 0
     _research_successful_attempts: int = 0
     _research_failed_attempts: int = 0
@@ -1215,7 +1229,14 @@ class ControlledPresentationPolicy:
             self._repair_failure_stage = (
                 next_stage if next_stage in _REPAIR_STAGES else None
             )
+            self._repair_failure_signature = None
             self._repair_failure_streak = 0
+        if next_stage != self._policy_rejection_stage:
+            self._policy_rejection_stage = (
+                next_stage if next_stage in _REPAIR_STAGES else None
+            )
+            self._policy_rejection_signature = None
+            self._policy_rejection_streak = 0
         self.stage = next_stage
         self.has_patch_input = "\nPATCH_INPUT=" in checkpoint_text
         self.has_scaffold_input = "\nSCAFFOLD_INPUT=" in checkpoint_text
@@ -1300,22 +1321,6 @@ class ControlledPresentationPolicy:
             tool_name,
             arguments,
         )
-        if parallel:
-            if self.stage == "image_auth_blocked":
-                return _IMAGE_AUTH_BLOCKED_TOOL_ERROR
-            if (
-                self.stage == "research"
-                and self.research_search_exhausted
-                and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
-            ):
-                return _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR
-            research_local_read_error = self._research_local_read_error(
-                tool_name,
-                arguments,
-            )
-            if research_local_read_error is not None:
-                return research_local_read_error
-            return handoff_error
         if self.stage == "repair_stalled":
             return _REPAIR_STALLED_TOOL_ERROR
         if self.stage == "image_auth_blocked":
@@ -1398,13 +1403,73 @@ class ControlledPresentationPolicy:
             return apply_patch_error
         return _finalize_error(self.stage, tool_name, arguments)
 
+    def _clear_step_failure(self, stage: str) -> None:
+        if self._last_step_failure_signature is None:
+            return
+        if self._last_step_failure_signature.startswith(f"{stage}:"):
+            self._last_step_failure_signature = None
+            self._step_failure_streak = 0
+
+    def _record_step_failure(self, signature: str) -> None:
+        scoped_signature = f"{self.stage}:{signature}"
+        if scoped_signature == self._last_step_failure_signature:
+            self._step_failure_streak += 1
+        else:
+            self._last_step_failure_signature = scoped_signature
+            self._step_failure_streak = 1
+        if self._step_failure_streak >= _REPEATED_EXECUTION_FAILURE_LIMIT:
+            self.repair_stalled = True
+            _log.warning(
+                "controlled_presentation/repair_stalled stage=%s repeated_failure=%d",
+                self.stage,
+                self._step_failure_streak,
+            )
+
+    def _record_policy_rejection(self, result: ToolResult) -> None:
+        if self.stage not in _REPAIR_STAGES:
+            self._policy_rejection_stage = None
+            self._policy_rejection_signature = None
+            self._policy_rejection_streak = 0
+            return
+        signature = _tool_failure_signature(result)
+        if not signature.startswith("CONTROLLED_PRESENTATION_"):
+            self._policy_rejection_stage = None
+            self._policy_rejection_signature = None
+            self._policy_rejection_streak = 0
+            return
+        if (
+            self.stage == self._policy_rejection_stage
+            and signature == self._policy_rejection_signature
+        ):
+            self._policy_rejection_streak += 1
+        else:
+            self._policy_rejection_stage = self.stage
+            self._policy_rejection_signature = signature
+            self._policy_rejection_streak = 1
+        if self._policy_rejection_streak >= _REPEATED_POLICY_REJECTION_LIMIT:
+            self.repair_stalled = True
+            _log.warning(
+                "controlled_presentation/repair_stalled "
+                "stage=%s consecutive_policy_rejections=%d",
+                self.stage,
+                self._policy_rejection_streak,
+            )
+
     def record_tool_result(
         self,
         tool_name: str,
         arguments: dict[str, Any],
         result: ToolResult,
+        *,
+        executed: bool = True,
     ) -> None:
         """Update deterministic-repair state after one tool result."""
+        if not executed:
+            self._record_policy_rejection(result)
+            return
+        self._policy_rejection_stage = None
+        self._policy_rejection_signature = None
+        self._policy_rejection_streak = 0
         if (
             result.success
             and tool_name in _MUTATION_TOOLS
@@ -1442,11 +1507,23 @@ class ControlledPresentationPolicy:
 
         if self.stage in _REPAIR_STAGES:
             if result.success:
+                self._repair_failure_signature = None
                 self._repair_failure_streak = 0
             else:
-                self._repair_failure_stage = self.stage
-                self._repair_failure_streak += 1
-                if self._repair_failure_streak >= 2:
+                signature = _tool_failure_signature(result)
+                if (
+                    self._repair_failure_stage == self.stage
+                    and self._repair_failure_signature == signature
+                ):
+                    self._repair_failure_streak += 1
+                else:
+                    self._repair_failure_stage = self.stage
+                    self._repair_failure_signature = signature
+                    self._repair_failure_streak = 1
+                if (
+                    self._repair_failure_streak
+                    >= _REPEATED_EXECUTION_FAILURE_LIMIT
+                ):
                     self.repair_stalled = True
                     _log.warning(
                         "controlled_presentation/repair_stalled "
@@ -1469,18 +1546,14 @@ class ControlledPresentationPolicy:
                 and _apply_patch_error(self.stage, tool_name, arguments) is None
             )
             if wrote_patch or applied_patch:
-                for key in tuple(self._step_failure_counts):
-                    if key.startswith("apply_patch:"):
-                        self._step_failure_counts.pop(key, None)
+                self._clear_step_failure("apply_patch")
             if applied_patch:
                 self.apply_patch_repair_allowed = False
                 self.apply_patch_repair_paths = ()
 
         if self.stage == "outline_qa":
             if result.success and _is_outline_validation_call(tool_name, arguments):
-                for key in tuple(self._step_failure_counts):
-                    if key.startswith("outline_qa:"):
-                        self._step_failure_counts.pop(key, None)
+                self._clear_step_failure("outline_qa")
                 signature = None
             else:
                 signature = _outline_validation_failure_signature(
@@ -1518,16 +1591,7 @@ class ControlledPresentationPolicy:
 
         if signature is None:
             return
-        scoped_signature = f"{self.stage}:{signature}"
-        repeat_count = self._step_failure_counts.get(scoped_signature, 0) + 1
-        self._step_failure_counts[scoped_signature] = repeat_count
-        if repeat_count >= 2:
-            self.repair_stalled = True
-            _log.warning(
-                "controlled_presentation/repair_stalled stage=%s repeated_failure=%d",
-                self.stage,
-                repeat_count,
-            )
+        self._record_step_failure(signature)
 
     def exempts_tool_budget(self, tool_name: str) -> bool:
         """Return whether a research-stage call is exempt from delivery budget."""

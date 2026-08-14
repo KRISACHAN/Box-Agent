@@ -116,6 +116,7 @@ from box_agent.events import (
 )
 from box_agent.client_info import ClientInfo, scoped_client_info
 from box_agent.llm import LLMClient, SessionBoundLLM
+from box_agent.llm.model_routing import normalize_auto_routing
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
 from box_agent.completion import (
@@ -265,10 +266,14 @@ class _ActionHintNormalizingLLM:
         normalizer = ActionHintStreamNormalizer()
         text_template = None
         async for event in self._wrapped.generate_stream(*args, **kwargs):
-            if getattr(event, "type", None) != "text":
+            event_type = getattr(event, "type", None)
+            if event_type == "finish":
                 for text in normalizer.finish():
                     if text:
                         yield _text_stream_event_like(event, text)
+                yield event
+                continue
+            if event_type != "text":
                 yield event
                 continue
 
@@ -305,30 +310,36 @@ class _FollowUpSuggestionsExtractingLLM:
         return self._extractor.suggestions
 
     async def generate_stream(self, *args: Any, **kwargs: Any):
+        extractor = FollowUpSuggestionsStreamExtractor()
+        self._extractor = extractor
         text_template = None
         async for event in self._wrapped.generate_stream(*args, **kwargs):
-            if getattr(event, "type", None) != "text":
-                for text in self._extractor.finish():
+            event_type = getattr(event, "type", None)
+            if event_type == "finish":
+                for text in extractor.finish():
                     if text:
                         yield _text_stream_event_like(event, text)
                 yield event
                 continue
+            if event_type != "text":
+                yield event
+                continue
 
             text_template = event
-            for text in self._extractor.push(event.delta or ""):
+            for text in extractor.push(event.delta or ""):
                 if text:
                     yield event.model_copy(update={"delta": text})
 
         if text_template is not None:
-            for text in self._extractor.finish():
+            for text in extractor.finish():
                 if text:
                     yield text_template.model_copy(update={"delta": text})
 
     async def generate(self, *args: Any, **kwargs: Any):
         response = await self._wrapped.generate(*args, **kwargs)
         extractor = FollowUpSuggestionsStreamExtractor()
-        visible = "".join(extractor.push(response.content) + extractor.finish())
         self._extractor = extractor
+        visible = "".join(extractor.push(response.content) + extractor.finish())
         if visible == response.content:
             return response
         return response.model_copy(update={"content": visible})
@@ -386,7 +397,7 @@ def _meta_string(meta: Any, *keys: str) -> str:
     return ""
 
 
-def _normalize_llm_binding(meta: Any) -> dict[str, str] | None:
+def _normalize_llm_binding(meta: Any) -> dict[str, Any] | None:
     """Parse the host-owned, session-scoped LLM binding extension."""
     if not isinstance(meta, dict):
         return None
@@ -402,7 +413,22 @@ def _normalize_llm_binding(meta: Any) -> dict[str, str] | None:
         raise ValueError(f"unsupported llm_binding source: {source or '<empty>'}")
     if not model or len(model) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in model):
         raise ValueError("llm_binding.model is invalid")
-    return {"source": source, "model": model}
+    raw_max_tokens = raw.get("maxTokens", raw.get("max_tokens"))
+    if raw_max_tokens is not None and (
+        isinstance(raw_max_tokens, bool)
+        or not isinstance(raw_max_tokens, int)
+        or raw_max_tokens <= 0
+    ):
+        raise ValueError("llm_binding.maxTokens is invalid")
+    binding: dict[str, Any] = {"source": source, "model": model}
+    if raw_max_tokens is not None:
+        binding["maxTokens"] = raw_max_tokens
+    auto_routing = normalize_auto_routing(
+        raw.get("autoRouting", raw.get("auto_routing"))
+    )
+    if auto_routing is not None:
+        binding["autoRouting"] = auto_routing
+    return binding
 
 
 def _plan_approval_from_meta(meta: Any) -> dict[str, Any] | None:
@@ -730,7 +756,7 @@ class SessionState:
     output_dir: str | None = None  # ``{workspace}/output/`` — the canonical artifact root
     artifact_mode: str = "output"
     session_mode: str | None = None  # e.g. "data_analysis" for /analysis pages
-    llm_binding: dict[str, str] | None = None  # host-owned model binding for this ACP session
+    llm_binding: dict[str, Any] | None = None  # host-owned model binding for this ACP session
     permission_engine: PermissionEngine | None = None
     grant_store: GrantStore | None = None  # in-band permission grants
     memory_extractor: Any | None = None  # per-session instance to avoid cross-session state leaks
@@ -835,13 +861,16 @@ class BoxACPAgent:
         self._skill_task = skill_task
         self._skills_loaded = skill_task is None
 
-    def _llm_for_binding(self, binding: dict[str, str] | None) -> LLMClient:
+    def _llm_for_binding(self, binding: dict[str, Any] | None) -> LLMClient:
         if binding is None:
             return self._llm
         clone_for_model = getattr(self._llm, "for_model", None)
         if not callable(clone_for_model):
             raise ValueError("configured LLM client does not support session model binding")
-        return clone_for_model(binding["model"])
+        return clone_for_model(
+            binding["model"],
+            max_output_tokens=binding.get("maxTokens"),
+        )
 
     def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
         """Update all live holders of the current system prompt."""
@@ -1157,6 +1186,9 @@ class BoxACPAgent:
 
         llm_binding = _normalize_llm_binding(meta)
         session_llm = SessionBoundLLM(self._llm_for_binding(llm_binding))
+        session_llm.set_auto_model_candidates(
+            (llm_binding or {}).get("autoRouting", {}).get("models", [])
+        )
         session_llm.set_request_context(
             session_id=upstream_session_id or session_id,
             title=upstream_title,
@@ -1647,12 +1679,16 @@ class BoxACPAgent:
             if state.session_llm is None:
                 raise ValueError("session LLM binding is unavailable")
             state.session_llm.bind(self._llm_for_binding(requested_llm_binding))
+            state.session_llm.set_auto_model_candidates(
+                requested_llm_binding.get("autoRouting", {}).get("models", [])
+            )
             state.llm_binding = requested_llm_binding
             log.info(
                 "session/model_binding",
                 session_id=session_id,
                 source=requested_llm_binding["source"],
                 model=requested_llm_binding["model"],
+                max_tokens=requested_llm_binding.get("maxTokens"),
             )
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")

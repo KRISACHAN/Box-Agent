@@ -91,7 +91,7 @@ _SOLUTION_DESIGN_RE: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _EXTERNAL_EVIDENCE_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:市场(?:规模|分析|研究|趋势|格局)?|行业(?:分析|研究|趋势|现状|格局)|"
+    r"(?:市场(?:规模|分析|研究|趋势|格局)|行业(?:分析|研究|趋势|现状|格局)|"
     r"竞品|竞争格局|商业价值|投资价值|市占率|增长率|政策|法规|监管|"
     r"最新(?:数据|趋势|进展|动态)|调研数据|统计数据|引用|出处|来源|证据|"
     r"market\s+(?:size|analysis|research|trend)|industry\s+(?:analysis|research|trend)|"
@@ -101,7 +101,9 @@ _EXTERNAL_EVIDENCE_RE: Final[re.Pattern[str]] = re.compile(
 )
 _EXPLICIT_EXTERNAL_RESEARCH_ACTION_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:"
-    r"搜索|检索|查找|调研|核实|验证|查证|"
+    r"搜索|检索|查找|核实|验证|查证|"
+    r"(?:开展|进行|先做|先行|请做|帮我做|需要|要求)\s*(?:一次|相关|专项)?调研|"
+    r"调研(?:一下|后|并|再|然后|资料|数据|市场|行业|竞品|公司|产品)|"
     r"(?:使用|采用|优先使用|优先采用)?(?:官方|权威)(?:来源|资料|网站|数据)?|"
     r"补充(?:外部)?资料|补充来源|引用来源|引用资料|"
     r"\b(?:search|research|investigate|verify|fact[- ]?check|look\s+up)\b|"
@@ -113,6 +115,10 @@ _EXPLICIT_EXTERNAL_RESEARCH_ACTION_RE: Final[re.Pattern[str]] = re.compile(
 _PAGE_PLAN_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:第\s*\d+\s*页|slide\s*\d+\s*[:：.-])",
     re.IGNORECASE,
+)
+_HOST_PRESENTATION_CONFIG_RE: Final[re.Pattern[str]] = re.compile(
+    r"<presentation_config\b[^>]*>.*?</presentation_config>",
+    re.IGNORECASE | re.DOTALL,
 )
 _SUCCESS_REPORT_GLOBS: Final[tuple[str, ...]] = (
     f"{OUTPUT_SUBDIR}/**/qa/outline_check.json",
@@ -132,7 +138,10 @@ _PRESENTATION_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
 
 
 def _research_mode(user_text: str) -> str:
-    text = user_text.strip()
+    # Host metadata contains routing words such as ``source`` and role labels
+    # such as ``市场``. It informs deck planning, but must not masquerade as the
+    # user's request to search or research external evidence.
+    text = _HOST_PRESENTATION_CONFIG_RE.sub(" ", user_text).strip()
     if _RESEARCH_SEARCH_FORBIDDEN_RE.search(text):
         return "source_first"
     # An explicit request to acquire or verify external evidence outranks the

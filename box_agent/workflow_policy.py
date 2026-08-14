@@ -57,6 +57,8 @@ class WorkflowPolicy(Protocol):
         tool_name: str,
         arguments: dict[str, Any],
         result: ToolResult,
+        *,
+        executed: bool = True,
     ) -> None: ...
 
     def exempts_tool_budget(self, tool_name: str) -> bool: ...

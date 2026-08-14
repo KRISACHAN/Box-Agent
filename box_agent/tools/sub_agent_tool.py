@@ -29,6 +29,7 @@ from ..events import (
     ToolCallStart,
     WebSearchEvent,
 )
+from ..llm.model_routing import select_auto_model
 from ..schema import Message
 from .base import EventEmittingTool, Tool, ToolResult
 from .sub_agent_capabilities import (
@@ -133,10 +134,11 @@ class _WriteScopedTool(Tool):
 class SubAgentTool(EventEmittingTool):
     """Run a task in an isolated agent context.
 
-    The child agent shares the same LLM client and tool instances (so
-    Jupyter kernel sessions, sandbox state, etc. are preserved), but has
-    its own message history.  Only the final textual summary is returned
-    to the parent agent, keeping the parent context clean.
+    The child agent shares the parent tool instances (so Jupyter kernel
+    sessions, sandbox state, etc. are preserved), but has its own message
+    history. In an automatic hosted-model session it may receive an isolated
+    model binding selected from the host allowlist; manual sessions keep the
+    parent model. Only the final textual summary is returned to the parent.
     """
 
     parallel_safe = True
@@ -557,6 +559,7 @@ class SubAgentTool(EventEmittingTool):
     async def _run_general_loop(
         self,
         *,
+        llm: Any,
         messages: list[Message],
         child_tools: dict[str, Tool],
         max_steps: int,
@@ -579,7 +582,7 @@ class SubAgentTool(EventEmittingTool):
         usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         try:
             async for event in run_agent_loop(
-                llm=self._llm,
+                llm=llm,
                 messages=messages,
                 tools=child_tools,
                 max_steps=max_steps,
@@ -666,6 +669,7 @@ class SubAgentTool(EventEmittingTool):
     async def _run_batch_files(
         self,
         *,
+        llm: Any,
         bundle: ResolvedCapabilityBundle,
         messages: list[Message],
         diagnostic: dict[str, Any],
@@ -826,7 +830,7 @@ class SubAgentTool(EventEmittingTool):
             event=StepStart(step=1, max_steps=1),
         )
         try:
-            synthesis = self._llm.generate(
+            synthesis = llm.generate(
                 messages=messages,
                 tools=None,
                 thinking_enabled=False,
@@ -910,6 +914,51 @@ class SubAgentTool(EventEmittingTool):
             )
         return ToolResult(success=True, content=content, raw_output=raw_output)
 
+    def _resolve_task_llm(
+        self,
+        *,
+        task: str,
+        strategy: str,
+        required_tools: tuple[str, ...] = (),
+        skills: tuple[str, ...] = (),
+        files: tuple[str, ...] = (),
+    ) -> tuple[Any, dict[str, Any]]:
+        candidates = getattr(self._llm, "auto_model_candidates", ())
+        if not isinstance(candidates, (list, tuple)):
+            candidates = ()
+        selected, diagnostic = select_auto_model(
+            candidates,
+            task=task,
+            strategy=strategy,
+            required_tools=required_tools,
+            skills=skills,
+            files=files,
+        )
+        if selected is None:
+            return self._llm, diagnostic
+        clone_for_model = getattr(self._llm, "for_model", None)
+        if not callable(clone_for_model):
+            return self._llm, {
+                **diagnostic,
+                "mode": "inherit",
+                "reason": "model_clone_unavailable",
+            }
+        try:
+            return (
+                clone_for_model(
+                    selected["model"],
+                    max_output_tokens=selected.get("maxTokens"),
+                ),
+                diagnostic,
+            )
+        except (TypeError, ValueError) as exc:
+            return self._llm, {
+                **diagnostic,
+                "mode": "inherit",
+                "reason": "model_clone_failed",
+                "error": str(exc),
+            }
+
     async def execute(  # type: ignore[override]
         self,
         task: Any = None,
@@ -970,6 +1019,10 @@ class SubAgentTool(EventEmittingTool):
 
         live_tools = self._resolve_child_tools()
         if capabilities is _CAPABILITIES_UNSET:
+            child_llm, model_routing = self._resolve_task_llm(
+                task=task,
+                strategy="general_loop",
+            )
             diagnostic = {
                 "type": "sub_agent_delegation",
                 "legacy_general": True,
@@ -979,8 +1032,10 @@ class SubAgentTool(EventEmittingTool):
                 "denied_tools": [],
                 "resolved_skills": [],
                 "budget": {"max_steps": self._max_steps, "max_tool_calls": None},
+                "model_routing": model_routing,
             }
             return await self._run_general_loop(
+                llm=child_llm,
                 messages=self._legacy_messages(task),
                 child_tools=live_tools,
                 max_steps=self._max_steps,
@@ -1023,9 +1078,18 @@ class SubAgentTool(EventEmittingTool):
             "legacy_general": False,
             **resolved.diagnostic_payload(),
         }
+        child_llm, model_routing = self._resolve_task_llm(
+            task=parsed.task,
+            strategy=parsed.strategy,
+            required_tools=parsed.required_tools,
+            skills=parsed.skill_names,
+            files=tuple(parsed.inputs.get("files", ())),
+        )
+        diagnostic["model_routing"] = model_routing
         messages = self._explicit_messages(parsed, resolved)
         if parsed.strategy == "batch_files":
             return await self._run_batch_files(
+                llm=child_llm,
                 bundle=resolved,
                 messages=messages,
                 diagnostic=diagnostic,
@@ -1037,6 +1101,7 @@ class SubAgentTool(EventEmittingTool):
             )
 
         return await self._run_general_loop(
+            llm=child_llm,
             messages=messages,
             child_tools=self._apply_write_scopes(resolved.tools, parsed),
             max_steps=parsed.budget.max_steps,

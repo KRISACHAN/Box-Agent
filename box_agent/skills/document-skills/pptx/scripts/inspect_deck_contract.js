@@ -59,6 +59,7 @@ const THEME_ID_ALIASES = Object.freeze({
 });
 const REQUIRED_FIELD_ALIASES = Object.freeze({
   "cards-grid-v1": Object.freeze({ cards: "items" }),
+  "kpi-grid-v1": Object.freeze({ cards: "items", metrics: "items" }),
   "chart-bar-v1": Object.freeze({ chart: "items", data: "items" }),
   "chart-data-v1": Object.freeze({ chart: "series", data: "series" }),
   "table-data-v1": Object.freeze({ items: "rows", matrix: "rows", table: "rows" }),
