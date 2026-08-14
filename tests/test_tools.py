@@ -18,6 +18,7 @@ from box_agent.tools import (
     add_workspace_tools,
 )
 from box_agent.tools.file_tools import MAX_SEARCH_OFFSET, MAX_SEARCH_OUTPUT_CHARS
+from box_agent.tools.bash_tool import _detect_dingtalk_workspace_violation
 from box_agent.tools.permissions import CapabilityPolicy, PermissionEngine
 
 
@@ -699,6 +700,94 @@ async def test_bash_tool_allows_setting_lark_cli_env_without_invoking_cli():
     result = await tool.execute(command='export BOX_AGENT_LARK_CLI=/tmp/lark-cli')
 
     assert result.success
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_blocks_dingtalk_dws_control_plane_and_out_of_scope_commands():
+    tool = BashTool()
+
+    for command in [
+        'dws auth login',
+        '$BOX_AGENT_DINGTALK_CLI auth reset',
+        'dws profile switch another',
+        'dws plugin install arbitrary',
+        'dws drive delete --node abc',
+        'dws api request /v1.0/anything',
+    ]:
+        result = await tool.execute(command=command)
+        assert not result.success
+        assert "Blocked:" in (result.error or "")
+
+
+def test_dingtalk_dws_policy_allows_v1_read_and_document_write_commands():
+    for command in [
+        'dws auth status',
+        'dws doc search --query "周报"',
+        'dws doc read --node doc_1',
+        'dws wiki space list',
+        'dws wiki node list --space-id space_1',
+        'dws drive list-spaces --space-type orgSpace',
+        'dws drive download --node file_1 --output /tmp/file_1',
+        'dws drive upload --file /tmp/report.md --folder folder_1',
+        'dws drive mkdir --name 项目资料 --folder folder_1',
+        'dws doc create --name 周报 --content-file /tmp/report.md',
+        'dws doc update --node doc_1 --content-file /tmp/report.md',
+    ]:
+        assert _detect_dingtalk_workspace_violation(command) is None
+
+
+def test_dingtalk_dws_policy_allows_officev3_bundled_absolute_binary_path():
+    assert _detect_dingtalk_workspace_violation(
+        '/Applications/办公小浣熊.app/Contents/Resources/cli-bundle/dws doc read --node doc_1'
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dws auth login -v",
+        "dws drive delete --node abc -v",
+        "dws drive upload-info --file-name report.md --file-size 1",
+        "dws drive commit --upload-id upload_1 --file-name report.md --file-size 1",
+        "dws doc read --node doc_1 & dws auth login",
+        "dws doc read --node x;dws auth login",
+        "dws doc read --node x&dws auth login",
+        "dws doc read --node x&&dws auth login",
+        "dws doc read --node x\ndws auth login",
+        "export BOX_AGENT_DINGTALK_CLI=/opt/officev3/dws; dws auth login",
+        r"d\ws auth login",
+        'dws doc read --node "$(dws auth login)"',
+        "dws doc read --node doc_1 --profile another",
+        "dws doc read --node doc_1 --client-id another",
+        "dws doc read --node doc_1 --client-secret secret",
+        "DWS_PROFILE=another dws doc read --node doc_1",
+        "PATH=/tmp dws doc read --node doc_1",
+    ],
+)
+def test_dingtalk_dws_policy_blocks_control_plane_bypasses(command: str):
+    assert _detect_dingtalk_workspace_violation(command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rg dws box_agent tests",
+        "echo dws",
+        "cat /tmp/dws.txt",
+        "command -v dws",
+        "which dws",
+    ],
+)
+def test_dingtalk_dws_policy_allows_commands_that_only_mention_dws(command: str):
+    assert _detect_dingtalk_workspace_violation(command) is None
+
+
+def test_dingtalk_dws_policy_allows_quoted_windows_binary_path(monkeypatch):
+    monkeypatch.setattr("box_agent.tools.bash_tool.platform.system", lambda: "Windows")
+
+    assert _detect_dingtalk_workspace_violation(
+        r'"C:\Program Files\Office\dws.exe" doc read --node doc_1'
+    ) is None
 
 
 @pytest.mark.asyncio

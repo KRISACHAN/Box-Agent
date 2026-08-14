@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "box_agent_version": "0.8.86",
-  "generated_at": "2026-08-14T08:52:58Z",
+  "generated_at": "2026-08-14T13:26:29Z",
   "skills": [
     {
       "name": "artifacts-builder",
@@ -86,6 +86,10 @@
     {
       "name": "dev-branch-isolation",
       "path": "superpowers/dev-branch-isolation/SKILL.md"
+    },
+    {
+      "name": "dev-code-init",
+      "path": "superpowers/dev-code-init/SKILL.md"
     },
     {
       "name": "dev-code-review",

@@ -7,7 +7,7 @@
 
 Electron 宿主能实时拿到一些后端无法可靠探测的事实：
 
-- bundled CLI 路径（`resolveCliRuntime('lark-cli', '@larksuite/cli')` 返回的 lark-cli / wecom-cli / dingtalk-cli 等）
+- bundled CLI 路径（例如 `resolveCliRuntime('lark-cli', '@larksuite/cli')` 返回的 lark-cli / wecom-cli / dws 等）
 - npx / Node 路径（已通过 `augmentEnvWithNpxPath` 注入到子进程 PATH）
 - 操作系统、浏览器工具配套状态、用户是否完成过 onboarding
 
@@ -42,7 +42,7 @@ env_context 与 [Action Hint](./ACTION_HINT_PROTOCOL.md) 是**互补但不强耦
         "cli": {
           "lark-cli": "/Applications/Office.app/Contents/Resources/bin/lark-cli",
           "wecom-cli": null,
-          "dingtalk-cli": null
+          "dws": null
         },
         "platform": "darwin",
         "browser_tools": { "installed": true, "enabled": true, "available": true },
@@ -183,7 +183,7 @@ async function buildEnvContext() {
     cli: {
       'lark-cli': await resolveCliRuntime('lark-cli', '@larksuite/cli'),
       'wecom-cli': await resolveCliRuntime('wecom-cli', '@wecom/cli'),
-      'dingtalk-cli': await resolveCliRuntime('dingtalk-cli', '@dingtalk/cli'),
+      'dws': await resolveCliRuntime('dws', 'dingtalk-workspace-cli'),
     },
     platform: process.platform,
     browser_tools: {
