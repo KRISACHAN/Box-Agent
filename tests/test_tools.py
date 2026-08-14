@@ -750,6 +750,12 @@ def test_dingtalk_dws_policy_allows_officev3_bundled_absolute_binary_path():
         "dws drive upload-info --file-name report.md --file-size 1",
         "dws drive commit --upload-id upload_1 --file-name report.md --file-size 1",
         "dws doc read --node doc_1 & dws auth login",
+        "dws doc read --node x;dws auth login",
+        "dws doc read --node x&dws auth login",
+        "dws doc read --node x&&dws auth login",
+        "dws doc read --node x\ndws auth login",
+        "export BOX_AGENT_DINGTALK_CLI=/opt/officev3/dws; dws auth login",
+        r"d\ws auth login",
         'dws doc read --node "$(dws auth login)"',
         "dws doc read --node doc_1 --profile another",
         "dws doc read --node doc_1 --client-id another",
@@ -760,6 +766,28 @@ def test_dingtalk_dws_policy_allows_officev3_bundled_absolute_binary_path():
 )
 def test_dingtalk_dws_policy_blocks_control_plane_bypasses(command: str):
     assert _detect_dingtalk_workspace_violation(command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rg dws box_agent tests",
+        "echo dws",
+        "cat /tmp/dws.txt",
+        "command -v dws",
+        "which dws",
+    ],
+)
+def test_dingtalk_dws_policy_allows_commands_that_only_mention_dws(command: str):
+    assert _detect_dingtalk_workspace_violation(command) is None
+
+
+def test_dingtalk_dws_policy_allows_quoted_windows_binary_path(monkeypatch):
+    monkeypatch.setattr("box_agent.tools.bash_tool.platform.system", lambda: "Windows")
+
+    assert _detect_dingtalk_workspace_violation(
+        r'"C:\Program Files\Office\dws.exe" doc read --node doc_1'
+    ) is None
 
 
 @pytest.mark.asyncio
