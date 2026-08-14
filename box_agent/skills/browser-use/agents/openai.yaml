@@ -1,0 +1,4 @@
+interface:
+  display_name: "浏览器操作"
+  short_description: "根据用户意图选择后台自动化或真实可见的浏览器体验与流程"
+  default_prompt: "Use $browser-use to complete this browser task with the appropriate browser experience."

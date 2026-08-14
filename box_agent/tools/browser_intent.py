@@ -1,15 +1,13 @@
-"""Browser backend routing and current-page guards shared by ACP and CLI."""
+"""Current-page browser intent guards shared by ACP and CLI turns."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Literal, Sequence
+from typing import Any, Sequence
 
 from box_agent.schema import Message
 
-
-BrowserBackend = Literal["auto", "playwright", "browser_connector"]
 
 _CURRENT_PAGE_ONLY_TOOLS = frozenset(
     {
@@ -20,7 +18,7 @@ _CURRENT_PAGE_ONLY_TOOLS = frozenset(
         "browser_connector_submit",
     }
 )
-_BROWSER_GATEWAY_TOOLS = frozenset(
+_BROWSER_CONTEXT_TOOLS = frozenset(
     {
         "browser_open_url",
         "browser_read_page",
@@ -58,10 +56,6 @@ _CURRENT_PAGE_REFERENCE_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-_PLAYWRIGHT_EXPLICIT_RE = re.compile(
-    r"(?:\bplaywright\b|无头浏览器|无头模式|\bheadless\b)",
-    re.IGNORECASE,
-)
 _CONNECTOR_CONTEXT_RE = re.compile(
     r"(?:"
     r"真实浏览器|浏览器连接器|浏览器插件"
@@ -72,25 +66,6 @@ _CONNECTOR_CONTEXT_RE = re.compile(
     r"|公众号(?:文章|页面|链接)"
     r"|\bbrowser\s+connector\b|\breal\s+browser\b|\blogged[\s-]?in\b"
     r"|\b(?:existing|current|my)\s+cookies?\b|\bintranet\s+(?:page|site|system)\b"
-    r")",
-    re.IGNORECASE,
-)
-_PUBLIC_WEB_RETRIEVAL_RE = re.compile(
-    r"(?:"
-    r"检索|搜索|查找|查询|调研"
-    r"|爬虫|爬取|抓取|采集|收集(?:网页|网站|公开资料|公开信息|数据)"
-    r"|批量(?:读取|获取|整理|分析).{0,8}(?:网页|页面|网站|链接|数据)"
-    r"|公开(?:网页|网站|页面|链接)"
-    r"|\bsearch\b|\bresearch\b|\bcrawl(?:er|ing)?\b|\bscrap(?:e|er|ing)\b"
-    r"|\bharvest\b|\bcollect\b.{0,20}\b(?:web|page|site|data)\b"
-    r")",
-    re.IGNORECASE,
-)
-_URL_BASED_READ_RE = re.compile(
-    r"(?:"
-    r"https?://"
-    r"|(?:读取|总结|提取|分析|整理|打开).{0,12}(?:网页|页面|网站|链接|url)"
-    r"|(?:read|summarize|extract|analy[sz]e|open).{0,20}\b(?:url|page|site|link)\b"
     r")",
     re.IGNORECASE,
 )
@@ -135,17 +110,6 @@ _CURRENT_PAGE_INTENT_ERROR = (
     "interaction. Do not inspect the user's active tab. Answer directly, use "
     "web_search, or use a URL-based browser tool instead."
 )
-_HEADLESS_BROWSER_REQUIRED_ERROR = (
-    "BROWSER_BACKEND_MISMATCH: this turn is public web retrieval or crawling. "
-    "Do not open or manipulate the user's real browser. Use web_search or the "
-    "standalone headless Playwright MCP tools."
-)
-_REAL_BROWSER_REQUIRED_ERROR = (
-    "BROWSER_BACKEND_MISMATCH: this turn requires the user's visible real "
-    "browser for current login state or human review/handoff. Use Browser "
-    "Connector tools and leave final submission to the user unless they "
-    "explicitly authorize it."
-)
 _HUMAN_FINAL_ACTION_REQUIRED_ERROR = (
     "HUMAN_FINAL_ACTION_REQUIRED: the user asked to review, take over, or "
     "perform the final click themselves. Fill the visible real-browser form, "
@@ -189,63 +153,21 @@ def has_human_browser_handoff_intent(user_text: str | None) -> bool:
     )
 
 
-def classify_browser_backend_intent(user_text: str | None) -> BrowserBackend:
-    """Choose the browser backend required by the current user request."""
-    if not user_text or not user_text.strip():
-        return "auto"
-    text = user_text.strip()
-    if (
-        has_explicit_current_page_intent(text)
-        or has_human_browser_handoff_intent(text)
-        or _CONNECTOR_CONTEXT_RE.search(text) is not None
-    ):
-        return "browser_connector"
-    if _PLAYWRIGHT_EXPLICIT_RE.search(text) is not None:
-        return "playwright"
-    if _FORM_INTERACTION_RE.search(text) is not None:
-        return "playwright"
-    if (
-        _PUBLIC_WEB_RETRIEVAL_RE.search(text) is not None
-        or _URL_BASED_READ_RE.search(text) is not None
-    ):
-        return "playwright"
-    return "auto"
-
-
-def _is_playwright_browser_tool(tool_name: str) -> bool:
-    return tool_name.startswith("browser_") and tool_name not in _BROWSER_GATEWAY_TOOLS
-
-
-def _recent_successful_browser_backend(
-    messages: Sequence[Message],
-) -> BrowserBackend:
-    """Return the backend used successfully in the immediately prior turn."""
+def has_recent_successful_browser_context(messages: Sequence[Message]) -> bool:
+    """Return whether the prior turn successfully used the real-browser context."""
     user_indices = [index for index, message in enumerate(messages) if message.role == "user"]
     if len(user_indices) < 2:
-        return "auto"
+        return False
 
     previous_turn = messages[user_indices[-2] + 1 : user_indices[-1]]
     for message in reversed(previous_turn):
-        if message.role != "tool" or not message.name:
-            continue
-        if (
-            message.name not in _BROWSER_GATEWAY_TOOLS
-            and not _is_playwright_browser_tool(message.name)
-        ):
+        if message.role != "tool" or message.name not in _BROWSER_CONTEXT_TOOLS:
             continue
         content = message.content if isinstance(message.content, str) else str(message.content)
         if content.lstrip().startswith("Error:"):
             continue
-        if message.name in _BROWSER_GATEWAY_TOOLS:
-            return "browser_connector"
-        if message.name and _is_playwright_browser_tool(message.name):
-            return "playwright"
-    return "auto"
-
-
-def has_recent_successful_browser_context(messages: Sequence[Message]) -> bool:
-    """Return whether the prior turn successfully used the real-browser context."""
-    return _recent_successful_browser_backend(messages) == "browser_connector"
+        return True
+    return False
 
 
 def _latest_user_text(messages: Sequence[Message]) -> str:
@@ -264,10 +186,9 @@ def _latest_user_text(messages: Sequence[Message]) -> str:
 
 @dataclass(frozen=True, slots=True)
 class BrowserToolIntentPolicy:
-    """Filter and validate browser tools according to the required backend."""
+    """Guard tools that access the user's active browser tab."""
 
     allow_current_page: bool
-    backend: BrowserBackend
     human_handoff: bool
 
     @classmethod
@@ -278,34 +199,26 @@ class BrowserToolIntentPolicy:
         messages: Sequence[Message],
     ) -> "BrowserToolIntentPolicy":
         user_text = current_turn_text if current_turn_text is not None else _latest_user_text(messages)
-        continuation_backend: BrowserBackend = "auto"
-        if is_browser_continuation(user_text):
-            continuation_backend = _recent_successful_browser_backend(messages)
-        backend = classify_browser_backend_intent(user_text)
         human_handoff = has_human_browser_handoff_intent(user_text)
-        if backend == "auto":
-            backend = continuation_backend
-        allow_current_page = backend == "browser_connector" and (
+        allow_current_page = (
             has_explicit_current_page_intent(user_text)
             or human_handoff
             or _CONNECTOR_CONTEXT_RE.search(user_text or "") is not None
-            or continuation_backend == "browser_connector"
+            or (
+                is_browser_continuation(user_text)
+                and has_recent_successful_browser_context(messages)
+            )
         )
         return cls(
             allow_current_page=allow_current_page,
-            backend=backend,
             human_handoff=human_handoff,
         )
 
     def is_tool_visible(self, tool_name: str) -> bool:
-        """Expose only the browser backend appropriate for the current turn."""
+        """Hide active-tab tools unless the current turn explicitly needs them."""
         if not self.allow_current_page and tool_name in _CURRENT_PAGE_ONLY_TOOLS:
             return False
         if self.human_handoff and tool_name == "browser_connector_submit":
-            return False
-        if self.backend == "playwright" and tool_name in _BROWSER_GATEWAY_TOOLS:
-            return False
-        if self.backend == "browser_connector" and _is_playwright_browser_tool(tool_name):
             return False
         return True
 
@@ -314,13 +227,9 @@ class BrowserToolIntentPolicy:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> str | None:
-        """Return an internal denial reason for a disallowed browser call."""
+        """Return an internal denial reason for a disallowed active-tab call."""
         if self.human_handoff and tool_name == "browser_connector_submit":
             return _HUMAN_FINAL_ACTION_REQUIRED_ERROR
-        if self.backend == "playwright" and tool_name in _BROWSER_GATEWAY_TOOLS:
-            return _HEADLESS_BROWSER_REQUIRED_ERROR
-        if self.backend == "browser_connector" and _is_playwright_browser_tool(tool_name):
-            return _REAL_BROWSER_REQUIRED_ERROR
         if self.allow_current_page:
             return None
         if tool_name in _CURRENT_PAGE_ONLY_TOOLS:

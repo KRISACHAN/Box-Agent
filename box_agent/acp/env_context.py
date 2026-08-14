@@ -457,83 +457,6 @@ def _format_browser_connector(state: BrowserConnectorState) -> list[str]:
     return [f"- 真实浏览器连接器状态：{', '.join(parts)}"]
 
 
-def _state_available(value: bool | None, fallback: bool) -> bool:
-    return value if value is not None else fallback
-
-
-def _format_browser_capability_policy(
-    browser_tools: BrowserToolsState | None,
-    browser_connector: BrowserConnectorState | None,
-) -> list[str]:
-    if browser_tools is None and browser_connector is None:
-        return []
-
-    playwright_available = False
-    if browser_tools is not None:
-        fallback = bool(browser_tools.enabled and browser_tools.installed)
-        playwright_available = _state_available(browser_tools.available, fallback)
-
-    connector_available = False
-    if browser_connector is not None:
-        fallback = bool(
-            browser_connector.enabled
-            and browser_connector.connected
-            and browser_connector.paused is not True
-        )
-        connector_available = _state_available(browser_connector.available, fallback)
-
-    lines = [
-        "- 浏览器能力策略：Playwright 是隔离网页自动化通道；真实浏览器连接器是用户当前浏览器上下文的读写通道。"
-        "必须按页面上下文选择，而不是按点击/填写等动作类型选择。"
-        "“看一下”“帮我看看”“查一下”“了解一下”等通用请求动词本身不表示用户在引用当前页面；"
-        "只有明确提到当前页、这个页面、当前标签页等上下文，或延续刚完成的浏览器操作时，才能读取用户当前页。"
-    ]
-    if playwright_available and connector_available:
-        lines.append(
-            "  - 两者都可用：用户提到“当前页/这个页面/帮我翻页”，或任务依赖现有登录、Cookie、内网、公众号等"
-            "真实浏览器状态时，使用连接器读取工具以及 `browser_connector_snapshot`、`browser_connector_click`、"
-            "`browser_connector_fill`、`browser_connector_submit`；"
-            "普通公开网页、批量采集、自动化测试、截图、页面结构/网络检查等不依赖用户浏览器状态的任务使用 Playwright。"
-        )
-    elif playwright_available:
-        lines.append(
-            "  - 当前只有 Playwright 可用或连接器未连接：不依赖真实浏览器状态的网页任务使用 Playwright；"
-            "若任务明确依赖当前页、既有登录或内网状态，应说明连接器不可用，不要假装 Playwright 继承了这些状态。"
-        )
-    elif connector_available:
-        lines.append(
-            "  - 当前只有真实浏览器连接器可用：可读取当前页或链接，并执行允许的 snapshot、点击、填写和经确认的提交；"
-            "截图、任意脚本、文件上传、网络检查和独立批量自动化仍需 Playwright。"
-        )
-    else:
-        lines.append(
-            "  - 当前两类浏览器能力都不可用：普通公开网页或隔离自动化任务引导用户启用 Playwright；"
-            "依赖当前页、登录态或内网状态的任务引导用户连接真实浏览器扩展。"
-        )
-    lines.append(
-        "  - 用户明确指定 Playwright 或真实浏览器时，优先遵从。选定后同一操作链必须保持同一后端："
-        "`browser_connector_snapshot` 的 ref 只能交给 `browser_connector_*` 动作，Playwright snapshot/ref 只能交给 Playwright 工具。"
-    )
-    lines.append(
-        "  - 真实浏览器中的翻页、展开、切换等低风险操作可在用户明确要求后执行；填写不等于提交；"
-        "发送、发布、购买、删除等有外部副作用的提交必须先获得本次操作的明确确认，再调用 `browser_connector_submit`。"
-    )
-    lines.append(
-        "  - 纯公开网页检索、爬取、批量采集默认使用 `web_search` 或无头 Playwright，不要仅为展示过程而打开用户浏览器；"
-        "如果用户要求填好后亲自查看、确认、接管或最后点击，则从任务开始就使用真实浏览器连接器，填写完成后停下等待用户操作。"
-    )
-    lines.append(
-        "  - 如果连接器返回 `extension_not_connected`：仅当任务不依赖真实浏览器状态且有普通公开 URL 时才改用 Playwright；"
-        "依赖当前页、登录态或内网状态时不得静默切换，应提示用户连接扩展。"
-    )
-    lines.append(
-        "  - 这里的 Playwright 指 standalone Playwright MCP tools；不要把浏览器网关的 "
-        "`source_preference:playwright` 当作替代。调用浏览器网关的读取工具时使用 `auto` 或 "
-        "`browser_connector`；`browser_connector_*` 动作始终操作真实浏览器。只有实际提供的 Playwright MCP 工具才走 Playwright。"
-    )
-    return lines
-
-
 def _format_image_service(state: ImageServiceState) -> list[str]:
     if state.available is None:
         return []
@@ -663,7 +586,6 @@ def build_env_context_prompt(ctx: EnvContext | None) -> str:
         lines.extend(_format_browser_tools(ctx.browser_tools))
     if ctx.browser_connector is not None:
         lines.extend(_format_browser_connector(ctx.browser_connector))
-    lines.extend(_format_browser_capability_policy(ctx.browser_tools, ctx.browser_connector))
     if ctx.hyperframes is not None:
         lines.extend(_format_hyperframes(ctx.hyperframes))
     if ctx.image_service is not None:
