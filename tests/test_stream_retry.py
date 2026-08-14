@@ -20,12 +20,32 @@ from box_agent.retry import RetryConfig, StreamInterrupted, is_retryable_stream_
 from box_agent.schema import Message
 
 
-def _delta(content=None, tool_calls=None):
-    return SimpleNamespace(content=content, tool_calls=tool_calls, reasoning_content=None)
+def _delta(content=None, tool_calls=None, reasoning=None, reasoning_content=None):
+    return SimpleNamespace(
+        content=content,
+        tool_calls=tool_calls,
+        reasoning=reasoning,
+        reasoning_content=reasoning_content,
+    )
 
 
-def _chunk(content=None, finish_reason=None, usage=None):
-    choice = SimpleNamespace(delta=_delta(content=content), finish_reason=finish_reason)
+def _chunk(
+    content=None,
+    finish_reason=None,
+    usage=None,
+    tool_calls=None,
+    reasoning=None,
+    reasoning_content=None,
+):
+    choice = SimpleNamespace(
+        delta=_delta(
+            content=content,
+            tool_calls=tool_calls,
+            reasoning=reasoning,
+            reasoning_content=reasoning_content,
+        ),
+        finish_reason=finish_reason,
+    )
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
@@ -80,6 +100,82 @@ def _raw_response(stream):
     return raw
 
 
+def _tool_delta(name: str, arguments: str, *, index: int = 0):
+    return SimpleNamespace(
+        index=index,
+        id=f"call-{index}",
+        function=SimpleNamespace(name=name, arguments=arguments),
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_stops_oversized_tool_arguments_before_json_parse(monkeypatch):
+    monkeypatch.setattr(
+        "box_agent.llm.openai_client.streamed_argument_limit", lambda _name: 12
+    )
+    stream = _AsyncIter(
+        [
+            _chunk(tool_calls=[_tool_delta("bash", '{"command":"')]),
+            _chunk(tool_calls=[_tool_delta("", "x" * 20)]),
+            _chunk(tool_calls=[_tool_delta("", '"}')], finish_reason="stop"),
+        ]
+    )
+
+    async def factory(**kwargs):
+        return _raw_response(stream)
+
+    client, _ = _build_client(factory, retries=0)
+    events = [
+        event
+        async for event in client.generate_stream([Message(role="user", content="hi")])
+    ]
+
+    finish = events[-1]
+    assert finish.type == "finish"
+    assert finish.finish_reason == "tool_argument_limit"
+    assert finish.tool_calls is None
+    assert finish.oversized_tool_calls == [
+        {"name": "bash", "arguments_len": 32, "limit": 12}
+    ]
+    assert any(event.type == "activity" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_bounded_provider_liveness_during_tool_arguments(
+    monkeypatch,
+):
+    clock = iter([0.0, 1.0, 6.0, 7.0])
+    monkeypatch.setattr(
+        "box_agent.llm.openai_client.monotonic", lambda: next(clock)
+    )
+    stream = _AsyncIter(
+        [
+            _chunk(tool_calls=[_tool_delta("staged_file_write", '{"content":"')]),
+            _chunk(tool_calls=[_tool_delta("", "a")]),
+            _chunk(tool_calls=[_tool_delta("", "b")]),
+            _chunk(tool_calls=[_tool_delta("", '"}')], finish_reason="stop"),
+        ]
+    )
+
+    async def factory(**kwargs):
+        return _raw_response(stream)
+
+    client, _ = _build_client(factory, retries=0)
+    events = [
+        event
+        async for event in client.generate_stream([Message(role="user", content="hi")])
+    ]
+
+    provider_liveness = [
+        event
+        for event in events
+        if event.type == "activity"
+        and event.activity
+        and event.activity.get("phase") == "provider_stream"
+    ]
+    assert len(provider_liveness) == 2
+
+
 def test_is_retryable_stream_error_matches_production_string():
     exc = httpx.RemoteProtocolError(
         "peer closed connection without sending complete message body (incomplete chunked read)"
@@ -89,6 +185,34 @@ def test_is_retryable_stream_error_matches_production_string():
 
 def test_is_retryable_stream_error_ignores_value_error():
     assert is_retryable_stream_error(ValueError("bad input")) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
+async def test_stream_emits_reasoning_alias_as_thinking(reasoning_field):
+    """Provider-specific reasoning deltas are emitted as thinking events."""
+    stream = _AsyncIter([
+        _chunk(**{reasoning_field: "private "}),
+        _chunk(
+            content="answer",
+            finish_reason="stop",
+            **{reasoning_field: "reasoning"},
+        ),
+    ])
+
+    async def factory(**kwargs):
+        return _raw_response(stream)
+
+    client, _ = _build_client(factory)
+    events = [
+        event
+        async for event in client.generate_stream([Message(role="user", content="hi")])
+    ]
+
+    assert "".join(event.delta for event in events if event.type == "thinking") == (
+        "private reasoning"
+    )
+    assert "".join(event.delta for event in events if event.type == "text") == "answer"
 
 
 @pytest.mark.asyncio

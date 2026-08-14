@@ -1,9 +1,11 @@
 """Test cases for MCP tool loading and Git-based MCP servers."""
 
 import asyncio
+import inspect
 import json
 import sys
 import tempfile
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +14,7 @@ import pytest
 
 from box_agent.tools import mcp_loader
 from box_agent.tools.mcp_loader import (
+    DynamicBearerAuth,
     MCPServerConnection,
     MCPTool,
     MCPTimeoutConfig,
@@ -28,6 +31,119 @@ from box_agent.tools.base import Tool, ToolResult
 def test_streamable_http_client_is_available():
     """The loader resolves the client exported by the installed MCP SDK."""
     assert callable(mcp_loader.streamable_http_client)
+
+
+def test_streamable_http_client_has_supported_signature():
+    """The installed SDK must expose either the MCP 1.x or 2.x client API."""
+    parameters = inspect.signature(mcp_loader.streamable_http_client).parameters
+
+    legacy_options = {"headers", "timeout", "sse_read_timeout", "auth"}
+    assert legacy_options <= parameters.keys() or (
+        "http_client" in parameters and "headers" not in parameters
+    )
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_mcp1_passes_transport_configuration(monkeypatch):
+    captured = {}
+
+    @asynccontextmanager
+    async def fake_client(
+        url,
+        headers=None,
+        timeout=0,
+        sse_read_timeout=0,
+        auth=None,
+    ):
+        captured.update(
+            url=url,
+            headers=headers,
+            timeout=timeout,
+            sse_read_timeout=sse_read_timeout,
+            auth=auth,
+        )
+        yield ("read", "write", lambda: None)
+
+    monkeypatch.setattr(mcp_loader, "streamable_http_client", fake_client)
+    conn = MCPServerConnection(
+        name="mcp1",
+        connection_type="streamable_http",
+        url="https://example.com/mcp",
+        headers={"X-Test": "one"},
+        connect_timeout=7,
+        sse_read_timeout=11,
+    )
+    conn.exit_stack = AsyncExitStack()
+
+    try:
+        assert await conn._connect_streamable_http() == ("read", "write")
+    finally:
+        await conn.exit_stack.aclose()
+
+    assert captured == {
+        "url": "https://example.com/mcp",
+        "headers": {"X-Test": "one"},
+        "timeout": 7,
+        "sse_read_timeout": 11,
+        "auth": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_mcp2_uses_preconfigured_http_client(monkeypatch):
+    captured = {}
+    fake_http_client = object()
+
+    @asynccontextmanager
+    async def managed_http_client():
+        yield fake_http_client
+
+    def fake_factory(*, headers=None, timeout=None, auth=None):
+        captured.update(headers=headers, timeout=timeout, auth=auth)
+        return managed_http_client()
+
+    @asynccontextmanager
+    async def fake_client(url, *, http_client=None, terminate_on_close=True):
+        captured.update(url=url, http_client=http_client)
+        yield ("read", "write")
+
+    class FakeTimeout:
+        def __init__(self, **kwargs):
+            self.values = kwargs
+
+    monkeypatch.setitem(
+        sys.modules,
+        "httpx2",
+        SimpleNamespace(Timeout=FakeTimeout, Auth=object),
+    )
+    monkeypatch.setattr(mcp_loader, "create_mcp_http_client", fake_factory)
+    monkeypatch.setattr(mcp_loader, "streamable_http_client", fake_client)
+    conn = MCPServerConnection(
+        name="mcp2",
+        connection_type="streamable_http",
+        url="https://example.com/mcp",
+        headers={"X-Test": "two"},
+        connect_timeout=13,
+        sse_read_timeout=17,
+        auth=DynamicBearerAuth(explicit_token="token"),
+    )
+    conn.exit_stack = AsyncExitStack()
+
+    try:
+        assert await conn._connect_streamable_http() == ("read", "write")
+    finally:
+        await conn.exit_stack.aclose()
+
+    assert captured["headers"] == {"X-Test": "two"}
+    assert captured["timeout"].values == {
+        "connect": 13,
+        "read": 17,
+        "write": 13,
+        "pool": 13,
+    }
+    assert captured["url"] == "https://example.com/mcp"
+    assert captured["http_client"] is fake_http_client
+    assert captured["auth"] is not conn.auth
 
 
 class NamedDummyTool(Tool):

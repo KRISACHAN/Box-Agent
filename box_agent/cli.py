@@ -75,6 +75,11 @@ from box_agent.tools.skill_execution_env import build_skill_execution_env
 from box_agent.utils import calculate_display_width
 from box_agent.acp.project_context import build_project_startup_context_prompt
 from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
+from box_agent.workflows import (
+    CONTROLLED_PRESENTATION_WORKFLOW_KIND,
+    build_external_skill_completion_gate,
+    resolve_explicit_skill_invocation,
+)
 
 
 def run_setup_wizard(config_path: Path) -> bool:
@@ -1446,12 +1451,20 @@ def _doctor_config_status() -> tuple[dict[str, Any], Config | None]:
         return _doctor_check("error", f"parse error: {e}", config_file=str(config_path)), None
 
 
+async def _probe_llm_api(client: LLMClient):
+    """Run one tool-free connectivity probe classified as an internal helper call."""
+    return await client.generate(
+        messages=[Message(role="user", content="hi")],
+        call_kind="utility",
+    )
+
+
 async def _doctor_api_status(config: Config | None) -> dict[str, Any]:
     if config is None:
         return _doctor_check("skipped", "skipped (no valid config)")
     try:
         from box_agent.retry import RetryConfig as DoctorRetryConfig
-        from box_agent.schema import LLMProvider as LP, Message
+        from box_agent.schema import LLMProvider as LP
 
         provider = LP.ANTHROPIC if config.llm.provider.lower() == "anthropic" else LP.OPENAI
         no_retry = DoctorRetryConfig(enabled=False, max_retries=0)
@@ -1465,8 +1478,7 @@ async def _doctor_api_status(config: Config | None) -> dict[str, Any]:
             auth_file=config.llm.auth_file,
             timeout=config.llm.timeout,
         )
-        messages = [Message(role="user", content="hi")]
-        response = await client.generate(messages)
+        response = await _probe_llm_api(client)
         if response and response.content:
             return _doctor_check(
                 "ok",
@@ -1861,7 +1873,6 @@ async def run_agent(
         print(f"{Colors.DIM}Verifying API connection...{Colors.RESET}", end=" ", flush=True)
         try:
             from box_agent.retry import RetryConfig as VerifyRetryConfig
-            from box_agent.schema import Message as Msg
             # Use a temporary client with retry disabled to avoid long waits
             _verify_client = LLMClient(
                 api_key=config.llm.api_key,
@@ -1873,9 +1884,7 @@ async def run_agent(
                 auth_file=config.llm.auth_file,
                 timeout=config.llm.timeout,
             )
-            await _verify_client.generate(
-                messages=[Msg(role="user", content="hi")],
-            )
+            await _probe_llm_api(_verify_client)
             print(f"{Colors.GREEN}OK{Colors.RESET}")
         except Exception as e:
             err_str = str(e)
@@ -1925,7 +1934,7 @@ async def run_agent(
                             auth_file=config.llm.auth_file,
                             timeout=config.llm.timeout,
                         )
-                        await _verify_client2.generate(messages=[Msg(role="user", content="hi")])
+                        await _probe_llm_api(_verify_client2)
                         print(f"{Colors.GREEN}OK{Colors.RESET}")
                     except Exception as e2:
                         print(f"{Colors.RED}FAILED{Colors.RESET}")
@@ -2262,6 +2271,31 @@ async def run_agent(
                 f"{', '.join(result.loaded_names)}{Colors.RESET}"
             )
 
+    def _build_cli_completion_gate(user_input: str):
+        if not completion_gate_enabled:
+            return None
+        explicit_skill = resolve_explicit_skill_invocation(skill_loader, user_input)
+        if (
+            explicit_skill is not None
+            and explicit_skill.workflow != CONTROLLED_PRESENTATION_WORKFLOW_KIND
+        ):
+            return build_external_skill_completion_gate(
+                user_text=user_input,
+                workspace_dir=workspace_dir,
+                skill=explicit_skill,
+                tool_limits=config.tool_limits,
+            )
+        return build_auto_completion_gate(
+            user_input,
+            workspace_dir,
+            confirmed_presentation=(
+                explicit_skill is not None
+                and explicit_skill.workflow
+                == CONTROLLED_PRESENTATION_WORKFLOW_KIND
+            ),
+            tool_limits=config.tool_limits,
+        )
+
     # 8. Display welcome information
     if not task:
         print_banner()
@@ -2274,16 +2308,8 @@ async def run_agent(
         print(f"\n{Colors.BRIGHT_BLUE}Agent{Colors.RESET} {Colors.DIM}›{Colors.RESET} {Colors.DIM}Executing task...{Colors.RESET}\n")
         # Block on MCP only when user is actually about to run
         register_mcp_tools(agent.tools, await await_mcp_tools(mcp_task))
-        completion_gate = (
-            build_auto_completion_gate(
-                task,
-                workspace_dir,
-                tool_limits=config.tool_limits,
-            )
-            if completion_gate_enabled
-            else None
-        )
         _apply_skill_filter(task)
+        completion_gate = _build_cli_completion_gate(task)
         _apply_cli_auto_loaded_skills(completion_gate, task)
         agent.add_user_message(task)
         if completion_gate is not None:
@@ -2621,16 +2647,8 @@ async def run_agent(
                 f"\n{Colors.BRIGHT_BLUE}Agent{Colors.RESET} {Colors.DIM}›{Colors.RESET} "
                 f"{Colors.DIM}Thinking... (Esc to cancel){Colors.RESET}\n"
             )
-            preload_gate = (
-                build_auto_completion_gate(
-                    user_input,
-                    workspace_dir,
-                    tool_limits=config.tool_limits,
-                )
-                if completion_gate_enabled
-                else None
-            )
             _apply_skill_filter(user_input)
+            preload_gate = _build_cli_completion_gate(user_input)
             _apply_cli_auto_loaded_skills(preload_gate, user_input)
             agent.add_user_message(user_input)
 
@@ -2692,6 +2710,7 @@ async def run_agent(
                 agent_task = asyncio.create_task(
                     agent.run(
                         force_plan_start=force_plan_next_turn,
+                        completion_gate=preload_gate,
                         current_turn_text=user_input,
                     )
                 )
@@ -2714,6 +2733,14 @@ async def run_agent(
 
             # Visual separation
             print(f"\n{Colors.DIM}{'─' * 60}{Colors.RESET}\n")
+
+        except EOFError:
+            print(
+                f"\n{Colors.BRIGHT_YELLOW}👋 Goodbye! Thanks for using Box Agent"
+                f"{Colors.RESET}\n"
+            )
+            print_stats(agent, session_start)
+            break
 
         except KeyboardInterrupt:
             print(f"\n\n{Colors.BRIGHT_YELLOW}👋 Interrupt signal detected, exiting...{Colors.RESET}\n")

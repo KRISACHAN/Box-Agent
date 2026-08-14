@@ -5,12 +5,18 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
+from time import monotonic
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from ..retry import RetryConfig, StreamInterrupted, async_retry, is_retryable_stream_error
 from ..schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
+from ..tools.argument_limits import (
+    PROVIDER_STREAM_ACTIVITY_INTERVAL_SECONDS,
+    TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS,
+    streamed_argument_limit,
+)
 from .base import LLMClientBase
 from .error_messages import is_retryable_llm_error
 from .debug_logging import (
@@ -166,6 +172,22 @@ async def _await_if_needed(value: Any) -> Any:
     return value
 
 
+def _get_field(value: Any, name: str) -> Any:
+    """Read a field from an SDK model or a plain mapping."""
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _reasoning_text_from_aliases(value: Any) -> str:
+    """Return reasoning text from common OpenAI-compatible field aliases."""
+    for name in ("reasoning", "reasoning_content"):
+        reasoning = _get_field(value, name)
+        if isinstance(reasoning, str) and reasoning:
+            return reasoning
+    return ""
+
+
 class OpenAIClient(LLMClientBase):
     """LLM client using OpenAI's protocol.
 
@@ -242,6 +264,7 @@ class OpenAIClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> Any:
         """Execute API request (core method that can be retried).
 
@@ -268,7 +291,7 @@ class OpenAIClient(LLMClientBase):
             params["tools"] = self._convert_tools(tools)
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -437,13 +460,17 @@ class OpenAIClient(LLMClientBase):
         # Extract text content
         text_content = message.content or ""
 
-        # Extract thinking content from reasoning_details
-        thinking_content = ""
-        if hasattr(message, "reasoning_details") and message.reasoning_details:
+        # Extract thinking content. OpenAI-compatible providers use different
+        # aliases: SenseNova emits ``reasoning``, while other gateways expose
+        # ``reasoning_content`` or structured ``reasoning_details`` blocks.
+        thinking_content = _reasoning_text_from_aliases(message)
+        reasoning_details = _get_field(message, "reasoning_details")
+        if not thinking_content and reasoning_details:
             # reasoning_details is a list of reasoning blocks
-            for detail in message.reasoning_details:
-                if hasattr(detail, "text"):
-                    thinking_content += detail.text
+            for detail in reasoning_details:
+                detail_text = _get_field(detail, "text")
+                if isinstance(detail_text, str):
+                    thinking_content += detail_text
 
         # Extract tool calls
         tool_calls = []
@@ -478,6 +505,7 @@ class OpenAIClient(LLMClientBase):
             tool_calls=tool_calls if tool_calls else None,
             finish_reason="stop",  # OpenAI doesn't provide finish_reason in the message
             usage=usage,
+            provider_response_id=str(response.id) if getattr(response, "id", None) else None,
         )
 
     async def generate(
@@ -489,6 +517,7 @@ class OpenAIClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         """Generate response from OpenAI LLM.
 
@@ -522,6 +551,7 @@ class OpenAIClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
         else:
             # Don't use retry
@@ -532,6 +562,7 @@ class OpenAIClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
 
         # Parse and return response
@@ -546,6 +577,7 @@ class OpenAIClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from OpenAI LLM.
 
@@ -566,7 +598,7 @@ class OpenAIClient(LLMClientBase):
             params["tools"] = self._convert_tools(request_params["tools"])
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -583,8 +615,10 @@ class OpenAIClient(LLMClientBase):
         finish_reason: str | None = None
 
         # Tool call accumulators: {index: {id, name, arguments_str}}
-        tool_acc: dict[int, dict[str, str]] = {}
+        tool_acc: dict[int, dict[str, Any]] = {}
+        oversized_info: list[dict[str, Any]] = []
         provider_request_id: str | None = None
+        provider_response_id: str | None = None
 
         async def _open_stream() -> Any:
             nonlocal provider_request_id
@@ -618,6 +652,9 @@ class OpenAIClient(LLMClientBase):
             usage = None
             finish_reason = None
             tool_acc = {}
+            oversized_info = []
+            provider_response_id = None
+            last_provider_activity_at: float | None = None
 
             try:
                 response_stream = await _open_stream()
@@ -640,6 +677,22 @@ class OpenAIClient(LLMClientBase):
 
             try:
                 async for chunk in response_stream:
+                    if provider_response_id is None and getattr(chunk, "id", None):
+                        provider_response_id = str(chunk.id)
+                    now = monotonic()
+                    if (
+                        last_provider_activity_at is None
+                        or now - last_provider_activity_at
+                        >= PROVIDER_STREAM_ACTIVITY_INTERVAL_SECONDS
+                    ):
+                        last_provider_activity_at = now
+                        yield StreamEvent(
+                            type="activity",
+                            activity={
+                                "protocol": "agent_activity_v1",
+                                "phase": "provider_stream",
+                            },
+                        )
                     # Usage info (sent in the final chunk with choices=[])
                     if hasattr(chunk, "usage") and chunk.usage:
                         usage = TokenUsage(
@@ -661,11 +714,14 @@ class OpenAIClient(LLMClientBase):
                     if delta is None:
                         continue
 
-                    # Reasoning / thinking content (DeepSeek, o1, etc.)
-                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                        thinking_content += delta.reasoning_content
+                    # Reasoning / thinking content. SenseNova uses
+                    # ``reasoning``; DeepSeek-style gateways commonly use
+                    # ``reasoning_content``.
+                    reasoning_delta = _reasoning_text_from_aliases(delta)
+                    if reasoning_delta:
+                        thinking_content += reasoning_delta
                         any_user_yield = True
-                        yield StreamEvent(type="thinking", delta=delta.reasoning_content)
+                        yield StreamEvent(type="thinking", delta=reasoning_delta)
 
                     # Text content
                     if delta.content:
@@ -682,6 +738,7 @@ class OpenAIClient(LLMClientBase):
                                     "id": tc_delta.id or "",
                                     "name": tc_delta.function.name if tc_delta.function and tc_delta.function.name else "",
                                     "arguments": "",
+                                    "activity_bucket": -1,
                                 }
                             else:
                                 if tc_delta.id:
@@ -690,6 +747,38 @@ class OpenAIClient(LLMClientBase):
                                     tool_acc[idx]["name"] = tc_delta.function.name
                             if tc_delta.function and tc_delta.function.arguments:
                                 tool_acc[idx]["arguments"] += tc_delta.function.arguments
+                                entry = tool_acc[idx]
+                                arguments_len = len(entry["arguments"])
+                                activity_bucket = (
+                                    arguments_len // TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS
+                                )
+                                if activity_bucket > entry["activity_bucket"]:
+                                    entry["activity_bucket"] = activity_bucket
+                                    yield StreamEvent(
+                                        type="activity",
+                                        activity={
+                                            "protocol": "agent_activity_v1",
+                                            "phase": "tool_arguments",
+                                            "tool_name": entry["name"] or "",
+                                            "argument_chars": arguments_len,
+                                        },
+                                    )
+                                limit = streamed_argument_limit(entry["name"])
+                                if arguments_len > limit:
+                                    oversized_info.append(
+                                        {
+                                            "name": entry["name"] or "",
+                                            "arguments_len": arguments_len,
+                                            "limit": limit,
+                                        }
+                                    )
+                                    finish_reason = "tool_argument_limit"
+                                    break
+                        if oversized_info:
+                            closer = getattr(response_stream, "aclose", None)
+                            if closer is not None:
+                                await closer()
+                            break
             except Exception as exc:
                 log_llm_error_meta(provider="openai", mode="stream", exc=exc)
                 if is_retryable_stream_error(exc):
@@ -725,6 +814,23 @@ class OpenAIClient(LLMClientBase):
             else:
                 # Successful consume — break out of the retry loop.
                 break
+
+        if oversized_info:
+            logger.warning(
+                "openai tool argument stream stopped locally: %s request_id=%s",
+                oversized_info,
+                provider_request_id,
+            )
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_argument_limit",
+                usage=usage,
+                provider_response_id=provider_response_id,
+                provider_request_id=provider_request_id,
+                oversized_tool_calls=oversized_info,
+                raw_finish_reason=None,
+            )
+            return
 
         # Build tool calls. When a relay truncates output mid-arguments the
         # accumulated ``arguments_str`` is invalid JSON. First try to repair
@@ -817,6 +923,7 @@ class OpenAIClient(LLMClientBase):
             finish_reason=finish_reason,
             usage=usage,
             tool_calls=tool_calls if tool_calls else None,
+            provider_response_id=provider_response_id,
             provider_request_id=provider_request_id,
             truncated_tool_calls=truncated_info or None,
             raw_finish_reason=raw_finish_reason,

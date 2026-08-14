@@ -24,6 +24,7 @@ from ..model_history import (
     is_model_instruction_source_path,
 )
 from .base import EventEmittingTool, Tool, ToolResult
+from .argument_limits import MAX_GENERATED_BODY_CHARS
 from .pptx_safety import detect_pptx_self_check_bypass
 from .safety import backup_file, validate_path_in_workspace
 
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 _MODEL_CONTEXT_EXTS = {".html", ".htm", ".json", ".md", ".txt", ".log", ".xml"}
 _MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
 _MODEL_CONTEXT_SIZE_THRESHOLD = 8_000
-MAX_FILE_TOOL_CONTENT_CHARS = 8_000
+MAX_FILE_TOOL_CONTENT_CHARS = MAX_GENERATED_BODY_CHARS
 MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY = f"{MAX_FILE_TOOL_CONTENT_CHARS:,}"
 DEFAULT_READ_LIMIT = 500
 MAX_READ_LINES = 2_000
@@ -1290,10 +1291,12 @@ class EditTool(Tool):
                 },
                 "old_str": {
                     "type": "string",
+                    "maxLength": MAX_FILE_TOOL_CONTENT_CHARS,
                     "description": "Exact string to find and replace (must be unique in file)",
                 },
                 "new_str": {
                     "type": "string",
+                    "maxLength": MAX_FILE_TOOL_CONTENT_CHARS,
                     "description": "Replacement string (use for refactoring, renaming, etc.)",
                 },
             },
@@ -1344,6 +1347,13 @@ class EditTool(Tool):
             placeholder_error = _model_history_placeholder_error(old_str, new_str)
             if placeholder_error:
                 return ToolResult(success=False, content="", error=placeholder_error)
+
+            for argument_name, value in (("old_str", old_str), ("new_str", new_str)):
+                size_error = _oversized_file_tool_argument_error(
+                    self.name, argument_name, value
+                )
+                if size_error:
+                    return ToolResult(success=False, content="", error=size_error)
 
             bypass_error = detect_pptx_self_check_bypass(str(file_path), f"{content}\n{old_str}\n{new_str}")
             if bypass_error:

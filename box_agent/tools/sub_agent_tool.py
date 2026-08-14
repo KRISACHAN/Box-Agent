@@ -255,6 +255,9 @@ class SubAgentTool(EventEmittingTool):
             "file or content limits are exceeded. Do not create multiple children merely because there "
             "are five or more units. Use `general_loop` for heterogeneous work, independent web research, "
             "or tasks that genuinely need an iterative tool loop.\n\n"
+            "For managed Playwright tools, browser navigation/snapshot requires "
+            "`constraints.network=true`; browser interaction or `browser_run_code` also requires "
+            "`constraints.external_side_effect=true`.\n\n"
             "Give parallel calls a short distinct `title`; never assign two children to write the same "
             "path. Constraints and budgets are hard runtime boundaries, not suggestions."
         )
@@ -356,6 +359,7 @@ class SubAgentTool(EventEmittingTool):
                 },
             },
             "required": ["task"],
+            "additionalProperties": False,
         }
 
     # Event types worth surfacing to the parent.
@@ -590,6 +594,7 @@ class SubAgentTool(EventEmittingTool):
                     "sub_agent_strategy": diagnostic.get("strategy"),
                     "resolved_skills": diagnostic.get("resolved_skills", []),
                 },
+                call_kind="subagent_step",
             ):
                 if isinstance(event, ToolCallStart):
                     pending_child_tc[event.tool_call_id] = event.tool_name
@@ -825,6 +830,7 @@ class SubAgentTool(EventEmittingTool):
                 messages=messages,
                 tools=None,
                 thinking_enabled=False,
+                call_kind="subagent_step",
             )
             if self._batch_synthesis_timeout_seconds > 0:
                 response = await asyncio.wait_for(
@@ -906,7 +912,7 @@ class SubAgentTool(EventEmittingTool):
 
     async def execute(  # type: ignore[override]
         self,
-        task: str,
+        task: Any = None,
         title: str | None = None,
         execution: dict[str, Any] | None = None,
         capabilities: Any = _CAPABILITIES_UNSET,
@@ -916,7 +922,38 @@ class SubAgentTool(EventEmittingTool):
         *,
         _event_queue: asyncio.Queue | None = None,
         _parent_tool_call_id: str | None = None,
+        **unexpected: Any,
     ) -> ToolResult:
+        invalid_top_level = sorted(unexpected)
+        if not isinstance(task, str) or not task.strip():
+            invalid_top_level.append("task")
+        if title is not None and not isinstance(title, str):
+            invalid_top_level.append("title")
+        for field_name, value in (
+            ("execution", execution),
+            ("inputs", inputs),
+            ("constraints", constraints),
+            ("budget", budget),
+        ):
+            if value is not None and not isinstance(value, dict):
+                invalid_top_level.append(field_name)
+        if capabilities is not _CAPABILITIES_UNSET and not isinstance(
+            capabilities, dict
+        ):
+            invalid_top_level.append("capabilities")
+        if invalid_top_level:
+            return self._failure_result(
+                CapabilityFailure(
+                    code="INVALID_DELEGATION_SPEC",
+                    message=(
+                        "The sub-agent delegation contains invalid top-level fields; "
+                        "fix the listed fields and retry at most once."
+                    ),
+                    retryable=True,
+                    invalid_fields=tuple(sorted(set(invalid_top_level))),
+                )
+            )
+
         queue = _event_queue if _event_queue is not None else self._event_queue
         parent_tool_call_id = (
             _parent_tool_call_id

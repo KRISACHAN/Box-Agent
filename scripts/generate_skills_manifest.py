@@ -21,7 +21,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import yaml
 
@@ -83,6 +83,35 @@ def _parse_skill_name(skill_md: Path) -> str | None:
     return name
 
 
+def _parse_builtin_availability(skill_md: Path) -> dict[str, list[str]] | None:
+    """Read optional host/platform conditions copied into the builtin manifest."""
+
+    text = skill_md.read_text(encoding="utf-8")
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return None
+    frontmatter: dict[str, Any] = yaml.safe_load(match.group(1)) or {}
+    raw = frontmatter.get("builtin_availability")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SystemExit(f"error: {skill_md} has invalid builtin_availability")
+
+    availability: dict[str, list[str]] = {}
+    for key in ("platforms", "required_env_paths"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            raise SystemExit(f"error: {skill_md} has invalid builtin_availability.{key}")
+        availability[key] = [item.strip() for item in value]
+    if not availability:
+        raise SystemExit(f"error: {skill_md} has empty builtin_availability")
+    return availability
+
+
 def _collect_skills() -> List[Tuple[str, str]]:
     """Return ``(name, relative_path)`` tuples for every builtin skill."""
 
@@ -130,11 +159,14 @@ def main() -> int:
         "schema_version": 1,
         "box_agent_version": _read_box_agent_version(),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "skills": [
-            {"name": name, "path": rel}
-            for name, rel in entries
-        ],
+        "skills": [],
     }
+    for name, rel in entries:
+        item: dict[str, object] = {"name": name, "path": rel}
+        availability = _parse_builtin_availability(SKILLS_DIR / rel)
+        if availability is not None:
+            item["availability"] = availability
+        payload["skills"].append(item)
 
     MANIFEST_PATH.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",

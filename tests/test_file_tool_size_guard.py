@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
-from box_agent.tools.file_tools import AppendTool, MAX_FILE_TOOL_CONTENT_CHARS, WriteTool
+from box_agent.tools.file_tools import (
+    AppendTool,
+    EditTool,
+    MAX_FILE_TOOL_CONTENT_CHARS,
+    WriteTool,
+)
 from box_agent.tools.setup import SANDBOX_INFO_PROMPT, add_workspace_tools
 
 
@@ -70,21 +75,38 @@ def test_workspace_file_tools_include_append_file(tmp_path):
 
     add_workspace_tools(tools, config, tmp_path)
 
-    assert "append_file" in {tool.name for tool in tools}
+    names = {tool.name for tool in tools}
+    assert "append_file" in names
+    assert "staged_file_write" in names
 
 
 def test_sandbox_prompt_limits_single_write_file_content_argument():
-    assert (
-        f"每次 `write_file(content=...)` / `append_file(content=...)` 控制在 {MAX_FILE_TOOL_CONTENT_CHARS} 字符以内"
-        in SANDBOX_INFO_PROMPT
-    )
-    assert "除非必须用 Python 处理，否则不要把正文塞进 `execute_code`" in SANDBOX_INFO_PROMPT
-    assert "用 `write_file` 写第一段，再用 `append_file` 分块续写" in SANDBOX_INFO_PROMPT
+    assert f"预计超过 {MAX_FILE_TOOL_CONTENT_CHARS} 字符" in SANDBOX_INFO_PROMPT
+    assert "`staged_file_write`" in SANDBOX_INFO_PROMPT
+    assert "禁止把文件正文、heredoc 或 base64 载荷塞进 `bash`" in SANDBOX_INFO_PROMPT
 
 
 def test_system_prompt_warns_against_single_write_file_large_artifacts():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 
-    assert "长 HTML/CSS/JS/JSON/base64/模板正文不要一次性塞进单个工具参数" in prompt
-    assert "不要整段塞进 `execute_code`" in prompt
-    assert "用 `write_file` 写第一段，再用 `append_file` 分块续写" in prompt
+    assert "预计超过 8,000 字符" in prompt
+    assert "`staged_file_write`" in prompt
+    assert "禁止把文件正文、heredoc 或 base64 载荷塞进 `bash`" in prompt
+
+
+@pytest.mark.asyncio
+async def test_edit_file_rejects_oversized_replacement(tmp_path):
+    target = tmp_path / "sample.txt"
+    target.write_text("old", encoding="utf-8")
+    tool = EditTool(workspace_dir=str(tmp_path))
+
+    result = await tool.execute(
+        path="sample.txt",
+        old_str="old",
+        new_str="x" * (MAX_FILE_TOOL_CONTENT_CHARS + 1),
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("FILE_TOOL_ARGUMENT_TOO_LARGE")
+    assert target.read_text(encoding="utf-8") == "old"

@@ -36,7 +36,7 @@ Use this branch when the user asks to convert an existing HTML file, folder, web
 
 ## Artifact Size Guardrails
 
-- Keep the first renderable `index.html` under 7600 characters so it fits in one `write_file` call.
+- Keep the first renderable `index.html` under 5500 characters so it fits in one `write_file` call with safety margin.
 - Prefer compact CSS plus JS-generated scenes from arrays over spelling out many repeated HTML blocks.
 - Do not attempt a 9-scene or long-form visual treatment until a small strict-rendered MP4 exists.
 - Do not copy or append text that says `[Full tool-call argument omitted from model history]`; that is a history placeholder, not file content.
@@ -149,7 +149,7 @@ Report the final MP4 path, duration, resolution, and any fallback used.
 - Browser/page errors, local 404s, or timeline registration timeouts in render output: treat them as blocking even if an MP4 exists and ffprobe can read it.
 - Missed ad hoc replacement: read the root composition line first, then patch the actual attribute value. Do not assume duration or id values when applying a one-line fix.
 - Render path mismatch: use the runner `final_output` line, or parse the actual `Rendering ...` MP4 path and copy it to the user-facing artifact path before reporting completion.
-- `FILE_TOOL_ARGUMENT_TOO_LARGE`: simplify the composition to one complete HTML file under 7600 characters, usually by generating repeated scene markup from JS arrays. Do not split into append chunks unless every chunk is freshly regenerated literal content.
+- `FILE_TOOL_ARGUMENT_TOO_LARGE`: simplify the composition to one complete HTML file under 5500 characters, usually by generating repeated scene markup from JS arrays. Do not split into append chunks unless every chunk is freshly regenerated literal content.
 - Placeholder append failure: stop appending, read the current file, then rewrite a smaller complete file. The placeholder itself must never be written.
 - Duplicate or partial HTML: overwrite the whole file. Do not keep any old prefix, repeated `</body></html>`, or half-written script.
 - Empty diagnostic code output: when using `execute_code` to inspect images, JSON, paths, or media metadata, print the result explicitly. An expression without `print(...)` may return `(No output)`.

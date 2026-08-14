@@ -10,7 +10,7 @@ import box_agent.cli as cli
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, ToolCall
 from box_agent.tools.base import Tool, ToolResult
-from box_agent.tools.skill_loader import SkillLoader
+from box_agent.tools.skill_loader import Skill, SkillLoader
 from box_agent.tools.runtime import build_skill_runtime_context, build_skill_runtime_prompt
 from box_agent.tools.setup import add_workspace_tools
 from box_agent.tools.skill_tool import GetSkillTool
@@ -160,6 +160,195 @@ class _EchoTool(Tool):
 
     async def execute(self, text: str) -> ToolResult:
         return ToolResult(success=True, content=text)
+
+
+class _EOFPromptSession:
+    prompt_count = 0
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def prompt_async(self, *args, **kwargs) -> str:
+        type(self).prompt_count += 1
+        raise EOFError
+
+
+class _ExplicitSkillPromptSession:
+    prompt_count = 0
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def prompt_async(self, *args, **kwargs) -> str:
+        type(self).prompt_count += 1
+        if type(self).prompt_count == 1:
+            return "请用 /report-skill 生成报告"
+        raise EOFError
+
+
+def test_cli_ctrl_d_exits_without_empty_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_key: test\n", encoding="utf-8")
+    system_prompt_path = tmp_path / "system_prompt.md"
+    system_prompt_path.write_text(
+        "base system\n\n{SKILLS_METADATA}\n\n{SANDBOX_INFO}",
+        encoding="utf-8",
+    )
+    workspace = tmp_path / "workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=2,
+            workspace_dir=str(workspace),
+            enable_memory=False,
+            enable_memory_extraction=False,
+            memory_maintainer_enabled=False,
+            memory_promotion_proposal_enabled=False,
+            system_prompt_path=str(system_prompt_path),
+        ),
+        tools=ToolsConfig(
+            enable_file_tools=False,
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_mcp=False,
+            enable_skills=False,
+            allow_full_access=True,
+        ),
+    )
+
+    async def fake_initialize_base_tools(*args, **kwargs):
+        return [], None, None, None
+
+    monkeypatch.setattr(
+        cli.Config,
+        "get_default_config_path",
+        staticmethod(lambda: config_path),
+    )
+    monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
+    monkeypatch.setattr(
+        cli.Config,
+        "find_config_file",
+        staticmethod(
+            lambda name: Path(name) if name == str(system_prompt_path) else None
+        ),
+    )
+    monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
+    monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
+    monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "PromptSession", _EOFPromptSession)
+    _EOFPromptSession.prompt_count = 0
+
+    exit_code = asyncio.run(
+        cli.run_agent(
+            workspace,
+            sandbox_mode=False,
+            verify_api=False,
+            completion_gate_enabled=False,
+            goal_autopilot_enabled=False,
+        )
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert _EOFPromptSession.prompt_count == 1
+    assert "Goodbye! Thanks for using Box Agent" in output
+    assert "❌ Error:" not in output
+
+
+def test_interactive_cli_passes_explicit_skill_gate_to_agent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_key: test\n", encoding="utf-8")
+    system_prompt_path = tmp_path / "system_prompt.md"
+    system_prompt_path.write_text(
+        "base system\n\n{SKILLS_METADATA}\n\n{SANDBOX_INFO}",
+        encoding="utf-8",
+    )
+    workspace = tmp_path / "workspace"
+    skill_path = tmp_path / "skills" / "report-skill" / "SKILL.md"
+    skill_loader = SkillLoader(skill_path.parent.parent)
+    skill_loader.loaded_skills["report-skill"] = Skill(
+        name="report-skill",
+        description="Generate an HTML report.",
+        content="Generate the requested report.",
+        source="user",
+        skill_path=skill_path,
+    )
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=2,
+            workspace_dir=str(workspace),
+            enable_memory=False,
+            enable_memory_extraction=False,
+            memory_maintainer_enabled=False,
+            memory_promotion_proposal_enabled=False,
+            system_prompt_path=str(system_prompt_path),
+        ),
+        tools=ToolsConfig(
+            enable_file_tools=False,
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_mcp=False,
+            enable_skills=True,
+            allow_full_access=True,
+        ),
+    )
+    run_options: list[dict[str, object]] = []
+
+    async def fake_initialize_base_tools(*args, **kwargs):
+        return [GetSkillTool(skill_loader)], skill_loader, None, None
+
+    async def fake_run(self, *args, **kwargs):
+        run_options.append(kwargs)
+        return "done"
+
+    monkeypatch.setattr(
+        cli.Config,
+        "get_default_config_path",
+        staticmethod(lambda: config_path),
+    )
+    monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
+    monkeypatch.setattr(
+        cli.Config,
+        "find_config_file",
+        staticmethod(
+            lambda name: Path(name) if name == str(system_prompt_path) else None
+        ),
+    )
+    monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
+    monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
+    monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "PromptSession", _ExplicitSkillPromptSession)
+    monkeypatch.setattr(cli.Agent, "run", fake_run)
+    _ExplicitSkillPromptSession.prompt_count = 0
+
+    exit_code = asyncio.run(
+        cli.run_agent(
+            workspace,
+            sandbox_mode=False,
+            verify_api=False,
+            goal_autopilot_enabled=False,
+        )
+    )
+
+    assert exit_code == 0
+    assert len(run_options) == 1
+    gate = run_options[0]["completion_gate"]
+    assert gate.workflow_checkpoint_kind == "external_skill"
+    assert gate.workflow_options["skill_name"] == "report-skill"
 
 
 def test_cli_workspace_tools_receive_self_managed_node_runtime(

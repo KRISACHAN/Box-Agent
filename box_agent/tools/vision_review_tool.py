@@ -124,7 +124,7 @@ class VisionReviewTool(Tool):
 
         try:
             response = await asyncio.wait_for(
-                self.llm.generate(messages=messages, tools=None),
+                self.llm.generate(messages=messages, tools=None, call_kind="utility"),
                 timeout=_VISION_REVIEW_TIMEOUT,
             )
         except asyncio.TimeoutError:

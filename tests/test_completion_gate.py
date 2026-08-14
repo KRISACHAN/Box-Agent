@@ -5567,6 +5567,23 @@ def test_changed_artifact_glob_accepts_modified_baseline_file(tmp_path):
     assert completion_gate_gaps(gate, set(), str(tmp_path)) == []
 
 
+def test_changed_artifact_glob_ignores_staging_and_package_fixtures(tmp_path):
+    patterns = ("output/**/*.html",)
+    gate = CompletionGate(required_changed_artifact_globs=patterns)
+    staging = tmp_path / "output" / ".box-agent-staging"
+    fixture = tmp_path / "output" / "qrpkg" / "package" / "test"
+    staging.mkdir(parents=True)
+    fixture.mkdir(parents=True)
+    (staging / "draft.html").write_text("draft")
+    (fixture / "index.html").write_text("fixture")
+
+    gaps = completion_gate_gaps(gate, set(), str(tmp_path))
+    assert len(gaps) == 1
+
+    (tmp_path / "output" / "qr-code.html").write_text("delivery")
+    assert completion_gate_gaps(gate, set(), str(tmp_path)) == []
+
+
 # ── Loop behaviour ───────────────────────────────────────────────
 
 

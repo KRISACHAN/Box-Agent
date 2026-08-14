@@ -10,6 +10,7 @@ from typing import Any, Literal, Mapping
 from box_agent.config import ToolLimitsConfig
 from box_agent.loop_guards import CompletionGate
 from box_agent.tools.skill_loader import SkillLoader
+from box_agent.workflows.external_skill import EXTERNAL_SKILL_WORKFLOW_KIND
 from box_agent.workflows.presentation_contract import RESEARCH_MODE_OPTION
 
 AUTO_LOADED_SKILLS_HEADING = "## Auto-Loaded Skill Instructions"
@@ -125,6 +126,9 @@ def document_preload_skill_names(
 ) -> list[str]:
     if completion_gate is None:
         return []
+    if completion_gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND:
+        skill_name = completion_gate.workflow_options.get("skill_name")
+        return [skill_name] if isinstance(skill_name, str) and skill_name else []
     patterns = tuple(completion_gate.required_changed_artifact_globs)
     preload: list[str] = []
     if (

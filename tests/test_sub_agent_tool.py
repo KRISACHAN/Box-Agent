@@ -413,6 +413,48 @@ async def test_explicit_null_capabilities_is_invalid_not_legacy():
     llm.generate_stream.assert_not_called()
 
 
+def test_sub_agent_schema_rejects_unknown_top_level_fields():
+    tool = SubAgentTool(llm=AsyncMock(), parent_tools={})
+
+    assert tool.parameters["additionalProperties"] is False
+
+
+async def test_unknown_top_level_fields_return_structured_failure():
+    llm = AsyncMock()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+
+    result = await tool.execute(
+        task="Inspect",
+        required_tools='["file", "terminal"]',
+        capabilities="",
+    )
+
+    assert result.success is False
+    assert result.raw_output["code"] == "INVALID_DELEGATION_SPEC"
+    assert result.raw_output["invalid_fields"] == ["capabilities", "required_tools"]
+    assert "Traceback" not in (result.error or "")
+    llm.generate.assert_not_called()
+    llm.generate_stream.assert_not_called()
+
+
+async def test_event_context_missing_task_returns_structured_failure():
+    llm = AsyncMock()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+
+    result = await tool.execute_with_event_context(
+        event_queue=asyncio.Queue(),
+        parent_tool_call_id="parent-call",
+        capabilities={"required_tools": ["read_file"]},
+    )
+
+    assert result.success is False
+    assert result.raw_output["code"] == "INVALID_DELEGATION_SPEC"
+    assert result.raw_output["invalid_fields"] == ["task"]
+    assert "Traceback" not in (result.error or "")
+    llm.generate.assert_not_called()
+    llm.generate_stream.assert_not_called()
+
+
 async def test_selected_skills_are_loaded_into_new_prompt_only(tmp_path):
     skill_dir = tmp_path / "review-skill"
     skill_dir.mkdir()
@@ -713,6 +755,7 @@ async def test_batch_files_reads_twenty_files_once_and_calls_generate_once(tmp_p
     assert llm.stream_calls == 0
     assert llm.tools is None
     assert "session_id" not in llm.generate_kwargs
+    assert llm.generate_kwargs["call_kind"] == "subagent_step"
     assert "<<<UNTRUSTED_FILE" in llm.messages[-1].content
     assert llm.messages[-1].content.count("<<<UNTRUSTED_FILE") == 20
     assert result.raw_output["model_calls"] == 1

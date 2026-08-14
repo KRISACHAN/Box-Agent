@@ -3,12 +3,18 @@
 import inspect
 import logging
 from collections.abc import AsyncIterator
+from time import monotonic
 from typing import Any
 
 import anthropic
 
 from ..retry import RetryConfig, StreamInterrupted, async_retry, is_retryable_stream_error
 from ..schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
+from ..tools.argument_limits import (
+    PROVIDER_STREAM_ACTIVITY_INTERVAL_SECONDS,
+    TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS,
+    streamed_argument_limit,
+)
 from .base import LLMClientBase
 from .error_messages import is_retryable_llm_error
 from .debug_logging import (
@@ -88,6 +94,7 @@ class AnthropicClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> anthropic.types.Message:
         """Execute API request (core method that can be retried).
 
@@ -121,7 +128,7 @@ class AnthropicClient(LLMClientBase):
             params["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET}
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -322,6 +329,7 @@ class AnthropicClient(LLMClientBase):
             tool_calls=tool_calls if tool_calls else None,
             finish_reason=response.stop_reason or "stop",
             usage=usage,
+            provider_response_id=str(response.id) if getattr(response, "id", None) else None,
         )
 
     async def generate(
@@ -333,6 +341,7 @@ class AnthropicClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> LLMResponse:
         """Generate response from Anthropic LLM.
 
@@ -367,6 +376,7 @@ class AnthropicClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
         else:
             # Don't use retry
@@ -378,6 +388,7 @@ class AnthropicClient(LLMClientBase):
                 session_id=session_id,
                 turn_id=turn_id,
                 title=title,
+                call_kind=call_kind,
             )
 
         # Parse and return response
@@ -392,6 +403,7 @@ class AnthropicClient(LLMClientBase):
         session_id: str = "",
         turn_id: str = "",
         title: str = "",
+        call_kind: str = "",
     ) -> AsyncIterator[StreamEvent]:
         """Generate streaming response from Anthropic LLM.
 
@@ -414,7 +426,7 @@ class AnthropicClient(LLMClientBase):
             params["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET}
 
         auth_headers = self._auth_headers(
-            self._agent_headers(session_id, turn_id, title)
+            self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
             params["extra_headers"] = auth_headers
@@ -437,7 +449,10 @@ class AnthropicClient(LLMClientBase):
         current_tool_id: str | None = None
         current_tool_name: str | None = None
         current_tool_json = ""
+        current_activity_bucket = -1
+        oversized_info: list[dict[str, Any]] = []
         provider_request_id: str | None = None
+        provider_response_id: str | None = None
 
         import asyncio as _asyncio
 
@@ -457,6 +472,10 @@ class AnthropicClient(LLMClientBase):
             current_tool_id = None
             current_tool_name = None
             current_tool_json = ""
+            current_activity_bucket = -1
+            oversized_info = []
+            provider_response_id = None
+            last_provider_activity_at: float | None = None
 
             try:
                 stream_context = self.client.messages.stream(**params)
@@ -483,9 +502,25 @@ class AnthropicClient(LLMClientBase):
                         headers=response_headers,
                     )
                     async for event in stream:
+                        now = monotonic()
+                        if (
+                            last_provider_activity_at is None
+                            or now - last_provider_activity_at
+                            >= PROVIDER_STREAM_ACTIVITY_INTERVAL_SECONDS
+                        ):
+                            last_provider_activity_at = now
+                            yield StreamEvent(
+                                type="activity",
+                                activity={
+                                    "protocol": "agent_activity_v1",
+                                    "phase": "provider_stream",
+                                },
+                            )
                         # ── Message start (input token usage) ──
                         if event.type == "message_start":
                             msg = event.message
+                            if provider_response_id is None and getattr(msg, "id", None):
+                                provider_response_id = str(msg.id)
                             if hasattr(msg, "usage") and msg.usage:
                                 input_tokens = msg.usage.input_tokens or 0
                                 cache_read_tokens = getattr(msg.usage, "cache_read_input_tokens", 0) or 0
@@ -498,6 +533,7 @@ class AnthropicClient(LLMClientBase):
                                 current_tool_id = block.id
                                 current_tool_name = block.name
                                 current_tool_json = ""
+                                current_activity_bucket = -1
 
                         # ── Content block delta ──
                         elif event.type == "content_block_delta":
@@ -512,6 +548,32 @@ class AnthropicClient(LLMClientBase):
                                 yield StreamEvent(type="text", delta=delta.text)
                             elif delta.type == "input_json_delta":
                                 current_tool_json += delta.partial_json
+                                arguments_len = len(current_tool_json)
+                                activity_bucket = (
+                                    arguments_len // TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS
+                                )
+                                if activity_bucket > current_activity_bucket:
+                                    current_activity_bucket = activity_bucket
+                                    yield StreamEvent(
+                                        type="activity",
+                                        activity={
+                                            "protocol": "agent_activity_v1",
+                                            "phase": "tool_arguments",
+                                            "tool_name": current_tool_name or "",
+                                            "argument_chars": arguments_len,
+                                        },
+                                    )
+                                limit = streamed_argument_limit(current_tool_name)
+                                if arguments_len > limit:
+                                    oversized_info.append(
+                                        {
+                                            "name": current_tool_name or "",
+                                            "arguments_len": arguments_len,
+                                            "limit": limit,
+                                        }
+                                    )
+                                    finish_reason = "tool_argument_limit"
+                                    break
 
                         # ── Content block stop ──
                         elif event.type == "content_block_stop":
@@ -605,8 +667,11 @@ class AnthropicClient(LLMClientBase):
 
         yield StreamEvent(
             type="finish",
-            finish_reason=finish_reason,
+            finish_reason=("tool_argument_limit" if oversized_info else finish_reason),
             usage=usage,
-            tool_calls=tool_calls if tool_calls else None,
+            tool_calls=None if oversized_info else (tool_calls if tool_calls else None),
+            provider_response_id=provider_response_id,
             provider_request_id=provider_request_id,
+            oversized_tool_calls=oversized_info or None,
+            raw_finish_reason=None if oversized_info else finish_reason,
         )

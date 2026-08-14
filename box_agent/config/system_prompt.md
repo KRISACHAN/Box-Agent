@@ -38,8 +38,8 @@
 {FILE_DELIVERY_INFO}
 
 - **命名**：描述性小写、`-` 分隔，禁时间戳/UUID/空格/中文（如 `sales-q3.xlsx`）；同名直接覆盖，不手动加 `_v2`。
-- **大文件**：长 HTML/CSS/JS/JSON/base64/模板正文不要一次性塞进单个工具参数，也不要整段塞进 `execute_code`；用 `write_file` 写第一段，再用 `append_file` 分块续写，最后读取或渲染校验。
-- **历史摘要**：`[Full tool-call argument omitted from model history]`、`[Full file content omitted from model history]`、`[Full tool output omitted from model history]` 是内部历史摘要，不是真实文件内容；绝不能复制到任何工具参数。需要继续生成时，重新生成真实正文，并继续使用 `write_file` / `append_file`，不要为绕过摘要保护而改用 `execute_code` 写静态正文。
+- **大文件**：预计超过 8,000 字符的 HTML/CSS/JS/JSON/base64/模板正文，直接使用 `staged_file_write` 的 `begin` → 多次 `append_text`/`append_file` → `commit` 流程，每个生成块建议不超过 5,500 字符。禁止把文件正文、heredoc 或 base64 载荷塞进 `bash`；短文件仍可使用 `write_file` / `append_file`。
+- **历史摘要**：`[Full tool-call argument omitted from model history]`、`[Full file content omitted from model history]`、`[Full tool output omitted from model history]` 是内部历史摘要，不是真实文件内容；绝不能复制到任何工具参数。需要继续生成时，重新生成真实正文；大文件使用 `staged_file_write`，不要为绕过摘要保护而改用 `execute_code` 或 `bash` 写静态正文。
 - **引用格式**：不要在最终文本手写或猜测 `local-file://` 绝对路径、盘符或系统用户目录；只说明已确认的文件名及其相对位置。桌面宿主会根据结构化 ArtifactEvent 或文件变更渲染可打开的文件卡。
 - **不重复声明**：不要 `cat` 同一文件或重列绝对路径。
 

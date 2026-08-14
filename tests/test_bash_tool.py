@@ -15,6 +15,19 @@ from box_agent.tools.bash_tool import (
     _truncate_bash_output,
     _truncate_bash_streams,
 )
+from box_agent.tools.argument_limits import MAX_BASH_COMMAND_CHARS
+
+
+@pytest.mark.asyncio
+async def test_rejects_oversized_command_before_execution():
+    bash_tool = BashTool()
+
+    result = await bash_tool.execute(command="x" * (MAX_BASH_COMMAND_CHARS + 1))
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("BASH_ARGUMENT_TOO_LARGE")
+    assert bash_tool.parameters["properties"]["command"]["maxLength"] == MAX_BASH_COMMAND_CHARS
 
 
 @pytest.mark.asyncio
@@ -126,6 +139,49 @@ async def test_background_command():
     kill_result = await bash_kill_tool.execute(bash_id=bash_id)
     assert kill_result.success
     print("Background process terminated")
+
+
+@pytest.mark.asyncio
+async def test_background_processes_are_scoped_and_cleaned_by_owner():
+    owner_a = BashTool(process_owner_id="session-a")
+    owner_b = BashTool(process_owner_id="session-b")
+    started = await owner_a.execute(command="sleep 100", run_in_background=True)
+    assert started.success
+    assert started.bash_id is not None
+
+    try:
+        hidden = await BashOutputTool(process_owner_id="session-b").execute(
+            bash_id=started.bash_id
+        )
+        assert hidden.success is False
+        assert "Available: none" in hidden.error
+
+        cleaned = await owner_a.cleanup_background_processes()
+        assert cleaned == [started.bash_id]
+        assert BackgroundShellManager.get(started.bash_id) is None
+        assert await owner_a.cleanup_background_processes() == []
+    finally:
+        await owner_a.cleanup_background_processes()
+        await owner_b.cleanup_background_processes()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="process-group assertion is POSIX-specific")
+async def test_owner_cleanup_kills_grandchild_after_shell_wrapper_exits():
+    tool = BashTool(process_owner_id="session-grandchild")
+    started = await tool.execute(command="sleep 100 &", run_in_background=True)
+    assert started.success
+    shell = BackgroundShellManager.get(started.bash_id)
+    assert shell is not None
+    process_group_id = shell.process.pid
+
+    try:
+        await asyncio.sleep(0.1)
+        assert await tool.cleanup_background_processes() == [started.bash_id]
+        with pytest.raises(ProcessLookupError):
+            os.killpg(process_group_id, 0)
+    finally:
+        await tool.cleanup_background_processes()
 
 
 @pytest.mark.asyncio

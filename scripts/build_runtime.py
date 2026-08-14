@@ -340,10 +340,17 @@ def require_supported_build_process(target_plat: str, target_arch: str) -> None:
 
 def verify_entry_binary_arch(entry_bin: Path, *, plat: str, arch: str) -> None:
     """Verify the packaged launcher has the requested CPU architecture."""
-    if plat != "darwin":
+    if plat not in {"darwin", "linux"}:
         return
 
-    expected = "x86_64" if arch == "x64" else "arm64"
+    expected_tokens = {
+        ("darwin", "x64"): ("x86_64",),
+        ("darwin", "arm64"): ("arm64",),
+        ("linux", "x64"): ("x86-64", "x86_64"),
+        ("linux", "arm64"): ("aarch64", "arm64"),
+    }.get((plat, arch))
+    if expected_tokens is None:
+        raise RuntimeError(f"Unsupported binary architecture check: {plat}-{arch}")
     try:
         result = subprocess.run(
             ["file", str(entry_bin)],
@@ -352,6 +359,8 @@ def verify_entry_binary_arch(entry_bin: Path, *, plat: str, arch: str) -> None:
             text=True,
         )
     except FileNotFoundError:
+        if plat == "linux":
+            raise RuntimeError("`file` command is required for Linux runtime builds")
         print(
             "Warning: `file` command not found; skipping binary arch verification",
             file=sys.stderr,
@@ -361,10 +370,10 @@ def verify_entry_binary_arch(entry_bin: Path, *, plat: str, arch: str) -> None:
     output = f"{result.stdout}\n{result.stderr}".lower()
     if result.returncode != 0:
         raise RuntimeError(f"Failed to inspect packaged binary architecture: {output.strip()}")
-    if expected not in output:
+    if not any(token in output for token in expected_tokens):
         raise RuntimeError(
             f"Packaged binary architecture mismatch for {entry_bin}: "
-            f"expected {expected}, got {output.strip()}"
+            f"expected one of {expected_tokens}, got {output.strip()}"
         )
 
 
@@ -478,7 +487,7 @@ def build_runtime(
     """Build the runtime artifact and return the archive path."""
     plat, arch = parse_target(target)
     require_supported_build_process(plat, arch)
-    if plat == "darwin":
+    if plat in {"darwin", "linux"}:
         external_python_sandbox = True
     project_root = PROJECT_ROOT
 
@@ -639,6 +648,13 @@ def build_runtime(
     # Archive size
     size_mb = archive_path.stat().st_size / (1024 * 1024)
     print(f"Archive created: {archive_path} ({size_mb:.1f} MB)")
+    if plat == "linux":
+        checksum_path = archive_path.with_name(f"{archive_path.name}.sha256")
+        checksum_path.write_text(
+            f"{_sha256_file(archive_path)}  {archive_path.name}\n",
+            encoding="utf-8",
+        )
+        print(f"Checksum created: {checksum_path}")
 
     # ── Cleanup ──────────────────────────────────────────────
     shutil.rmtree(dist_dir, ignore_errors=True)
