@@ -1,4 +1,4 @@
-"""MCP configuration tool — add/remove/enable/disable/list MCP servers."""
+"""MCP configuration tool — inspect and manage mcp.json servers."""
 
 from __future__ import annotations
 
@@ -8,6 +8,122 @@ from typing import Any
 
 from box_agent.config import Config
 from box_agent.tools.base import Tool, ToolResult
+
+
+_ALLOWED_SERVER_FIELDS = frozenset(
+    {
+        "command",
+        "args",
+        "env",
+        "url",
+        "type",
+        "transport",
+        "headers",
+        "connect_timeout",
+        "execute_timeout",
+        "sse_read_timeout",
+        "disabled",
+    }
+)
+_UPDATE_OPERATORS = frozenset({"args_add", "args_remove", "remove_fields"})
+
+
+def _updated_server_config(
+    existing: dict[str, Any],
+    changes: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Apply a shallow server patch plus safe list/remove operators."""
+    unknown = set(changes) - _ALLOWED_SERVER_FIELDS - _UPDATE_OPERATORS
+    if unknown:
+        return None, f"Unsupported update field(s): {', '.join(sorted(unknown))}"
+
+    updated = dict(existing)
+    for field in _ALLOWED_SERVER_FIELDS:
+        if field in changes:
+            updated[field] = changes[field]
+
+    remove_fields = changes.get("remove_fields", [])
+    if not isinstance(remove_fields, list) or not all(
+        isinstance(field, str) for field in remove_fields
+    ):
+        return None, "'remove_fields' must be a list of strings"
+    invalid_removals = set(remove_fields) - _ALLOWED_SERVER_FIELDS
+    if invalid_removals:
+        return None, (
+            "Unsupported remove field(s): "
+            + ", ".join(sorted(invalid_removals))
+        )
+    for field in remove_fields:
+        updated.pop(field, None)
+
+    args_add = changes.get("args_add", [])
+    args_remove = changes.get("args_remove", [])
+    if not isinstance(args_add, list) or not all(isinstance(arg, str) for arg in args_add):
+        return None, "'args_add' must be a list of strings"
+    if not isinstance(args_remove, list) or not all(
+        isinstance(arg, str) for arg in args_remove
+    ):
+        return None, "'args_remove' must be a list of strings"
+    if args_add or args_remove:
+        raw_args = updated.get("args")
+        if not isinstance(raw_args, list) or not all(
+            isinstance(arg, str) for arg in raw_args
+        ):
+            return None, "Server has no valid string args list"
+        next_args = [arg for arg in raw_args if arg not in set(args_remove)]
+        for arg in args_add:
+            if arg not in next_args:
+                next_args.append(arg)
+        updated["args"] = next_args
+
+    return updated, None
+
+
+def _browser_config_summary(config: Any) -> list[str]:
+    """Return a secret-free summary of the configured browser launch mode."""
+    if not isinstance(config, dict):
+        return [
+            "mode=unknown",
+            "isolated=unknown",
+            "profile=unknown",
+            "executable=configured=false",
+        ]
+
+    raw_args = config.get("args")
+    if not isinstance(raw_args, list) or not all(isinstance(arg, str) for arg in raw_args):
+        return [
+            "mode=unknown",
+            "isolated=unknown",
+            "profile=unknown",
+            "executable=configured=false",
+        ]
+
+    args = list(raw_args)
+    headless = "--headless" in args
+    isolated = "--isolated" in args
+    has_user_data_dir = any(
+        arg == "--user-data-dir" or arg.startswith("--user-data-dir=")
+        for arg in args
+    )
+    shared_context = "--shared-browser-context" in args
+    has_executable = any(
+        arg == "--executable-path" or arg.startswith("--executable-path=")
+        for arg in args
+    )
+
+    if isolated:
+        profile = "ephemeral-isolated"
+    elif has_user_data_dir or shared_context:
+        profile = "persistent-or-shared"
+    else:
+        profile = "runtime-default"
+
+    return [
+        f"mode={'headless' if headless else 'headed'}",
+        f"isolated={str(isolated).lower()}",
+        f"profile={profile}",
+        f"executable=configured={str(has_executable).lower()}",
+    ]
 
 
 def _resolve_write_target() -> Path:
@@ -52,6 +168,9 @@ class McpConfigTool(Tool):
         return (
             "Read or modify the MCP server configuration (mcp.json). "
             "Actions: list — show current servers; "
+            "inspect_browser — safely report the configured Playwright browser mode "
+            "without exposing unrelated MCP credentials; "
+            "update — patch an existing server while preserving unspecified settings; "
             "add — add or replace a server entry; "
             "remove — delete a server entry; "
             "enable / disable — toggle a server without deleting it. "
@@ -66,7 +185,15 @@ class McpConfigTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "add", "remove", "enable", "disable"],
+                    "enum": [
+                        "list",
+                        "inspect_browser",
+                        "update",
+                        "add",
+                        "remove",
+                        "enable",
+                        "disable",
+                    ],
                     "description": "Operation to perform.",
                 },
                 "name": {
@@ -76,17 +203,23 @@ class McpConfigTool(Tool):
                 "config": {
                     "type": "object",
                     "description": (
-                        "Server config object for 'add'. "
+                        "Server config object for 'add', or changes for 'update'. "
                         "For stdio: {command, args?, env?}. "
                         "For URL-based: {url, type?: 'sse'|'http'|'streamable_http', headers?}. "
-                        "Optional: connect_timeout, execute_timeout, sse_read_timeout, disabled."
+                        "Optional: connect_timeout, execute_timeout, sse_read_timeout, disabled. "
+                        "Update also supports args_add, args_remove, and remove_fields string lists."
                     ),
                 },
             },
             "required": ["action"],
         }
 
-    async def execute(self, action: str, name: str = "", config: dict | None = None) -> ToolResult:
+    async def execute(
+        self,
+        action: str,
+        name: str = "",
+        config: dict | None = None,
+    ) -> ToolResult:
         target = _resolve_write_target()
 
         if target.exists():
@@ -111,6 +244,30 @@ class McpConfigTool(Tool):
                 lines.append(f"  {sname} [{status}]  {conn}")
             return ToolResult(success=True, content="\n".join(lines))
 
+        if action == "inspect_browser":
+            playwright = servers.get("playwright")
+            lines = [
+                f"Browser automation config: {target}",
+                "source=config_file",
+            ]
+            if not isinstance(playwright, dict):
+                lines.extend(_browser_config_summary(None))
+                lines.append("enabled=false")
+                lines.append(
+                    "note=No playwright server entry is configured; current process mode cannot be inferred."
+                )
+                return ToolResult(success=True, content="\n".join(lines))
+
+            lines.extend(_browser_config_summary(playwright))
+            lines.append(
+                f"enabled={str(playwright.get('disabled') is not True).lower()}"
+            )
+            lines.append(
+                "note=This is the current configured launch mode. It becomes effective "
+                "after the host reconnect succeeds; it is not proof of the running process."
+            )
+            return ToolResult(success=True, content="\n".join(lines))
+
         if not name:
             return ToolResult(success=False, content="", error="'name' is required for this action")
 
@@ -124,18 +281,38 @@ class McpConfigTool(Tool):
                 return ToolResult(success=False, content="", error=f"Server '{name}' not found")
             servers[name]["disabled"] = (action == "disable")
 
+        elif action == "update":
+            if name not in servers:
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=f"Server '{name}' not found",
+                )
+            if config is None:
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error="'config' object is required for update",
+                )
+            existing = servers[name]
+            if not isinstance(existing, dict):
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=f"Server '{name}' has an invalid configuration",
+                )
+            updated, error = _updated_server_config(existing, config)
+            if error:
+                return ToolResult(success=False, content="", error=error)
+            servers[name] = updated
+
         elif action == "add":
             if config is None:
                 return ToolResult(success=False, content="", error="'config' object is required for add")
             # Only fields that mcp_loader actually consumes are kept; legacy
             # lazy / keywords are silently dropped because the runtime never
             # honored them.
-            _ALLOWED = {
-                "command", "args", "env", "url", "type", "transport", "headers",
-                "connect_timeout", "execute_timeout", "sse_read_timeout",
-                "disabled",
-            }
-            entry = {k: v for k, v in config.items() if k in _ALLOWED}
+            entry = {k: v for k, v in config.items() if k in _ALLOWED_SERVER_FIELDS}
             servers[name] = entry
 
         else:

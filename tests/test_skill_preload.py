@@ -13,6 +13,7 @@ from box_agent.tools.skill_preload import (
     build_active_skills_prompt,
     build_auto_loaded_skills_prompt,
     document_preload_skill_names,
+    has_browser_operation_intent,
     host_runtime_preload_skill_names,
     resolve_skill_preload_attributions,
     strip_active_skills,
@@ -113,6 +114,64 @@ class SummaryLLM:
 @pytest.fixture
 def available_hyperframes_env():
     return SimpleNamespace(hyperframes=SimpleNamespace(available=True))
+
+
+@pytest.fixture
+def browser_runtime_env():
+    return SimpleNamespace(
+        browser_tools=SimpleNamespace(available=True),
+        browser_connector=SimpleNamespace(available=True),
+    )
+
+
+@pytest.mark.parametrize(
+    "user_text",
+    [
+        "用真实浏览器打开百度",
+        "读取当前标签页并帮我翻页",
+        "后台抓取这个网页",
+        "请使用无头浏览器测试 https://example.com",
+        "use my current Chrome login to open the website",
+    ],
+)
+def test_browser_use_preloads_for_browser_operations(
+    browser_runtime_env,
+    user_text: str,
+) -> None:
+    assert has_browser_operation_intent(user_text) is True
+    assert host_runtime_preload_skill_names(
+        ("browser-use",),
+        browser_runtime_env,
+        user_text,
+    ) == ["browser-use"]
+
+
+@pytest.mark.parametrize(
+    "user_text",
+    [
+        "打开这个本地 Word 文件",
+        "帮我总结这段文字",
+        "生成一张海报",
+    ],
+)
+def test_browser_use_does_not_preload_for_unrelated_operations(
+    browser_runtime_env,
+    user_text: str,
+) -> None:
+    assert has_browser_operation_intent(user_text) is False
+    assert host_runtime_preload_skill_names(
+        ("browser-use",),
+        browser_runtime_env,
+        user_text,
+    ) == []
+
+
+def test_browser_use_preloads_without_host_state_so_it_can_explain_availability() -> None:
+    assert host_runtime_preload_skill_names(
+        ("browser-use",),
+        SimpleNamespace(),
+        "用浏览器打开网页",
+    ) == ["browser-use"]
 
 
 @pytest.mark.parametrize(

@@ -8,7 +8,6 @@ from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, To
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.browser_intent import (
     BrowserToolIntentPolicy,
-    classify_browser_backend_intent,
     has_explicit_current_page_intent,
     has_human_browser_handoff_intent,
 )
@@ -44,30 +43,6 @@ def test_current_page_intent_accepts_explicit_page_references(user_text: str) ->
 )
 def test_current_page_intent_rejects_generic_requests(user_text: str) -> None:
     assert not has_explicit_current_page_intent(user_text)
-
-
-@pytest.mark.parametrize(
-    ("user_text", "expected"),
-    [
-        ("检索最新的公开资料", "playwright"),
-        ("用爬虫批量抓取这些公开网页", "playwright"),
-        ("打开 https://example.com 并总结", "playwright"),
-        ("use Playwright to scrape the public site", "playwright"),
-        ("搜索 Cookie 政策的公开资料", "playwright"),
-        ("使用现有 Cookie 查询订单", "browser_connector"),
-        ("读取当前页面", "browser_connector"),
-        ("查询我已经登录后的订单", "browser_connector"),
-        ("填写这个表单，填好让我检查，最后我点击提交", "browser_connector"),
-        ("fill the form and let me review and submit it", "browser_connector"),
-        ("填写一个不会提交的计算器表单并返回结果", "playwright"),
-        ("写一个网页组件", "auto"),
-    ],
-)
-def test_browser_backend_classifier_routes_by_context(
-    user_text: str,
-    expected: str,
-) -> None:
-    assert classify_browser_backend_intent(user_text) == expected
 
 
 @pytest.mark.parametrize(
@@ -122,7 +97,7 @@ def test_browser_continuation_requires_recent_successful_browser_context() -> No
     assert failed_policy.allow_current_page is False
 
 
-def test_browser_continuation_keeps_the_previous_backend() -> None:
+def test_browser_continuation_does_not_hide_either_backend() -> None:
     messages = [
         Message(role="system", content="system"),
         Message(role="user", content="抓取公开网页"),
@@ -141,9 +116,8 @@ def test_browser_continuation_keeps_the_previous_backend() -> None:
         messages=messages,
     )
 
-    assert policy.backend == "playwright"
     assert policy.is_tool_visible("browser_navigate") is True
-    assert policy.is_tool_visible("browser_open_url") is False
+    assert policy.is_tool_visible("browser_open_url") is True
 
 
 def test_submit_continuation_allows_connector_only_after_human_confirmation() -> None:
@@ -165,7 +139,6 @@ def test_submit_continuation_allows_connector_only_after_human_confirmation() ->
         messages=messages,
     )
 
-    assert policy.backend == "browser_connector"
     assert policy.human_handoff is False
     assert policy.is_tool_visible("browser_connector_submit") is True
 
@@ -190,18 +163,17 @@ def test_browser_policy_blocks_current_page_aliases_without_explicit_intent() ->
     )
 
 
-def test_browser_policy_routes_public_retrieval_to_headless_tools() -> None:
+def test_browser_policy_exposes_both_backends_for_public_retrieval() -> None:
     policy = BrowserToolIntentPolicy.for_turn(
         current_turn_text="用爬虫批量抓取这些公开网页",
         messages=[],
     )
 
-    assert policy.backend == "playwright"
     assert policy.is_tool_visible("browser_navigate") is True
     assert policy.is_tool_visible("browser_snapshot") is True
-    assert policy.is_tool_visible("browser_open_url") is False
-    assert policy.is_tool_visible("browser_read_page") is False
-    assert policy.tool_call_error("browser_open_url", {"url": "https://example.com"}) is not None
+    assert policy.is_tool_visible("browser_open_url") is True
+    assert policy.is_tool_visible("browser_read_page") is True
+    assert policy.tool_call_error("browser_open_url", {"url": "https://example.com"}) is None
 
 
 def test_browser_policy_keeps_human_review_in_real_browser_without_submitting() -> None:
@@ -210,15 +182,14 @@ def test_browser_policy_keeps_human_review_in_real_browser_without_submitting() 
         messages=[],
     )
 
-    assert policy.backend == "browser_connector"
     assert policy.allow_current_page is True
     assert policy.human_handoff is True
     assert policy.is_tool_visible("browser_connector_snapshot") is True
     assert policy.is_tool_visible("browser_connector_fill") is True
     assert policy.is_tool_visible("browser_connector_submit") is False
-    assert policy.is_tool_visible("browser_navigate") is False
+    assert policy.is_tool_visible("browser_navigate") is True
     assert policy.tool_call_error("browser_connector_submit", {"confirmed": True}) is not None
-    assert policy.tool_call_error("browser_navigate", {"url": "https://example.com"}) is not None
+    assert policy.tool_call_error("browser_navigate", {"url": "https://example.com"}) is None
 
 
 class _CapturingLLM:
@@ -371,7 +342,7 @@ async def test_core_exposes_and_executes_current_page_tool_for_explicit_request(
 
 
 @pytest.mark.asyncio
-async def test_core_routes_public_retrieval_away_from_real_browser() -> None:
+async def test_core_exposes_and_executes_either_backend_for_public_retrieval() -> None:
     connector = _CountingNamedBrowserTool("browser_open_url")
     playwright = _CountingNamedBrowserTool("browser_navigate")
     llm = _CapturingLLM(
@@ -406,13 +377,12 @@ async def test_core_routes_public_retrieval_away_from_real_browser() -> None:
         )
     )
 
-    assert "browser_open_url" not in llm.tool_name_calls[0]
+    assert "browser_open_url" in llm.tool_name_calls[0]
     assert "browser_navigate" in llm.tool_name_calls[0]
-    assert connector.calls == 0
+    assert connector.calls == 1
     result = next(event for event in events if isinstance(event, ToolCallResult))
-    assert result.success is False
-    assert result.user_visible is False
-    assert "BROWSER_BACKEND_MISMATCH" in (result.error or "")
+    assert result.success is True
+    assert result.user_visible is True
 
 
 @pytest.mark.asyncio
@@ -458,7 +428,7 @@ async def test_core_stops_before_submit_when_user_wants_human_handoff() -> None:
 
     assert "browser_connector_fill" in llm.tool_name_calls[0]
     assert "browser_connector_submit" not in llm.tool_name_calls[0]
-    assert "browser_navigate" not in llm.tool_name_calls[0]
+    assert "browser_navigate" in llm.tool_name_calls[0]
     assert submit.calls == 0
     result = next(event for event in events if isinstance(event, ToolCallResult))
     assert result.success is False

@@ -1,11 +1,15 @@
 {
   "schema_version": 1,
   "box_agent_version": "0.8.86",
-  "generated_at": "2026-08-12T08:33:25Z",
+  "generated_at": "2026-08-14T08:52:58Z",
   "skills": [
     {
       "name": "artifacts-builder",
       "path": "artifacts-builder/SKILL.md"
+    },
+    {
+      "name": "browser-use",
+      "path": "browser-use/SKILL.md"
     },
     {
       "name": "canvas-design",

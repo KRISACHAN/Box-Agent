@@ -27,7 +27,17 @@ GATE_REQUIRED_DOCUMENT_SKILL_ARTIFACT_SUFFIXES: dict[str, tuple[str, ...]] = {
     "docx": DOCUMENT_SKILL_ARTIFACT_SUFFIXES["docx"],
     "xlsx": DOCUMENT_SKILL_ARTIFACT_SUFFIXES["xlsx"],
 }
-HOST_RUNTIME_PRELOAD_SKILLS: frozenset[str] = frozenset({"hyperframes-video"})
+HOST_RUNTIME_PRELOAD_SKILLS: frozenset[str] = frozenset(
+    {"browser-use", "hyperframes-video"}
+)
+_BROWSER_OPERATION_SIGNAL_RE = re.compile(
+    r"https?://|"
+    r"\b(?:browser|chrome|cookie|current[\s-]+tab|headless|headed|playwright|"
+    r"scrape|crawl|webpage|website)\b|"
+    r"(?:浏览器|网页|网站|页面|标签页|当前页|网址|登录态|无头|有头|带头|"
+    r"真实浏览器|系统浏览器|默认浏览器|网页抓取|网页自动化|内网)",
+    re.IGNORECASE,
+)
 _VIDEO_DELIVERABLE_SIGNAL_RE = re.compile(
     r"\b(?:videos?|mp4|gifs?|hyperframes)\b|"
     r"\bmotion[\s-]+graphics?\b|"
@@ -190,23 +200,36 @@ def has_explicit_video_deliverable_intent(user_text: str | None) -> bool:
     )
 
 
+def has_browser_operation_intent(user_text: str | None) -> bool:
+    """Return whether the current turn requests or configures browser use."""
+    if not user_text or not user_text.strip():
+        return False
+    return bool(_BROWSER_OPERATION_SIGNAL_RE.search(user_text))
+
+
 def host_runtime_preload_skill_names(
     matched_skill_names: tuple[str, ...],
     env_context: Any | None,
     user_text: str | None,
 ) -> list[str]:
+    preload: list[str] = []
+
+    if (
+        "browser-use" in matched_skill_names
+        and has_browser_operation_intent(user_text)
+    ):
+        preload.append("browser-use")
+
     hyperframes = getattr(env_context, "hyperframes", None)
-    if hyperframes is None:
-        return []
-    if getattr(hyperframes, "available", None) is not True:
-        return []
-    if not has_explicit_video_deliverable_intent(user_text):
-        return []
-    return [
-        skill_name
-        for skill_name in matched_skill_names
-        if skill_name in HOST_RUNTIME_PRELOAD_SKILLS
-    ]
+    if (
+        "hyperframes-video" in matched_skill_names
+        and hyperframes is not None
+        and getattr(hyperframes, "available", None) is True
+        and has_explicit_video_deliverable_intent(user_text)
+    ):
+        preload.append("hyperframes-video")
+
+    return [name for name in preload if name in HOST_RUNTIME_PRELOAD_SKILLS]
 
 
 def turn_preload_skill_names(

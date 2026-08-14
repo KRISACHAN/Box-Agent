@@ -239,38 +239,7 @@ def test_prompt_renders_platform_and_browser_state() -> None:
     assert "connected=false" in out
 
 
-def test_browser_policy_uses_playwright_when_connector_missing() -> None:
-    ctx = EnvContext.from_meta(
-        {
-            "browser_tools": {"installed": True, "enabled": True, "available": True},
-            "browser_connector": {"enabled": True, "connected": False, "available": False},
-        }
-    )
-
-    out = build_env_context_prompt(ctx)
-
-    assert "当前只有 Playwright 可用或连接器未连接" in out
-    assert "不依赖真实浏览器状态" in out
-    assert "不要假装 Playwright 继承了这些状态" in out
-    assert "extension_not_connected" in out
-
-
-def test_browser_policy_prefers_playwright_when_both_missing() -> None:
-    ctx = EnvContext.from_meta(
-        {
-            "browser_tools": {"installed": False, "enabled": False, "available": False},
-            "browser_connector": {"enabled": False, "connected": False, "available": False},
-        }
-    )
-
-    out = build_env_context_prompt(ctx)
-
-    assert "当前两类浏览器能力都不可用" in out
-    assert "普通公开网页或隔离自动化任务" in out
-    assert "连接真实浏览器扩展" in out
-
-
-def test_browser_policy_distinguishes_both_available() -> None:
+def test_browser_routing_guidance_is_not_always_on() -> None:
     ctx = EnvContext.from_meta(
         {
             "browser_tools": {"installed": True, "enabled": True, "available": True},
@@ -280,37 +249,11 @@ def test_browser_policy_distinguishes_both_available() -> None:
 
     out = build_env_context_prompt(ctx)
 
-    assert "两者都可用" in out
-    assert "普通公开网页" in out
-    assert "当前页" in out
-    assert "必须按页面上下文选择" in out
-    assert "browser_connector_click" in out
-    assert "同一操作链必须保持同一后端" in out
-    assert "browser_connector_submit" in out
-    assert "standalone Playwright MCP tools" in out
-    assert "source_preference:playwright" in out
-    assert "browser_connector" in out
-    assert "“看一下”" in out
-    assert "本身不表示用户在引用当前页面" in out
-    assert "纯公开网页检索、爬取、批量采集" in out
-    assert "无头 Playwright" in out
-    assert "填好后亲自查看、确认、接管或最后点击" in out
-    assert "填写完成后停下等待用户操作" in out
-
-
-def test_browser_policy_connector_only_supports_allowlisted_actions() -> None:
-    ctx = EnvContext.from_meta(
-        {
-            "browser_tools": {"installed": False, "enabled": False, "available": False},
-            "browser_connector": {"enabled": True, "connected": True, "available": True},
-        }
-    )
-
-    out = build_env_context_prompt(ctx)
-
-    assert "当前只有真实浏览器连接器可用" in out
-    assert "snapshot、点击、填写和经确认的提交" in out
-    assert "截图、任意脚本、文件上传、网络检查" in out
+    assert "installed=true" in out
+    assert "connected=true" in out
+    assert "浏览器能力策略" not in out
+    assert "browser_connector_click" not in out
+    assert "standalone Playwright MCP tools" not in out
 
 
 def test_prompt_renders_image_service_available() -> None:
