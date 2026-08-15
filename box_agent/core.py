@@ -3398,16 +3398,19 @@ async def run_agent_loop(
 
         # ── LLM call (streaming) ──────────────────────────────
         tool_list = list(tools.values())
-        tool_list = [
-            tool
-            for tool in tool_list
-            if browser_intent_policy.is_tool_visible(tool.name)
-        ]
         offered_mcp_generations: dict[str, int] = {}
         if tool_exposure_manager is not None:
             exposure = tool_exposure_manager.prepare_tools(tool_list)
             tool_list = exposure.tools
             offered_mcp_generations = exposure.mcp_generations
+        # Apply intent filtering after catalog exposure so an activated MCP
+        # browser tool cannot bypass the same visibility policy as a stable
+        # core/fallback tool.
+        tool_list = [
+            tool
+            for tool in tool_list
+            if browser_intent_policy.is_tool_visible(tool.name)
+        ]
         if (
             completion_gate is not None
             and completion_gate.restrict_tools_until_required_succeed
@@ -3423,7 +3426,8 @@ async def run_agent_loop(
                         and tool.name == "tool_search"
                     )
                 ]
-        offered_tool_names = frozenset(tool.name for tool in tool_list)
+        offered_tools_by_name = {tool.name: tool for tool in tool_list}
+        offered_tool_names = frozenset(offered_tools_by_name)
 
         def _tool_offer_error(tool_name: str) -> str | None:
             if tool_exposure_manager is None:
@@ -3436,7 +3440,7 @@ async def run_agent_loop(
             return tool_exposure_manager.validate_call(
                 tool_name,
                 offered_mcp_generations.get(tool_name),
-                tools.get(tool_name),
+                offered_tools_by_name.get(tool_name),
             )
 
         cache_fingerprint = build_cache_fingerprint(
@@ -4424,7 +4428,9 @@ async def run_agent_loop(
                 # sequential branch even if a future mutation tool is marked
                 # parallel-safe.
                 regular_calls.append(tc)
-            elif fn_name in tools and getattr(tools[fn_name], "parallel_safe", False):
+            elif fn_name in offered_tools_by_name and getattr(
+                offered_tools_by_name[fn_name], "parallel_safe", False
+            ):
                 parallel_calls.append(tc)
             else:
                 regular_calls.append(tc)
@@ -4709,14 +4715,14 @@ async def run_agent_loop(
 
             if not allowed_to_execute:
                 result = ToolResult(success=False, content="", error=internal_skip_error or "")
-            elif fn_name not in tools:
+            elif fn_name not in offered_tools_by_name:
                 result = ToolResult(success=False, content="", error=f"Unknown tool: {fn_name}")
             elif (
                 current_offer_error := _tool_offer_error(fn_name)
             ):
                 result = ToolResult(success=False, content="", error=current_offer_error)
             else:
-                tool = tools[fn_name]
+                tool = offered_tools_by_name[fn_name]
                 if isinstance(tool, EventEmittingTool):
                     # Wire queue, run in background, drain in foreground
                     event_queue: asyncio.Queue = asyncio.Queue()
@@ -4779,7 +4785,7 @@ async def run_agent_loop(
                         result = exec_result  # type: ignore[assignment]
                 else:
                     try:
-                        result = await tools[fn_name].execute(**fn_args)
+                        result = await offered_tools_by_name[fn_name].execute(**fn_args)
                     except Exception as exc:
                         detail = f"{type(exc).__name__}: {exc!s}"
                         trace = traceback.format_exc()
@@ -4843,7 +4849,7 @@ async def run_agent_loop(
                     )
                     retry_offer_error = (
                         f"Unknown tool: {fn_name}"
-                        if fn_name not in tools
+                        if fn_name not in offered_tools_by_name
                         else _tool_offer_error(fn_name)
                     )
                     if retry_offer_error is not None:
@@ -4853,9 +4859,12 @@ async def run_agent_loop(
                             error=retry_offer_error,
                         )
                     else:
-                        _approve_tool_permission(tools[fn_name], result.permission_request)
+                        _approve_tool_permission(
+                            offered_tools_by_name[fn_name],
+                            result.permission_request,
+                        )
                         try:
-                            result = await tools[fn_name].execute(**fn_args)
+                            result = await offered_tools_by_name[fn_name].execute(**fn_args)
                         except Exception as exc:
                             detail = f"{type(exc).__name__}: {exc!s}"
                             trace = traceback.format_exc()
@@ -5190,7 +5199,7 @@ async def run_agent_loop(
                 fn_args = par_args_map[tc.id]
                 if tc.id in par_budget_errors:
                     return tc, ToolResult(success=False, content="", error=par_budget_errors[tc.id])
-                if fn_name not in tools:
+                if fn_name not in offered_tools_by_name:
                     return tc, ToolResult(success=False, content="", error=f"Unknown tool: {fn_name}")
                 current_offer_error = _tool_offer_error(fn_name)
                 if current_offer_error is not None:
@@ -5201,7 +5210,7 @@ async def run_agent_loop(
                     )
                 try:
                     async with par_semaphore:
-                        tool = tools[fn_name]
+                        tool = offered_tools_by_name[fn_name]
                         if isinstance(tool, EventEmittingTool):
                             r = await tool.execute_with_event_context(
                                 event_queue=par_event_queue,
@@ -5406,7 +5415,7 @@ async def run_agent_loop(
                         )
                         retry_offer_error = (
                             f"Unknown tool: {fn_name}"
-                            if fn_name not in tools
+                            if fn_name not in offered_tools_by_name
                             else _tool_offer_error(fn_name)
                         )
                         if retry_offer_error is not None:
@@ -5416,9 +5425,12 @@ async def run_agent_loop(
                                 error=retry_offer_error,
                             )
                         else:
-                            _approve_tool_permission(tools[fn_name], result.permission_request)
+                            _approve_tool_permission(
+                                offered_tools_by_name[fn_name],
+                                result.permission_request,
+                            )
                             try:
-                                result = await tools[fn_name].execute(**fn_args)
+                                result = await offered_tools_by_name[fn_name].execute(**fn_args)
                             except Exception as exc:
                                 detail = f"{type(exc).__name__}: {exc!s}"
                                 trace = traceback.format_exc()

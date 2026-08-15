@@ -848,8 +848,8 @@ class BoxACPAgent:
         self._memory = memory_manager
         self._hooks = hooks
         self._skill_loader = skill_loader
-        self._mcp_task = mcp_task  # background-loaded MCP tools; awaited on first prompt
-        self._mcp_loaded = mcp_task is None  # True once MCP has been injected
+        self._mcp_task = mcp_task  # background MCP discovery; awaited on first prompt
+        self._mcp_loaded = mcp_task is None  # True once the live catalog is ready
         # Guards against re-scheduling the deferred finalize task on subsequent
         # prompts while the first one is still awaiting the background load.
         # Distinct from `_mcp_loaded` — see `_ensure_mcp_loaded` for why.
@@ -1003,11 +1003,12 @@ class BoxACPAgent:
             )
 
     async def _ensure_mcp_loaded(self) -> None:
-        """Merge startup MCP tools into the agent on first prompt.
+        """Finalize startup MCP discovery on the first prompt.
 
-        If the background task is already done, merge immediately (zero wait).
+        If the background task is already done, finalize immediately (zero wait).
         If it is still running, fire a background finalize task and proceed
-        without blocking — tools arrive once they are ready.
+        without blocking. Deferred mode keeps discovered tools catalog-only;
+        legacy eager mode additionally merges them into stable agent registries.
         """
         if self._mcp_loaded:
             return
@@ -1015,7 +1016,7 @@ class BoxACPAgent:
             self._mcp_loaded = True
             return
         if not self._mcp_task.done():
-            # Don't block the prompt; inject tools in background when ready.
+            # Don't block the prompt; finalize discovery in background when ready.
             # NOTE: do NOT flip _mcp_loaded here — the finalize task needs it
             # to stay False so it can actually merge when the load completes.
             # We use a separate scheduled flag to prevent re-arming on later
@@ -1025,9 +1026,10 @@ class BoxACPAgent:
                 asyncio.create_task(self._finalize_mcp_load(), name="mcp-finalize")
             return
         mcp_tools = await await_mcp_tools(self._mcp_task)
-        merge_mcp_tools(self._base_tools, mcp_tools)
-        for state in self._sessions.values():
-            register_mcp_tools(state.agent.tools, mcp_tools)
+        if not self._config.tools.mcp.deferred_loading_enabled:
+            merge_mcp_tools(self._base_tools, mcp_tools)
+            for state in self._sessions.values():
+                register_mcp_tools(state.agent.tools, mcp_tools)
         self._mcp_loaded = True
         log.info("mcp/ready", count=len(mcp_tools))
 
@@ -1044,9 +1046,10 @@ class BoxACPAgent:
         mcp_tools = await await_mcp_tools(self._mcp_task)
         if self._mcp_loaded:
             return
-        merge_mcp_tools(self._base_tools, mcp_tools)
-        for state in self._sessions.values():
-            register_mcp_tools(state.agent.tools, mcp_tools)
+        if not self._config.tools.mcp.deferred_loading_enabled:
+            merge_mcp_tools(self._base_tools, mcp_tools)
+            for state in self._sessions.values():
+                register_mcp_tools(state.agent.tools, mcp_tools)
         self._mcp_loaded = True
         log.info("mcp/ready", count=len(mcp_tools), source="deferred")
 
@@ -2594,7 +2597,10 @@ class BoxACPAgent:
             result = await reconnect_mcp_server(name)
             if result.get("success"):
                 new_tools = get_mcp_tools_for_server(name)
-                if new_tools:
+                if (
+                    new_tools
+                    and not self._config.tools.mcp.deferred_loading_enabled
+                ):
                     merge_mcp_tools(self._base_tools, new_tools)
                     for state in self._sessions.values():
                         register_mcp_tools(state.agent.tools, new_tools)

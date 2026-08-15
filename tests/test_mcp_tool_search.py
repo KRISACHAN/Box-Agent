@@ -26,11 +26,13 @@ class FakeMCPTool(Tool):
         description: str = "",
         *,
         always_load: bool = False,
+        parameters: dict | None = None,
     ) -> None:
         self._name = name
         self._server_name = server_name
         self._description = description
         self._always_load = always_load
+        self._parameters = parameters or {"type": "object", "properties": {}}
         self._mcp_generation = 0
         self.calls = 0
 
@@ -44,7 +46,7 @@ class FakeMCPTool(Tool):
 
     @property
     def parameters(self) -> dict:
-        return {"type": "object", "properties": {}}
+        return self._parameters
 
     @property
     def mcp_tool_id(self) -> str:
@@ -90,7 +92,16 @@ async def _collect(source):
 @pytest.mark.asyncio
 async def test_search_activates_only_the_calling_session() -> None:
     catalog = MCPToolCatalog()
-    tool = FakeMCPTool("find_customer", "crm", "Find a customer account")
+    schema = {
+        "type": "object",
+        "properties": {"customer_id": {"type": "string"}},
+    }
+    tool = FakeMCPTool(
+        "find_customer",
+        "crm",
+        "Find a customer account",
+        parameters=schema,
+    )
     catalog.replace_server("crm", [tool])
     first_activated = OrderedDict()
     second_activated = OrderedDict()
@@ -98,13 +109,15 @@ async def test_search_activates_only_the_calling_session() -> None:
     second = MCPToolExposureManager(catalog, second_activated)
     search = ToolSearchTool(catalog, first_activated)
 
-    assert first.prepare_tools([tool]).tools == []
+    assert first.prepare_tools([]).tools == []
     result = await search.execute(query="customer")
 
     assert result.success
     assert json.loads(result.content)["activated"][0]["name"] == "find_customer"
-    assert [item.name for item in first.prepare_tools([tool]).tools] == ["find_customer"]
-    assert second.prepare_tools([tool]).tools == []
+    exposed = first.prepare_tools([]).tools
+    assert [item.name for item in exposed] == ["find_customer"]
+    assert exposed[0].parameters == schema
+    assert second.prepare_tools([]).tools == []
 
 
 def test_always_load_is_visible_without_activation() -> None:
@@ -118,6 +131,46 @@ def test_always_load_is_visible_without_activation() -> None:
     assert exposure.offered_names == frozenset({"health_check"})
 
 
+def test_catalog_retains_real_schema_without_putting_tool_in_candidates() -> None:
+    catalog = MCPToolCatalog()
+    schema = {
+        "type": "object",
+        "properties": {"customer_id": {"type": "string"}},
+        "required": ["customer_id"],
+    }
+    tool = FakeMCPTool("lookup", "crm", parameters=schema)
+    catalog.replace_server("crm", [tool])
+    entry = catalog.get("mcp:crm/lookup")
+
+    assert entry is not None
+    assert entry.tool.parameters == schema
+    assert MCPToolExposureManager(catalog, OrderedDict()).prepare_tools([]).tools == []
+
+
+@pytest.mark.asyncio
+async def test_search_activates_exactly_requested_hits_without_small_cap() -> None:
+    catalog = MCPToolCatalog()
+    names = [f"report_{index:02d}" for index in range(12)]
+    for name in names:
+        catalog.replace_server(
+            name,
+            [FakeMCPTool(name, name, "shared reporting capability")],
+        )
+    activated = OrderedDict()
+    search = ToolSearchTool(catalog, activated)
+
+    result = await search.execute(query="reporting", top_k=10)
+    payload = json.loads(result.content)
+    exposed = MCPToolExposureManager(catalog, activated).prepare_tools([])
+
+    assert search.parameters["properties"]["top_k"]["default"] == 1
+    assert "maximum" not in search.parameters["properties"]["top_k"]
+    assert [item["name"] for item in payload["activated"]] == names[:10]
+    assert [tool.name for tool in exposed.tools] == names[:10]
+    assert set(names[10:]).isdisjoint(exposed.offered_names)
+    assert "Only these hits" in payload["notice"]
+
+
 @pytest.mark.asyncio
 async def test_duplicate_model_names_are_reported_but_not_activated() -> None:
     catalog = MCPToolCatalog()
@@ -127,7 +180,10 @@ async def test_duplicate_model_names_are_reported_but_not_activated() -> None:
     catalog.replace_server("erp", [second])
     activated = OrderedDict()
 
-    result = await ToolSearchTool(catalog, activated).execute(query="lookup")
+    result = await ToolSearchTool(catalog, activated).execute(
+        query="lookup",
+        top_k=2,
+    )
     payload = json.loads(result.content)
 
     assert result.success is False
@@ -240,7 +296,7 @@ async def test_search_then_real_tool_is_exposed_on_next_step() -> None:
         run_agent_loop(
             llm=llm,
             messages=[Message(role="system", content="test")],
-            tools={"lookup": tool, "tool_search": search},
+            tools={"tool_search": search},
             max_steps=3,
             tool_exposure_manager=manager,
         )
@@ -269,6 +325,7 @@ async def test_agent_wires_search_and_child_inheritance_to_session_visibility(
         )
 
         assert "tool_search" in agent.tools
+        assert "lookup" not in agent.tools
         assert "lookup" not in agent._inherited_tools()
         assert "tool_search" not in agent._inherited_tools()
 
@@ -280,13 +337,14 @@ async def test_agent_wires_search_and_child_inheritance_to_session_visibility(
         catalog.clear()
 
 
-def test_agent_default_keeps_existing_eager_behavior(tmp_path) -> None:
+def test_agent_explicit_legacy_mode_keeps_existing_eager_behavior(tmp_path) -> None:
     tool = FakeMCPTool("lookup", "crm", "Lookup")
     agent = Agent(
         llm_client=object(),
         system_prompt="test",
         tools=[tool],
         workspace_dir=str(tmp_path),
+        deferred_mcp_loading_enabled=False,
     )
 
     assert "tool_search" not in agent.tools

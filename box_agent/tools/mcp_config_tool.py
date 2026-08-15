@@ -175,6 +175,8 @@ class McpConfigTool(Tool):
             "add — add or replace a server entry; "
             "remove — delete a server entry; "
             "enable / disable — toggle a server without deleting it. "
+            "The list action reports configuration entries, not connected tools or "
+            "callable schemas; use tool_search for capability discovery. "
             "This tool only confirms the configuration write, not a live connection. "
             "The host watches mcp.json and applies hot reload automatically; when "
             "registration finishes during an active turn, the runtime supplies an "
@@ -240,13 +242,31 @@ class McpConfigTool(Tool):
 
         if action == "list":
             if not servers:
-                return ToolResult(success=True, content=f"No MCP servers configured in {target}")
-            lines = [f"MCP config: {target}", ""]
+                return ToolResult(
+                    success=True,
+                    content=(
+                        f"No MCP servers configured in {target}. This is configuration "
+                        "state, not a connected tool inventory; use tool_search for "
+                        "capability discovery."
+                    ),
+                )
+            lines = [
+                f"MCP config: {target}",
+                "note=Configuration entries only; not proof of connection and not a tool inventory.",
+                "note=Use tool_search to discover connected MCP capabilities.",
+                "",
+            ]
             for sname, scfg in servers.items():
                 disabled = scfg.get("disabled", False)
                 status = "disabled" if disabled else "enabled"
-                conn = scfg.get("url") or scfg.get("command") or "?"
-                lines.append(f"  {sname} [{status}]  {conn}")
+                transport = (
+                    "url"
+                    if scfg.get("url")
+                    else "stdio"
+                    if scfg.get("command")
+                    else "unknown"
+                )
+                lines.append(f"  {sname} [{status}] transport={transport}")
             return ToolResult(success=True, content="\n".join(lines))
 
         if action == "inspect_browser":

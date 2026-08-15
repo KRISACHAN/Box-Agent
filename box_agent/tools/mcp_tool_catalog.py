@@ -135,7 +135,7 @@ class MCPToolCatalog:
                 score = 5
             ranked.append((score, entry.tool_id, entry))
         ranked.sort(key=lambda item: (item[0], item[1]))
-        return [entry for _, _, entry in ranked[: max(1, min(top_k, 5))]]
+        return [entry for _, _, entry in ranked[: max(1, top_k)]]
 
     def _rebuild_conflicts(self) -> None:
         counts: dict[str, int] = {}

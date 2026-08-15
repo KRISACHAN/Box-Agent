@@ -1189,8 +1189,8 @@ async def test_mcp_reconnect_injects_hidden_deferred_state_into_active_turns_onl
     result = await agent.extMethod("mcp/reconnect", {"name": "demo"})
 
     assert result["success"] is True
-    assert active_state.agent.tools["echo"] is runtime_tool
-    assert inactive_state.agent.tools["echo"] is runtime_tool
+    assert "echo" not in active_state.agent.tools
+    assert "echo" not in inactive_state.agent.tools
     update = active_state.inject_queue.get_nowait()
     assert update["user_visible"] is False
     assert update["source"] == "runtime"

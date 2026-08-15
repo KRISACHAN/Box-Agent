@@ -23,7 +23,6 @@
                 "@playwright/mcp@latest"
             ],
             "disabled": true,
-            "alwaysLoad": true,
             "connect_timeout": 15.0,
             "execute_timeout": 60.0
         }

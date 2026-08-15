@@ -488,10 +488,15 @@ class Agent:
         truncated_tool_call_boost_cap: int = 32768,
         context_resource_dedup_enabled: bool = True,
         tool_limits: ToolLimitsConfig | None = None,
-        deferred_mcp_loading_enabled: bool = False,
+        deferred_mcp_loading_enabled: bool = True,
     ):
         self.llm = llm_client
-        self.tools = {tool.name: tool for tool in tools}
+        self.tools = {
+            tool.name: tool
+            for tool in tools
+            if not deferred_mcp_loading_enabled
+            or getattr(tool, "mcp_tool_id", None) is None
+        }
         self.max_steps = max_steps
         self.tool_limits = tool_limits or ToolLimitsConfig()
         self.max_parallel_tools = max_parallel_tools
@@ -541,8 +546,11 @@ class Agent:
             system_prompt = (
                 f"{system_prompt.rstrip()}\n\n## Deferred MCP tools\n"
                 "Use `tool_search` when the visible tools do not cover the task. "
-                "Its activated matches become directly callable by their real tool "
-                "name on the next step. A successful `mcp_config` write only updates "
+                "Every returned match is activated for this session; only those matches "
+                "are added by their real tool name on the next step, while all unreturned "
+                "catalog tools remain hidden. Set `top_k` to the number of matching schemas "
+                "the task actually needs; do not assume a small fixed cap. A successful "
+                "`mcp_config` write only updates "
                 "configuration; do not claim the server is connected until an internal "
                 "MCP runtime update confirms registration. If that confirmation arrives "
                 "during the turn, use `tool_search` to discover the newly registered "

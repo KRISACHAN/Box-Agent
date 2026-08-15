@@ -46,8 +46,12 @@ class ToolSearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search connected MCP tools by capability. Matching tools become "
-            "available for direct calls on the next model step."
+            "Search the connected deferred MCP catalog by capability. Every hit "
+            "returned by this call is immediately activated for this session and "
+            "only those activated hits are added to the next model step; other "
+            "catalog tools are not exposed. Set top_k to however many matching tool "
+            "schemas the task actually needs, including ten or more when appropriate. "
+            "This search activates tools but does not execute them."
         )
 
     @property
@@ -57,7 +61,10 @@ class ToolSearchTool(Tool):
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Capability, action, or tool name to search for.",
+                    "description": (
+                        "Capability, action, or tool name. Returned matches are all "
+                        "activated for this session."
+                    ),
                 },
                 "server_name": {
                     "type": "string",
@@ -66,8 +73,12 @@ class ToolSearchTool(Tool):
                 "top_k": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 5,
-                    "default": 3,
+                    "default": 1,
+                    "description": (
+                        "Exact maximum number of matches to return and activate. "
+                        "Choose any positive count required by the task; there is no "
+                        "small fixed cap. Unreturned catalog tools remain hidden."
+                    ),
                 },
             },
             "required": ["query"],
@@ -78,7 +89,7 @@ class ToolSearchTool(Tool):
         self,
         query: str,
         server_name: str | None = None,
-        top_k: int = 3,
+        top_k: int = 1,
     ) -> ToolResult:
         hits = self._catalog.search(query, server_name=server_name, top_k=top_k)
         activated_results = []
@@ -121,7 +132,9 @@ class ToolSearchTool(Tool):
             "activated": activated_results,
             "conflicts": conflicts,
             "notice": (
-                "Activated tools are callable by their real name on the next step."
+                f"Activated exactly {len(activated_results)} returned tool(s) for this "
+                "session. Only these hits (plus explicit eager tools) are callable by "
+                "their real name on the next step; all other catalog tools remain hidden."
                 if activated_results
                 else (
                     "Matching tools have conflicting model-facing names."
@@ -154,24 +167,30 @@ class MCPToolExposureManager:
         self._activated = activated
 
     def prepare_tools(self, candidates: list[Tool]) -> ToolExposure:
-        visible: list[Tool] = []
+        # ``candidates`` is the session's stable core-tool registry. Ordinary
+        # MCP tools live only in the process catalog and are appended here
+        # after an explicit activation (or alwaysLoad). Keeping the two stores
+        # separate makes it impossible for a loaded MCP schema to leak into a
+        # provider request merely because it was connected successfully.
+        visible: OrderedDict[str, Tool] = OrderedDict()
         generations: dict[str, int] = {}
         for tool in candidates:
-            tool_id = getattr(tool, "mcp_tool_id", None)
-            if tool_id is None:
-                visible.append(tool)
+            if getattr(tool, "mcp_tool_id", None) is None:
+                visible[tool.name] = tool
+
+        for entry in self._catalog.snapshot():
+            if entry.name_conflict or entry.model_name == TOOL_SEARCH_NAME:
                 continue
-            entry = self._catalog.get(tool_id)
-            if entry is None or entry.name_conflict:
-                continue
-            activation = self._activated.get(tool_id)
+            activation = self._activated.get(entry.tool_id)
             activated = activation is not None and activation.generation == entry.generation
             if not entry.always_load and not activated:
                 continue
-            visible.append(entry.tool)
+            # Preserve the historical MCP-over-fallback behavior only after
+            # this particular target is eligible for exposure.
+            visible[entry.model_name] = entry.tool
             generations[entry.model_name] = entry.generation
-        names = frozenset(tool.name for tool in visible)
-        return ToolExposure(visible, names, generations)
+        tools = list(visible.values())
+        return ToolExposure(tools, frozenset(visible), generations)
 
     def inherited_tools(self, tool_map: dict[str, Tool]) -> dict[str, Tool]:
         """Give child agents only the parent's currently visible real tools."""
