@@ -27,6 +27,7 @@ from box_agent.config import (
     FilesystemPermissions,
     ImageGenerationConfig,
     LLMConfig,
+    MCPConfig,
     Officev3Config,
     Officev3Paths,
     Officev3Permissions,
@@ -1146,6 +1147,89 @@ class EchoTool(Tool):
 
     async def execute(self, text: str):
         return ToolResult(success=True, content=f"tool:{text}")
+
+
+@pytest.mark.asyncio
+async def test_mcp_reconnect_injects_hidden_deferred_state_into_active_turns_only(
+    tmp_path,
+    monkeypatch,
+):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_sub_agent=False,
+            mcp=MCPConfig(deferred_loading_enabled=True),
+        ),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+    active_session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={})
+    )
+    inactive_session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={})
+    )
+    active_state = agent._sessions[active_session.sessionId]
+    inactive_state = agent._sessions[inactive_session.sessionId]
+    active_state.turn_active = True
+    runtime_tool = EchoTool()
+
+    async def reconnect(_name):
+        return {"success": True, "toolCount": 1, "tools": ["echo"]}
+
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.reconnect_mcp_server",
+        reconnect,
+    )
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.get_mcp_tools_for_server",
+        lambda _name: [runtime_tool],
+    )
+
+    result = await agent.extMethod("mcp/reconnect", {"name": "demo"})
+
+    assert result["success"] is True
+    assert active_state.agent.tools["echo"] is runtime_tool
+    assert inactive_state.agent.tools["echo"] is runtime_tool
+    update = active_state.inject_queue.get_nowait()
+    assert update["user_visible"] is False
+    assert update["source"] == "runtime"
+    assert "connected" in update["content"]
+    assert "deferred catalog" in update["content"]
+    assert "tool_search" in update["content"]
+    assert inactive_state.inject_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_mcp_reconnect_failure_injects_non_availability_state(
+    tmp_path,
+    monkeypatch,
+):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+    session = await agent.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+    state = agent._sessions[session.sessionId]
+    state.turn_active = True
+
+    async def reconnect(_name):
+        return {"success": False, "error": "connection failed"}
+
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.reconnect_mcp_server",
+        reconnect,
+    )
+
+    result = await agent.extMethod("mcp/reconnect", {"name": "demo"})
+
+    assert result["success"] is False
+    update = state.inject_queue.get_nowait()
+    assert update["user_visible"] is False
+    assert "did not connect" in update["content"]
+    assert "connection failed" not in update["content"]
 
 
 class CountingWebSearchTool(Tool):

@@ -1393,6 +1393,11 @@ class BoxACPAgent:
             context_resource_dedup_enabled=(
                 self._config.agent.context_resource_dedup_enabled
             ),
+            deferred_mcp_loading_enabled=(
+                not utility
+                and self._config.tools.enable_mcp
+                and self._config.tools.mcp.deferred_loading_enabled
+            ),
         )
 
         if initial_goal_request is not None:
@@ -2593,7 +2598,23 @@ class BoxACPAgent:
                     merge_mcp_tools(self._base_tools, new_tools)
                     for state in self._sessions.values():
                         register_mcp_tools(state.agent.tools, new_tools)
-            log.info("mcp/reconnect", server=name, success=result.get("success"), error=result.get("error"))
+                injected = self._inject_mcp_runtime_update(
+                    name=name,
+                    state="connected",
+                    tool_count=len(new_tools),
+                )
+            else:
+                injected = self._inject_mcp_runtime_update(
+                    name=name,
+                    state="failed",
+                )
+            log.info(
+                "mcp/reconnect",
+                server=name,
+                success=result.get("success"),
+                error=result.get("error"),
+                context_injected_sessions=injected,
+            )
             return result
         if method == "mcp/disconnect":
             name = params.get("name", "")
@@ -2607,9 +2628,72 @@ class BoxACPAgent:
                 for state in self._sessions.values():
                     for tool_name in removed:
                         state.agent.tools.pop(tool_name, None)
-            log.info("mcp/disconnect", server=name, removed=len(removed))
+            injected = self._inject_mcp_runtime_update(
+                name=name,
+                state="disconnected",
+                tool_count=len(removed),
+            )
+            log.info(
+                "mcp/disconnect",
+                server=name,
+                removed=len(removed),
+                context_injected_sessions=injected,
+            )
             return result
         return {"error": f"unknown_method: {method}"}
+
+    def _inject_mcp_runtime_update(
+        self,
+        *,
+        name: str,
+        state: str,
+        tool_count: int = 0,
+    ) -> int:
+        """Inject a hidden, authoritative MCP state change into active turns only."""
+        injected = 0
+        update_id = uuid4().hex
+        for session_id, session in self._sessions.items():
+            if not session.turn_active:
+                continue
+            if state == "connected":
+                if session.agent.mcp_tool_exposure is not None:
+                    detail = (
+                        f"{tool_count} tools are registered in the deferred catalog. "
+                        "Their schemas were not bulk-injected. Use tool_search now to "
+                        "discover and activate only the capability needed; an activated "
+                        "tool becomes callable by its real name on the next step."
+                    )
+                else:
+                    detail = (
+                        f"{tool_count} tools are registered and available to the next "
+                        "model step."
+                    )
+                content = (
+                    f"[MCP runtime update] Server '{name}' is connected and its tools "
+                    f"are registered. {detail} This runtime update, not the preceding "
+                    "mcp_config file write, is connection confirmation."
+                )
+            elif state == "failed":
+                content = (
+                    f"[MCP runtime update] Server '{name}' did not connect, so its tools "
+                    "are not newly available. Do not describe the mcp_config write as a "
+                    "successful connection."
+                )
+            else:
+                content = (
+                    f"[MCP runtime update] Server '{name}' is disconnected and "
+                    f"{tool_count} registered tools were removed. Do not call them."
+                )
+            session.inject_queue.put_nowait(
+                {
+                    "id": f"mcp-runtime-{update_id}-{session_id}",
+                    "content": content,
+                    "user_visible": False,
+                    "source": "runtime",
+                }
+            )
+            injected += 1
+        return injected
 
     ext_method = extMethod
 
