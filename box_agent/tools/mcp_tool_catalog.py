@@ -74,7 +74,7 @@ class MCPToolCatalog:
             return True
         try:
             await asyncio.wait_for(ready_event.wait(), timeout=timeout)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             return False
         return True
 
