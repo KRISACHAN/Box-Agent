@@ -21,7 +21,7 @@
 
 - 使用绝对路径或相对 workspace 的路径，写文件前先确认父目录存在。
 - Bash 命令在执行前先说明，特别是涉及删改的命令；检查命令输出并处理异常。
-- 读取文件正文使用 `read_file`；列目录、按名称找文件或搜索文件内容使用 `search_files`。不要用 bash 的 `cat/head/tail`、`grep/rg/find/ls` 拼接实现这些操作。
+- 读取普通文本正文使用 `read_file`；读取 JSONL/NDJSON 日志，尤其是需要按事件筛选或记录可能很大时，使用 `query_jsonl` 做字段投影和游标分页；列目录、按名称找文件或搜索文件内容使用 `search_files`。不要用 bash 的 `cat/head/tail`、`grep/rg/find/ls` 拼接实现这些操作，也不要因 JSONL 超长记录改用 `execute_code` 整体读取。
 
 ### Factual & Search Reliability
 

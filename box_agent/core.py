@@ -2032,18 +2032,6 @@ def _log_web_search_model_results(
     )
 
 
-def _web_search_urls(content: str) -> set[str]:
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError:
-        return set()
-    return {
-        normalized
-        for item in _candidate_search_items(payload)
-        if (normalized := _normalize_search_url(_search_item_url(item)))
-    }
-
-
 def _dedupe_web_search_content(
     content: str,
     seen_result_keys: set[str],
@@ -4884,11 +4872,11 @@ async def run_agent_loop(
                 if inspected:
                     web_search_step_structured_results += 1
                 web_search_step_labels.extend(new_labels[:3])
-                verified_evidence_urls.update(_web_search_urls(tc_content))
             elif (
                 result.success
                 and workflow_policy is not None
                 and workflow_policy.is_direct_evidence_read_tool(fn_name)
+                and (result.model_context or result.content or "").strip()
             ):
                 direct_url = _first_present(fn_args, ("url", "URL", "href"))
                 normalized_direct_url = _normalize_search_url(direct_url)
@@ -5421,11 +5409,11 @@ async def run_agent_loop(
                     if inspected:
                         web_search_step_structured_results += 1
                     web_search_step_labels.extend(new_labels[:3])
-                    verified_evidence_urls.update(_web_search_urls(par_content))
                 elif (
                     result.success
                     and workflow_policy is not None
                     and workflow_policy.is_direct_evidence_read_tool(fn_name)
+                    and (result.model_context or result.content or "").strip()
                 ):
                     direct_url = _first_present(par_fn_args, ("url", "URL", "href"))
                     normalized_direct_url = _normalize_search_url(direct_url)

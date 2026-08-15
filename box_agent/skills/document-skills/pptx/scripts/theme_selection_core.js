@@ -34,10 +34,10 @@ function selectionIntentText(value) {
   ["title", "deck_title", "prompt", "brief", "request"].forEach(key => add(value[key]));
   const outline = isPlainObject(value.outline) ? value.outline : null;
   if (outline) {
-    ["deck_goal", "audience", "storyline", "tone", "title"].forEach(key => add(outline[key]));
+    ["deck_goal", "audience", "storyline", "tone", "design_requirements", "title"].forEach(key => add(outline[key]));
     (Array.isArray(outline.slides) ? outline.slides : []).forEach(slide => {
       if (!isPlainObject(slide)) return;
-      ["title", "message", "visual", "layout_id"].forEach(key => add(slide[key]));
+      ["title", "message", "visual", "layout", "layout_id"].forEach(key => add(slide[key]));
     });
   } else {
     add(value.source_text);
@@ -109,6 +109,12 @@ function profileHas(profile, pattern) {
 }
 
 const THEME_KEYWORD_RULES = Object.freeze([
+  Object.freeze({
+    theme_id: "soft-editorial",
+    signal: "user intent rule: modern editorial design",
+    pattern: /(?:现代编辑(?:设计|风格)|编辑式设计|cover[- ]editorial|editorial[- ]cover|modern\s+editorial\s+(?:design|style))/i,
+    weight: 20,
+  }),
   Object.freeze({
     theme_id: "vellum",
     signal: "subject rule: fantasy and wizarding worlds",

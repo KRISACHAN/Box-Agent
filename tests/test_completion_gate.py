@@ -1169,6 +1169,272 @@ def test_parallel_research_queries_count_as_one_round(tmp_path):
     ).exists()
 
 
+def test_deep_research_falls_back_when_candidate_searches_succeed_but_pages_fail(
+    tmp_path,
+):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"official source {index}"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    policy.record_tool_result(
+        "browser_read_page",
+        {"url": "https://example.com/report"},
+        ToolResult(success=False, error="source_unavailable"),
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert '"fallback":true' in checkpoint
+    assert (
+        '"fallback_reason":"research_round_limit_reached_without_validated_report"'
+        in checkpoint
+    )
+    assert "a conservative deck will continue automatically" in checkpoint
+    assert "do not wait for confirmation" in checkpoint
+    assert "outline.json so HTML delivery can continue" in checkpoint
+    status = json.loads(
+        (
+            tmp_path
+            / "output"
+            / "research"
+            / "qa"
+            / "research_status.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert status["generation_continues"] is True
+    assert status["continued_to"] == "outline"
+    assert (
+        status["reason"]
+        == "research_round_limit_reached_without_validated_report"
+    )
+
+
+def test_deep_research_keeps_validating_after_a_successful_direct_page_read(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"official source {index}"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    policy.record_tool_result(
+        "browser_navigate",
+        {"url": "https://example.com/report"},
+        ToolResult(success=True, content="Verified source page body"),
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    assert '"fallback":true' not in checkpoint
+    assert not (
+        tmp_path
+        / "output"
+        / "research"
+        / "qa"
+        / "research_status.json"
+    ).exists()
+
+
+def test_deep_research_homepage_navigation_does_not_count_as_source_read(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"official source {index}"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    policy.record_tool_result(
+        "browser_navigate",
+        {"url": "https://example.com/"},
+        ToolResult(success=True, content="Example official homepage"),
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert '"fallback":true' in checkpoint
+    assert (
+        '"fallback_reason":"research_round_limit_reached_without_validated_report"'
+        in checkpoint
+    )
+
+
+def test_deep_research_falls_back_after_two_failed_validation_attempts(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"official source {index}"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    policy.record_tool_result(
+        "browser_navigate",
+        {"url": "https://example.com/report"},
+        ToolResult(success=True, content="Verified source page body"),
+    )
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+
+    validation_args = {
+        "command": (
+            "python validate_research_artifacts.py --research-dir research "
+            "--topic market --report research/qa/market_research_check.json; "
+            'echo "EXIT=$?"'
+        )
+    }
+    report = tmp_path / "output" / "research" / "qa" / "market_research_check.json"
+    report.parent.mkdir(parents=True)
+    report.write_text('{"ok":false}', encoding="utf-8")
+    policy.record_tool_result(
+        "bash",
+        validation_args,
+        ToolResult(
+            success=True,
+            content="expected at least 10 dimension files\nEXIT=1",
+        ),
+    )
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+
+    policy.record_tool_result(
+        "bash",
+        validation_args,
+        ToolResult(success=True, content="evidence excerpts remain invalid"),
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert '"fallback":true' in checkpoint
+    assert (
+        '"fallback_reason":"research_artifacts_incomplete_or_validation_failed"'
+        in checkpoint
+    )
+    assert "a conservative deck will continue automatically" in checkpoint
+
+
+def test_deep_research_falls_back_after_repeated_blocked_progress(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    for index in range(RESEARCH_ROUND_LIMIT):
+        policy.record_tool_result(
+            "web_search",
+            {"query": f"official source {index}"},
+            ToolResult(success=True, content=f"https://example.com/{index}"),
+        )
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        policy.update_checkpoint(checkpoint)
+
+    policy.record_tool_result(
+        "browser_navigate",
+        {"url": "https://example.com/report"},
+        ToolResult(success=True, content="Verified source page body"),
+    )
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+
+    blocked_error = policy.tool_call_error(
+        "bash",
+        {"command": "pwd && echo $BOX_AGENT_OUTPUT_DIR"},
+        verified_evidence_urls=set(),
+    )
+    assert blocked_error is not None
+    rejection = ToolResult(success=False, error=blocked_error)
+
+    policy.record_tool_result(
+        "bash",
+        {"command": "pwd && echo $BOX_AGENT_OUTPUT_DIR"},
+        rejection,
+        executed=False,
+    )
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    policy.update_checkpoint(checkpoint)
+
+    policy.record_tool_result(
+        "bash",
+        {"command": "pwd && echo $BOX_AGENT_OUTPUT_DIR"},
+        rejection,
+        executed=False,
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert '"fallback":true' in checkpoint
+    assert (
+        '"fallback_reason":"research_progress_stalled_after_bounded_search"'
+        in checkpoint
+    )
+    assert policy.repair_stalled is False
+
+
 def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
     tmp_path,
 ):
@@ -1193,7 +1459,10 @@ def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
 
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
     assert '"fallback":true' not in checkpoint
-    assert "bounded search rounds already returned usable evidence" in checkpoint
+    assert "bounded search rounds already returned candidate sources" in checkpoint
+    assert "Route A requires at least 10 distinct dimension files" in checkpoint
+    assert "target_entities entry uses entity, aliases (array)" in checkpoint
+    assert "Do not inspect browser tabs, execute page scripts" in checkpoint
     assert not (
         tmp_path
         / "output"
@@ -1209,10 +1478,209 @@ def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
             parallel=True,
         )
         == "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research "
-        "searches already returned usable evidence. Do not call web_search or a "
-        "browser read tool again. Complete the cross-verification, insight, evidence "
-        "ledger, and validation report from the evidence already in context."
+        "searches already returned candidate sources. Do not call web_search again. "
+        "Search snippets are discovery only: open the exact strongest first-party "
+        "candidate URLs with a browser read tool before marking their evidence rows "
+        "verified, then complete the ledger and validation report."
     )
+    assert (
+        policy.tool_call_error(
+            "browser_read_page",
+            {"url": "https://example.com/0"},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+
+
+def test_research_validator_requires_successful_exact_page_reads(tmp_path):
+    research = tmp_path / "research"
+    research.mkdir()
+    source_url = "https://example.com/report?utm_source=search"
+    (research / "topic_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "topic",
+                "target_entities": [],
+                "evidence": [
+                    {
+                        "entity": "Example",
+                        "claim": "Example published a report.",
+                        "source_url": source_url,
+                        "source_type": "first_party",
+                        "evidence_excerpt": "Example published a report.",
+                        "confidence": "high",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=tmp_path / "output",
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    validator = {
+        "command": (
+            "python validate_research_artifacts.py --research-dir research "
+            "--topic topic --route B --report research/qa/topic_research_check.json"
+        )
+    }
+
+    blocked = policy.tool_call_error(
+        "bash",
+        validator,
+        verified_evidence_urls=set(),
+    )
+    assert blocked is not None
+    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in blocked
+    assert source_url in blocked
+
+    assert (
+        policy.tool_call_error(
+            "bash",
+            validator,
+            verified_evidence_urls={"https://example.com/report"},
+        )
+        is None
+    )
+
+
+def test_research_validator_rejects_verified_homepage_navigation(tmp_path):
+    research = tmp_path / "research"
+    research.mkdir()
+    source_url = "https://example.com/"
+    (research / "topic_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "topic",
+                "target_entities": [],
+                "evidence": [
+                    {
+                        "entity": "Example",
+                        "claim": "Example published a report.",
+                        "source_url": source_url,
+                        "source_type": "first_party",
+                        "evidence_excerpt": "Example published a report.",
+                        "confidence": "high",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=tmp_path / "output",
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    validator = {
+        "command": (
+            "python validate_research_artifacts.py --research-dir research "
+            "--topic topic --route B --report research/qa/topic_research_check.json"
+        )
+    }
+
+    blocked = policy.tool_call_error(
+        "bash",
+        validator,
+        verified_evidence_urls={source_url},
+    )
+
+    assert blocked is not None
+    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in blocked
+
+
+def test_research_direct_reads_have_a_total_limit_and_rejection_fuse(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    for index in range(policy.evidence_read_limit):
+        policy.record_tool_result(
+            "browser_read_page",
+            {"url": f"https://example.com/{index}"},
+            ToolResult(success=True, content="page"),
+        )
+
+    arguments = {"url": "https://example.com/overflow"}
+    error = policy.tool_call_error(
+        "browser_read_page",
+        arguments,
+        verified_evidence_urls=set(),
+    )
+    assert error is not None
+    assert "CONTROLLED_PRESENTATION_RESEARCH_DIRECT_READ_COMPLETE" in error
+
+    rejection = ToolResult(success=False, error=error)
+    for _ in range(3):
+        policy.record_tool_result(
+            "browser_read_page",
+            arguments,
+            rejection,
+            executed=False,
+        )
+    assert policy.repair_stalled is True
+
+
+def test_research_stops_retrying_an_unavailable_browser_connector(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+    )
+    policy.record_tool_result(
+        "browser_read_page",
+        {"url": "https://example.com/report", "source_preference": "auto"},
+        ToolResult(success=False, error="source_unavailable"),
+    )
+
+    connector_error = policy.tool_call_error(
+        "browser_read_page",
+        {"url": "https://example.org/report", "source_preference": "auto"},
+        verified_evidence_urls=set(),
+    )
+    assert connector_error is not None
+    assert "RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE" in connector_error
+    assert (
+        policy.tool_call_error(
+            "browser_open_url",
+            {"url": "https://example.org/report"},
+            verified_evidence_urls=set(),
+        )
+        == connector_error
+    )
+    assert (
+        policy.tool_call_error(
+            "browser_navigate",
+            {"url": "https://example.org/report"},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+
+    rejection = ToolResult(success=False, error=connector_error)
+    for _ in range(3):
+        policy.record_tool_result(
+            "browser_read_page",
+            {"url": "https://example.org/report"},
+            rejection,
+            executed=False,
+        )
+    assert policy.repair_stalled is False
 
 
 def test_completed_research_search_blocks_reinspection_but_allows_one_json_repair_read(
@@ -1269,6 +1737,50 @@ def test_completed_research_search_blocks_reinspection_but_allows_one_json_repai
         )
         == blocked
     )
+    assert (
+        policy.tool_call_error(
+            "bash",
+            {"command": "pwd && ls research"},
+            verified_evidence_urls=set(),
+        )
+        == blocked
+    )
+    browser_reinspection = policy.tool_call_error(
+        "browser_tabs",
+        {"action": "select", "index": 1},
+        verified_evidence_urls=set(),
+    )
+    assert browser_reinspection is not None
+    assert "RESEARCH_BROWSER_REINSPECTION_COMPLETE" in browser_reinspection
+    assert (
+        policy.tool_call_error(
+            "browser_evaluate",
+            {"function": "() => document.body.innerText"},
+            verified_evidence_urls=set(),
+        )
+        == browser_reinspection
+    )
+    assert (
+        policy.tool_call_error(
+            "browser_read_section",
+            {"section_id": "section-1"},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    assert (
+        policy.tool_call_error(
+            "bash",
+            {
+                "command": (
+                    "python validate_research_artifacts.py --research-dir research "
+                    "--topic topic --report research/qa/topic_research_check.json"
+                )
+            },
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
 
     report_args = {"path": "research/qa/topic_research_check.json"}
     assert (
@@ -1304,6 +1816,108 @@ def test_completed_research_search_blocks_reinspection_but_allows_one_json_repai
             verified_evidence_urls=set(),
         )
         is None
+    )
+
+
+def test_failed_research_validator_refreshes_json_repair_reads(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    report_args = {"path": "research/qa/topic_research_check.json"}
+    evidence_args = {"path": "research/topic_evidence.json"}
+
+    policy.record_tool_result(
+        "read_file",
+        report_args,
+        ToolResult(success=True, content='{"ok": false}'),
+    )
+    policy.record_tool_result(
+        "read_file",
+        evidence_args,
+        ToolResult(success=True, content='{"evidence": []}'),
+    )
+    assert policy.tool_call_error(
+        "read_file",
+        report_args,
+        verified_evidence_urls=set(),
+    ) is not None
+    assert policy.tool_call_error(
+        "read_file",
+        evidence_args,
+        verified_evidence_urls=set(),
+    ) is not None
+
+    validator_args = {
+        "command": (
+            "python validate_research_artifacts.py --research-dir research "
+            "--topic topic --report research/qa/topic_research_check.json"
+        )
+    }
+    policy.record_tool_result(
+        "bash",
+        validator_args,
+        ToolResult(success=False, error="validation failed"),
+    )
+
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            report_args,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            evidence_args,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+
+
+def test_research_repair_read_allows_session_root_when_artifacts_use_output(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    research = tmp_path / "research"
+    report = research / "qa" / "topic_research_check.json"
+    report.parent.mkdir(parents=True)
+    report.write_text('{"ok": false}', encoding="utf-8")
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=output,
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    report_args = {"path": str(report)}
+
+    assert (
+        policy.tool_call_error(
+            "read_file",
+            report_args,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    policy.record_tool_result(
+        "read_file",
+        report_args,
+        ToolResult(success=True, content='{"ok": false}'),
+    )
+
+    assert "CONTROLLED_PRESENTATION_RESEARCH_LOCAL_READ_COMPLETE" in (
+        policy.tool_call_error(
+            "read_file",
+            report_args,
+            verified_evidence_urls=set(),
+        )
+        or ""
     )
 
 
@@ -1567,6 +2181,53 @@ def test_controlled_policy_rejections_must_be_consecutive(tmp_path):
     assert policy.repair_stalled is True
 
 
+def test_controlled_scaffold_policy_rejection_streak_resets_after_execution(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+        stage="scaffold",
+    )
+    rejection = ToolResult(
+        success=False,
+        error=(
+            "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY: remove the shell pipe"
+        ),
+    )
+
+    for tail_lines in (60, 100):
+        policy.record_tool_result(
+            "bash",
+            {"command": f"inspect_deck_contract.js 2>&1 | tail -{tail_lines}"},
+            rejection,
+            executed=False,
+        )
+
+    policy.record_tool_result(
+        "bash",
+        {"command": "inspect_deck_contract.js --outline outline.json --out deck.json"},
+        ToolResult(success=True, content="ok"),
+    )
+    for tail_lines in (120, 200):
+        policy.record_tool_result(
+            "bash",
+            {"command": f"inspect_deck_contract.js 2>&1 | tail -{tail_lines}"},
+            rejection,
+            executed=False,
+        )
+
+    assert policy.repair_stalled is False
+
+    policy.record_tool_result(
+        "bash",
+        {"command": "inspect_deck_contract.js 2>&1 | tail -300"},
+        rejection,
+        executed=False,
+    )
+
+    assert policy.repair_stalled is True
+
+
 def test_controlled_parallel_calls_obey_repair_stage_guards(tmp_path):
     stalled = ControlledPresentationPolicy(
         workspace_dir=str(tmp_path),
@@ -1775,6 +2436,13 @@ def test_legacy_semantic_and_image_reports_can_resume_through_finalizer(
 
     payload = json.loads(spec_report.read_text(encoding="utf-8"))
     payload["issues"].append("slides.slide-01.layout_id: unknown layout")
+    spec_report.write_text(json.dumps(payload), encoding="utf-8")
+    assert _deck_spec_failure_is_degradable(spec_report) is False
+
+    payload["issues"] = [outline_issue]
+    payload["structuralIssues"] = [
+        "slides.slide-01.props.items: still contains scaffold placeholder content"
+    ]
     spec_report.write_text(json.dumps(payload), encoding="utf-8")
     assert _deck_spec_failure_is_degradable(spec_report) is False
 
@@ -3482,7 +4150,8 @@ async def test_controlled_scaffold_allows_auto_theme(tmp_path):
     command = (
         "cd output && node "
         f"{INSPECTOR_SCRIPT} cover-hero-v1 --theme auto "
-        "--outline outline.json --out deck.json"
+        "--image-mode auto --outline outline.json --title \"Exact title\" "
+        "--fact \"Exact fact\" --out deck.json"
     )
     llm = MockLLM(
         [
@@ -3603,6 +4272,112 @@ async def test_controlled_scaffold_blocks_compound_shell_mutation(tmp_path):
     )
     assert blocked.success is False
     assert "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY" in (blocked.error or "")
+
+
+@pytest.mark.asyncio
+async def test_controlled_scaffold_stalls_after_three_trace_shaped_pipe_rejections(
+    tmp_path,
+):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "新能源汽车本土品牌市场动态分析",
+                        "message": "市场动态总览",
+                        "bullets": ["销量与份额"],
+                        "layout": "cover",
+                        "visual": "editorial cover",
+                        "evidence": ["用户提供的汇报主题"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    layout_ids = (
+        "cover-editorial-v1 kpi-grid-v1 chart-data-v1 chart-bar-v1 "
+        "chart-data-v1 timeline-horizontal-v1 project-case-study-v1 "
+        "kpi-grid-v1 closing-next-steps-v1"
+    )
+    commands = [
+        (
+            "cd output && node "
+            f"{INSPECTOR_SCRIPT} {layout_ids} --theme auto --image-mode auto "
+            "--outline outline.json "
+            '--title "新能源汽车本土品牌市场动态分析" '
+            '--fact "用于市场战略分析和行业汇报" '
+            f"--out deck.json 2>&1 | tail -{tail_lines}"
+        )
+        for tail_lines in (60, 100, 200, 300)
+    ]
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content=f"scaffold attempt {attempt}",
+                tool_calls=[
+                    ToolCall(
+                        id=f"piped-scaffold-{attempt}",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            )
+            for attempt, command in enumerate(commands, start=1)
+        ]
+        + [_final("Stopped after repeated scaffold policy rejection.")]
+    )
+    bash_tool = CountingBashTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"bash": bash_tool},
+            max_steps=7,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert bash_tool.calls == 0
+    for attempt in range(1, 4):
+        rejected = next(
+            event
+            for event in events
+            if isinstance(event, ToolCallResult)
+            and event.tool_call_id == f"piped-scaffold-{attempt}"
+        )
+        assert "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY" in (
+            rejected.error or ""
+        )
+        assert "remove the entire pipe or redirection" in (rejected.error or "")
+    fourth = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "piped-scaffold-4"
+    )
+    assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in (fourth.error or "")
+    assert any(
+        isinstance(event, InjectedMessageEvent)
+        and f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled"
+        in event.content
+        for event in events
+    )
 
 
 @pytest.mark.asyncio

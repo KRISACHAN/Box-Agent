@@ -3575,6 +3575,26 @@ def test_bound_deck_rejects_visual_cardinality_and_missing_persisted_intent(
     assert "outline visual explicitly requests 3 visual item(s), got 4" in result.stdout
 
 
+def test_bound_deck_rejects_unchanged_scaffold_content(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    _write_outline(outline_path, page_count=1)
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    result = _run("validate_deck_spec.js", str(deck_path))
+
+    assert result.returncode == 1
+    assert "props.items: still contains scaffold placeholder content" in result.stdout
+
+
 def test_controlled_redesign_preserves_outline_intent_and_previous_layout_draft(
     tmp_path: Path,
 ) -> None:
@@ -11001,6 +11021,232 @@ def test_original_exact_hex_palette_wins_over_outline_color_paraphrases(
     assert "--deck-accent-color: #EF4444" in html
 
 
+def test_natural_black_white_neon_palette_is_preserved_without_palette_keyword(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    prompt = (
+        "现代编辑设计，强留白，黑白为主（背景白 #FFFFFF、正文黑 #111111），"
+        "荧光绿 #39FF14 点缀强调。"
+    )
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "--title",
+        prompt,
+        "--fact",
+        prompt,
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    palette = json.loads(deck_path.read_text(encoding="utf-8"))["design_contract"]["palette"]
+    assert palette["background"]["value"] == "#FFFFFF"
+    assert palette["primary"]["value"] == "#111111"
+    assert palette["accent"]["value"] == "#39FF14"
+
+
+def test_slide_local_text_only_cover_does_not_disable_project_images(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=2, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "年度作品集",
+            "layout": "cover",
+            "visual": "纯文字编辑式封面，强留白",
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "品牌项目 A",
+            "layout": "project case",
+            "visual": "项目案例：抽象几何主视觉缩略图 + 一句话定位 + 3 项醒目数字",
+            "bullets": ["品牌触点 42 处", "品牌认知 +68%", "上线周期 9 周"],
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+    env = os.environ.copy()
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(
+        (
+            "制作一份 2 页作品集。页面：1 纯文字封面；2 品牌项目 A，"
+            "使用抽象几何主视觉缩略图和 3 项醒目数字。"
+        ).encode()
+    ).decode()
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "project-case-study-v1",
+        "--outline",
+        str(outline_path),
+        "--image-mode",
+        "auto",
+        "--out",
+        str(deck_path),
+        env=env,
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    manifest = json.loads(
+        (tmp_path / "assets" / "generated" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["generation_forbidden"] is False
+    assert [entry["decision"] for entry in manifest["image_plan"]] == ["skip", "generate"]
+
+
+def test_project_thumbnail_remains_generated_when_visual_also_mentions_metrics(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=2, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "年度作品集",
+            "layout": "cover-editorial",
+            "visual": "纯文字封面，强留白",
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "品牌项目 A",
+            "layout": "project-case-study",
+            "visual": "缩略图区域 + 一句话定位 + 醒目数字（项目指标，待补充）",
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "project-case-study-v1",
+        "--outline",
+        str(outline_path),
+        "--image-mode",
+        "auto",
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    manifest = json.loads(
+        (tmp_path / "assets" / "generated" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert [entry["decision"] for entry in manifest["image_plan"]] == ["skip", "generate"]
+
+
+def test_modern_editorial_brief_outranks_one_kpi_slide_for_deck_theme(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=2, source_mode="user_provided")
+    outline.update(
+        {
+            "deck_goal": "以现代编辑设计呈现年度作品集",
+            "tone": "现代编辑设计，强留白，克制而有力",
+            "design_requirements": {
+                "palette": "背景白 #FFFFFF、正文黑 #111111、荧光绿 #39FF14 点缀强调"
+            },
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "年度总览",
+            "layout": "dashboard",
+            "visual": "KPI strip，4 项年度关键数字",
+            "bullets": ["项目 24 个", "客户 16 家", "奖项 7 项", "团队 12 人"],
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "kpi-grid-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    assert json.loads(deck_path.read_text(encoding="utf-8"))["theme_id"] == "soft-editorial"
+
+
+def test_editorial_layout_intent_survives_when_model_omits_top_level_tone(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=2, source_mode="user_provided")
+    outline.update(
+        {
+            "deck_goal": "呈现年度品牌、空间与数字产品三类代表项目",
+            "storyline": "从封面与年度总览开篇，再展示代表项目",
+        }
+    )
+    outline["slides"][0].update(
+        {
+            "title": "NOON Studio 2025 年度作品集",
+            "layout": "cover-editorial",
+            "visual": "强留白黑白封面，荧光绿 #39FF14 点缀标题与年份",
+        }
+    )
+    outline["slides"][1].update(
+        {
+            "title": "年度总览",
+            "layout": "dashboard",
+            "visual": "KPI strip，4 项年度关键数字",
+            "bullets": ["项目 24 个", "客户 16 家", "奖项 7 项", "团队 12 人"],
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cover-editorial-v1",
+        "kpi-grid-v1",
+        "--theme",
+        "auto",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    assert json.loads(deck_path.read_text(encoding="utf-8"))["theme_id"] == "soft-editorial"
+
+
+def test_readability_css_keeps_folios_visible_and_four_kpis_balanced() -> None:
+    deck_css = (SKILL_DIR / "runtime" / "deck.css").read_text(encoding="utf-8")
+    composition_css = (SKILL_DIR / "runtime" / "composition.css").read_text(encoding="utf-8")
+
+    deck_page_rule = deck_css.split(".deck-page {", 1)[1].split("}", 1)[0]
+    assert "z-index: 3" in deck_page_rule
+    assert "pointer-events: none" in deck_page_rule
+    four_kpi_rule = (
+        'body[data-deck-composition="literary-minimal"]'
+        '[data-deck-composition-variant="asymmetric-column"] .kpis-count-4 .kpi-grid'
+    )
+    asymmetric_grid_rule = (
+        'body[data-deck-composition="literary-minimal"]'
+        '[data-deck-composition-variant="asymmetric-column"] .kpi-grid,'
+    )
+    assert four_kpi_rule in composition_css
+    assert composition_css.rfind(four_kpi_rule) > composition_css.rfind(asymmetric_grid_rule)
+    assert "cover-title-medium" in composition_css
+    assert "cover-title-long" in composition_css
+
+
 def test_exact_one_page_request_overrides_default_outline_minimum(
     tmp_path: Path,
 ) -> None:
@@ -11024,6 +11270,27 @@ def test_exact_one_page_request_overrides_default_outline_minimum(
 
     assert rejected.returncode == 1
     assert "Too many slides: 3; expected at most 1" in rejected.stdout
+
+
+def test_explicit_total_page_count_outranks_host_range_and_ordinal_slide_span(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    _write_outline(outline_path, page_count=6, source_mode="user_provided")
+    env = os.environ.copy()
+    source_text = """<presentation_config schema_version=\"1\" confirmed_by=\"user\">
+{"page_count":{"id":"page_count_5_10","label":"5-10页","source":"explicit"}}
+</presentation_config>
+
+用户问题：制作一份 6 页中文 PPT。页面：1 封面；2 总览；第 3–5 页为项目案例；6 团队与联系。
+"""
+    env["BOX_AGENT_SOURCE_TEXT_B64"] = base64.b64encode(source_text.encode()).decode()
+
+    result = _run("validate_outline.js", str(outline_path), env=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report["pageCountContract"] == {"minimum": 6, "maximum": 6}
 
 
 def test_no_image_instruction_blocks_technical_cover_generation_and_is_qa_enforced(

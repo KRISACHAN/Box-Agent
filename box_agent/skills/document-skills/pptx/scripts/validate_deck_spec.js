@@ -31,6 +31,20 @@ const DESIGN_COLLECTION_FIELDS = Object.freeze({
   "closing-next-steps-v1": "actions",
 });
 
+const SCAFFOLD_NARRATIVE_FIELDS = new Set([
+  "title",
+  "subtitle",
+  "statement",
+  "body",
+  "caption",
+  "message",
+  "insight",
+  "note",
+  "conclusion",
+  "source",
+  "contact",
+]);
+
 function designContractResolution(deck) {
   const contract = deck && deck.design_contract;
   if (!contract) return { required: false, ok: true, palette: null, slides: [] };
@@ -147,6 +161,48 @@ function collectText(value, output = []) {
     Object.values(value).forEach(item => collectText(item, output));
   }
   return output;
+}
+
+function sameJsonValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function validateBoundScaffoldPlaceholders(deckPath, deck) {
+  const contractPath = path.join(path.dirname(deckPath), "qa", "deck_contract.json");
+  let contract = null;
+  try {
+    contract = JSON.parse(fs.readFileSync(contractPath, "utf8"));
+  } catch (_error) {
+    return [];
+  }
+  if (!contract || !contract.outline_binding) return [];
+
+  const issues = [];
+  const slides = deck && Array.isArray(deck.slides) ? deck.slides : [];
+  slides.forEach((slide, index) => {
+    const layout = slide && getLayout(slide.layout_id);
+    const defaults = layout && layout.editor && layout.editor.defaultProps;
+    if (!defaults || !slide.props || typeof slide.props !== "object") return;
+    const slideId = typeof slide.id === "string" ? slide.id : String(index);
+    Object.entries(defaults).forEach(([field, defaultValue]) => {
+      const actualValue = slide.props[field];
+      const unchangedCollection =
+        Array.isArray(defaultValue)
+        && defaultValue.length > 0
+        && sameJsonValue(actualValue, defaultValue);
+      const unchangedNarrative =
+        SCAFFOLD_NARRATIVE_FIELDS.has(field)
+        && typeof defaultValue === "string"
+        && Boolean(defaultValue.trim())
+        && actualValue === defaultValue;
+      if (!unchangedCollection && !unchangedNarrative) return;
+      issues.push(
+        `slides.${slideId}.props.${field}: still contains scaffold placeholder content; ` +
+        "replace the template example with page-specific content before rendering"
+      );
+    });
+  });
+  return issues;
 }
 
 function allowsIllustrativeQuantitative(deck) {
@@ -308,6 +364,7 @@ function main() {
   const opts = parseArgs(process.argv.slice(2));
   const deckPath = resolveArtifactPath(opts.deck);
   const result = validateAndNormalizeDeck(readJson(opts.deck));
+  result.issues.push(...validateBoundScaffoldPlaceholders(deckPath, result.normalized));
   const structuralIssues = [...result.issues];
   const outlineBinding = validateOutlineBinding(deckPath, result.normalized);
   result.issues.push(...outlineBinding.issues);

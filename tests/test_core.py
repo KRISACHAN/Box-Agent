@@ -2743,6 +2743,120 @@ async def test_controlled_outline_accepts_url_from_prior_web_search(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_controlled_research_does_not_treat_search_result_as_page_read(tmp_path):
+    query = "official report"
+    source_url = "https://example.gov/reports/latest"
+    research = tmp_path / "research"
+    research.mkdir()
+    (research / "topic_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "topic",
+                "target_entities": [],
+                "evidence": [
+                    {
+                        "entity": "Example",
+                        "claim": "Example published the latest report.",
+                        "source_url": source_url,
+                        "source_type": "first_party",
+                        "evidence_excerpt": "Example published the latest report.",
+                        "confidence": "high",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CountingBashTool(Tool):
+        def __init__(self):
+            self.calls = 0
+
+        @property
+        def name(self):
+            return "bash"
+
+        @property
+        def description(self):
+            return "Runs a command"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"command": {"type": "string"}}}
+
+        async def execute(self, command: str = ""):
+            self.calls += 1
+            return ToolResult(success=True, content=command)
+
+    validator_command = (
+        "python validate_research_artifacts.py --research-dir research "
+        "--topic topic --route B --report research/qa/topic_research_check.json"
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="search-only",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": query},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="validate-without-read",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": validator_command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+        ]
+    )
+    bash = CountingBashTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "web_search": JsonWebSearchTool({query: source_url}),
+                "bash": bash,
+            },
+            max_steps=2,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                workflow_options={"research_mode": "deep"},
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "validate-without-read"
+    )
+    assert bash.calls == 0
+    assert result.success is False
+    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in (result.error or "")
+
+
+@pytest.mark.asyncio
 async def test_at_threshold_does_not_inject_final_summary_guidance():
     """Exactly at the threshold (boundary) does not trigger the wrap-up nudge."""
     llm = MockLLM(

@@ -49,6 +49,7 @@ class ToolCapabilityMetadata:
 # treated conservatively rather than inferred from their description.
 BUILTIN_TOOL_CAPABILITIES: dict[str, ToolCapabilityMetadata] = {
     "read_file": ToolCapabilityMetadata(read=True),
+    "query_jsonl": ToolCapabilityMetadata(read=True),
     "search_files": ToolCapabilityMetadata(read=True),
     "write_file": ToolCapabilityMetadata(write=True),
     "append_file": ToolCapabilityMetadata(write=True),

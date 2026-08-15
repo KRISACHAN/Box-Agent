@@ -410,6 +410,12 @@ function slideFrame(slide, index, layoutClass, content) {
 
 function renderCover(slide, index) {
   const p = slide.props;
+  const titleLength = Array.from(String(p.title || "").trim()).length;
+  const titleFit = titleLength > 30
+    ? "cover-title-long"
+    : titleLength > 16
+      ? "cover-title-medium"
+      : "cover-title-short";
   const hasHero = p.hero && p.hero.src;
   const mediaSide = p.media_side || "right";
   const classes = ["layout-cover", hasHero ? "has-hero" : "no-hero", `media-${mediaSide}`].join(" ");
@@ -417,7 +423,7 @@ function renderCover(slide, index) {
     '<div class="cover-copy" data-layout-region="cover-copy">',
     editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
     '<div class="accent-rule"></div>',
-    editableText("h1", "title", p.title),
+    editableText("h1", "title", p.title, titleFit),
     editableText("p", "subtitle", p.subtitle, "lead"),
     editableText("p", "meta", p.meta || "", "meta"),
     "</div>",

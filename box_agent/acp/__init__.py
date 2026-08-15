@@ -1672,6 +1672,15 @@ class BoxACPAgent:
         )
         _bind_user_source_text(state, source_binding_text)
         prompt_meta = getattr(params, "field_meta", None) or {}
+        ui_language = _meta_string(prompt_meta, "ui_language", "uiLanguage").lower()
+        if ui_language in {"en", "ja", "zh"}:
+            display_language = {"en": "English", "ja": "Japanese", "zh": "Chinese"}[ui_language]
+            user_text = (
+                f"[Host UI language: {display_language}. Use this language for user-visible "
+                "intermediate summaries, progress updates, and the final response unless the user "
+                "explicitly requests another language.]\n\n"
+                f"{user_text}"
+            )
         requested_llm_binding = _normalize_llm_binding(prompt_meta)
         if requested_llm_binding is not None and requested_llm_binding != state.llm_binding:
             if state.turn_active:
@@ -2111,6 +2120,7 @@ class BoxACPAgent:
                 auto_approve_plan=auto_approve_plan,
                 completion_gate=completion_gate,
                 plan_start_text=plan_detection_text,
+                ui_language=ui_language,
             )
             while (
                 auto_enabled
@@ -3064,6 +3074,7 @@ class BoxACPAgent:
         auto_approve_plan: bool = False,
         completion_gate: CompletionGate | None = None,
         plan_start_text: str | None = None,
+        ui_language: str = "zh",
     ) -> str:
         """Consume the shared execution core and translate events to ACP updates."""
         agent = state.agent
@@ -3487,6 +3498,11 @@ class BoxACPAgent:
                         _update_pending_plan_approval_from_raw(state, payload)
                         plan_call_id = f"plan-snapshot-start-{uuid4().hex[:8]}"
                         title = str((payload.get("plan") or {}).get("title") or "执行方案")
+                        if title == "正在制定执行方案":
+                            title = {
+                                "en": "Preparing execution plan",
+                                "ja": "実行計画を作成中",
+                            }.get(ui_language, title)
                         await self._send(
                             session_id,
                             start_tool_call(

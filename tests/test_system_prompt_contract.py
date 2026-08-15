@@ -52,6 +52,14 @@ def test_system_prompt_forbids_reusing_model_history_placeholders():
     assert "不要为绕过摘要保护而改用 `execute_code`" in prompt
 
 
+def test_system_prompt_routes_large_jsonl_to_bounded_query_tool():
+    prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
+
+    assert "JSONL/NDJSON" in prompt
+    assert "使用 `query_jsonl` 做字段投影和游标分页" in prompt
+    assert "不要因 JSONL 超长记录改用 `execute_code` 整体读取" in prompt
+
+
 def test_system_prompt_uses_mode_specific_file_delivery_guidance():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 

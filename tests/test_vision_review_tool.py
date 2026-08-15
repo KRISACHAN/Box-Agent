@@ -225,3 +225,58 @@ def test_add_workspace_tools_registers_vision_review_when_llm_is_available(tmp_p
     )
 
     assert any(tool.name == "vision_review" for tool in tools)
+
+
+def test_add_workspace_tools_omits_vision_review_for_known_text_only_model(tmp_path: Path):
+    class TextOnlyLLM:
+        model = "deepseek-v4-pro"
+        api_base = "https://api.deepseek.com"
+
+    tools = []
+
+    add_workspace_tools(
+        tools,
+        ToolConfig(),
+        tmp_path,
+        allow_full_access=False,
+        llm=TextOnlyLLM(),
+        output=lambda *_: None,
+    )
+
+    assert not any(tool.name == "vision_review" for tool in tools)
+
+
+def test_add_workspace_tools_routes_vision_review_to_catalog_vision_model(tmp_path: Path):
+    class RoutedLLM:
+        model = "text-model"
+        api_base = "https://example.test/v1"
+        auto_model_candidates = (
+            {"model": "text-model", "tags": ["code"], "abilityLevel": 4},
+            {
+                "model": "vision-model",
+                "tags": ["vision"],
+                "abilityLevel": 5,
+                "maxTokens": 8192,
+            },
+        )
+
+        def for_model(self, model, *, max_output_tokens=None):
+            selected = FakeVisionLLM()
+            selected.model = model
+            selected.max_output_tokens = max_output_tokens
+            return selected
+
+    tools = []
+
+    add_workspace_tools(
+        tools,
+        ToolConfig(),
+        tmp_path,
+        allow_full_access=False,
+        llm=RoutedLLM(),
+        output=lambda *_: None,
+    )
+
+    vision_tool = next(tool for tool in tools if tool.name == "vision_review")
+    assert vision_tool.llm.model == "vision-model"
+    assert vision_tool.llm.max_output_tokens == 8192

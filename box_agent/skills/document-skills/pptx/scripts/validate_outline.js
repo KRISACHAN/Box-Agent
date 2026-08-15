@@ -35,14 +35,26 @@ function parsePageToken(value) {
 }
 
 function explicitPageCountContract(sourceText) {
-  const normalized = String(sourceText || "").normalize("NFKC");
-  const range = normalized.match(PAGE_RANGE_RE);
+  let normalized = String(sourceText || "").normalize("NFKC");
+  const userQuestionMarkers = [...normalized.matchAll(
+    /(?:^|\n)(?:用户问题|user\s+(?:question|request))\s*[:：]\s*/gi
+  )];
+  if (userQuestionMarkers.length) {
+    const marker = userQuestionMarkers[userQuestionMarkers.length - 1];
+    normalized = normalized.slice(marker.index + marker[0].length);
+  }
+  const ordinalPageReference = new RegExp(
+    `第\\s*${PAGE_TOKEN_SOURCE}(?:\\s*(?:-|~|～|—|–|至|到)\\s*${PAGE_TOKEN_SOURCE})?\\s*页`,
+    "gi"
+  );
+  const requestText = normalized.replace(ordinalPageReference, " ");
+  const range = requestText.match(PAGE_RANGE_RE);
   if (range) {
     const minimum = parsePageToken(range[1]);
     const maximum = parsePageToken(range[2]);
     if (minimum && maximum && minimum <= maximum) return { minimum, maximum };
   }
-  const exact = normalized.match(PAGE_COUNT_RE);
+  const exact = requestText.match(PAGE_COUNT_RE);
   const count = exact ? parsePageToken(exact[1]) : null;
   return count ? { minimum: count, maximum: count } : null;
 }

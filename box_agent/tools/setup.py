@@ -10,18 +10,18 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, List, Mapping, Optional
 
 from box_agent.config import Config, ToolLimitsConfig
 from box_agent.tools.base import Tool
 from box_agent.tools.argument_limits import RECOMMENDED_GENERATED_BODY_CHARS
 from box_agent.tools.bash_tool import BashKillTool, BashOutputTool, BashTool
 from box_agent.tools.execution_result_tool import ReportExecutionResultTool
+from box_agent.tools.file import JsonlQueryTool, ReadTool
 from box_agent.tools.file_tools import (
     AppendTool,
     EditTool,
     MAX_FILE_TOOL_CONTENT_CHARS,
-    ReadTool,
     SearchFilesTool,
     WriteTool,
 )
@@ -52,6 +52,55 @@ from box_agent.tools.vision_review_tool import VisionReviewTool
 
 if TYPE_CHECKING:
     from box_agent.tools.permissions import PermissionEngine
+
+
+def _vision_capable_llm(llm: Any | None) -> Any | None:
+    """Return an image-capable client, or None for known text-only bindings."""
+    if llm is None:
+        return None
+
+    model = str(getattr(llm, "model", "") or "").strip()
+    candidates = tuple(getattr(llm, "auto_model_candidates", ()) or ())
+    if candidates:
+        current = next(
+            (
+                candidate
+                for candidate in candidates
+                if isinstance(candidate, Mapping) and candidate.get("model") == model
+            ),
+            None,
+        )
+        if current is not None and "vision" in current.get("tags", ()):
+            return llm
+        vision_candidates = sorted(
+            (
+                candidate
+                for candidate in candidates
+                if isinstance(candidate, Mapping)
+                and "vision" in candidate.get("tags", ())
+            ),
+            key=lambda candidate: int(candidate.get("abilityLevel", 0) or 0),
+            reverse=True,
+        )
+        for_model = getattr(llm, "for_model", None)
+        if vision_candidates and callable(for_model):
+            selected = vision_candidates[0]
+            return for_model(
+                str(selected["model"]),
+                max_output_tokens=selected.get("maxTokens"),
+            )
+        return None
+
+    normalized_model = model.lower()
+    api_base = str(getattr(llm, "api_base", "") or "").lower()
+    deepseek_vision_model = (
+        "vision" in normalized_model or "deepseek-vl" in normalized_model
+    )
+    if not deepseek_vision_model and (
+        "api.deepseek.com" in api_base or normalized_model.startswith("deepseek-")
+    ):
+        return None
+    return llm
 
 
 def build_sandbox_info_prompt(use_output_dir: bool = True) -> str:
@@ -516,6 +565,12 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                     permission_engine=permission_engine,
                     relative_root_dir=str(relative_root),
                 ),
+                JsonlQueryTool(
+                    workspace_dir=str(workspace_dir),
+                    allow_full_access=allow_full_access,
+                    permission_engine=permission_engine,
+                    relative_root_dir=str(relative_root),
+                ),
                 SearchFilesTool(
                     workspace_dir=str(workspace_dir),
                     allow_full_access=allow_full_access,
@@ -594,11 +649,14 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         _out(f"{Colors.GREEN}✅ Loaded Jupyter sandbox tool (execute_code){Colors.RESET}")
         _out(f"{Colors.GREEN}✅ Loaded sandbox status tool{Colors.RESET}")
 
-    # Vision review tool — reads local screenshots and sends image content to the current LLM
-    if llm is not None:
+    # Vision review tool — only expose it when the bound model can actually
+    # accept image blocks. Known text-only endpoints otherwise invite costly,
+    # futile resize/retry loops during presentation QA.
+    vision_llm = _vision_capable_llm(llm)
+    if vision_llm is not None:
         tools.append(
             VisionReviewTool(
-                llm=llm,
+                llm=vision_llm,
                 workspace_dir=str(workspace_dir),
                 allow_full_access=allow_full_access,
                 permission_engine=permission_engine,

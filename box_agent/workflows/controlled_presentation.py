@@ -13,10 +13,11 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Final
+from urllib.parse import urlsplit
 
 from ..config import ToolLimitsConfig
 from ..artifacts import artifact_scan_root
-from ..evidence import extract_http_urls
+from ..evidence import extract_http_urls, normalize_search_url
 from ..tools.base import ToolResult
 from ..workflow_policy import WorkflowCheckpointUpdate
 from ..workflow_checkpoint_store import (
@@ -34,13 +35,18 @@ DIRECT_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
         "browser_open_url",
         "browser_read_page",
         "browser_read_article",
+        "browser_read_section",
         "browser_navigate",
     }
 )
 RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
     DIRECT_RESEARCH_READ_TOOLS | frozenset({"web_search"})
 )
+GATEWAY_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
+    {"browser_open_url", "browser_read_page", "browser_read_article"}
+)
 RESEARCH_READ_BATCH_SIZE: Final[int] = 2
+RESEARCH_DIRECT_READ_LIMIT: Final[int] = 12
 RESEARCH_ROUND_LIMIT: Final[int] = ToolLimitsConfig().presentation.research_rounds
 
 _log = logging.getLogger(__name__)
@@ -77,8 +83,15 @@ _IMAGE_AUTH_BLOCKED_TOOL_ERROR = (
 _SCAFFOLD_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY: SCAFFOLD_INPUT in the latest "
     "checkpoint already contains every registered theme/layout id and every page "
-    "intent. Invoke inspect_deck_contract.js once now with --outline outline.json "
-    "and --out deck.json; do not reread files, list the registry, or invent ids."
+    "intent. Invoke inspect_deck_contract.js once now with exact registered layout "
+    "ids plus --outline outline.json and --out deck.json; do not reread files, list "
+    "the registry, or invent ids. Keep the inspector as the only shell command: do "
+    "not append a pipe, tail, redirection, or another command."
+)
+_SCAFFOLD_SHELL_SUFFIX_TOOL_ERROR = (
+    f"{_SCAFFOLD_TOOL_ERROR} Rejected shell suffix: remove the entire pipe or "
+    "redirection (for example `2>&1 | tail -N`) and invoke the inspector directly. "
+    "Registered layout ids and valid inspector flags may remain."
 )
 _REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"write_file", "append_file"}
@@ -95,6 +108,9 @@ _MUTATION_TOOLS: Final[frozenset[str]] = frozenset(
 )
 _REPAIR_STAGES: Final[frozenset[str]] = frozenset(
     {"outline_repair", "deck_spec_repair"}
+)
+_POLICY_REJECTION_STAGES: Final[frozenset[str]] = (
+    _REPAIR_STAGES | frozenset({"research", "scaffold"})
 )
 _REPEATED_EXECUTION_FAILURE_LIMIT: Final[int] = 2
 _REPEATED_POLICY_REJECTION_LIMIT: Final[int] = 3
@@ -191,9 +207,23 @@ _RESEARCH_HANDOFF_TOOL_ERROR = (
 )
 _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research searches "
-    "already returned usable evidence. Do not call web_search or a browser read tool "
-    "again. Complete the cross-verification, insight, evidence ledger, and validation "
-    "report from the evidence already in context."
+    "already returned candidate sources. Do not call web_search again. Search snippets "
+    "are discovery only: open the exact strongest first-party candidate URLs with a "
+    "browser read tool before marking their evidence rows verified, then complete the "
+    "ledger and validation report."
+)
+_RESEARCH_DIRECT_READ_COMPLETE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_DIRECT_READ_COMPLETE: the bounded direct-source "
+    "read budget is exhausted. Do not retry browser reads. Mark any unread source rows "
+    "unverified (or omit optional unsupported claims), then finish the evidence ledger "
+    "and run validate_research_artifacts.py."
+)
+_RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL: the evidence ledger marks URLs as "
+    "verified even though this run has not successfully read those exact source pages: "
+    "{urls}. Search snippets do not establish provenance. Open each URL with a browser "
+    "read tool, or change the corresponding row to unverified and include an "
+    "unverified_reason, then rerun the validator."
 )
 _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_LOCAL_READ_COMPLETE: bounded research is "
@@ -202,6 +232,21 @@ _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR = (
     "write the remaining research artifacts and run validate_research_artifacts.py "
     "with --report. After a failed validation, you may read its JSON report and the "
     "JSON evidence ledger once, then make a repair before reading either again."
+)
+_RESEARCH_BROWSER_REINSPECTION_COMPLETE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_BROWSER_REINSPECTION_COMPLETE: bounded "
+    "research is complete. Do not inspect browser tabs, execute page scripts, "
+    "take snapshots, or use another browser-state side channel. Read only an "
+    "exact candidate URL with browser_read_page, browser_read_article, "
+    "browser_read_section, browser_open_url, or browser_navigate, then write the "
+    "remaining research artifacts and run validate_research_artifacts.py."
+)
+_RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE: the browser "
+    "connector already returned source_unavailable in this research run. Do not "
+    "retry browser_read_page, browser_read_article, or browser_open_url. Use the "
+    "available standalone Playwright browser_navigate tool with an exact candidate "
+    "URL, or mark the source unverified and continue to the research artifacts."
 )
 
 _PPTX_SCRIPTS_DIR = (
@@ -793,6 +838,227 @@ def _research_handoff_urls(
     return urls
 
 
+def _research_validation_ledger(
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> Path | None:
+    """Resolve the evidence ledger used by one research validator call."""
+    if not _is_research_validation_call(tool_name, arguments):
+        return None
+    command = arguments.get("command")
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if "--research-dir" not in tokens or "--topic" not in tokens:
+        return None
+    research_index = tokens.index("--research-dir") + 1
+    topic_index = tokens.index("--topic") + 1
+    if research_index >= len(tokens) or topic_index >= len(tokens):
+        return None
+    research_arg = Path(tokens[research_index])
+    topic = tokens[topic_index].strip()
+    if not topic or Path(topic).name != topic:
+        return None
+
+    roots: list[Path] = []
+    if workspace_dir:
+        workspace_root = Path(workspace_dir).expanduser().resolve()
+        roots.append(workspace_root)
+        if len(tokens) >= 3 and tokens[0] == "cd" and tokens[2] == "&&":
+            cd_path = Path(tokens[1]).expanduser()
+            roots.insert(
+                0,
+                (
+                    cd_path if cd_path.is_absolute() else workspace_root / cd_path
+                ).resolve(),
+            )
+    artifact_root = artifact_scan_root(workspace_dir, artifact_root_dir)
+    if artifact_root is not None:
+        roots.append(artifact_root.resolve())
+
+    candidates = (
+        [research_arg / f"{topic}_evidence.json"]
+        if research_arg.is_absolute()
+        else [root / research_arg / f"{topic}_evidence.json" for root in roots]
+    )
+    existing = [candidate for candidate in candidates if candidate.is_file()]
+    return max(existing, key=lambda path: path.stat().st_mtime_ns) if existing else None
+
+
+def _research_validation_report(
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> Path | None:
+    """Resolve the JSON report written by one research validator call."""
+    if not _is_research_validation_call(tool_name, arguments):
+        return None
+    command = arguments.get("command")
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if "--report" not in tokens:
+        return None
+    report_index = tokens.index("--report") + 1
+    if report_index >= len(tokens):
+        return None
+    report_token = tokens[report_index].rstrip(";")
+    if not report_token:
+        return None
+    report_arg = Path(report_token).expanduser()
+
+    roots: list[Path] = []
+    if workspace_dir:
+        workspace_root = Path(workspace_dir).expanduser().resolve()
+        roots.append(workspace_root)
+        if len(tokens) >= 2 and tokens[0] == "cd":
+            cd_path = Path(tokens[1]).expanduser()
+            roots.insert(
+                0,
+                (
+                    cd_path if cd_path.is_absolute() else workspace_root / cd_path
+                ).resolve(),
+            )
+    artifact_root = artifact_scan_root(workspace_dir, artifact_root_dir)
+    if artifact_root is not None:
+        roots.insert(0, artifact_root.resolve())
+
+    if report_arg.is_absolute():
+        candidates = [report_arg.resolve()]
+    else:
+        candidates = [(root / report_arg).resolve() for root in roots]
+    existing = [candidate for candidate in candidates if candidate.is_file()]
+    return max(existing, key=lambda path: path.stat().st_mtime_ns) if existing else None
+
+
+def _is_research_validation_call(
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> bool:
+    if tool_name != "bash":
+        return False
+    command = arguments.get("command")
+    if not isinstance(command, str):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return any(
+        Path(token).name == "validate_research_artifacts.py" for token in tokens
+    )
+
+
+def _research_validation_failed(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: ToolResult,
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> bool:
+    """Return the validator outcome even when a trailing shell command masks it."""
+    if not _is_research_validation_call(tool_name, arguments):
+        return False
+    if not result.success:
+        return True
+
+    payload = "\n".join(
+        part
+        for part in (result.content, result.error, result.model_context)
+        if isinstance(part, str) and part
+    )
+    exit_markers = re.findall(r"(?im)^\s*EXIT\s*=\s*(-?\d+)\s*$", payload)
+    if exit_markers:
+        return int(exit_markers[-1]) != 0
+
+    report = _research_validation_report(
+        tool_name,
+        arguments,
+        workspace_dir,
+        artifact_root_dir,
+    )
+    if report is None:
+        return False
+    try:
+        report_payload = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(report_payload, dict) and report_payload.get("ok") is False
+
+
+def _is_substantive_research_url(value: Any) -> bool:
+    """Return whether a URL identifies content beyond an origin homepage."""
+    normalized = normalize_search_url(value)
+    if not normalized.startswith(("http://", "https://")):
+        return False
+    parsed = urlsplit(normalized)
+    return bool(parsed.path.strip("/") or parsed.query)
+
+
+def _research_result_establishes_direct_source(
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: ToolResult,
+) -> bool:
+    """Return whether a successful direct read reached substantive source content."""
+    if (
+        tool_name not in DIRECT_RESEARCH_READ_TOOLS
+        or not result.success
+        or _research_result_is_empty(result)
+    ):
+        return False
+    if tool_name != "browser_navigate":
+        return True
+    return _is_substantive_research_url(
+        arguments.get("url") or arguments.get("URL") or arguments.get("href")
+    )
+
+
+def _research_unread_verified_urls(
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+    verified_evidence_urls: set[str],
+) -> tuple[str, ...]:
+    """Return ledger URLs incorrectly marked verified without a page read."""
+    ledger = _research_validation_ledger(
+        tool_name,
+        arguments,
+        workspace_dir,
+        artifact_root_dir,
+    )
+    if ledger is None:
+        return ()
+    try:
+        payload = json.loads(ledger.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    evidence = payload.get("evidence") if isinstance(payload, dict) else None
+    if not isinstance(evidence, list):
+        return ()
+    trusted = {normalize_search_url(url) for url in verified_evidence_urls}
+    unread: list[str] = []
+    for row in evidence:
+        if (
+            not isinstance(row, dict)
+            or str(row.get("status", "")).casefold() != "verified"
+        ):
+            continue
+        url = row.get("source_url")
+        normalized = normalize_search_url(url)
+        if normalized.startswith(("http://", "https://")) and (
+            not _is_substantive_research_url(normalized) or normalized not in trusted
+        ):
+            unread.append(str(url))
+    return tuple(dict.fromkeys(unread))
+
+
 def _research_handoff_error(
     stage: str | None,
     research_mode: str | None,
@@ -908,7 +1174,7 @@ def _scaffold_error(
         token in {"&&", "||", ";", "|", "&", ">", ">>", "<", "<<"}
         for token in inspector_args
     ):
-        return _SCAFFOLD_TOOL_ERROR
+        return _SCAFFOLD_SHELL_SUFFIX_TOOL_ERROR
     if tokens.count("--outline") != 1 or tokens.count("--out") != 1:
         return _SCAFFOLD_TOOL_ERROR
     if (
@@ -1057,15 +1323,20 @@ class ControlledPresentationPolicy:
     _research_successful_attempts: int = 0
     _research_failed_attempts: int = 0
     _research_empty_attempts: int = 0
+    _research_direct_read_attempts: int = 0
+    _research_successful_direct_read_attempts: int = 0
+    _research_failed_validation_attempts: int = 0
     _research_calls_since_checkpoint: int = 0
     _research_rounds_without_handoff: int = 0
     _research_json_reads_since_mutation: set[str] = field(default_factory=set)
+    _research_browser_connector_unavailable: bool = False
     _successful_mutation_since_checkpoint: bool = False
     _no_progress_mutation_streak: int = 0
 
     kind: ClassVar[str] = WORKFLOW_KIND
     checkpoint_injection_id: ClassVar[str] = CHECKPOINT_MARKER
     evidence_read_batch_size: ClassVar[int] = RESEARCH_READ_BATCH_SIZE
+    evidence_read_limit: ClassVar[int] = RESEARCH_DIRECT_READ_LIMIT
 
     def attach_resume_checkpoint(
         self,
@@ -1085,10 +1356,31 @@ class ControlledPresentationPolicy:
             self._research_rounds_without_handoff >= self.research_round_limit
         )
         unavailable = self._research_failed_attempts + self._research_empty_attempts
+        direct_source_verification_unavailable = (
+            self._research_direct_read_attempts > 0
+            and self._research_successful_direct_read_attempts == 0
+        )
+        direct_source_budget_exhausted = (
+            self._research_direct_read_attempts >= self.evidence_read_limit
+        )
+        repeated_research_validation_failure = (
+            self._research_failed_validation_attempts
+            >= _REPEATED_EXECUTION_FAILURE_LIMIT
+        )
+        repeated_research_progress_rejection = (
+            self._policy_rejection_stage == "research"
+            and self._policy_rejection_streak >= _REPEATED_EXECUTION_FAILURE_LIMIT
+        )
         fallback_allowed = (
             round_limit_reached
             and self._research_tool_attempts > 0
-            and unavailable == self._research_tool_attempts
+            and (
+                unavailable == self._research_tool_attempts
+                or direct_source_verification_unavailable
+                or direct_source_budget_exhausted
+                or repeated_research_validation_failure
+                or repeated_research_progress_rejection
+            )
         )
         self.research_search_exhausted = round_limit_reached and not fallback_allowed
         attempt_summary = {
@@ -1100,7 +1392,19 @@ class ControlledPresentationPolicy:
         }
         fallback_reason = None
         if fallback_allowed:
-            fallback_reason = "research_sources_unavailable"
+            fallback_reason = (
+                "research_artifacts_incomplete_or_validation_failed"
+                if repeated_research_validation_failure
+                else (
+                    "research_progress_stalled_after_bounded_search"
+                    if repeated_research_progress_rejection
+                    else (
+                        "research_sources_unavailable"
+                        if unavailable == self._research_tool_attempts
+                        else "research_round_limit_reached_without_validated_report"
+                    )
+                )
+            )
         checkpoint_text = build_checkpoint_text(
             self.workspace_dir,
             self.research_mode,
@@ -1236,7 +1540,7 @@ class ControlledPresentationPolicy:
             self._repair_failure_streak = 0
         if next_stage != self._policy_rejection_stage:
             self._policy_rejection_stage = (
-                next_stage if next_stage in _REPAIR_STAGES else None
+                next_stage if next_stage in _POLICY_REJECTION_STAGES else None
             )
             self._policy_rejection_signature = None
             self._policy_rejection_streak = 0
@@ -1278,29 +1582,71 @@ class ControlledPresentationPolicy:
         path_value = arguments.get("path")
         if not isinstance(path_value, str) or not path_value.strip():
             return None
-        root = artifact_scan_root(self.workspace_dir, self.artifact_root_dir)
-        if root is None:
+        artifact_root = artifact_scan_root(
+            self.workspace_dir,
+            self.artifact_root_dir,
+        )
+        workspace_root = (
+            Path(self.workspace_dir).expanduser().resolve()
+            if self.workspace_dir
+            else None
+        )
+        research_roots = [
+            root / "research"
+            for root in (artifact_root, workspace_root)
+            if root is not None
+        ]
+        if not research_roots:
             return None
         path = Path(path_value)
-        candidate = path if path.is_absolute() else root / path
-        try:
-            relative = candidate.resolve(strict=False).relative_to(
-                (root / "research").resolve(strict=False)
-            )
-        except ValueError:
-            return None
-        if relative.suffix.casefold() != ".json":
-            return None
-        return relative.as_posix()
+        candidates = (
+            [path]
+            if path.is_absolute()
+            else [root / path for root in (artifact_root, workspace_root) if root]
+        )
+        # Prefer the root that actually owns the file. Deep-research staging may
+        # live at {workspace}/research while final artifacts live under output/.
+        ordered_candidates = sorted(
+            candidates,
+            key=lambda candidate: not candidate.is_file(),
+        )
+        for candidate in ordered_candidates:
+            resolved = candidate.expanduser().resolve(strict=False)
+            for research_root in research_roots:
+                try:
+                    relative = resolved.relative_to(
+                        research_root.resolve(strict=False)
+                    )
+                except ValueError:
+                    continue
+                if relative.suffix.casefold() == ".json":
+                    return relative.as_posix()
+        return None
 
     def _research_local_read_error(
         self,
         tool_name: str,
         arguments: dict[str, Any],
     ) -> str | None:
-        if self.stage != "research" or not self.research_search_exhausted:
+        if self.stage != "research":
             return None
+        if (
+            self._research_browser_connector_unavailable
+            and tool_name in GATEWAY_RESEARCH_READ_TOOLS
+        ):
+            return _RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE_TOOL_ERROR
+        if not self.research_search_exhausted:
+            return None
+        if (
+            tool_name.startswith("browser_")
+            and tool_name not in DIRECT_RESEARCH_READ_TOOLS
+        ):
+            return _RESEARCH_BROWSER_REINSPECTION_COMPLETE_TOOL_ERROR
         if tool_name == "search_files":
+            return _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR
+        if tool_name == "bash":
+            if _is_research_validation_call(tool_name, arguments):
+                return None
             return _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR
         if tool_name != "read_file":
             return None
@@ -1350,12 +1696,31 @@ class ControlledPresentationPolicy:
         )
         if image_policy_rebase_error is not None:
             return image_policy_rebase_error
+        if self.stage == "research":
+            unread_urls = _research_unread_verified_urls(
+                tool_name,
+                arguments,
+                self.workspace_dir,
+                self.artifact_root_dir,
+                verified_evidence_urls,
+            )
+            if unread_urls:
+                displayed = ", ".join(unread_urls[:5])
+                if len(unread_urls) > 5:
+                    displayed += f" (+{len(unread_urls) - 5} more)"
+                return _RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR.format(urls=displayed)
         if (
             self.stage == "research"
             and self.research_search_exhausted
-            and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
+            and tool_name == "web_search"
         ):
             return _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR
+        if (
+            self.stage == "research"
+            and tool_name in DIRECT_RESEARCH_READ_TOOLS
+            and self._research_direct_read_attempts >= self.evidence_read_limit
+        ):
+            return _RESEARCH_DIRECT_READ_COMPLETE_TOOL_ERROR
         if (
             self.stage == "content_patch"
             and self.has_patch_input
@@ -1429,12 +1794,22 @@ class ControlledPresentationPolicy:
             )
 
     def _record_policy_rejection(self, result: ToolResult) -> None:
-        if self.stage not in _REPAIR_STAGES:
+        if self.stage not in _POLICY_REJECTION_STAGES:
             self._policy_rejection_stage = None
             self._policy_rejection_signature = None
             self._policy_rejection_streak = 0
             return
         signature = _tool_failure_signature(result)
+        if signature.startswith(
+            "CONTROLLED_PRESENTATION_RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE"
+        ):
+            # One model response may contain several gateway reads planned before
+            # the first connector failure is observed. Reject the stale siblings,
+            # but do not mistake that single preplanned batch for repeated model
+            # non-compliance and terminate the whole presentation workflow.
+            self._policy_rejection_signature = None
+            self._policy_rejection_streak = 0
+            return
         if not signature.startswith("CONTROLLED_PRESENTATION_"):
             self._policy_rejection_stage = None
             self._policy_rejection_signature = None
@@ -1494,12 +1869,32 @@ class ControlledPresentationPolicy:
         if self.stage == "research" and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS:
             self._research_tool_attempts += 1
             self._research_calls_since_checkpoint += 1
+            if tool_name in DIRECT_RESEARCH_READ_TOOLS:
+                self._research_direct_read_attempts += 1
             if not result.success:
                 self._research_failed_attempts += 1
             elif _research_result_is_empty(result):
                 self._research_empty_attempts += 1
             else:
                 self._research_successful_attempts += 1
+                if _research_result_establishes_direct_source(
+                    tool_name,
+                    arguments,
+                    result,
+                ):
+                    self._research_successful_direct_read_attempts += 1
+            if (
+                tool_name in GATEWAY_RESEARCH_READ_TOOLS
+                and not result.success
+                and "source_unavailable"
+                in f"{result.error or ''}\n{result.content or ''}".casefold()
+            ):
+                self._research_browser_connector_unavailable = True
+        validation_call = (
+            self.stage == "research"
+            and executed
+            and _is_research_validation_call(tool_name, arguments)
+        )
         if self.stage == "research" and result.success:
             if tool_name in _MUTATION_TOOLS:
                 self._research_json_reads_since_mutation.clear()
@@ -1507,6 +1902,18 @@ class ControlledPresentationPolicy:
                 key = self._research_json_read_key(arguments)
                 if key is not None:
                     self._research_json_reads_since_mutation.add(key)
+        if validation_call:
+            if _research_validation_failed(
+                tool_name,
+                arguments,
+                result,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            ):
+                self._research_failed_validation_attempts += 1
+            # The validator writes a fresh JSON report even when it exits non-zero.
+            # Let the model inspect that report and the ledger once for repair.
+            self._research_json_reads_since_mutation.clear()
 
         if self.stage in _REPAIR_STAGES:
             if result.success:

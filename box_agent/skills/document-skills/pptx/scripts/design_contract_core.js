@@ -11,7 +11,7 @@ const NAMED_COLORS = Object.freeze([
   { id: "white", value: "#FFFFFF", pattern: /(?:白色|white)/i },
 ]);
 
-const PALETTE_REQUEST_RE = /(?:配色|色彩|颜色|色系|主色|背景色|底色|点缀色|米白底|纯黑字|palette|color\s*(?:palette|scheme)|accent)/i;
+const PALETTE_REQUEST_RE = /(?:配色|色彩|颜色|色系|主色|背景色|底色|点缀色|点缀强调|米白底|纯黑字|背景[黑白]|正文[黑白]|黑白为主|palette|color\s*(?:palette|scheme)|accent)/i;
 const SPARSE_ACCENT_RE = /(?:少量|少许|小面积|克制|仅作|只作|点缀|sparse|restrained|limited|small\s+amount)/i;
 const HEX_COLOR_RE = /#[0-9a-f]{6}\b/ig;
 
