@@ -95,6 +95,7 @@ from .loop_guards import (
     completion_gate_tool_satisfies_requirements,
     completion_gate_text,
     format_injected_message,
+    format_runtime_context_update,
     looks_like_truncated_output,
     near_limit_wrapup_text,
     no_progress_wrapup_text,
@@ -2497,7 +2498,7 @@ async def run_agent_loop(
     memory_promotion_enabled: bool = False,
     memory_promotion_hit_threshold: int = 5,
     memory_promotion_cooldown_days: int = 14,
-    inject_queue: asyncio.Queue[str] | None = None,
+    inject_queue: asyncio.Queue[Any] | None = None,
     thinking_enabled: bool = False,
     session_id: str = "",
     turn_id: str = "",
@@ -2525,6 +2526,7 @@ async def run_agent_loop(
     current_turn_text: str | None = None,
     context_resource_ledger: ContextResourceLedger | None = None,
     context_resource_dedup_enabled: bool = True,
+    tool_exposure_manager: Any | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Execute the agent loop, yielding structured events.
 
@@ -2987,19 +2989,36 @@ async def run_agent_loop(
             while not inject_queue.empty():
                 injected_item = inject_queue.get_nowait()
                 injection_id = None
+                user_visible = True
+                injection_source = "user"
                 if isinstance(injected_item, dict):
                     injected_text = str(injected_item.get("content") or "")
                     raw_injection_id = injected_item.get("id")
                     if isinstance(raw_injection_id, str):
                         injection_id = raw_injection_id
+                    raw_user_visible = injected_item.get("user_visible")
+                    if isinstance(raw_user_visible, bool):
+                        user_visible = raw_user_visible
+                    raw_source = injected_item.get("source")
+                    if raw_source == "runtime":
+                        injection_source = "runtime"
                 else:
                     injected_text = str(injected_item)
                 if not injected_text:
                     continue
-                messages.append(
-                    Message(role="user", content=format_injected_message(injected_text))
+                formatted_injection = (
+                    format_runtime_context_update(injected_text)
+                    if injection_source == "runtime"
+                    else format_injected_message(injected_text)
                 )
-                yield InjectedMessageEvent(content=injected_text, injection_id=injection_id)
+                messages.append(
+                    Message(role="user", content=formatted_injection)
+                )
+                yield InjectedMessageEvent(
+                    content=injected_text,
+                    injection_id=injection_id,
+                    user_visible=user_visible,
+                )
 
         has_plan_tool = "plan_write" in tools
         latest_user_text = _latest_user_text(messages)
@@ -3384,6 +3403,11 @@ async def run_agent_loop(
             for tool in tool_list
             if browser_intent_policy.is_tool_visible(tool.name)
         ]
+        offered_mcp_generations: dict[str, int] = {}
+        if tool_exposure_manager is not None:
+            exposure = tool_exposure_manager.prepare_tools(tool_list)
+            tool_list = exposure.tools
+            offered_mcp_generations = exposure.mcp_generations
         if (
             completion_gate is not None
             and completion_gate.restrict_tools_until_required_succeed
@@ -3392,9 +3416,29 @@ async def run_agent_loop(
             if pending_required_tools:
                 tool_list = [
                     tool
-                    for tool_name, tool in tools.items()
-                    if tool_name in pending_required_tools
+                    for tool in tool_list
+                    if tool.name in pending_required_tools
+                    or (
+                        tool_exposure_manager is not None
+                        and tool.name == "tool_search"
+                    )
                 ]
+        offered_tool_names = frozenset(tool.name for tool in tool_list)
+
+        def _tool_offer_error(tool_name: str) -> str | None:
+            if tool_exposure_manager is None:
+                return None
+            if tool_name not in offered_tool_names:
+                return (
+                    f"Tool '{tool_name}' was not offered in this model step. "
+                    "Use tool_search and call an activated result on the next step."
+                )
+            return tool_exposure_manager.validate_call(
+                tool_name,
+                offered_mcp_generations.get(tool_name),
+                tools.get(tool_name),
+            )
+
         cache_fingerprint = build_cache_fingerprint(
             messages=messages,
             tools=tool_list,
@@ -4567,7 +4611,12 @@ async def run_agent_loop(
                 fn_args,
             )
 
-            if browser_intent_error is not None:
+            offered_error = _tool_offer_error(fn_name)
+
+            if offered_error is not None:
+                allowed_to_execute = False
+                internal_skip_error = offered_error
+            elif browser_intent_error is not None:
                 allowed_to_execute = False
                 internal_skip_error = browser_intent_error
             elif placeholder_argument is not None:
@@ -4662,6 +4711,10 @@ async def run_agent_loop(
                 result = ToolResult(success=False, content="", error=internal_skip_error or "")
             elif fn_name not in tools:
                 result = ToolResult(success=False, content="", error=f"Unknown tool: {fn_name}")
+            elif (
+                current_offer_error := _tool_offer_error(fn_name)
+            ):
+                result = ToolResult(success=False, content="", error=current_offer_error)
             else:
                 tool = tools[fn_name]
                 if isinstance(tool, EventEmittingTool):
@@ -4788,17 +4841,29 @@ async def run_agent_loop(
                         decision="approved",
                         retry_count=1,
                     )
-                    _approve_tool_permission(tools[fn_name], result.permission_request)
-                    try:
-                        result = await tools[fn_name].execute(**fn_args)
-                    except Exception as exc:
-                        detail = f"{type(exc).__name__}: {exc!s}"
-                        trace = traceback.format_exc()
+                    retry_offer_error = (
+                        f"Unknown tool: {fn_name}"
+                        if fn_name not in tools
+                        else _tool_offer_error(fn_name)
+                    )
+                    if retry_offer_error is not None:
                         result = ToolResult(
                             success=False,
                             content="",
-                            error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
+                            error=retry_offer_error,
                         )
+                    else:
+                        _approve_tool_permission(tools[fn_name], result.permission_request)
+                        try:
+                            result = await tools[fn_name].execute(**fn_args)
+                        except Exception as exc:
+                            detail = f"{type(exc).__name__}: {exc!s}"
+                            trace = traceback.format_exc()
+                            result = ToolResult(
+                                success=False,
+                                content="",
+                                error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
+                            )
                     # Re-log after retry
                     if logger:
                         logger.log_tool_result(
@@ -5035,7 +5100,11 @@ async def run_agent_loop(
                     tc.function.name,
                     par_fn_args,
                 )
-                if browser_intent_error is not None:
+                offered_error = _tool_offer_error(tc.function.name)
+                if offered_error is not None:
+                    allowed_to_execute = False
+                    internal_skip_error = offered_error
+                elif browser_intent_error is not None:
                     allowed_to_execute = False
                     internal_skip_error = browser_intent_error
                 elif browser_snapshot_path_error is not None:
@@ -5123,6 +5192,13 @@ async def run_agent_loop(
                     return tc, ToolResult(success=False, content="", error=par_budget_errors[tc.id])
                 if fn_name not in tools:
                     return tc, ToolResult(success=False, content="", error=f"Unknown tool: {fn_name}")
+                current_offer_error = _tool_offer_error(fn_name)
+                if current_offer_error is not None:
+                    return tc, ToolResult(
+                        success=False,
+                        content="",
+                        error=current_offer_error,
+                    )
                 try:
                     async with par_semaphore:
                         tool = tools[fn_name]
@@ -5328,17 +5404,29 @@ async def run_agent_loop(
                             decision="approved",
                             retry_count=1,
                         )
-                        _approve_tool_permission(tools[fn_name], result.permission_request)
-                        try:
-                            result = await tools[fn_name].execute(**fn_args)
-                        except Exception as exc:
-                            detail = f"{type(exc).__name__}: {exc!s}"
-                            trace = traceback.format_exc()
+                        retry_offer_error = (
+                            f"Unknown tool: {fn_name}"
+                            if fn_name not in tools
+                            else _tool_offer_error(fn_name)
+                        )
+                        if retry_offer_error is not None:
                             result = ToolResult(
                                 success=False,
                                 content="",
-                                error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
+                                error=retry_offer_error,
                             )
+                        else:
+                            _approve_tool_permission(tools[fn_name], result.permission_request)
+                            try:
+                                result = await tools[fn_name].execute(**fn_args)
+                            except Exception as exc:
+                                detail = f"{type(exc).__name__}: {exc!s}"
+                                trace = traceback.format_exc()
+                                result = ToolResult(
+                                    success=False,
+                                    content="",
+                                    error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
+                                )
                         if logger:
                             logger.log_tool_result(
                                 tool_name=fn_name,

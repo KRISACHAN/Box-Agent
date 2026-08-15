@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import sys
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -47,6 +48,12 @@ from .loop_guards import CompletionGate
 from .runtime import run_agent_loop
 from .schema import Message
 from .tools.base import Tool, ToolResult
+from .tools.mcp_tool_catalog import get_mcp_tool_catalog
+from .tools.mcp_tool_search import (
+    ActivatedMCPTool,
+    MCPToolExposureManager,
+    ToolSearchTool,
+)
 from .tools.skill_preload import build_active_skills_prompt
 from .utils import calculate_display_width
 from .workflow_policy import WorkflowPolicy
@@ -75,7 +82,7 @@ class AgentRunOptions:
     memory_manager: Any | None = None
     memory_extractor: Any | None = None
     memory_turn_id: str = ""
-    inject_queue: asyncio.Queue[str] | None = None
+    inject_queue: asyncio.Queue[Any] | None = None
     session_id: str = ""
     turn_id: str = ""
     title: str = ""
@@ -481,6 +488,7 @@ class Agent:
         truncated_tool_call_boost_cap: int = 32768,
         context_resource_dedup_enabled: bool = True,
         tool_limits: ToolLimitsConfig | None = None,
+        deferred_mcp_loading_enabled: bool = False,
     ):
         self.llm = llm_client
         self.tools = {tool.name: tool for tool in tools}
@@ -494,10 +502,22 @@ class Agent:
         self.truncated_tool_call_boost_cap = truncated_tool_call_boost_cap
         self.context_resource_dedup_enabled = context_resource_dedup_enabled
         self.context_resource_ledger = ContextResourceLedger()
+        self.activated_mcp_tools: OrderedDict[str, ActivatedMCPTool] = OrderedDict()
+        self.mcp_tool_exposure: MCPToolExposureManager | None = None
+        if deferred_mcp_loading_enabled:
+            catalog = get_mcp_tool_catalog()
+            self.mcp_tool_exposure = MCPToolExposureManager(
+                catalog,
+                self.activated_mcp_tools,
+            )
+            self.tools["tool_search"] = ToolSearchTool(
+                catalog,
+                self.activated_mcp_tools,
+            )
         self.token_limit = token_limit
         self.workspace_dir = Path(workspace_dir)
         self.cancel_event: Optional[asyncio.Event] = None
-        self.inject_queue: asyncio.Queue[str] = asyncio.Queue()
+        self.inject_queue: asyncio.Queue[Any] = asyncio.Queue()
         self._permission_negotiator = None  # set by CLI/ACP when permission engine is active
         self._proposal_negotiator = None  # set by CLI/ACP to handle MemoryProposalEvent
         self._hooks = hooks
@@ -517,6 +537,18 @@ class Agent:
             )
             system_prompt = system_prompt + workspace_info
 
+        if self.mcp_tool_exposure is not None:
+            system_prompt = (
+                f"{system_prompt.rstrip()}\n\n## Deferred MCP tools\n"
+                "Use `tool_search` when the visible tools do not cover the task. "
+                "Its activated matches become directly callable by their real tool "
+                "name on the next step. A successful `mcp_config` write only updates "
+                "configuration; do not claim the server is connected until an internal "
+                "MCP runtime update confirms registration. If that confirmation arrives "
+                "during the turn, use `tool_search` to discover the newly registered "
+                "capability instead of expecting all schemas to appear at once."
+            )
+
         self.system_prompt = system_prompt
         self._active_skill_prompts: dict[str, str] = {}
         self._active_skill_hashes: dict[str, str] = {}
@@ -530,7 +562,7 @@ class Agent:
             # register_mcp_tools which mutates self.tools in place) are still
             # inherited by child agents instead of a stale snapshot.
             if hasattr(tool, "set_tool_provider"):
-                tool.set_tool_provider(lambda: self.tools)
+                tool.set_tool_provider(self._inherited_tools)
         self.messages: list[Message] = [Message(role="system", content=system_prompt)]
         self.logger = AgentLogger()
         self.api_total_tokens: int = 0
@@ -541,6 +573,11 @@ class Agent:
         self.goal: GoalState | None = None
         self.tools["goal_read"] = _GoalReadTool(self)
         self.tools["goal_write"] = _GoalWriteTool(self)
+
+    def _inherited_tools(self) -> dict[str, Tool]:
+        if self.mcp_tool_exposure is None:
+            return self.tools
+        return self.mcp_tool_exposure.inherited_tools(self.tools)
 
     def set_system_prompt(self, system_prompt: str) -> None:
         """Update the live system prompt while preserving active skills."""
@@ -896,6 +933,7 @@ class Agent:
             current_turn_text=effective_options.current_turn_text,
             context_resource_ledger=self.context_resource_ledger,
             context_resource_dedup_enabled=self.context_resource_dedup_enabled,
+            tool_exposure_manager=self.mcp_tool_exposure,
         ):
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):
