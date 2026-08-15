@@ -3429,6 +3429,15 @@ async def run_agent_loop(
         offered_tools_by_name = {tool.name: tool for tool in tool_list}
         offered_tool_names = frozenset(offered_tools_by_name)
 
+        def _tool_target_identity(tool_name: str) -> tuple[str | None, str | None]:
+            tool = offered_tools_by_name.get(tool_name)
+            tool_id = getattr(tool, "mcp_tool_id", None)
+            server_name = getattr(tool, "server_name", None)
+            return (
+                tool_id if isinstance(tool_id, str) and tool_id else None,
+                server_name if isinstance(server_name, str) and server_name else None,
+            )
+
         def _tool_offer_error(tool_name: str) -> str | None:
             if tool_exposure_manager is None:
                 return None
@@ -4682,11 +4691,14 @@ async def run_agent_loop(
             if tool_user_visible and fn_name not in FINAL_SUMMARY_EXCLUDED_TOOLS:
                 visible_tool_call_total += 1
 
+            tool_id, server_name = _tool_target_identity(fn_name)
             yield ToolCallStart(
                 tool_call_id=tc_id,
                 tool_name=fn_name,
                 arguments=fn_args,
                 user_visible=tool_user_visible,
+                tool_id=tool_id,
+                server_name=server_name,
             )
 
             # Hook: tool start (interceptor — may modify arguments)
@@ -4702,6 +4714,8 @@ async def run_agent_loop(
                 tool_call_id=tc_id,
                 data={
                     "tool_name": fn_name,
+                    "tool_id": tool_id,
+                    "server_name": server_name,
                     "arguments": fn_args,
                     "allowed_to_execute": allowed_to_execute,
                     "user_visible": tool_user_visible,
@@ -4816,6 +4830,8 @@ async def run_agent_loop(
                     result_content=result.content if result.success else None,
                     result_error=result.error if not result.success else None,
                     raw_output=result.raw_output,
+                    tool_id=tool_id,
+                    server_name=server_name,
                 )
 
             # ── Permission negotiation + retry ──────────────
@@ -4882,6 +4898,8 @@ async def run_agent_loop(
                             result_content=result.content if result.success else None,
                             result_error=result.error if not result.success else None,
                             raw_output=result.raw_output,
+                            tool_id=tool_id,
+                            server_name=server_name,
                         )
                 elif policy_decision is not None and policy_decision.get("decision") != "error":
                     policy_decision = _policy_decision_payload(
@@ -5021,6 +5039,8 @@ async def run_agent_loop(
                 tool_call_id=tc_id,
                 data={
                     "tool_name": fn_name,
+                    "tool_id": tool_id,
+                    "server_name": server_name,
                     "success": result.success,
                     "content": tc_content,
                     "error": tc_error,
@@ -5041,6 +5061,8 @@ async def run_agent_loop(
                 raw_output=result.raw_output,
                 user_visible=tool_user_visible,
                 policy_decision=policy_decision,
+                tool_id=tool_id,
+                server_name=server_name,
             )
             if result.success and tool_user_visible:
                 web_search_payload = _extract_web_search_payload(fn_name, tc_content)
@@ -5155,11 +5177,14 @@ async def run_agent_loop(
                 par_user_visible[tc.id] = allowed_to_execute
                 if allowed_to_execute and tc.function.name not in FINAL_SUMMARY_EXCLUDED_TOOLS:
                     visible_tool_call_total += 1
+                tool_id, server_name = _tool_target_identity(tc.function.name)
                 yield ToolCallStart(
                     tool_call_id=tc.id,
                     tool_name=tc.function.name,
                     arguments=par_fn_args,
                     user_visible=allowed_to_execute,
+                    tool_id=tool_id,
+                    server_name=server_name,
                 )
                 if hook_mgr.hooks and allowed_to_execute:
                     par_fn_args = await hook_mgr.fire_tool_start(
@@ -5174,6 +5199,8 @@ async def run_agent_loop(
                     tool_call_id=tc.id,
                     data={
                         "tool_name": tc.function.name,
+                        "tool_id": tool_id,
+                        "server_name": server_name,
                         "arguments": par_fn_args,
                         "allowed_to_execute": allowed_to_execute,
                         "user_visible": allowed_to_execute,
@@ -5360,6 +5387,7 @@ async def run_agent_loop(
                 tc_id = tc.id
                 fn_name = tc.function.name
                 fn_args = par_args_map[tc_id]
+                tool_id, server_name = _tool_target_identity(fn_name)
                 tool_user_visible = par_user_visible.get(tc_id, True)
                 policy_decision: dict[str, Any] | None = None
 
@@ -5382,6 +5410,8 @@ async def run_agent_loop(
                         result_content=result.content if result.success else None,
                         result_error=result.error if not result.success else None,
                         raw_output=result.raw_output,
+                        tool_id=tool_id,
+                        server_name=server_name,
                     )
 
                 # ── Permission negotiation + retry ──────────────
@@ -5447,6 +5477,8 @@ async def run_agent_loop(
                                 result_content=result.content if result.success else None,
                                 result_error=result.error if not result.success else None,
                                 raw_output=result.raw_output,
+                                tool_id=tool_id,
+                                server_name=server_name,
                             )
                     elif policy_decision is not None and policy_decision.get("decision") != "error":
                         policy_decision = _policy_decision_payload(
@@ -5585,6 +5617,8 @@ async def run_agent_loop(
                     tool_call_id=tc_id,
                     data={
                         "tool_name": fn_name,
+                        "tool_id": tool_id,
+                        "server_name": server_name,
                         "success": result.success,
                         "content": par_content,
                         "error": par_error,
@@ -5609,6 +5643,8 @@ async def run_agent_loop(
                     raw_output=result.raw_output,
                     user_visible=tool_user_visible,
                     policy_decision=policy_decision,
+                    tool_id=tool_id,
+                    server_name=server_name,
                 )
                 if result.success and tool_user_visible:
                     web_search_payload = _extract_web_search_payload(fn_name, par_content)
@@ -5688,11 +5724,14 @@ async def run_agent_loop(
                     f"call {source_id} did not produce a result."
                 )
 
+            tool_id, server_name = _tool_target_identity(tc.function.name)
             yield ToolCallStart(
                 tool_call_id=tc.id,
                 tool_name=tc.function.name,
                 arguments=tc.function.arguments,
                 user_visible=False,
+                tool_id=tool_id,
+                server_name=server_name,
             )
             emit_session_trace(
                 "tool.request",
@@ -5701,6 +5740,8 @@ async def run_agent_loop(
                 tool_call_id=tc.id,
                 data={
                     "tool_name": tc.function.name,
+                    "tool_id": tool_id,
+                    "server_name": server_name,
                     "arguments": tc.function.arguments,
                     "allowed_to_execute": False,
                     "user_visible": False,
@@ -5722,6 +5763,8 @@ async def run_agent_loop(
                 tool_call_id=tc.id,
                 data={
                     "tool_name": tc.function.name,
+                    "tool_id": tool_id,
+                    "server_name": server_name,
                     "success": source_succeeded is True,
                     "content": duplicate_content,
                     "error": duplicate_error,
@@ -5745,6 +5788,8 @@ async def run_agent_loop(
                 raw_output=None,
                 user_visible=False,
                 policy_decision=None,
+                tool_id=tool_id,
+                server_name=server_name,
             )
 
         if model_history_placeholder_auto_repair_requested:

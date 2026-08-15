@@ -1201,6 +1201,38 @@ async def test_mcp_reconnect_injects_hidden_deferred_state_into_active_turns_onl
 
 
 @pytest.mark.asyncio
+async def test_initial_mcp_catalog_ready_is_injected_into_active_turn(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_sub_agent=False,
+            mcp=MCPConfig(deferred_loading_enabled=True),
+        ),
+    )
+    mcp_task = asyncio.create_task(asyncio.sleep(0, result=[EchoTool()]))
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DummyLLM(),
+        [],
+        "system",
+        mcp_task=mcp_task,
+    )
+    session = await agent.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+    state = agent._sessions[session.sessionId]
+    state.turn_active = True
+
+    await agent._finalize_mcp_load()
+
+    update = state.inject_queue.get_nowait()
+    assert update["user_visible"] is False
+    assert "catalog discovery is complete" in update["content"]
+    assert "Retry tool_search" in update["content"]
+    assert "Deferred schemas remain hidden" in update["content"]
+
+
+@pytest.mark.asyncio
 async def test_mcp_reconnect_failure_injects_non_availability_state(
     tmp_path,
     monkeypatch,

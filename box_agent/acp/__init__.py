@@ -1052,6 +1052,13 @@ class BoxACPAgent:
                 register_mcp_tools(state.agent.tools, mcp_tools)
         self._mcp_loaded = True
         log.info("mcp/ready", count=len(mcp_tools), source="deferred")
+        injected = self._inject_mcp_runtime_update(
+            name="catalog",
+            state="ready",
+            tool_count=len(mcp_tools),
+        )
+        if injected:
+            log.info("mcp/catalog_ready_injected", sessions=injected)
 
     async def _ensure_skills_loaded(self) -> None:
         """Await the background skill-discovery task before it's needed.
@@ -2661,7 +2668,14 @@ class BoxACPAgent:
         for session_id, session in self._sessions.items():
             if not session.turn_active:
                 continue
-            if state == "connected":
+            if state == "ready":
+                content = (
+                    f"[MCP runtime update] Initial MCP catalog discovery is complete "
+                    f"with {tool_count} registered tools. Retry tool_search now if an "
+                    "earlier search reported that the catalog was still loading. "
+                    "Deferred schemas remain hidden until selected by tool_search."
+                )
+            elif state == "connected":
                 if session.agent.mcp_tool_exposure is not None:
                     detail = (
                         f"{tool_count} tools are registered in the deferred catalog. "
@@ -3643,7 +3657,14 @@ class BoxACPAgent:
                             ),
                         )
 
-                    case ToolCallStartEvent(tool_call_id=tid, tool_name=name, arguments=args, user_visible=user_visible):
+                    case ToolCallStartEvent(
+                        tool_call_id=tid,
+                        tool_name=name,
+                        arguments=args,
+                        user_visible=user_visible,
+                        tool_id=tool_id,
+                        server_name=server_name,
+                    ):
                         log.info(
                             "tool/start",
                             session_id=session_id,
@@ -3651,6 +3672,8 @@ class BoxACPAgent:
                             tool_name=name,
                             arguments=args,
                             user_visible=user_visible,
+                            tool_id=tool_id,
+                            server_name=server_name,
                         )
                         if name == "get_skill":
                             skill_name = _get_skill_name_from_args(args)
@@ -3683,11 +3706,31 @@ class BoxACPAgent:
                         raw_output=raw_output,
                         user_visible=user_visible,
                         policy_decision=policy_decision,
+                        tool_id=tool_id,
+                        server_name=server_name,
                     ):
                         if ok:
-                            log.info("tool/end", session_id=session_id, tool_call_id=tid, tool_name=tname, result=text, user_visible=user_visible)
+                            log.info(
+                                "tool/end",
+                                session_id=session_id,
+                                tool_call_id=tid,
+                                tool_name=tname,
+                                tool_id=tool_id,
+                                server_name=server_name,
+                                result=text,
+                                user_visible=user_visible,
+                            )
                         else:
-                            log.warn("tool/fail", session_id=session_id, tool_call_id=tid, tool_name=tname, error=err, user_visible=user_visible)
+                            log.warn(
+                                "tool/fail",
+                                session_id=session_id,
+                                tool_call_id=tid,
+                                tool_name=tname,
+                                tool_id=tool_id,
+                                server_name=server_name,
+                                error=err,
+                                user_visible=user_visible,
+                            )
                         if ok and tname == "request_user_input":
                             state.waiting_for_user_input = True
                             log.info(

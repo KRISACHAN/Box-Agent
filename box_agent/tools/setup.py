@@ -36,6 +36,7 @@ from box_agent.tools.jupyter_tool import (
     SandboxStatusTool,
 )
 from box_agent.tools.mcp_loader import load_mcp_tools_async, set_mcp_timeout_config
+from box_agent.tools.mcp_tool_catalog import get_mcp_tool_catalog
 from box_agent.tools.memory_tool import MemoryReadTool, MemorySearchTool, MemoryWriteTool
 from box_agent.tools.obsidian_tool import create_obsidian_tools
 from box_agent.tools.plan_tool import PlanReadTool, PlanStore, PlanWriteTool
@@ -342,6 +343,7 @@ async def initialize_base_tools(
         _user_mcp = Path.home() / ".box-agent" / "config" / "mcp.json"
         mcp_config_path = _user_mcp if _user_mcp.exists() else Config.find_config_file(config.tools.mcp_config_path)
         if mcp_config_path:
+            get_mcp_tool_catalog().mark_loading()
             _out(f"{Colors.BRIGHT_CYAN}Loading MCP tools in background (from: {mcp_config_path})...{Colors.RESET}")
             _out(
                 f"{Colors.DIM}  MCP timeouts: connect={mcp_config.connect_timeout}s, "

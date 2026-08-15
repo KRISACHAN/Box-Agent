@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .base import Tool, ToolResult
@@ -35,9 +36,14 @@ class ToolSearchTool(Tool):
         self,
         catalog: MCPToolCatalog,
         activated: OrderedDict[str, ActivatedMCPTool],
+        *,
+        protected_names_provider: Callable[[], frozenset[str]] | None = None,
+        readiness_timeout: float = 15.0,
     ) -> None:
         self._catalog = catalog
         self._activated = activated
+        self._protected_names_provider = protected_names_provider
+        self._readiness_timeout = readiness_timeout
 
     @property
     def name(self) -> str:
@@ -91,11 +97,38 @@ class ToolSearchTool(Tool):
         server_name: str | None = None,
         top_k: int = 1,
     ) -> ToolResult:
+        if not await self._catalog.wait_until_ready(self._readiness_timeout):
+            payload = {
+                "success": False,
+                "query": query,
+                "state": "catalog_loading",
+                "activated": [],
+                "conflicts": [],
+                "notice": (
+                    "The MCP catalog is still loading. Retry tool_search after the "
+                    "runtime readiness update; no empty-catalog conclusion was made."
+                ),
+            }
+            return ToolResult(
+                success=False,
+                content=json.dumps(payload, ensure_ascii=False),
+                error="MCP catalog is still loading; retry tool_search shortly.",
+            )
+
         hits = self._catalog.search(query, server_name=server_name, top_k=top_k)
         activated_results = []
         conflicts = []
+        protected_names = (
+            self._protected_names_provider()
+            if self._protected_names_provider is not None
+            else frozenset()
+        )
         for entry in hits:
-            if entry.name_conflict or entry.model_name == TOOL_SEARCH_NAME:
+            if (
+                entry.name_conflict
+                or entry.model_name == TOOL_SEARCH_NAME
+                or entry.model_name in protected_names
+            ):
                 conflicts.append(
                     {
                         "tool_id": entry.tool_id,
@@ -104,7 +137,11 @@ class ToolSearchTool(Tool):
                         "error": (
                             "reserved deferred-search tool name"
                             if entry.model_name == TOOL_SEARCH_NAME
-                            else "duplicate model-facing tool name"
+                            else (
+                                "conflicts with stable core tool"
+                                if entry.model_name in protected_names
+                                else "duplicate model-facing tool name"
+                            )
                         ),
                     }
                 )
@@ -177,16 +214,19 @@ class MCPToolExposureManager:
         for tool in candidates:
             if getattr(tool, "mcp_tool_id", None) is None:
                 visible[tool.name] = tool
+        protected_names = frozenset(visible)
 
         for entry in self._catalog.snapshot():
-            if entry.name_conflict or entry.model_name == TOOL_SEARCH_NAME:
+            if (
+                entry.name_conflict
+                or entry.model_name == TOOL_SEARCH_NAME
+                or entry.model_name in protected_names
+            ):
                 continue
             activation = self._activated.get(entry.tool_id)
             activated = activation is not None and activation.generation == entry.generation
             if not entry.always_load and not activated:
                 continue
-            # Preserve the historical MCP-over-fallback behavior only after
-            # this particular target is eligible for exposure.
             visible[entry.model_name] = entry.tool
             generations[entry.model_name] = entry.generation
         tools = list(visible.values())

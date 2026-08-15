@@ -518,6 +518,7 @@ class Agent:
             self.tools["tool_search"] = ToolSearchTool(
                 catalog,
                 self.activated_mcp_tools,
+                protected_names_provider=lambda: frozenset(self.tools),
             )
         self.token_limit = token_limit
         self.workspace_dir = Path(workspace_dir)

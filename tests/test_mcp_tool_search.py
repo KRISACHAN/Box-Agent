@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import OrderedDict
 
 import pytest
 
 from box_agent.agent import Agent
-from box_agent.events import ToolCallResult
+from box_agent.events import ToolCallResult, ToolCallStart
 from box_agent.runtime import run_agent_loop
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.tools import mcp_loader
@@ -53,6 +54,10 @@ class FakeMCPTool(Tool):
         return f"mcp:{self._server_name}/{self._name}"
 
     @property
+    def server_name(self) -> str:
+        return self._server_name
+
+    @property
     def mcp_always_load(self) -> bool:
         return self._always_load
 
@@ -62,6 +67,26 @@ class FakeMCPTool(Tool):
 
     async def execute(self, **kwargs) -> ToolResult:
         self.calls += 1
+        return ToolResult(success=True, content=json.dumps(kwargs))
+
+
+class FakeCoreTool(Tool):
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return "Stable core tool"
+
+    @property
+    def parameters(self) -> dict:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs) -> ToolResult:
         return ToolResult(success=True, content=json.dumps(kwargs))
 
 
@@ -193,6 +218,68 @@ async def test_duplicate_model_names_are_reported_but_not_activated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mcp_tool_cannot_replace_same_named_stable_core_tool() -> None:
+    catalog = MCPToolCatalog()
+    core_bash = FakeCoreTool("bash")
+    remote_bash = FakeMCPTool("bash", "untrusted", always_load=True)
+    catalog.replace_server("untrusted", [remote_bash])
+    activated = OrderedDict()
+    manager = MCPToolExposureManager(catalog, activated)
+    search = ToolSearchTool(
+        catalog,
+        activated,
+        protected_names_provider=lambda: frozenset({"bash", "tool_search"}),
+    )
+
+    result = await search.execute(query="bash")
+    payload = json.loads(result.content)
+    exposure = manager.prepare_tools([core_bash])
+
+    assert result.success is False
+    assert payload["activated"] == []
+    assert payload["conflicts"][0]["error"] == "conflicts with stable core tool"
+    assert activated == OrderedDict()
+    assert exposure.tools == [core_bash]
+    assert exposure.mcp_generations == {}
+
+
+@pytest.mark.asyncio
+async def test_search_waits_for_initial_catalog_discovery() -> None:
+    catalog = MCPToolCatalog()
+    activated = OrderedDict()
+    search = ToolSearchTool(catalog, activated, readiness_timeout=1.0)
+    catalog.mark_loading()
+
+    pending = asyncio.create_task(search.execute(query="lookup"))
+    await asyncio.sleep(0)
+    assert not pending.done()
+
+    catalog.replace_server("crm", [FakeMCPTool("lookup", "crm", "Lookup")])
+    catalog.mark_ready()
+    result = await pending
+
+    assert result.success is True
+    assert list(activated) == ["mcp:crm/lookup"]
+
+
+@pytest.mark.asyncio
+async def test_search_reports_loading_instead_of_false_empty_result() -> None:
+    catalog = MCPToolCatalog()
+    catalog.mark_loading()
+    result = await ToolSearchTool(
+        catalog,
+        OrderedDict(),
+        readiness_timeout=0.001,
+    ).execute(query="lookup")
+    payload = json.loads(result.content)
+
+    assert result.success is False
+    assert payload["state"] == "catalog_loading"
+    assert payload["activated"] == []
+    catalog.mark_ready()
+
+
+@pytest.mark.asyncio
 async def test_reconnect_generation_invalidates_session_activation() -> None:
     catalog = MCPToolCatalog()
     original = FakeMCPTool("lookup", "crm", "Lookup")
@@ -292,7 +379,7 @@ async def test_search_then_real_tool_is_exposed_on_next_step() -> None:
         ]
     )
 
-    await _collect(
+    events = await _collect(
         run_agent_loop(
             llm=llm,
             messages=[Message(role="system", content="test")],
@@ -305,6 +392,20 @@ async def test_search_then_real_tool_is_exposed_on_next_step() -> None:
     assert llm.offered_names[0] == ["tool_search"]
     assert set(llm.offered_names[1]) == {"lookup", "tool_search"}
     assert tool.calls == 1
+    real_start = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallStart) and event.tool_call_id == "real-call"
+    )
+    real_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_call_id == "real-call"
+    )
+    assert real_start.tool_id == "mcp:crm/lookup"
+    assert real_start.server_name == "crm"
+    assert real_result.tool_id == "mcp:crm/lookup"
+    assert real_result.server_name == "crm"
 
 
 @pytest.mark.asyncio

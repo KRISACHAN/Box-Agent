@@ -6,6 +6,7 @@ an LLM is decided per Agent session by :mod:`mcp_tool_search`.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -39,6 +40,43 @@ class MCPToolCatalog:
         self._lock = RLock()
         self._entries: dict[str, MCPToolEntry] = {}
         self._server_generations: dict[str, int] = {}
+        self._loading = False
+        self._ready_event: asyncio.Event | None = None
+
+    def mark_loading(self) -> None:
+        """Mark initial discovery as incomplete without resetting live waiters."""
+        with self._lock:
+            if self._loading:
+                return
+            self._loading = True
+            self._ready_event = asyncio.Event()
+
+    def mark_ready(self) -> None:
+        """Publish discovery completion and release pending catalog searches."""
+        with self._lock:
+            self._loading = False
+            ready_event = self._ready_event
+        if ready_event is not None:
+            ready_event.set()
+
+    @property
+    def loading(self) -> bool:
+        with self._lock:
+            return self._loading
+
+    async def wait_until_ready(self, timeout: float) -> bool:
+        """Wait for active discovery, returning False on a bounded timeout."""
+        with self._lock:
+            if not self._loading:
+                return True
+            ready_event = self._ready_event
+        if ready_event is None:
+            return True
+        try:
+            await asyncio.wait_for(ready_event.wait(), timeout=timeout)
+        except TimeoutError:
+            return False
+        return True
 
     def replace_server(self, server_name: str, tools: Iterable[Tool]) -> int:
         """Replace one server snapshot and return its new generation."""
@@ -82,6 +120,11 @@ class MCPToolCatalog:
         with self._lock:
             self._entries.clear()
             self._server_generations.clear()
+            self._loading = False
+            ready_event = self._ready_event
+            self._ready_event = None
+        if ready_event is not None:
+            ready_event.set()
 
     def snapshot(self) -> tuple[MCPToolEntry, ...]:
         with self._lock:

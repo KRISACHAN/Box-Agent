@@ -902,6 +902,8 @@ async def load_mcp_tools_async(
     """
     global _mcp_connections, _mcp_status, _mcp_loading, _mcp_config_path, _mcp_auth_file, _mcp_auth_token
     _mcp_loading = True
+    catalog = get_mcp_tool_catalog()
+    catalog.mark_loading()
     # Remember the auth inputs so reconnect_mcp_server() can rebuild the same
     # dynamic bearer / Authorization headers it would have used on cold start.
     _mcp_auth_file = auth_file
@@ -1034,6 +1036,7 @@ async def load_mcp_tools_async(
 
     finally:
         _mcp_loading = False
+        catalog.mark_ready()
 
 
 async def cleanup_mcp_connections():
