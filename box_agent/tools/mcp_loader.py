@@ -52,11 +52,29 @@ from box_agent.auth import request_auth_headers, resolve_auth_token, should_atta
 
 from .base import Tool, ToolResult
 from .browser_runtime_scope import acquire_browser_runtime_for_current_turn
+from .mcp_tool_catalog import get_mcp_tool_catalog
 
 
 def _warn(msg: str) -> None:
     """Write diagnostic message to stderr (never stdout)."""
     sys.stderr.write(msg + "\n")
+
+
+def _replace_server_catalog(connection: "MCPServerConnection") -> None:
+    catalog = get_mcp_tool_catalog()
+    catalog.replace_server(connection.name, connection.tools)
+    conflicts = sorted(
+        {
+            entry.model_name
+            for entry in catalog.snapshot()
+            if entry.name_conflict
+        }
+    )
+    if conflicts:
+        _warn(
+            "MCP tool name conflict detected; deferred loading will hide all "
+            f"conflicting targets: {', '.join(conflicts)}"
+        )
 
 
 def _structured_mcp_error_message(content: str) -> str | None:
@@ -265,6 +283,7 @@ class MCPTool(Tool):
         session: ClientSession,
         server_name: str = "",
         execute_timeout: float | None = None,
+        always_load: bool = False,
     ):
         self._name = name
         self._server_name = server_name
@@ -272,6 +291,8 @@ class MCPTool(Tool):
         self._parameters = parameters
         self._session = session
         self._execute_timeout = execute_timeout
+        self._always_load = always_load
+        self._mcp_generation = 0
 
     @property
     def name(self) -> str:
@@ -280,6 +301,18 @@ class MCPTool(Tool):
     @property
     def server_name(self) -> str:
         return self._server_name
+
+    @property
+    def mcp_tool_id(self) -> str:
+        return f"mcp:{self._server_name}/{self._name}"
+
+    @property
+    def mcp_generation(self) -> int:
+        return self._mcp_generation
+
+    @property
+    def mcp_always_load(self) -> bool:
+        return self._always_load
 
     @property
     def description(self) -> str:
@@ -347,6 +380,7 @@ class MCPServerConnection:
         connect_timeout: float | None = None,
         execute_timeout: float | None = None,
         sse_read_timeout: float | None = None,
+        always_load: bool = False,
     ):
         self.name = name
         self.connection_type = connection_type
@@ -362,6 +396,7 @@ class MCPServerConnection:
         self.connect_timeout = connect_timeout
         self.execute_timeout = execute_timeout
         self.sse_read_timeout = sse_read_timeout
+        self.always_load = always_load
         # Connection state
         self.last_error: str | None = None
         self.session: ClientSession | None = None
@@ -464,6 +499,7 @@ class MCPServerConnection:
                     session=session,
                     server_name=self.name,
                     execute_timeout=execute_timeout,
+                    always_load=self.always_load,
                 )
                 self.tools.append(mcp_tool)
 
@@ -753,6 +789,7 @@ async def disconnect_mcp_server(name: str) -> dict:
         except Exception:
             pass
         _mcp_connections = [c for c in _mcp_connections if c.name != name]
+    get_mcp_tool_catalog().remove_server(name)
     _record_status(name, "disabled")
     return {"success": True, "removedTools": removed_tools}
 
@@ -941,6 +978,7 @@ async def load_mcp_tools_async(
                     connect_timeout=server_config.get("connect_timeout"),
                     execute_timeout=server_config.get("execute_timeout"),
                     sse_read_timeout=server_config.get("sse_read_timeout"),
+                    always_load=bool(server_config.get("alwaysLoad", False)),
                 )
             )
 
@@ -968,6 +1006,7 @@ async def load_mcp_tools_async(
                 continue
             if success:
                 _mcp_connections.append(conn)
+                _replace_server_catalog(conn)
                 all_tools.extend(conn.tools)
                 _record_status(
                     conn.name, "connected",
@@ -1003,6 +1042,7 @@ async def cleanup_mcp_connections():
     for connection in _mcp_connections:
         await connection.disconnect()
     _mcp_connections.clear()
+    get_mcp_tool_catalog().clear()
 
 
 async def reconnect_mcp_server(name: str) -> dict:
@@ -1034,6 +1074,7 @@ async def reconnect_mcp_server(name: str) -> dict:
         except Exception:
             pass
         _mcp_connections = [c for c in _mcp_connections if c.name != name]
+        get_mcp_tool_catalog().remove_server(name)
 
     conn_type = _determine_connection_type(server_config)
     url = server_config.get("url")
@@ -1074,6 +1115,7 @@ async def reconnect_mcp_server(name: str) -> dict:
         connect_timeout=server_config.get("connect_timeout"),
         execute_timeout=server_config.get("execute_timeout"),
         sse_read_timeout=server_config.get("sse_read_timeout"),
+        always_load=bool(server_config.get("alwaysLoad", False)),
     )
 
     _record_status(name, "connecting", transport=transport_label)
@@ -1085,6 +1127,7 @@ async def reconnect_mcp_server(name: str) -> dict:
 
     if success:
         _mcp_connections.append(conn)
+        _replace_server_catalog(conn)
         _record_status(
             name, "connected",
             transport=transport_label,

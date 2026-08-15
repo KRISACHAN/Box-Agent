@@ -2177,6 +2177,10 @@ async def run_agent(
         max_truncated_tool_call_retries=config.agent.max_truncated_tool_call_retries,
         truncated_tool_call_boost_cap=config.agent.truncated_tool_call_boost_cap,
         context_resource_dedup_enabled=config.agent.context_resource_dedup_enabled,
+        deferred_mcp_loading_enabled=(
+            config.tools.enable_mcp
+            and config.tools.mcp.deferred_loading_enabled
+        ),
     )
 
     restored_goal = _restore_cli_goal(agent, workspace_dir)

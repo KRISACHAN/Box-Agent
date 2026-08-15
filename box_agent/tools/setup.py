@@ -408,6 +408,11 @@ async def await_mcp_tools(mcp_task: Optional[asyncio.Task]) -> List[Tool]:
 def register_mcp_tools(tool_map: dict[str, Tool], mcp_tools: list[Tool]) -> None:
     """Register MCP tools, allowing them to override same-named fallback tools."""
     for tool in mcp_tools:
+        existing = tool_map.get(tool.name)
+        if getattr(existing, "reserved_deferred_mcp_search", False):
+            # A remote MCP tool cannot replace the session-bound discovery
+            # control entry after background loading completes.
+            continue
         tool_map[tool.name] = tool
 
 
