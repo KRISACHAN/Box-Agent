@@ -182,7 +182,7 @@ async def _stream_with_activity(
                 await closer()
             except (RuntimeError, asyncio.CancelledError):
                 pass
-from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
+from .schema import LLMResponse, Message, StreamEvent
 from .tools.base import (
     EventEmittingTool,
     Tool,
@@ -649,139 +649,6 @@ def _compact_visible_tool_content_for_model(
         f"Preview first {min(preview_limit, len(lines))} lines:\n"
         f"{preview}"
     )
-
-
-def _summarize_tool_argument_for_model(
-    *,
-    tool_name: str,
-    argument_name: str,
-    value: str,
-    path: str | None = None,
-) -> str:
-    """Return a compact placeholder for large tool-call arguments in history."""
-    lines = value.splitlines()
-    path_obj = Path(path) if path else None
-    preview_limit = 12 if (path_obj and path_obj.suffix.lower() in {".html", ".htm"}) else 20
-    preview = ""
-    is_generated_file_write = (
-        tool_name in {"write_file", "append_file"}
-        and argument_name == "content"
-        and path_obj is not None
-        and path_obj.suffix.lower() in _MODEL_CONTEXT_PATH_EXTS
-    )
-    is_generated_file_edit = (
-        tool_name == "edit_file"
-        and argument_name in {"old_str", "new_str"}
-        and path_obj is not None
-        and path_obj.suffix.lower() in _MODEL_CONTEXT_PATH_EXTS
-    )
-    if not (
-        is_generated_file_write
-        or is_generated_file_edit
-        or (
-            path_obj
-            and (
-                path_obj.name in _MODEL_CONTEXT_PATH_NAMES
-                or ("qa" in path_obj.parts and path_obj.suffix.lower() in _MODEL_CONTEXT_PATH_EXTS)
-            )
-        )
-    ):
-        preview = "\n".join(lines[:preview_limit])
-        if len(preview) > 1200:
-            preview = preview[:1200] + "\n..."
-    summary = [
-        "[Full tool-call argument omitted from model history]",
-        f"Tool: {tool_name}",
-        f"Argument: {argument_name}",
-        f"Path: {path or 'unknown'}",
-        f"Lines: {len(lines)}",
-        f"Characters: {len(value)}",
-        "Reason: the argument was omitted to keep future model turns compact; consult the matching tool result for success or failure, and read the file if exact content is needed.",
-    ]
-    if preview:
-        summary.extend(["", f"Preview first {min(preview_limit, len(lines))} lines:", preview])
-    return "\n".join(summary)
-
-
-def _tool_argument_needs_compaction(tool_name: str, argument_name: str, value: Any, path: str | None) -> bool:
-    """Detect large/generated tool-call arguments that should not stay verbatim."""
-    if not isinstance(value, str):
-        return False
-
-    if tool_name in {"write_file", "append_file"} and argument_name == "content":
-        if path and Path(path).suffix.lower() in _MODEL_CONTEXT_PATH_EXTS:
-            return True
-        return _path_needs_compact_model_context(path, value)
-
-    if tool_name == "edit_file" and argument_name in {"old_str", "new_str"}:
-        if path and _path_needs_compact_model_context(path, value):
-            return True
-        return len(value) > _MODEL_CONTEXT_CONTENT_THRESHOLD
-
-    # Catch accidental inline scripts/HTML in generic tool arguments, while
-    # leaving normal short commands and prompts intact.
-    return len(value) > _MODEL_CONTEXT_CONTENT_THRESHOLD
-
-
-def _compact_tool_call_arguments_for_model(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Compact tool-call arguments before storing assistant calls in history.
-
-    ToolCallStart events, logs, and actual tool execution keep the original
-    arguments.  This affects only future LLM turns, preventing generated files
-    such as ``deck.html`` from being resent after every step.
-    """
-    path = arguments.get("path")
-    path_value = path if isinstance(path, str) else None
-    compacted: dict[str, Any] = {}
-    for key, value in arguments.items():
-        if _tool_argument_needs_compaction(tool_name, key, value, path_value):
-            compacted[key] = _summarize_tool_argument_for_model(
-                tool_name=tool_name,
-                argument_name=key,
-                value=value,
-                path=path_value,
-            )
-        else:
-            compacted[key] = value
-    return compacted
-
-
-def _tool_calls_for_model_history(tool_calls: list[ToolCall] | None) -> list[ToolCall] | None:
-    """Return tool calls safe to keep in model-facing message history."""
-    if not tool_calls:
-        return None
-    return [
-        ToolCall(
-            id=tc.id,
-            type=tc.type,
-            function=FunctionCall(
-                name=tc.function.name,
-                arguments=_compact_tool_call_arguments_for_model(tc.function.name, tc.function.arguments),
-            ),
-        )
-        for tc in tool_calls
-    ]
-
-
-def _tool_calls_need_model_history_compaction(tool_calls: list[ToolCall] | None) -> bool:
-    """Return true when any tool-call argument should be compacted after one turn."""
-    if not tool_calls:
-        return False
-    for tool_call in tool_calls:
-        arguments = tool_call.function.arguments
-        path = arguments.get("path")
-        path_value = path if isinstance(path, str) else None
-        if any(
-            _tool_argument_needs_compaction(
-                tool_call.function.name,
-                argument_name,
-                value,
-                path_value,
-            )
-            for argument_name, value in arguments.items()
-        ):
-            return True
-    return False
 
 
 def _model_history_placeholder_argument(
@@ -3091,19 +2958,9 @@ async def run_agent_loop(
     plan_approval_request_id = "plan-" + hashlib.sha1(
         f"{run_start}:{_latest_user_text(messages)}".encode("utf-8", errors="ignore")
     ).hexdigest()[:10]
-    pending_history_compaction: Message | None = None
     model_history_placeholder_repairs = 0
     model_history_framework_error_counts: dict[str, int] = {}
     pending_model_history_recovery: _ModelHistoryPlaceholderRecovery | None = None
-
-    def _compact_pending_tool_call_history() -> None:
-        """Compact the latest large tool arguments after one LLM request saw them."""
-        nonlocal pending_history_compaction
-        pending = pending_history_compaction
-        pending_history_compaction = None
-        if pending is None or not any(message is pending for message in messages):
-            return
-        pending.tool_calls = _tool_calls_for_model_history(pending.tool_calls)
 
     def _compact_repeated_framework_error_for_model(
         *,
@@ -3146,7 +3003,6 @@ async def run_agent_loop(
         # ── Cancellation check (top of step) ────────────────
         # No cleanup needed here — messages are consistent at step boundaries.
         if cancelled():
-            _compact_pending_tool_call_history()
             if hook_mgr.hooks:
                 await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
             yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
@@ -3734,7 +3590,6 @@ async def run_agent_loop(
                     except Exception:
                         _log.debug("failed to close repetitive LLM stream", exc_info=True)
                 _cleanup_incomplete_messages(messages)
-                _compact_pending_tool_call_history()
                 _log.warning(
                     "repetitive_llm_stream_aborted: pattern=%r text_len=%d thinking_len=%d",
                     stream_repeat_pattern,
@@ -3754,14 +3609,12 @@ async def run_agent_loop(
 
             if cancelled():
                 _cleanup_incomplete_messages(messages)
-                _compact_pending_tool_call_history()
                 if hook_mgr.hooks:
                     await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 return
 
             if finish_event is None:
-                _compact_pending_tool_call_history()
                 msg = "LLM stream ended without a finish event"
                 if hook_mgr.hooks:
                     await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
@@ -3784,11 +3637,6 @@ async def run_agent_loop(
                 oversized_tool_calls=finish_event.oversized_tool_calls,
             )
             provider_request_id = finish_event.provider_request_id
-            # The request that just completed saw the previous large tool-call
-            # arguments in full. Compact them now so only one subsequent model
-            # turn pays that context cost and later turns cannot immediately
-            # echo a synthetic placeholder as the next file chunk.
-            _compact_pending_tool_call_history()
             yield LLMOutputEvent(
                 step=step + 1,
                 content=response.content,
@@ -3803,9 +3651,6 @@ async def run_agent_loop(
             from .llm.error_messages import classify_llm_error, extract_llm_error_code
             from .retry import StreamInterrupted
 
-            # The provider request was attempted with the pending arguments in
-            # full. Do not retain them indefinitely when the request fails.
-            _compact_pending_tool_call_history()
             provider_request_id = None
             if isinstance(exc, StreamInterrupted):
                 partial_text = exc.partial_text or ""
@@ -4263,8 +4108,6 @@ async def run_agent_loop(
 
         # ── Append assistant message (non-truncated path) ───
         messages.append(assistant_msg)
-        if _tool_calls_need_model_history_compaction(assistant_msg.tool_calls):
-            pending_history_compaction = assistant_msg
 
         # Reset the retry counter now that a clean turn landed — a future
         # truncation on a later step should get its own fresh budget.
@@ -4609,7 +4452,6 @@ async def run_agent_loop(
         # ── Cancellation check (before tools) ──────────────
         if cancelled():
             _cleanup_incomplete_messages(messages)
-            _compact_pending_tool_call_history()
             if hook_mgr.hooks:
                 await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
             yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
@@ -5437,7 +5279,6 @@ async def run_agent_loop(
             # Cancellation check after each tool
             if cancelled():
                 _cleanup_incomplete_messages(messages)
-                _compact_pending_tool_call_history()
                 if hook_mgr.hooks:
                     await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
@@ -6066,7 +5907,6 @@ async def run_agent_loop(
             # protocol-valid state for the next turn.
             if cancelled():
                 _cleanup_incomplete_messages(messages)
-                _compact_pending_tool_call_history()
                 if hook_mgr.hooks:
                     await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
                 yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
@@ -6186,7 +6026,6 @@ async def run_agent_loop(
             )
 
         if plan_approval_gate_completed:
-            _compact_pending_tool_call_history()
             elapsed = perf_counter() - step_start
             total = perf_counter() - run_start
             if hook_mgr.hooks:
@@ -6302,7 +6141,6 @@ async def run_agent_loop(
             )
 
     # ── Max steps exhausted ─────────────────────────────────
-    _compact_pending_tool_call_history()
     msg = f"Task couldn't be completed after {max_steps} steps."
     if memory_extractor:
         asyncio.create_task(
