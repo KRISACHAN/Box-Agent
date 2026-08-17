@@ -8,7 +8,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .schema_validation import ToolArgumentIssue, validate_tool_arguments
+from .schema_validation import (
+    ToolArgumentIssue,
+    ToolSchemaValidationError,
+    validate_tool_arguments,
+)
 
 
 class ToolResult(BaseModel):
@@ -62,10 +66,31 @@ class Tool:
     ) -> ToolResult:
         """Validate an invocation and execute the tool implementation."""
 
-        issues = validate_tool_arguments(self.parameters, arguments)
+        try:
+            issues = validate_tool_arguments(self.parameters, arguments)
+        except ToolSchemaValidationError:
+            return self._invalid_schema_result()
         if issues:
             return self._invalid_arguments_result(issues)
         return await self._invoke_validated(arguments, context=context)
+
+    def _invalid_schema_result(self) -> ToolResult:
+        message = "tool parameter schema is invalid"
+        return ToolResult(
+            success=False,
+            error=f"INVALID_TOOL_SCHEMA: {self.name}\n- /: {message}",
+            raw_output={
+                "code": "INVALID_TOOL_SCHEMA",
+                "tool": self.name,
+                "issues": [
+                    {
+                        "path": "/",
+                        "keyword": "schema",
+                        "message": message,
+                    }
+                ],
+            },
+        )
 
     def _invalid_arguments_result(
         self,

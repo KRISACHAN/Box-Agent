@@ -10,6 +10,10 @@ from jsonschema import Draft202012Validator
 from jsonschema.validators import validator_for
 
 
+class ToolSchemaValidationError(ValueError):
+    """Raised when a tool parameter schema cannot be evaluated safely."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolArgumentIssue:
     """A safe, structured argument-validation issue."""
@@ -129,14 +133,23 @@ def validate_tool_arguments(
 ) -> tuple[ToolArgumentIssue, ...]:
     """Return deterministic, value-redacted validation issues."""
 
-    validator_class = validator_for(schema, default=Draft202012Validator)
-    validator = validator_class(schema)
-    errors = sorted(
-        validator.iter_errors(arguments),
-        key=lambda error: (
-            _json_pointer(error.absolute_path),
-            str(error.validator or ""),
-            error.message,
-        ),
-    )
-    return tuple(_safe_issue(error) for error in errors[:max_issues])
+    try:
+        validator_class = validator_for(schema, default=Draft202012Validator)
+        validator_class.check_schema(schema)
+        validator = validator_class(schema)
+        errors = sorted(
+            validator.iter_errors(arguments),
+            key=lambda error: (
+                _json_pointer(error.absolute_path),
+                str(error.validator or ""),
+                error.message,
+            ),
+        )
+        return tuple(_safe_issue(error) for error in errors[:max_issues])
+    except Exception:
+        # jsonschema exceptions can render the complete instance, including
+        # secrets from tool arguments. Never let those details cross the
+        # invocation boundary.
+        raise ToolSchemaValidationError(
+            "Tool parameter schema is invalid."
+        ) from None

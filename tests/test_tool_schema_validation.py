@@ -112,6 +112,39 @@ async def test_invoke_rejects_invalid_arguments_without_executing_or_leaking_val
 
 
 @pytest.mark.asyncio
+async def test_invoke_rejects_invalid_schema_without_leaking_arguments() -> None:
+    class InvalidSchemaTool(RecordingTool):
+        @property
+        def parameters(self) -> dict:
+            return {"type": "definitely-not-a-json-schema-type"}
+
+    tool = InvalidSchemaTool()
+    secret = "TOP_SECRET_ARGUMENT_VALUE"
+
+    result = await tool.invoke({"text": secret})
+
+    assert result.success is False
+    assert result.error == (
+        "INVALID_TOOL_SCHEMA: record\n"
+        "- /: tool parameter schema is invalid"
+    )
+    assert result.raw_output == {
+        "code": "INVALID_TOOL_SCHEMA",
+        "tool": "record",
+        "issues": [
+            {
+                "path": "/",
+                "keyword": "schema",
+                "message": "tool parameter schema is invalid",
+            }
+        ],
+    }
+    assert secret not in (result.error or "")
+    assert secret not in str(result.raw_output)
+    assert tool.calls == []
+
+
+@pytest.mark.asyncio
 async def test_invoke_reports_missing_required_property_at_its_pointer() -> None:
     result = await RecordingTool().invoke({})
 
