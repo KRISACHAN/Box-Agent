@@ -2714,6 +2714,46 @@ async def test_tool_exception():
 
 
 @pytest.mark.asyncio
+async def test_tool_argument_binding_error_is_reported_without_crashing_turn():
+    """Unexpected tool arguments should fail the call without aborting the turn."""
+    llm = MockLLM([
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="t1",
+                    type="function",
+                    function=FunctionCall(
+                        name="echo",
+                        arguments={"text": "hello", "path": "/tmp/output"},
+                    ),
+                )
+            ],
+            finish_reason="tool",
+        ),
+        LLMResponse(content="recovered", finish_reason="stop"),
+    ])
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"echo": EchoTool()},
+            max_steps=5,
+        )
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "unexpected keyword argument 'path'" in (results[0].error or "")
+    assert any(
+        isinstance(event, ContentEvent) and event.content == "recovered"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_cancellation_at_step_start():
     """Cancellation before first LLM call yields Done(CANCELLED)."""
     llm = MockLLM([LLMResponse(content="should not reach", finish_reason="stop")])

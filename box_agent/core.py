@@ -4896,8 +4896,9 @@ async def run_agent_loop(
                         await exec_task
                         result = exec_result  # type: ignore[assignment]
                 else:
-                    exec_task = asyncio.create_task(tools[fn_name].execute(**fn_args))
+                    exec_task: asyncio.Task[ToolResult] | None = None
                     try:
+                        exec_task = asyncio.create_task(tools[fn_name].execute(**fn_args))
                         while True:
                             done, _ = await asyncio.wait(
                                 {exec_task}, timeout=TOOL_ACTIVITY_INTERVAL_SECONDS
@@ -4924,7 +4925,7 @@ async def run_agent_loop(
                             error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
                         )
                     finally:
-                        if not exec_task.done():
+                        if exec_task is not None and not exec_task.done():
                             exec_task.cancel()
                             try:
                                 await exec_task
