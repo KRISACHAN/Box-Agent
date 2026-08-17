@@ -815,6 +815,7 @@ class SessionState:
         default_factory=dict
     )
     follow_up_suggestions_enabled: bool = False
+    follow_up_suggestions_task: asyncio.Task[None] | None = None
     turn_counter: int = 0
     current_turn_id: str = ""
     source_text: str = ""  # accumulated real user requests for source-bound artifact checks
@@ -1734,6 +1735,10 @@ class BoxACPAgent:
                 log.error("session/prompt", session_id=session_id, message="Failed to auto-create session")
                 return PromptResponse(stopReason="refusal")
 
+        pending_suggestions = state.follow_up_suggestions_task
+        if pending_suggestions is not None and not pending_suggestions.done():
+            pending_suggestions.cancel()
+        state.follow_up_suggestions_task = None
         state.cancelled = False
         was_waiting_for_user_input = state.waiting_for_user_input
         user_text = "\n".join(block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "") for block in params.prompt)
@@ -2469,6 +2474,9 @@ class BoxACPAgent:
                     turn_id=state.current_turn_id,
                 )
             state.cancelled = True
+            pending_suggestions = state.follow_up_suggestions_task
+            if pending_suggestions is not None and not pending_suggestions.done():
+                pending_suggestions.cancel()
             log.info("session/cancel", session_id=params.sessionId, message="Cancel requested")
 
     def _apply_goal_action(self, agent: Agent, params: dict[str, Any]) -> dict[str, Any]:
@@ -3577,12 +3585,11 @@ class BoxACPAgent:
                 update_tool_call(tool_call_id, raw_output=payload),
             )
 
-        async def _generate_follow_up_suggestions(final_content: str) -> list[str]:
-            latest_user_request = ""
-            for message in reversed(agent.messages):
-                if message.role == "user" and isinstance(message.content, str):
-                    latest_user_request = message.content
-                    break
+        async def _generate_follow_up_suggestions(
+            latest_user_request: str,
+            final_content: str,
+            suggestion_turn_id: str,
+        ) -> list[str]:
             if not latest_user_request or not final_content.strip():
                 return []
 
@@ -3595,7 +3602,7 @@ class BoxACPAgent:
                     ),
                     system_prompt=build_follow_up_suggestions_generation_system_prompt(),
                     session_id=state.upstream_session_id,
-                    turn_id=state.current_turn_id,
+                    turn_id=suggestion_turn_id,
                     title=state.upstream_title,
                     call_kind="utility",
                     timeout=8.0,
@@ -3616,6 +3623,70 @@ class BoxACPAgent:
                 duration_ms=result.duration_ms,
             )
             return suggestions
+
+        async def _generate_and_send_follow_up_suggestions(
+            latest_user_request: str,
+            final_content: str,
+            expected_turn_id: str,
+        ) -> None:
+            try:
+                suggestions = await _generate_follow_up_suggestions(
+                    latest_user_request,
+                    final_content,
+                    expected_turn_id,
+                )
+                if (
+                    state.current_turn_id != expected_turn_id
+                    or state.cancelled
+                    or not suggestions
+                ):
+                    return
+                await self._send(
+                    session_id,
+                    update_tool_call(
+                        f"follow-up-suggestions-{uuid4().hex[:8]}",
+                        raw_output={
+                            "type": "follow_up_suggestions",
+                            "turn_id": expected_turn_id,
+                            "suggestions": suggestions,
+                        },
+                    ),
+                )
+            except asyncio.CancelledError:
+                log.info(
+                    "follow_up_suggestions/cancelled",
+                    session_id=session_id,
+                    turn_id=expected_turn_id,
+                )
+            except Exception as exc:
+                log.exception(
+                    "follow_up_suggestions/error",
+                    exc,
+                    session_id=session_id,
+                    turn_id=expected_turn_id,
+                )
+
+        def _schedule_follow_up_suggestions(final_content: str) -> None:
+            latest_user_request = ""
+            for message in reversed(agent.messages):
+                if message.role == "user" and isinstance(message.content, str):
+                    latest_user_request = message.content
+                    break
+            task = asyncio.create_task(
+                _generate_and_send_follow_up_suggestions(
+                    latest_user_request,
+                    final_content,
+                    turn_id,
+                ),
+                name=f"follow-up-suggestions:{session_id}:{turn_id}",
+            )
+            state.follow_up_suggestions_task = task
+
+            def _clear_finished_task(completed: asyncio.Task[None]) -> None:
+                if state.follow_up_suggestions_task is completed:
+                    state.follow_up_suggestions_task = None
+
+            task.add_done_callback(_clear_finished_task)
 
         llm: Any = _ActionHintNormalizingLLM(agent.llm)
         if state.follow_up_suggestions_enabled:
@@ -4008,13 +4079,12 @@ class BoxACPAgent:
                             )
                         suggestions = getattr(llm, "follow_up_suggestions", [])
                         if (
-                            reason == StopReason.END_TURN
+                            state.follow_up_suggestions_enabled
+                            and reason == StopReason.END_TURN
                             and state.pending_plan_approval is None
                             and not state.waiting_for_user_input
                             and (state.agent.goal is None or state.agent.goal.status != "active")
                         ):
-                            if not suggestions:
-                                suggestions = await _generate_follow_up_suggestions(final_content)
                             if suggestions:
                                 await self._send(
                                     session_id,
@@ -4026,6 +4096,8 @@ class BoxACPAgent:
                                         },
                                     ),
                                 )
+                            else:
+                                _schedule_follow_up_suggestions(final_content)
                         await _send_turn_usage()
                         return reason.value
 
