@@ -741,7 +741,7 @@ async def test_write_tool():
 
 
 @pytest.mark.asyncio
-async def test_write_tool_has_no_pptx_specific_policy():
+async def test_write_tool_blocks_pptx_skipcheck_exporter():
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = Path(tmpdir) / "export_skipcheck.js"
         tool = WriteTool()
@@ -750,8 +750,39 @@ async def test_write_tool_has_no_pptx_specific_policy():
             content='await window.domToPptx.exportToPptx([]); require("./dom-to-pptx.bundle.js");',
         )
 
-        assert result.success
-        assert file_path.exists()
+        assert not result.success
+        assert "PPTX HTML self-check bypass blocked" in result.error
+        assert not file_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_write_tool_blocks_pptx_bypass_split_across_chunks(tmp_path):
+    target = tmp_path / "export.js"
+    target.write_text("original", encoding="utf-8")
+    tool = WriteTool(workspace_dir=str(tmp_path))
+
+    first = await tool.execute(
+        path="export.js",
+        content="await window.domToPptx.exportTo",
+        chunk_index=0,
+        final=False,
+    )
+    blocked = await tool.execute(
+        path="export.js",
+        content='Pptx([]); require("./dom-to-pptx.bundle.js");',
+        chunk_index=1,
+        final=True,
+    )
+
+    assert first.success is True
+    assert blocked.success is False
+    assert "PPTX HTML self-check bypass blocked" in blocked.error
+    assert target.read_text(encoding="utf-8") == "original"
+
+    recovered = await tool.execute(path="export.js", content="safe replacement")
+
+    assert recovered.success is True
+    assert target.read_text(encoding="utf-8") == "safe replacement"
 
 
 @pytest.mark.asyncio
@@ -776,7 +807,7 @@ async def test_append_tool_allows_theme_css_after_canonical_pptx_comments(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_write_tool_itself_has_no_model_history_protocol_policy():
+async def test_write_tool_rejects_model_history_placeholder():
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = Path(tmpdir) / "deck.html"
         tool = WriteTool()
@@ -790,8 +821,9 @@ async def test_write_tool_itself_has_no_model_history_protocol_policy():
             ),
         )
 
-        assert result.success
-        assert file_path.exists()
+        assert not result.success
+        assert "model-history placeholder" in result.error
+        assert not file_path.exists()
 
 
 @pytest.mark.asyncio

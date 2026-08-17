@@ -8,6 +8,8 @@ from box_agent.tools.file_tools import (
     AppendTool,
     EditTool,
     MAX_FILE_TOOL_CONTENT_CHARS,
+    MAX_WRITE_FILE_BYTES,
+    MAX_WRITE_FILE_CHUNKS,
     WriteTool,
 )
 from box_agent.tools.setup import SANDBOX_INFO_PROMPT, add_workspace_tools
@@ -76,6 +78,107 @@ async def test_write_file_chunks_enforce_order_and_idempotent_retries(tmp_path):
     assert skipped.success is False
     assert skipped.error.startswith("WRITE_FILE_CHUNK_OUT_OF_ORDER")
     assert not (tmp_path / "a.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_write_file_final_chunk_retry_returns_committed_receipt(tmp_path):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+
+    first = await tool.execute(
+        path="a.txt", content="first-", chunk_index=0, final=False
+    )
+    committed = await tool.execute(
+        path="a.txt", content="last", chunk_index=1, final=True
+    )
+    retried = await tool.execute(
+        path="a.txt", content="last", chunk_index=1, final=True
+    )
+
+    assert first.success is True
+    assert committed.success is True
+    assert retried == committed
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "first-last"
+
+
+@pytest.mark.asyncio
+async def test_write_file_rejects_conflicting_final_chunk_retry(tmp_path):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    await tool.execute(path="a.txt", content="first-", chunk_index=0, final=False)
+    committed = await tool.execute(
+        path="a.txt", content="last", chunk_index=1, final=True
+    )
+
+    conflict = await tool.execute(
+        path="a.txt", content="different", chunk_index=1, final=True
+    )
+
+    assert committed.success is True
+    assert conflict.success is False
+    assert conflict.error.startswith("WRITE_FILE_FINAL_CHUNK_CONFLICT")
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "first-last"
+
+
+@pytest.mark.asyncio
+async def test_write_file_final_retry_rejects_changed_committed_target(tmp_path):
+    target = tmp_path / "a.txt"
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    await tool.execute(path="a.txt", content="first-", chunk_index=0, final=False)
+    await tool.execute(path="a.txt", content="last", chunk_index=1, final=True)
+    target.write_text("changed elsewhere", encoding="utf-8")
+
+    retry = await tool.execute(
+        path="a.txt", content="last", chunk_index=1, final=True
+    )
+
+    assert retry.success is False
+    assert retry.error.startswith("WRITE_FILE_COMMITTED_STATE_CHANGED")
+    assert target.read_text(encoding="utf-8") == "changed elsewhere"
+
+
+@pytest.mark.asyncio
+async def test_write_file_new_chunk_zero_replaces_prior_committed_receipt(tmp_path):
+    target = tmp_path / "a.txt"
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    first = await tool.execute(path="a.txt", content="first")
+
+    second = await tool.execute(path="a.txt", content="second")
+
+    assert first.success is True
+    assert second.success is True
+    assert target.read_text(encoding="utf-8") == "second"
+
+
+@pytest.mark.asyncio
+async def test_write_file_enforces_transaction_size_and_chunk_limits(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "box_agent.tools.file_tools.MAX_WRITE_FILE_BYTES", 3
+    )
+    monkeypatch.setattr(
+        "box_agent.tools.file_tools.MAX_WRITE_FILE_CHUNKS", 2
+    )
+    tool = WriteTool(workspace_dir=str(tmp_path))
+
+    accepted = await tool.execute(
+        path="size.txt", content="abc", chunk_index=0, final=False
+    )
+    oversized = await tool.execute(
+        path="size.txt", content="d", chunk_index=1, final=True
+    )
+    await tool.execute(path="chunks.txt", content="a", chunk_index=0, final=False)
+    await tool.execute(path="chunks.txt", content="b", chunk_index=1, final=False)
+    too_many = await tool.execute(
+        path="chunks.txt", content="c", chunk_index=2, final=True
+    )
+
+    assert accepted.success is True
+    assert oversized.error.startswith("WRITE_FILE_TOTAL_SIZE_EXCEEDED")
+    assert too_many.error.startswith("WRITE_FILE_TOO_MANY_CHUNKS")
+    assert MAX_WRITE_FILE_BYTES == 10 * 1024 * 1024
+    assert MAX_WRITE_FILE_CHUNKS == 2_048
+    assert not (tmp_path / "size.txt").exists()
+    assert not (tmp_path / "chunks.txt").exists()
 
 
 @pytest.mark.asyncio
