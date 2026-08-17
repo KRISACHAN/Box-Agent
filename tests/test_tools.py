@@ -741,7 +741,7 @@ async def test_write_tool():
 
 
 @pytest.mark.asyncio
-async def test_write_tool_blocks_pptx_skipcheck_exporter():
+async def test_write_tool_has_no_pptx_specific_policy():
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = Path(tmpdir) / "export_skipcheck.js"
         tool = WriteTool()
@@ -750,9 +750,8 @@ async def test_write_tool_blocks_pptx_skipcheck_exporter():
             content='await window.domToPptx.exportToPptx([]); require("./dom-to-pptx.bundle.js");',
         )
 
-        assert not result.success
-        assert "PPTX HTML self-check bypass blocked" in result.error
-        assert not file_path.exists()
+        assert result.success
+        assert file_path.exists()
 
 
 @pytest.mark.asyncio
@@ -777,7 +776,7 @@ async def test_append_tool_allows_theme_css_after_canonical_pptx_comments(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_write_tool_rejects_model_history_placeholder():
+async def test_write_tool_itself_has_no_model_history_protocol_policy():
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = Path(tmpdir) / "deck.html"
         tool = WriteTool()
@@ -791,9 +790,8 @@ async def test_write_tool_rejects_model_history_placeholder():
             ),
         )
 
-        assert not result.success
-        assert "model-history placeholder" in result.error
-        assert not file_path.exists()
+        assert result.success
+        assert file_path.exists()
 
 
 @pytest.mark.asyncio

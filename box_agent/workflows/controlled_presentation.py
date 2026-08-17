@@ -60,15 +60,15 @@ _CONTENT_PATCH_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_PATCH_INPUT_READY: PATCH_INPUT in the latest checkpoint "
     "already contains the exact outline content, slide mapping, prop shapes, and ready "
     "media paths. Do not inspect files again. Write deck.patch.json now with write_file "
-    "(and append_file only if the body exceeds the file-tool limit)."
+    "(use ordered chunk_index/final calls if one model response cannot hold the body)."
 )
 _CONTENT_PATCH_REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"read_file", "write_file", "append_file", "edit_file", "staged_file_write"}
 )
 _CONTENT_PATCH_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_PATCH_JSON_INCOMPLETE: deck.patch.json is not complete, "
-    "valid JSON. Read, rewrite, edit, append, or complete one staged_file_write "
-    "transaction only for that file until it parses; do not run apply_deck_patch.js "
+    "valid JSON. Read, rewrite, edit, append, or complete ordered write_file chunks "
+    "only for that file until it parses; do not run apply_deck_patch.js "
     "or mutate another artifact yet."
 )
 _CONTENT_PATCH_STAGED_ACTIVE_TOOL_ERROR = (
@@ -136,9 +136,9 @@ _REPAIR_TOOL_ERROR = (
 _OUTLINE_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_OUTLINE_REPAIR_INPUT_READY: REPAIR_INPUT in the "
     "latest checkpoint already contains the complete current outline and fresh "
-    "validator issues. Write the corrected outline.json now with write_file, or use "
-    "one staged_file_write begin/append_text/commit transaction when it exceeds the "
-    "single-call limit; do not reread files, inspect the schema, update todos/plans, "
+    "validator issues. Write the corrected outline.json now with write_file, using "
+    "ordered chunk_index/final calls if one model response cannot hold it; do not "
+    "reread files, inspect the schema, update todos/plans, "
     "or run another command first."
 )
 _IMAGE_STATUS_TOOL_ERROR = (
@@ -221,16 +221,15 @@ _RESEARCH_HANDOFF_TOOL_ERROR = (
     "from context; otherwise write outline.json now. In output mode, call "
     "write_file with path=outline.json so it resolves inside the canonical artifact "
     "root; never use the absolute session-workspace path. If the complete JSON "
-    "exceeds the single-call limit, use one staged_file_write transaction whose "
-    "begin call also uses path=outline.json, then reuse its exact write_id through "
-    "append_text and commit."
+    "cannot fit in one model response, use ordered write_file calls for that same "
+    "path: start with chunk_index=0 and final=false, increment the index, and set "
+    "final=true on the last chunk."
 )
 _OUTLINE_TARGET_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_OUTLINE_TARGET_REQUIRED: write outline.json inside "
     "the canonical presentation artifact root. In output mode, use the exact "
     "artifact-relative path outline.json; never use the absolute session-workspace "
-    "path. For a large outline, the staged_file_write begin call must use that same "
-    "path."
+    "path. For a large outline, every ordered write_file chunk must use that same path."
 )
 _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research searches "
@@ -663,6 +662,13 @@ def _apply_patch_error(
             and safe_patch_path
             and isinstance(arguments.get("content"), str)
         ):
+            chunk_index = arguments.get("chunk_index", 0)
+            if arguments.get("final", True) is False or (
+                isinstance(chunk_index, int)
+                and not isinstance(chunk_index, bool)
+                and chunk_index > 0
+            ):
+                return None
             return (
                 None
                 if _patch_repair_changes_named_field(
@@ -1379,7 +1385,9 @@ def _repair_write_call_allowed(
         return False
     if tool_name == "staged_file_write":
         return _staged_repair_call_allowed(stage, arguments)
-    if tool_name in {"write_file", "append_file"}:
+    if tool_name == "write_file":
+        return _is_safe_named_path(arguments.get("path"), expected_name)
+    if tool_name == "append_file":
         return _is_safe_named_path(arguments.get("path"), expected_name)
     return False
 
@@ -1396,7 +1404,12 @@ def _is_committed_repair_mutation(
     expected_name = _repair_artifact_name(stage)
     if expected_name is None:
         return False
-    if tool_name in {"write_file", "append_file"}:
+    if tool_name == "write_file":
+        return (
+            arguments.get("final", True) is not False
+            and _is_safe_named_path(arguments.get("path"), expected_name)
+        )
+    if tool_name == "append_file":
         return _is_safe_named_path(arguments.get("path"), expected_name)
     return (
         tool_name == "staged_file_write"
@@ -2492,6 +2505,10 @@ class ControlledPresentationPolicy:
             patch_path = arguments.get("path")
             wrote_patch = (
                 tool_name in {"write_file", "edit_file"}
+                and (
+                    tool_name != "write_file"
+                    or arguments.get("final", True) is not False
+                )
                 and isinstance(patch_path, str)
                 and Path(patch_path).name == "deck.patch.json"
                 and ".." not in Path(patch_path).parts

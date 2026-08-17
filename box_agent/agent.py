@@ -900,6 +900,16 @@ class Agent:
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):
                 self.api_total_tokens = event.total_tokens
+            if isinstance(event, DoneEvent):
+                write_tool = self.tools.get("write_file")
+                cleanup = getattr(write_tool, "cleanup_pending_writes", None)
+                if callable(cleanup):
+                    discarded = cleanup()
+                    if discarded:
+                        _log.info(
+                            "write_file discarded incomplete transactions: %s",
+                            discarded,
+                        )
             yield event
 
     # ── Backward-compatible run() ───────────────────────────

@@ -221,16 +221,17 @@ _MODEL_HISTORY_PLACEHOLDER_REPAIR_LIMIT: Final[int] = 1
 _MODEL_HISTORY_PLACEHOLDER_TOOL_ERROR = (
     "INTERNAL_MODEL_HISTORY_PLACEHOLDER: the requested tool argument is an internal "
     "history summary, not executable content. Regenerate the real argument. For static "
-    "artifacts, use staged_file_write instead of moving the body into execute_code."
+    "artifacts, use ordered write_file chunks instead of moving the body into execute_code."
 )
 _MODEL_HISTORY_PLACEHOLDER_REPAIR_GUIDANCE = (
     "An internal model-history placeholder was returned as a tool argument. Regenerate "
     "the missing real content now. Never copy text beginning with "
     "`[Full tool-call argument omitted from model history]`, `[Full file content omitted "
     "from model history]`, or `[Full tool output omitted from model history]` into any "
-    "tool argument. For long static artifacts, use staged_file_write with begin, ordered "
-    "append_text or append_file chunks, and commit; do not move the file body into "
-    "execute_code."
+    "tool argument. For long static artifacts, continue write_file from the "
+    "next_chunk_index returned by the last successful call for that path, or use "
+    "chunk_index=0 only if no chunk has been accepted. Keep final=false until the "
+    "last chunk; do not move the file body into execute_code."
 )
 _MODEL_HISTORY_PLACEHOLDER_RECOVERY_REQUIRED = (
     "INTERNAL_MODEL_HISTORY_PLACEHOLDER_RECOVERY_REQUIRED: a mutation argument was "
@@ -238,8 +239,24 @@ _MODEL_HISTORY_PLACEHOLDER_RECOVERY_REQUIRED = (
     "happen. Complete that exact mutation with regenerated real content before "
     "calling any downstream tool; do not validate, apply, render, or otherwise reuse "
     "the unchanged target. For a rejected file mutation, either retry a file mutation "
-    "with real content for the same target or finish one staged_file_write "
-    "begin/append_text/commit transaction for that target."
+    "with real content for the same target, using ordered write_file chunks when needed."
+)
+
+_OUTPUT_LENGTH_TOOL_RECOVERY = (
+    "The previous response ended because it reached the maximum output length. "
+    "None of its tool calls were executed, and no tool side effects occurred. "
+    "Retry and complete the original task. Do not assume that any tool call from "
+    "that response took effect."
+)
+_OUTPUT_LENGTH_WRITE_FILE_RECOVERY = (
+    "The previous response ended because it reached the maximum output length. "
+    "None of the tool calls in that response were executed, so that response made "
+    "no file-system changes. Previously accepted chunks, if any, are still pending. "
+    "Retry and complete the original task without emitting the entire large file in "
+    "one write_file call. For each path, continue with the next_chunk_index returned "
+    "by its last successful write_file result; use chunk_index=0 only when no chunk "
+    "has been accepted for that path. Keep final=false until the last chunk, then set "
+    "final=true."
 )
 
 _BROWSER_SNAPSHOT_OUTPUT_PATH_ERROR = (
@@ -887,6 +904,8 @@ def _record_model_history_placeholder_recovery_result(
             return None
         return recovery
     if tool_name in _MODEL_HISTORY_FILE_MUTATION_TOOLS:
+        if tool_name == "write_file" and arguments.get("final", True) is False:
+            return recovery
         return None
     if tool_name != "staged_file_write":
         return recovery
@@ -3822,8 +3841,8 @@ async def run_agent_loop(
                     recovery_text = (
                         "模型服务在上一轮已经输出部分内容、但尚未完成动作时长时间没有返回"
                         "新数据。请从未完成的动作继续，不要重复已经输出的说明，也不要把"
-                        "说明误当成任务完成。若要生成长文件，请使用 staged_file_write，"
-                        "每个 append_text 不超过 "
+                        "说明误当成任务完成。若要生成长文件，请使用 write_file 的"
+                        "chunk_index/final 分块协议，每块建议不超过 "
                         f"{RECOMMENDED_GENERATED_BODY_CHARS:,} 字符；bash 只传短命令。"
                     )
                     messages.append(
@@ -3887,10 +3906,11 @@ async def run_agent_loop(
                 repair_text = (
                     "上一轮工具参数在流式生成阶段超过安全预算，工具没有执行。"
                     f"超限信息：{rendered}。不要重新生成相同的大参数，也不要提高 token "
-                    "预算。bash 只执行短命令；预计超过 8,000 字符的文本文件必须使用 "
-                    "staged_file_write：begin 后用不超过 "
-                    f"{RECOMMENDED_GENERATED_BODY_CHARS:,} 字符的 append_text 分块，"
-                    "需要复用本地文本时用 append_file，最后 commit 并校验文件。"
+                    "预算。bash 只执行短命令；长文本文件请使用 write_file 的有序分块。"
+                    "同一路径已有成功分块时，从最近一次结果返回的 next_chunk_index 继续；"
+                    "只有尚无已接受分块时才使用 chunk_index=0。每块建议不超过 "
+                    f"{RECOMMENDED_GENERATED_BODY_CHARS:,} 字符，最后一块设置 final=true，"
+                    "然后校验文件。"
                 )
                 messages.append(
                     Message(role="user", content=format_injected_message(repair_text))
@@ -3932,41 +3952,103 @@ async def run_agent_loop(
             return
 
         # ── Output truncated by provider token limit ────────
-        # finish_reason="length" splits into four cases, distinguished by
-        # (a) whether visible text was already streamed to the host and
-        # (b) whether the tool_call arguments came back parseable:
-        #
-        #   1. NO visible text + broken tool_call + stream_dropped_mid_tool →
-        #      SSE stream died mid tool-call (network / peer close). Boosting
-        #      max_tokens is pointless. SAME-messages retry is safe because
-        #      nothing user-visible was emitted.
-        #   2. NO visible text + broken tool_call + upstream said "length" →
-        #      genuine output-cap on tool_call JSON. Boost max_tokens and
-        #      SAME-messages retry. Still safe: no double-render.
-        #   3. Visible text present (with or without broken tool_call) →
-        #      the host has already rendered the partial via ContentEvent.
-        #      SAME-messages retry would re-stream the SAME (or similar) text
-        #      and the user sees it twice. Instead: append the partial as
-        #      an assistant turn and hand off to the truncation_continuation
-        #      machinery — the next LLM call CONTINUES the reply rather than
-        #      restarting it.
-        #   4. No tool_calls, no visible text, but finish_reason="length" →
-        #      degenerate case (model spent tokens on hidden thinking or the
-        #      relay lied). SAME-messages retry with a boost.
-        #
-        # Only after the retry / continuation budget is exhausted do we
-        # surface a user-visible error.
+        # The finish reason, not best-effort JSON parseability, determines
+        # whether a response is complete enough to execute. A parseable tool
+        # call that arrived with length/max_tokens is still only a discarded
+        # attempt. Both parseable and broken attempts receive the same hidden
+        # user recovery instruction and no tool result, because no ToolCall
+        # was admitted into executable conversation history.
         if response.finish_reason in ("length", "max_tokens"):
             stream_dropped = getattr(response, "stream_dropped_mid_tool", False)
             has_broken_tool_call = bool(response.truncated_tool_calls)
             visible_text = (response.content or "").strip()
+            parsed_tool_names = {
+                tool_call.function.name
+                for tool_call in (response.tool_calls or [])
+                if tool_call.function.name
+            }
+            truncated_tool_names = {
+                str(item.get("name"))
+                for item in (response.truncated_tool_calls or [])
+                if item.get("name")
+            }
+            tool_names = parsed_tool_names | truncated_tool_names
+            has_tool_attempt = bool(
+                response.tool_calls or response.truncated_tool_calls
+            )
 
-            # Case 3: visible text already streamed. SAME-messages retry is
-            # NOT safe — it would double-render. Delegate to the continuation
-            # path: keep the partial assistant turn and inject a "continue
-            # from the tail" nudge. This is the same shape the normal
-            # suspected-truncation branch uses (see below), reused here for
-            # the honest "length" finish.
+            if has_tool_attempt:
+                if visible_text:
+                    messages.append(
+                        Message(
+                            role="assistant",
+                            content=response.content,
+                            thinking=response.thinking,
+                        )
+                    )
+                if truncated_tool_call_retries < max_truncated_tool_call_retries:
+                    truncated_tool_call_retries += 1
+                    repair_text = (
+                        _OUTPUT_LENGTH_WRITE_FILE_RECOVERY
+                        if "write_file" in tool_names
+                        else _OUTPUT_LENGTH_TOOL_RECOVERY
+                    )
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=format_injected_message(repair_text),
+                        )
+                    )
+                    yield InjectedMessageEvent(
+                        content=repair_text,
+                        injection_id=None,
+                        user_visible=False,
+                    )
+                    _log.warning(
+                        "discarded output-length tool attempt %d/%d: tools=%s "
+                        "parseable=%s broken=%s stream_dropped=%s request_id=%s",
+                        truncated_tool_call_retries,
+                        max_truncated_tool_call_retries,
+                        sorted(tool_names),
+                        bool(response.tool_calls),
+                        has_broken_tool_call,
+                        stream_dropped,
+                        provider_request_id,
+                    )
+                    elapsed = perf_counter() - step_start
+                    total = perf_counter() - run_start
+                    if hook_mgr.hooks:
+                        await hook_mgr.fire_step_end(
+                            step=step + 1,
+                            elapsed_seconds=elapsed,
+                            total_elapsed_seconds=total,
+                        )
+                    yield StepEnd(
+                        step=step + 1,
+                        elapsed_seconds=elapsed,
+                        total_elapsed_seconds=total,
+                    )
+                    continue
+
+                msg = "工具调用因输出长度限制未执行；分块重试仍未完成。"
+                _log.error(
+                    "output-length tool recovery exhausted: tools=%s request_id=%s",
+                    sorted(tool_names),
+                    provider_request_id,
+                )
+                _cleanup_incomplete_messages(messages)
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                    await hook_mgr.fire_done(
+                        stop_reason=StopReason.MAX_TOKENS,
+                        final_content=msg,
+                    )
+                yield ErrorEvent(message=msg, is_fatal=True)
+                yield DoneEvent(stop_reason=StopReason.MAX_TOKENS, final_content=msg)
+                return
+
+            # No tool attempt: preserve the existing text continuation and
+            # empty-response retry behavior.
             if visible_text and truncation_continuations < max_truncation_continuations:
                 messages.append(assistant_msg)
                 truncation_continuations += 1
@@ -4002,8 +4084,6 @@ async def run_agent_loop(
                 )
                 continue
 
-            # Cases 1/2/4: no visible text was streamed, so re-issuing the
-            # SAME messages does not double-render anything.
             if (
                 not visible_text
                 and truncated_tool_call_retries < max_truncated_tool_call_retries
@@ -4041,7 +4121,7 @@ async def run_agent_loop(
                 )
                 continue
 
-            # Retries / continuations exhausted — persist what we have and
+            # Retries / continuations exhausted — persist plain text and
             # surface the error.
             messages.append(assistant_msg)
             usage = response.usage
