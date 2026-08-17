@@ -156,6 +156,11 @@ Other MCP servers must be enabled explicitly in `~/.box-agent/config/mcp.json`.
 3.  Implement the required properties and methods.
 4.  Register the tool during Agent initialization.
 
+The runtime dispatches tool calls through `Tool.invoke(arguments)`. This
+validates each call's arguments against `parameters` before delegating to the
+tool's `execute()` implementation. Tool authors implement `execute()`; runtime
+callers should use `invoke()` so they do not bypass argument validation.
+
 #### Example
 
 ```python

@@ -182,7 +182,12 @@ async def _stream_with_activity(
             except (RuntimeError, asyncio.CancelledError):
                 pass
 from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
-from .tools.base import EventEmittingTool, Tool, ToolResult
+from .tools.base import (
+    EventEmittingTool,
+    Tool,
+    ToolInvocationContext,
+    ToolResult,
+)
 from .tools.argument_limits import RECOMMENDED_GENERATED_BODY_CHARS
 from .tools.browser_intent import BrowserToolIntentPolicy
 from .tools.skill_preload import build_active_skills_prompt
@@ -4829,10 +4834,12 @@ async def run_agent_loop(
                     async def _seq_exec(t=tool, a=fn_args):
                         nonlocal exec_result
                         try:
-                            exec_result = await t.execute_with_event_context(
-                                event_queue=event_queue,
-                                parent_tool_call_id=tc_id,
-                                **a,
+                            exec_result = await t.invoke(
+                                a,
+                                context=ToolInvocationContext(
+                                    event_queue=event_queue,
+                                    parent_tool_call_id=tc_id,
+                                ),
                             )
                         except Exception as exc:
                             detail = f"{type(exc).__name__}: {exc!s}"
@@ -4896,7 +4903,7 @@ async def run_agent_loop(
                         await exec_task
                         result = exec_result  # type: ignore[assignment]
                 else:
-                    exec_task = asyncio.create_task(tools[fn_name].execute(**fn_args))
+                    exec_task = asyncio.create_task(tools[fn_name].invoke(fn_args))
                     try:
                         while True:
                             done, _ = await asyncio.wait(
@@ -4985,7 +4992,7 @@ async def run_agent_loop(
                     )
                     _approve_tool_permission(tools[fn_name], result.permission_request)
                     try:
-                        result = await tools[fn_name].execute(**fn_args)
+                        result = await tools[fn_name].invoke(fn_args)
                     except Exception as exc:
                         detail = f"{type(exc).__name__}: {exc!s}"
                         trace = traceback.format_exc()
@@ -5347,13 +5354,15 @@ async def run_agent_loop(
                     async with par_semaphore:
                         tool = tools[fn_name]
                         if isinstance(tool, EventEmittingTool):
-                            r = await tool.execute_with_event_context(
-                                event_queue=par_event_queue,
-                                parent_tool_call_id=tc.id,
-                                **fn_args,
+                            r = await tool.invoke(
+                                fn_args,
+                                context=ToolInvocationContext(
+                                    event_queue=par_event_queue,
+                                    parent_tool_call_id=tc.id,
+                                ),
                             )
                         else:
-                            r = await tool.execute(**fn_args)
+                            r = await tool.invoke(fn_args)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -5566,7 +5575,7 @@ async def run_agent_loop(
                         )
                         _approve_tool_permission(tools[fn_name], result.permission_request)
                         try:
-                            result = await tools[fn_name].execute(**fn_args)
+                            result = await tools[fn_name].invoke(fn_args)
                         except Exception as exc:
                             detail = f"{type(exc).__name__}: {exc!s}"
                             trace = traceback.format_exc()

@@ -888,6 +888,126 @@ async def test_simple_conversation():
     assert done.final_content == "hello"
 
 
+class SchemaGuardTool(Tool):
+    def __init__(self, *, parallel_safe: bool = False) -> None:
+        self.parallel_safe = parallel_safe
+        self.calls: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "schema_guard"
+
+    @property
+    def description(self) -> str:
+        return "Execute only schema-valid calls."
+
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+            "additionalProperties": False,
+        }
+
+    async def execute(self, text: str) -> ToolResult:
+        self.calls.append(text)
+        return ToolResult(success=True, content=text)
+
+
+@pytest.mark.asyncio
+async def test_sequential_runtime_rejects_invalid_tool_arguments_before_execution():
+    tool = SchemaGuardTool()
+    responses = [
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="invalid-schema-call",
+                    type="function",
+                    function=FunctionCall(
+                        name=tool.name,
+                        arguments={"text": 42},
+                    ),
+                )
+            ],
+            finish_reason="tool",
+        ),
+        LLMResponse(content="done", finish_reason="stop"),
+    ]
+
+    events = await collect(
+        run_agent_loop(
+            llm=MockLLM(responses),
+            messages=_msgs(),
+            tools={tool.name: tool},
+            max_steps=5,
+        )
+    )
+
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "invalid-schema-call"
+    )
+    assert result.success is False
+    assert result.raw_output["code"] == "INVALID_TOOL_ARGUMENTS"
+    assert tool.calls == []
+
+
+@pytest.mark.asyncio
+async def test_parallel_runtime_validates_each_tool_call_independently():
+    tool = SchemaGuardTool(parallel_safe=True)
+    responses = [
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="valid-parallel-call",
+                    type="function",
+                    function=FunctionCall(
+                        name=tool.name,
+                        arguments={"text": "ok"},
+                    ),
+                ),
+                ToolCall(
+                    id="invalid-parallel-call",
+                    type="function",
+                    function=FunctionCall(
+                        name=tool.name,
+                        arguments={"extra": "no"},
+                    ),
+                ),
+            ],
+            finish_reason="tool",
+        ),
+        LLMResponse(content="done", finish_reason="stop"),
+    ]
+
+    events = await collect(
+        run_agent_loop(
+            llm=MockLLM(responses),
+            messages=_msgs(),
+            tools={tool.name: tool},
+            max_steps=5,
+            max_parallel_tools=2,
+        )
+    )
+
+    results = {
+        event.tool_call_id: event
+        for event in events
+        if isinstance(event, ToolCallResult)
+    }
+    assert results["valid-parallel-call"].success is True
+    assert results["invalid-parallel-call"].success is False
+    assert results["invalid-parallel-call"].raw_output["code"] == (
+        "INVALID_TOOL_ARGUMENTS"
+    )
+    assert tool.calls == ["ok"]
+
+
 @pytest.mark.asyncio
 async def test_long_plain_answer_streams_before_finish_without_duplicate():
     chunks = ["李白是唐代诗人，" * 20, "他的诗歌想象瑰丽，" * 20, "后世称他为诗仙。"]
