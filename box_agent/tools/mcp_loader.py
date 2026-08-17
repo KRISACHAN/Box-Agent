@@ -755,6 +755,7 @@ class MCPServerConnection:
 
 # Global connections registry
 _mcp_connections: list[MCPServerConnection] = []
+_mcp_reconnect_locks: dict[str, asyncio.Lock] = {}
 
 
 @dataclass
@@ -778,7 +779,7 @@ _mcp_auth_token: str = ""
 
 
 def is_mcp_loading() -> bool:
-    return _mcp_loading
+    return _mcp_loading or get_mcp_tool_catalog().loading
 
 
 def get_mcp_config_path() -> str | None:
@@ -789,6 +790,11 @@ def get_mcp_tools_for_server(name: str) -> list:
     """Return the Tool objects currently held by a connected server."""
     conn = next((c for c in _mcp_connections if c.name == name), None)
     return list(conn.tools) if conn else []
+
+
+def get_all_mcp_tools() -> list:
+    """Return current MCP tools in connection registration order."""
+    return [tool for connection in _mcp_connections for tool in connection.tools]
 
 
 async def disconnect_mcp_server(name: str) -> dict:
@@ -1059,10 +1065,18 @@ async def cleanup_mcp_connections():
     for connection in _mcp_connections:
         await connection.disconnect()
     _mcp_connections.clear()
+    _mcp_reconnect_locks.clear()
     get_mcp_tool_catalog().clear()
 
 
 async def reconnect_mcp_server(name: str) -> dict:
+    """Serialize hot reconnects for one server name."""
+    lock = _mcp_reconnect_locks.setdefault(name, asyncio.Lock())
+    async with lock:
+        return await _reconnect_mcp_server_locked(name)
+
+
+async def _reconnect_mcp_server_locked(name: str) -> dict:
     """Re-read mcp.json and reconnect a single named MCP server in-place."""
     global _mcp_connections
 
@@ -1083,75 +1097,81 @@ async def reconnect_mcp_server(name: str) -> dict:
         _record_status(name, "disabled")
         return {"success": False, "error": "Server is disabled", "configPath": _mcp_config_path}
 
-    # Drop any existing connection for this server.
-    old_conn = next((c for c in _mcp_connections if c.name == name), None)
-    if old_conn:
-        try:
-            await old_conn.disconnect()
-        except Exception:
-            pass
-        _mcp_connections = [c for c in _mcp_connections if c.name != name]
-        get_mcp_tool_catalog().remove_server(name)
-
-    conn_type = _determine_connection_type(server_config)
-    url = server_config.get("url")
-    command = server_config.get("command")
-    transport_label = url or command or ""
-
-    # Mirror cold-start auth logic in load_mcp_tools_async(): compute a dynamic
-    # bearer if applicable, otherwise fold static Authorization headers in via
-    # request_auth_headers(). Without this a hot reconnect drops the token and
-    # hosted MCP endpoints (e.g. mcp.xiaohuanxiong.com) return 401 forever.
-    configured_headers = server_config.get("headers", {})
-    auth = _dynamic_bearer_auth_for_url(
-        url=url,
-        headers=configured_headers,
-        auth_file=_mcp_auth_file,
-        auth_token=_mcp_auth_token,
-    )
-    connection_headers = (
-        configured_headers
-        if auth is not None
-        else request_auth_headers(
-            auth_file=_mcp_auth_file,
-            explicit_token=_mcp_auth_token,
-            existing=configured_headers,
-            url=url,
-        )
-    )
-
-    conn = MCPServerConnection(
-        name=name,
-        connection_type=conn_type,
-        command=command,
-        args=server_config.get("args", []),
-        env=server_config.get("env", {}),
-        url=url,
-        headers=connection_headers,
-        auth=auth,
-        connect_timeout=server_config.get("connect_timeout"),
-        execute_timeout=server_config.get("execute_timeout"),
-        sse_read_timeout=server_config.get("sse_read_timeout"),
-        always_load=bool(server_config.get("alwaysLoad", False)),
-    )
-
-    _record_status(name, "connecting", transport=transport_label)
+    catalog = get_mcp_tool_catalog()
+    catalog.mark_server_loading(name)
     try:
-        success = await conn.connect()
-    except Exception as e:
-        _record_status(name, "failed", transport=transport_label, error=str(e))
-        return {"success": False, "error": str(e), "configPath": _mcp_config_path}
+        # Drop any existing connection for this server. Searches wait on the
+        # per-server refresh marker until the replacement snapshot is stable.
+        old_conn = next((c for c in _mcp_connections if c.name == name), None)
+        if old_conn:
+            try:
+                await old_conn.disconnect()
+            except Exception:
+                pass
+            _mcp_connections = [c for c in _mcp_connections if c.name != name]
+            catalog.remove_server(name)
 
-    if success:
-        _mcp_connections.append(conn)
-        _replace_server_catalog(conn)
-        _record_status(
-            name, "connected",
-            transport=transport_label,
-            tool_count=len(conn.tools),
-            tools=[t.name for t in conn.tools],
+        conn_type = _determine_connection_type(server_config)
+        url = server_config.get("url")
+        command = server_config.get("command")
+        transport_label = url or command or ""
+
+        # Mirror cold-start auth logic in load_mcp_tools_async(): compute a dynamic
+        # bearer if applicable, otherwise fold static Authorization headers in via
+        # request_auth_headers(). Without this a hot reconnect drops the token and
+        # hosted MCP endpoints (e.g. mcp.xiaohuanxiong.com) return 401 forever.
+        configured_headers = server_config.get("headers", {})
+        auth = _dynamic_bearer_auth_for_url(
+            url=url,
+            headers=configured_headers,
+            auth_file=_mcp_auth_file,
+            auth_token=_mcp_auth_token,
         )
-        return {"success": True, "toolCount": len(conn.tools), "tools": [t.name for t in conn.tools], "configPath": _mcp_config_path}
+        connection_headers = (
+            configured_headers
+            if auth is not None
+            else request_auth_headers(
+                auth_file=_mcp_auth_file,
+                explicit_token=_mcp_auth_token,
+                existing=configured_headers,
+                url=url,
+            )
+        )
 
-    _record_status(name, "failed", transport=transport_label, error=conn.last_error)
-    return {"success": False, "error": conn.last_error or "connect() returned False", "configPath": _mcp_config_path}
+        conn = MCPServerConnection(
+            name=name,
+            connection_type=conn_type,
+            command=command,
+            args=server_config.get("args", []),
+            env=server_config.get("env", {}),
+            url=url,
+            headers=connection_headers,
+            auth=auth,
+            connect_timeout=server_config.get("connect_timeout"),
+            execute_timeout=server_config.get("execute_timeout"),
+            sse_read_timeout=server_config.get("sse_read_timeout"),
+            always_load=bool(server_config.get("alwaysLoad", False)),
+        )
+
+        _record_status(name, "connecting", transport=transport_label)
+        try:
+            success = await conn.connect()
+        except Exception as e:
+            _record_status(name, "failed", transport=transport_label, error=str(e))
+            return {"success": False, "error": str(e), "configPath": _mcp_config_path}
+
+        if success:
+            _mcp_connections.append(conn)
+            _replace_server_catalog(conn)
+            _record_status(
+                name, "connected",
+                transport=transport_label,
+                tool_count=len(conn.tools),
+                tools=[t.name for t in conn.tools],
+            )
+            return {"success": True, "toolCount": len(conn.tools), "tools": [t.name for t in conn.tools], "configPath": _mcp_config_path}
+
+        _record_status(name, "failed", transport=transport_label, error=conn.last_error)
+        return {"success": False, "error": conn.last_error or "connect() returned False", "configPath": _mcp_config_path}
+    finally:
+        catalog.mark_server_ready(name)

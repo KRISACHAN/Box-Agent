@@ -548,8 +548,9 @@ class Agent:
                 f"{system_prompt.rstrip()}\n\n## Deferred MCP tools\n"
                 "Use `tool_search` when the visible tools do not cover the task. "
                 "Every returned match is activated for this session; only those matches "
-                "are added by their real tool name on the next step, while all unreturned "
-                "catalog tools remain hidden. Set `top_k` to the number of matching schemas "
+                "are added by their real tool name on the next step, while unreturned "
+                "deferred tools remain hidden. Tools explicitly configured as alwaysLoad "
+                "are already visible without search. Set `top_k` to the number of schemas "
                 "the task actually needs; do not assume a small fixed cap. A successful "
                 "`mcp_config` write only updates "
                 "configuration; do not claim the server is connected until an internal "
@@ -566,10 +567,9 @@ class Agent:
         for tool in self.tools.values():
             if hasattr(tool, "set_parent_system_prompt"):
                 tool.set_parent_system_prompt(system_prompt)
-            # Give sub-agents a live view of this agent's tool map so tools
-            # registered after construction (e.g. MCP web_search, merged in by
-            # register_mcp_tools which mutates self.tools in place) are still
-            # inherited by child agents instead of a stale snapshot.
+            # Give sub-agents a live view of the parent's currently visible real
+            # tools. Deferred MCP discovery stays parent-owned; once activated,
+            # a real MCP tool becomes inheritable without exposing tool_search.
             if hasattr(tool, "set_tool_provider"):
                 tool.set_tool_provider(self._inherited_tools)
         self.messages: list[Message] = [Message(role="system", content=system_prompt)]

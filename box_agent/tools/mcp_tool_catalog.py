@@ -41,33 +41,65 @@ class MCPToolCatalog:
         self._entries: dict[str, MCPToolEntry] = {}
         self._server_generations: dict[str, int] = {}
         self._loading = False
+        self._refreshing_servers: set[str] = set()
         self._ready_event: asyncio.Event | None = None
+
+    def _has_pending_discovery(self) -> bool:
+        return self._loading or bool(self._refreshing_servers)
+
+    def _ensure_pending_event(self) -> None:
+        if self._ready_event is None or self._ready_event.is_set():
+            self._ready_event = asyncio.Event()
 
     def mark_loading(self) -> None:
         """Mark initial discovery as incomplete without resetting live waiters."""
         with self._lock:
             if self._loading:
                 return
+            was_pending = self._has_pending_discovery()
             self._loading = True
-            self._ready_event = asyncio.Event()
+            if not was_pending:
+                self._ensure_pending_event()
 
     def mark_ready(self) -> None:
         """Publish discovery completion and release pending catalog searches."""
         with self._lock:
             self._loading = False
-            ready_event = self._ready_event
+            ready_event = (
+                self._ready_event if not self._has_pending_discovery() else None
+            )
+        if ready_event is not None:
+            ready_event.set()
+
+    def mark_server_loading(self, server_name: str) -> None:
+        """Mark one hot-reloading server unavailable for catalog searches."""
+        with self._lock:
+            if server_name in self._refreshing_servers:
+                return
+            was_pending = self._has_pending_discovery()
+            self._refreshing_servers.add(server_name)
+            if not was_pending:
+                self._ensure_pending_event()
+
+    def mark_server_ready(self, server_name: str) -> None:
+        """Finish one hot-reload and release waiters when discovery is stable."""
+        with self._lock:
+            self._refreshing_servers.discard(server_name)
+            ready_event = (
+                self._ready_event if not self._has_pending_discovery() else None
+            )
         if ready_event is not None:
             ready_event.set()
 
     @property
     def loading(self) -> bool:
         with self._lock:
-            return self._loading
+            return self._has_pending_discovery()
 
     async def wait_until_ready(self, timeout: float) -> bool:
         """Wait for active discovery, returning False on a bounded timeout."""
         with self._lock:
-            if not self._loading:
+            if not self._has_pending_discovery():
                 return True
             ready_event = self._ready_event
         if ready_event is None:
@@ -121,6 +153,7 @@ class MCPToolCatalog:
             self._entries.clear()
             self._server_generations.clear()
             self._loading = False
+            self._refreshing_servers.clear()
             ready_event = self._ready_event
             self._ready_event = None
         if ready_event is not None:

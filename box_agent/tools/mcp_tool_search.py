@@ -55,7 +55,8 @@ class ToolSearchTool(Tool):
             "Search the connected deferred MCP catalog by capability. Every hit "
             "returned by this call is immediately activated for this session and "
             "only those activated hits are added to the next model step; other "
-            "catalog tools are not exposed. Set top_k to however many matching tool "
+            "deferred catalog tools are not exposed, while alwaysLoad tools remain "
+            "visible without search. Set top_k to however many matching tool "
             "schemas the task actually needs, including ten or more when appropriate. "
             "This search activates tools but does not execute them."
         )

@@ -16,7 +16,11 @@ from box_agent.tools import mcp_loader
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.mcp_tool_catalog import MCPToolCatalog, get_mcp_tool_catalog
 from box_agent.tools.mcp_tool_search import MCPToolExposureManager, ToolSearchTool
-from box_agent.tools.setup import register_mcp_tools
+from box_agent.tools.setup import (
+    register_mcp_tools,
+    sync_mcp_tool_list,
+    sync_mcp_tools,
+)
 
 
 class FakeMCPTool(Tool):
@@ -511,3 +515,166 @@ async def test_loader_catalogs_always_load_server_tools(tmp_path, monkeypatch) -
         assert get_mcp_tool_catalog().get("mcp:ops/health_check") is None
     finally:
         await mcp_loader.cleanup_mcp_connections()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_reports_loading_until_replacement_catalog_is_ready(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    await mcp_loader.cleanup_mcp_connections()
+    catalog = get_mcp_tool_catalog()
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps({"mcpServers": {"crm": {"command": "fake"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mcp_loader, "_mcp_config_path", str(config_path))
+    connect_started = asyncio.Event()
+    release_connect = asyncio.Event()
+
+    async def blocked_connect(connection) -> bool:
+        connect_started.set()
+        await release_connect.wait()
+        connection.tools = [FakeMCPTool("lookup", connection.name, "Lookup")]
+        return True
+
+    monkeypatch.setattr(mcp_loader.MCPServerConnection, "connect", blocked_connect)
+    reconnect = asyncio.create_task(mcp_loader.reconnect_mcp_server("crm"))
+    try:
+        await connect_started.wait()
+        loading_result = await ToolSearchTool(
+            catalog,
+            OrderedDict(),
+            readiness_timeout=0.001,
+        ).execute(query="lookup")
+        assert loading_result.success is False
+        assert json.loads(loading_result.content)["state"] == "catalog_loading"
+
+        release_connect.set()
+        reconnect_result = await reconnect
+        assert reconnect_result["success"] is True
+        ready_result = await ToolSearchTool(
+            catalog,
+            OrderedDict(),
+            readiness_timeout=0.001,
+        ).execute(query="lookup")
+        assert ready_result.success is True
+        assert json.loads(ready_result.content)["activated"][0]["name"] == "lookup"
+    finally:
+        release_connect.set()
+        if not reconnect.done():
+            await reconnect
+        await mcp_loader.cleanup_mcp_connections()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_failure_releases_catalog_loading_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    await mcp_loader.cleanup_mcp_connections()
+    catalog = get_mcp_tool_catalog()
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps({"mcpServers": {"crm": {"command": "fake"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mcp_loader, "_mcp_config_path", str(config_path))
+
+    async def failed_connect(_connection) -> bool:
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(mcp_loader.MCPServerConnection, "connect", failed_connect)
+    try:
+        result = await mcp_loader.reconnect_mcp_server("crm")
+        assert result["success"] is False
+        assert catalog.loading is False
+        assert mcp_loader.is_mcp_loading() is False
+    finally:
+        await mcp_loader.cleanup_mcp_connections()
+
+
+@pytest.mark.asyncio
+async def test_same_server_reconnects_remain_serialized_with_queued_waiters(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    await mcp_loader.cleanup_mcp_connections()
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps({"mcpServers": {"crm": {"command": "fake"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mcp_loader, "_mcp_config_path", str(config_path))
+    release_first = asyncio.Event()
+    release_second = asyncio.Event()
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    third_started = asyncio.Event()
+    call_count = 0
+
+    async def serialized_connect(connection) -> bool:
+        nonlocal call_count
+        call_count += 1
+        current = call_count
+        if current == 1:
+            first_started.set()
+            await release_first.wait()
+        elif current == 2:
+            second_started.set()
+            await release_second.wait()
+        else:
+            third_started.set()
+        connection.tools = [FakeMCPTool("lookup", connection.name, "Lookup")]
+        return True
+
+    monkeypatch.setattr(
+        mcp_loader.MCPServerConnection,
+        "connect",
+        serialized_connect,
+    )
+    first = asyncio.create_task(mcp_loader.reconnect_mcp_server("crm"))
+    second = asyncio.create_task(mcp_loader.reconnect_mcp_server("crm"))
+    third: asyncio.Task | None = None
+    try:
+        await first_started.wait()
+        release_first.set()
+        await first
+        await second_started.wait()
+        third = asyncio.create_task(mcp_loader.reconnect_mcp_server("crm"))
+        await asyncio.sleep(0)
+        assert third_started.is_set() is False
+
+        release_second.set()
+        await asyncio.gather(second, third)
+        assert third_started.is_set() is True
+    finally:
+        release_first.set()
+        release_second.set()
+        for task in (first, second, third):
+            if task is not None and not task.done():
+                await task
+        await mcp_loader.cleanup_mcp_connections()
+
+
+def test_sync_mcp_registrations_restore_stable_fallbacks() -> None:
+    stable = FakeCoreTool("lookup")
+    crm = FakeMCPTool("lookup", "crm")
+    erp = FakeMCPTool("lookup", "erp")
+
+    tool_map = {"lookup": stable}
+    map_fallbacks: dict[str, Tool] = {}
+    sync_mcp_tools(tool_map, [crm, erp], map_fallbacks)
+    assert tool_map["lookup"] is erp
+    sync_mcp_tools(tool_map, [crm], map_fallbacks)
+    assert tool_map["lookup"] is crm
+    sync_mcp_tools(tool_map, [], map_fallbacks)
+    assert tool_map["lookup"] is stable
+
+    tool_list: list[Tool] = [stable]
+    list_fallbacks: dict[str, Tool] = {}
+    sync_mcp_tool_list(tool_list, [crm], list_fallbacks)
+    assert tool_list == [crm]
+    sync_mcp_tool_list(tool_list, [], list_fallbacks)
+    assert tool_list == [stable]

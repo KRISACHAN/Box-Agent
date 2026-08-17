@@ -1211,6 +1211,7 @@ async def test_mcp_reconnect_injects_hidden_deferred_state_into_active_turns_onl
     inactive_state = agent._sessions[inactive_session.sessionId]
     active_state.turn_active = True
     runtime_tool = EchoTool()
+    runtime_tool.mcp_always_load = True
 
     async def reconnect(_name):
         return {"success": True, "toolCount": 1, "tools": ["echo"]}
@@ -1234,6 +1235,7 @@ async def test_mcp_reconnect_injects_hidden_deferred_state_into_active_turns_onl
     assert update["source"] == "runtime"
     assert "connected" in update["content"]
     assert "deferred catalog" in update["content"]
+    assert "alwaysLoad tool(s) are already visible" in update["content"]
     assert "tool_search" in update["content"]
     assert inactive_state.inject_queue.empty()
 
@@ -1267,7 +1269,99 @@ async def test_initial_mcp_catalog_ready_is_injected_into_active_turn(tmp_path):
     assert update["user_visible"] is False
     assert "catalog discovery is complete" in update["content"]
     assert "Retry tool_search" in update["content"]
-    assert "Deferred schemas remain hidden" in update["content"]
+    assert "ordinary deferred schemas remain hidden" in update["content"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_disconnect_does_not_remove_stable_tools_in_deferred_mode(
+    tmp_path,
+    monkeypatch,
+):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_sub_agent=False,
+            mcp=MCPConfig(deferred_loading_enabled=True),
+        ),
+    )
+    stable = EchoTool()
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [stable], "system")
+    session = await agent.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+    state = agent._sessions[session.sessionId]
+
+    async def disconnect(_name):
+        return {"success": True, "removedTools": ["echo", "tool_search"]}
+
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.disconnect_mcp_server",
+        disconnect,
+    )
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.get_all_mcp_tools",
+        lambda: [],
+    )
+
+    result = await agent.extMethod("mcp/disconnect", {"name": "demo"})
+
+    assert result["success"] is True
+    assert any(tool.name == "echo" for tool in agent._base_tools)
+    assert state.agent.tools["echo"] is stable
+    assert "tool_search" in state.agent.tools
+
+
+@pytest.mark.asyncio
+async def test_mcp_disconnect_restores_stable_tool_in_eager_mode(
+    tmp_path,
+    monkeypatch,
+):
+    from box_agent.tools.setup import sync_mcp_tool_list, sync_mcp_tools
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_sub_agent=False,
+            mcp=MCPConfig(deferred_loading_enabled=False),
+        ),
+    )
+    stable = EchoTool()
+    remote = EchoTool()
+    remote.mcp_tool_id = "mcp:demo/echo"
+    remote.server_name = "demo"
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [stable], "system")
+    session = await agent.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+    state = agent._sessions[session.sessionId]
+    sync_mcp_tool_list(
+        agent._base_tools,
+        [remote],
+        agent._base_mcp_fallback_tools,
+    )
+    sync_mcp_tools(
+        state.agent.tools,
+        [remote],
+        state.mcp_fallback_tools,
+    )
+    assert agent._base_tools[0] is remote
+    assert state.agent.tools["echo"] is remote
+
+    async def disconnect(_name):
+        return {"success": True, "removedTools": ["echo"]}
+
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.disconnect_mcp_server",
+        disconnect,
+    )
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.get_all_mcp_tools",
+        lambda: [],
+    )
+
+    result = await agent.extMethod("mcp/disconnect", {"name": "demo"})
+
+    assert result["success"] is True
+    assert agent._base_tools == [stable]
+    assert state.agent.tools["echo"] is stable
 
 
 @pytest.mark.asyncio

@@ -468,6 +468,31 @@ def register_mcp_tools(tool_map: dict[str, Tool], mcp_tools: list[Tool]) -> None
         tool_map[tool.name] = tool
 
 
+def sync_mcp_tools(
+    tool_map: dict[str, Tool],
+    mcp_tools: list[Tool],
+    fallback_tools: dict[str, Tool],
+) -> None:
+    """Rebuild MCP registrations while preserving overwritten stable tools."""
+    for name, tool in list(tool_map.items()):
+        if getattr(tool, "mcp_tool_id", None) is None:
+            continue
+        fallback = fallback_tools.get(name)
+        if fallback is None:
+            tool_map.pop(name, None)
+        else:
+            tool_map[name] = fallback
+
+    fallback_tools.clear()
+    for tool in mcp_tools:
+        existing = tool_map.get(tool.name)
+        if getattr(existing, "reserved_deferred_mcp_search", False):
+            continue
+        if existing is not None and getattr(existing, "mcp_tool_id", None) is None:
+            fallback_tools.setdefault(tool.name, existing)
+        tool_map[tool.name] = tool
+
+
 def merge_mcp_tools(base_tools: list[Tool], mcp_tools: list[Tool]) -> None:
     """Merge MCP tools into a tool list, replacing same-named fallback tools."""
     mcp_by_name = {tool.name: tool for tool in mcp_tools}
@@ -484,6 +509,17 @@ def merge_mcp_tools(base_tools: list[Tool], mcp_tools: list[Tool]) -> None:
     for tool in mcp_tools:
         if tool.name not in replaced_names:
             base_tools.append(tool)
+
+
+def sync_mcp_tool_list(
+    base_tools: list[Tool],
+    mcp_tools: list[Tool],
+    fallback_tools: dict[str, Tool],
+) -> None:
+    """List-form adapter for provenance-aware MCP registration rebuilds."""
+    tool_map = {tool.name: tool for tool in base_tools}
+    sync_mcp_tools(tool_map, mcp_tools, fallback_tools)
+    base_tools[:] = list(tool_map.values())
 
 
 def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, sandbox_mode: bool = False,
