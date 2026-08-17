@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import tempfile
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from box_agent.tools import (
     AppendTool,
     BashTool,
     EditTool,
+    JsonlQueryTool,
     ReadTool,
     SearchFilesTool,
     WriteTool,
@@ -20,6 +22,16 @@ from box_agent.tools import (
 from box_agent.tools.file_tools import MAX_SEARCH_OFFSET, MAX_SEARCH_OUTPUT_CHARS
 from box_agent.tools.bash_tool import _detect_dingtalk_workspace_violation
 from box_agent.tools.permissions import CapabilityPolicy, PermissionEngine
+
+
+def test_file_tool_package_preserves_legacy_imports():
+    from box_agent.tools.file import JsonlQueryTool as PackagedJsonlQueryTool
+    from box_agent.tools.file import ReadTool as PackagedReadTool
+    from box_agent.tools.file_tools import JsonlQueryTool as LegacyJsonlQueryTool
+    from box_agent.tools.file_tools import ReadTool as LegacyReadTool
+
+    assert PackagedReadTool is LegacyReadTool
+    assert PackagedJsonlQueryTool is LegacyJsonlQueryTool
 
 
 @pytest.mark.asyncio
@@ -122,6 +134,209 @@ async def test_read_tool_rejects_oversized_page_instead_of_truncating_middle(tmp
     assert "100,000-character safety limit" in result.error
     assert "smaller limit" in result.error
     assert "Content truncated" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_read_tool_routes_oversized_jsonl_record_to_query_tool(tmp_path):
+    path = tmp_path / "trace.jsonl"
+    path.write_text(
+        json.dumps({"event": "llm.request", "data": "x" * 100_001}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = await ReadTool(workspace_dir=str(tmp_path)).execute(path="trace.jsonl", limit=1)
+
+    assert result.success is False
+    assert "JSONL record at line 1" in result.error
+    assert "Use query_jsonl with fields/where" in result.error
+    assert "Retry with a smaller limit" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_query_jsonl_summarizes_large_records_without_exposing_raw_body(tmp_path):
+    marker = "RAW_BODY_MUST_NOT_BE_RETURNED"
+    path = tmp_path / "trace.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "event": "llm.request",
+                "timestamp": "2026-08-15T00:00:00Z",
+                "data": {"messages": [{"content": marker + ("x" * 120_000)}]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = await JsonlQueryTool(workspace_dir=str(tmp_path)).execute(path="trace.jsonl")
+
+    assert result.success is True
+    payload = json.loads(result.content)
+    assert payload["records"][0]["line"] == 1
+    assert payload["records"][0]["data"]["event"] == "llm.request"
+    assert payload["records"][0]["data"]["data"] == {
+        "$summarized": True,
+        "$type": "object",
+        "size": 1,
+        "keys": ["messages"],
+    }
+    assert payload["page"]["projection_truncated"] is True
+    assert marker not in result.content
+    assert result.raw_output["source_size_bytes"] > 120_000
+
+
+@pytest.mark.asyncio
+async def test_query_jsonl_filters_projects_and_resumes_with_cursor(tmp_path):
+    path = tmp_path / "events.ndjson"
+    rows = [
+        {"event": "start", "data": {"value": 0}},
+        {"event": "match", "data": {"value": 1}},
+        {"event": "match", "data": {"value": 2}},
+        {"event": "end", "data": {"value": 3}},
+    ]
+    path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    tool = JsonlQueryTool(workspace_dir=str(tmp_path))
+
+    first = await tool.execute(
+        path="events.ndjson",
+        fields=["/event", "/data/value", "/missing"],
+        where={"/event": "match"},
+        limit=1,
+    )
+    first_payload = json.loads(first.content)
+    second = await tool.execute(
+        path="events.ndjson",
+        fields=["/event", "/data/value"],
+        where={"/event": "match"},
+        cursor=first_payload["page"]["next_cursor"],
+        limit=1,
+    )
+    second_payload = json.loads(second.content)
+
+    assert first.success is True
+    assert first_payload["records"] == [
+        {
+            "line": 2,
+            "cursor": first_payload["records"][0]["cursor"],
+            "data": {
+                "/event": "match",
+                "/data/value": 1,
+                "/missing": {"$missing": True},
+            },
+        }
+    ]
+    assert first_payload["page"]["has_more"] is True
+    assert second.success is True
+    assert second_payload["records"][0]["line"] == 3
+    assert second_payload["records"][0]["data"]["/data/value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_query_jsonl_cursor_survives_append_and_rejects_other_file(tmp_path):
+    path = tmp_path / "growing.jsonl"
+    path.write_text(
+        json.dumps({"event": "first"}) + "\n" + json.dumps({"event": "second"}) + "\n",
+        encoding="utf-8",
+    )
+    tool = JsonlQueryTool(workspace_dir=str(tmp_path))
+    first = await tool.execute(path="growing.jsonl", fields=["/event"], limit=1)
+    cursor = json.loads(first.content)["page"]["next_cursor"]
+
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"event": "third"}) + "\n")
+    resumed = await tool.execute(
+        path="growing.jsonl",
+        fields=["/event"],
+        cursor=cursor,
+        limit=5,
+    )
+
+    other = tmp_path / "other.jsonl"
+    other.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    wrong_file = await tool.execute(path="other.jsonl", cursor=cursor)
+
+    assert resumed.success is True
+    assert [
+        record["data"]["/event"] for record in json.loads(resumed.content)["records"]
+    ] == ["second", "third"]
+    assert wrong_file.success is False
+    assert "different or replaced file" in wrong_file.error
+
+
+@pytest.mark.asyncio
+async def test_query_jsonl_keeps_valid_json_when_projected_field_is_large(tmp_path):
+    marker = "PROJECTED_SECRET_BODY"
+    path = tmp_path / "large-field.jsonl"
+    path.write_text(
+        json.dumps({"event": "large", "payload": marker + ("z" * 20_000)}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = await JsonlQueryTool(workspace_dir=str(tmp_path)).execute(
+        path="large-field.jsonl",
+        fields=["/event", "/payload"],
+    )
+
+    payload = json.loads(result.content)
+    projected = payload["records"][0]["data"]["/payload"]
+    assert result.success is True
+    assert projected["$truncated"] is True
+    assert projected["$type"] == "string"
+    assert projected["characters"] > 20_000
+    assert marker in projected["preview"]
+    assert len(result.content) < 10_000
+    assert payload["page"]["truncated_fields"] == ["/payload"]
+
+
+@pytest.mark.asyncio
+async def test_query_jsonl_bounds_oversized_physical_record_and_continues(
+    tmp_path,
+    monkeypatch,
+):
+    from box_agent.tools.file import jsonl_tool as jsonl_tool_module
+
+    monkeypatch.setattr(jsonl_tool_module, "MAX_JSONL_RECORD_BYTES", 100)
+    path = tmp_path / "mixed.jsonl"
+    path.write_text(
+        json.dumps({"payload": "x" * 200})
+        + "\n"
+        + json.dumps({"event": "valid"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = await JsonlQueryTool(workspace_dir=str(tmp_path)).execute(path="mixed.jsonl")
+
+    payload = json.loads(result.content)
+    assert result.success is True
+    assert payload["records"][0]["line"] == 2
+    assert payload["records"][0]["data"]["event"] == "valid"
+    assert payload["parse_errors"][0]["code"] == "RECORD_TOO_LARGE"
+    assert result.raw_output["oversized_record_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_query_jsonl_reports_invalid_record_and_keeps_scanning(tmp_path):
+    path = tmp_path / "invalid.jsonl"
+    path.write_text(
+        '{"event":"before"}\n{"event": invalid}\n{"event":"after"}\n',
+        encoding="utf-8",
+    )
+
+    result = await JsonlQueryTool(workspace_dir=str(tmp_path)).execute(
+        path="invalid.jsonl",
+        fields=["/event"],
+    )
+
+    payload = json.loads(result.content)
+    assert result.success is True
+    assert [record["line"] for record in payload["records"]] == [1, 3]
+    assert payload["parse_errors"][0]["line"] == 2
+    assert payload["parse_errors"][0]["code"] == "INVALID_JSONL_RECORD"
+    assert payload["parse_error_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -457,6 +672,7 @@ def test_workspace_tools_register_search_files(tmp_path):
 
     tool_names = {tool.name for tool in tools}
     assert "search_files" in tool_names
+    assert "query_jsonl" in tool_names
     assert "report_execution_result" in tool_names
 
 

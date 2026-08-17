@@ -8,6 +8,7 @@ from time import monotonic
 
 import pytest
 
+import box_agent.core as core
 from box_agent.config import ToolLimitsConfig
 from box_agent.core import (
     _detect_artifacts,
@@ -27,6 +28,7 @@ from box_agent.events import (
     DoneEvent,
     ErrorEvent,
     InjectedMessageEvent,
+    LLMActivityEvent,
     LLMOutputEvent,
     PlanSnapshotEvent,
     ProgressEvent,
@@ -43,6 +45,7 @@ from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
+from box_agent.tools.staged_file_write_tool import StagedFileWriteTool
 from box_agent.tools.sub_agent_tool import SubAgentTool
 
 
@@ -1288,6 +1291,171 @@ async def test_tool_call_cycle():
 
 
 @pytest.mark.asyncio
+async def test_long_running_tool_emits_liveness_activity(monkeypatch):
+    class SlowTool(Tool):
+        @property
+        def name(self):
+            return "slow"
+
+        @property
+        def description(self):
+            return "slow tool"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            await asyncio.sleep(0.025)
+            return ToolResult(success=True, content="done")
+
+    monkeypatch.setattr(core, "TOOL_ACTIVITY_INTERVAL_SECONDS", 0.01)
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="slow-1",
+                        type="function",
+                        function=FunctionCall(name="slow", arguments={}),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"slow": SlowTool()},
+            max_steps=5,
+        )
+    )
+
+    activity = [event for event in events if isinstance(event, LLMActivityEvent)]
+    assert activity
+    assert activity[0].payload == {
+        "protocol": "agent_activity_v1",
+        "phase": "tool_running",
+        "tool_name": "slow",
+    }
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_silent_event_tool_emits_liveness_activity(monkeypatch):
+    class SlowEventTool(EventEmittingTool):
+        def __init__(self):
+            super().__init__()
+
+        @property
+        def name(self):
+            return "slow_event"
+
+        @property
+        def description(self):
+            return "slow event tool"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            await asyncio.sleep(0.15)
+            return ToolResult(success=True, content="done")
+
+    monkeypatch.setattr(core, "TOOL_ACTIVITY_INTERVAL_SECONDS", 0.01)
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="slow-event-1",
+                        type="function",
+                        function=FunctionCall(name="slow_event", arguments={}),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"slow_event": SlowEventTool()},
+            max_steps=5,
+        )
+    )
+
+    activity = [event for event in events if isinstance(event, LLMActivityEvent)]
+    assert activity
+    assert activity[0].payload["tool_name"] == "slow_event"
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_batch_emits_liveness_activity(monkeypatch):
+    class SlowParallelTool(Tool):
+        parallel_safe = True
+
+        @property
+        def name(self):
+            return "slow_parallel"
+
+        @property
+        def description(self):
+            return "slow parallel tool"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            await asyncio.sleep(0.15)
+            return ToolResult(success=True, content="done")
+
+    monkeypatch.setattr(core, "TOOL_ACTIVITY_INTERVAL_SECONDS", 0.01)
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id=f"slow-parallel-{index}",
+                        type="function",
+                        function=FunctionCall(name="slow_parallel", arguments={}),
+                    )
+                    for index in range(2)
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"slow_parallel": SlowParallelTool()},
+            max_steps=5,
+        )
+    )
+
+    activity = [event for event in events if isinstance(event, LLMActivityEvent)]
+    assert activity
+    assert activity[0].payload["tool_name"] == "parallel_tools"
+
+
+@pytest.mark.asyncio
 async def test_tool_result_preserves_raw_output_for_cli_and_hosts():
     llm = MockLLM([
         LLMResponse(
@@ -2002,6 +2170,205 @@ async def test_model_history_placeholder_write_is_hidden_and_self_heals(tmp_path
         ("drafts/slides_05_08.html", second_html),
     ]
     assert (tmp_path / "drafts/slides_05_08.html").read_text() == second_html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("placeholder_tool_name", ["write_file", "append_file"])
+async def test_placeholder_file_mutation_blocks_stale_downstream_until_staged_commit(
+    tmp_path,
+    placeholder_tool_name,
+):
+    placeholder = (
+        "[Full tool-call argument omitted from model history]\n"
+        "Tool: write_file\n"
+        "Argument: content\n"
+        "Path: deck.patch.json"
+    )
+    target = tmp_path / "deck.patch.json"
+    target.write_text('{"rows":[1,2,3,4,5,6,7,8]}', encoding="utf-8")
+    echo = CountingEchoTool()
+    staged = StagedFileWriteTool(workspace_dir=str(tmp_path))
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="placeholder-write",
+                        type="function",
+                        function=FunctionCall(
+                            name=placeholder_tool_name,
+                            arguments={"path": "deck.patch.json", "content": placeholder},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="stale-downstream",
+                        type="function",
+                        function=FunctionCall(name="echo", arguments={"text": "apply old patch"}),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="staged-begin",
+                        type="function",
+                        function=FunctionCall(
+                            name="staged_file_write",
+                            arguments={
+                                "action": "begin",
+                                "path": "deck.patch.json",
+                                "expected_chunks": 1,
+                            },
+                        ),
+                    ),
+                    ToolCall(
+                        id="staged-append",
+                        type="function",
+                        function=FunctionCall(
+                            name="staged_file_write",
+                            arguments={
+                                "action": "append_text",
+                                "chunk_index": 0,
+                                "content": '{"rows":[1,2,3,4,5,6]}',
+                            },
+                        ),
+                    ),
+                    ToolCall(
+                        id="staged-commit",
+                        type="function",
+                        function=FunctionCall(
+                            name="staged_file_write",
+                            arguments={"action": "commit"},
+                        ),
+                    ),
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="fresh-downstream",
+                        type="function",
+                        function=FunctionCall(name="echo", arguments={"text": "apply new patch"}),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "write_file": WriteTool(workspace_dir=str(tmp_path)),
+                "append_file": AppendTool(workspace_dir=str(tmp_path)),
+                "staged_file_write": staged,
+                "echo": echo,
+            },
+            max_steps=7,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    blocked = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_call_id == "stale-downstream"
+    )
+    assert blocked.success is False
+    assert "INTERNAL_MODEL_HISTORY_PLACEHOLDER_RECOVERY_REQUIRED" in (blocked.error or "")
+    assert echo.calls == 1
+    assert target.read_text(encoding="utf-8") == '{"rows":[1,2,3,4,5,6]}'
+
+
+@pytest.mark.asyncio
+async def test_placeholder_append_can_recover_with_same_target_real_write(tmp_path):
+    placeholder = (
+        "[Full tool-call argument omitted from model history]\n"
+        "Tool: append_file\n"
+        "Argument: content\n"
+        "Path: deck.patch.json"
+    )
+    target = tmp_path / "deck.patch.json"
+    target.write_text('{"incomplete":', encoding="utf-8")
+    echo = CountingEchoTool()
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="placeholder-append",
+                        type="function",
+                        function=FunctionCall(
+                            name="append_file",
+                            arguments={"path": "deck.patch.json", "content": placeholder},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="real-rewrite",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "deck.patch.json",
+                                "content": '{"slides":{}}',
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="downstream",
+                        type="function",
+                        function=FunctionCall(name="echo", arguments={"text": "apply"}),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "append_file": AppendTool(workspace_dir=str(tmp_path)),
+                "write_file": WriteTool(workspace_dir=str(tmp_path)),
+                "echo": echo,
+            },
+            max_steps=6,
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert echo.calls == 1
+    assert target.read_text(encoding="utf-8") == '{"slides":{}}'
 
 
 @pytest.mark.asyncio
@@ -2740,6 +3107,120 @@ async def test_controlled_outline_accepts_url_from_prior_web_search(tmp_path):
     )
     assert write_result.success is True
     assert (tmp_path / "outline.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_controlled_research_does_not_treat_search_result_as_page_read(tmp_path):
+    query = "official report"
+    source_url = "https://example.gov/reports/latest"
+    research = tmp_path / "research"
+    research.mkdir()
+    (research / "topic_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "topic",
+                "target_entities": [],
+                "evidence": [
+                    {
+                        "entity": "Example",
+                        "claim": "Example published the latest report.",
+                        "source_url": source_url,
+                        "source_type": "first_party",
+                        "evidence_excerpt": "Example published the latest report.",
+                        "confidence": "high",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CountingBashTool(Tool):
+        def __init__(self):
+            self.calls = 0
+
+        @property
+        def name(self):
+            return "bash"
+
+        @property
+        def description(self):
+            return "Runs a command"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"command": {"type": "string"}}}
+
+        async def execute(self, command: str = ""):
+            self.calls += 1
+            return ToolResult(success=True, content=command)
+
+    validator_command = (
+        "python validate_research_artifacts.py --research-dir research "
+        "--topic topic --route B --report research/qa/topic_research_check.json"
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="search-only",
+                        type="function",
+                        function=FunctionCall(
+                            name="web_search",
+                            arguments={"query": query},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="validate-without-read",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": validator_command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+        ]
+    )
+    bash = CountingBashTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "web_search": JsonWebSearchTool({query: source_url}),
+                "bash": bash,
+            },
+            max_steps=2,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                workflow_options={"research_mode": "deep"},
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "validate-without-read"
+    )
+    assert bash.calls == 0
+    assert result.success is False
+    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in (result.error or "")
 
 
 @pytest.mark.asyncio

@@ -2178,6 +2178,10 @@ body[data-deck-composition="literary-minimal"] .kpi-grid {
   gap: 54px;
 }
 
+body[data-deck-composition="literary-minimal"] .kpis-count-4 .kpi-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 body[data-deck-composition="literary-minimal"] .content-card,
 body[data-deck-composition="literary-minimal"] .kpi-card {
   padding: 28px 0;
@@ -2340,6 +2344,10 @@ body[data-deck-composition="literary-minimal"][data-deck-composition-variant="as
 body[data-deck-composition="literary-minimal"][data-deck-composition-variant="asymmetric-column"] .kpi-grid,
 body[data-deck-composition="literary-minimal"][data-deck-composition-variant="asymmetric-column"] .text-sections {
   grid-template-columns: minmax(0, 1.42fr) repeat(2, minmax(0, 0.79fr));
+}
+
+body[data-deck-composition="literary-minimal"][data-deck-composition-variant="asymmetric-column"] .kpis-count-4 .kpi-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 body[data-deck-composition="literary-minimal"][data-deck-composition-variant="margin-note"] .deck-page {
@@ -3332,6 +3340,18 @@ body[data-deck-composition="technical-schematic"] .cover-copy {
 body[data-deck-composition="technical-schematic"] .cover-copy h1 {
   font-size: 90px;
   line-height: 0.98;
+}
+
+body[data-deck-composition] .cover-copy h1.cover-title-medium {
+  font-size: 72px;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+
+body[data-deck-composition] .cover-copy h1.cover-title-long {
+  font-size: 62px;
+  line-height: 1.08;
+  text-wrap: balance;
 }
 
 body[data-deck-composition="technical-schematic"] .editorial-cover-copy {

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import os
 import re
 import threading
@@ -14,15 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
 from ..events import ProgressEvent
-from ..context_resources import (
-    CONTEXT_RESOURCE_RAW_KEY,
-    ResourceDescriptor,
-    classify_read_resource,
-)
-from ..model_history import (
-    is_model_history_placeholder,
-    is_model_instruction_source_path,
-)
+from ..model_history import is_model_history_placeholder
 from .base import EventEmittingTool, Tool, ToolResult
 from .argument_limits import MAX_GENERATED_BODY_CHARS
 from .pptx_safety import detect_pptx_self_check_bypass
@@ -32,14 +22,8 @@ if TYPE_CHECKING:
     from .permissions import PermissionEngine
 
 
-_MODEL_CONTEXT_EXTS = {".html", ".htm", ".json", ".md", ".txt", ".log", ".xml"}
-_MODEL_CONTEXT_PATH_PARTS = {"qa", "rendered", "slides", "vision_inputs"}
-_MODEL_CONTEXT_SIZE_THRESHOLD = 8_000
 MAX_FILE_TOOL_CONTENT_CHARS = MAX_GENERATED_BODY_CHARS
 MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY = f"{MAX_FILE_TOOL_CONTENT_CHARS:,}"
-DEFAULT_READ_LIMIT = 500
-MAX_READ_LINES = 2_000
-MAX_READ_CHARS = 100_000
 DEFAULT_SEARCH_LIMIT = 50
 MAX_SEARCH_RESULTS = 200
 MAX_SEARCH_OFFSET = 10_000
@@ -53,42 +37,10 @@ _BINARY_EXTENSIONS = {
     ".mov", ".mp3", ".mp4", ".pdf", ".png", ".ppt", ".pptx", ".pyc",
     ".so", ".tar", ".tif", ".tiff", ".webp", ".xls", ".xlsx", ".zip",
 }
-_BLOCKED_POSIX_DEVICES = {
-    "/dev/full", "/dev/null", "/dev/random", "/dev/stdin", "/dev/tty",
-    "/dev/urandom", "/dev/zero",
-}
-_BLOCKED_WINDOWS_DEVICE_NAMES = {
-    "aux", "clock$", "con", "nul", "prn",
-    *(f"com{i}" for i in range(1, 10)),
-    *(f"lpt{i}" for i in range(1, 10)),
-}
-
-
-def _normalize_read_pagination(
-    offset: int | None,
-    limit: int | None,
-) -> tuple[int, int]:
-    """Return bounded 1-indexed pagination values."""
-    normalized_offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 1
-    normalized_limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else DEFAULT_READ_LIMIT
-    return max(1, normalized_offset), max(1, min(normalized_limit, MAX_READ_LINES))
-
-
 def _normalize_search_pagination(offset: int | None, limit: int | None) -> tuple[int, int]:
     normalized_offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 0
     normalized_limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else DEFAULT_SEARCH_LIMIT
     return max(0, normalized_offset), max(1, min(normalized_limit, MAX_SEARCH_RESULTS))
-
-
-def _blocked_device_error(file_path: Path) -> str | None:
-    """Reject special device paths before performing any I/O."""
-    normalized = file_path.as_posix().casefold()
-    if normalized in _BLOCKED_POSIX_DEVICES or normalized.startswith("/dev/fd/"):
-        return f"Cannot read device file: {file_path}"
-    device_name = file_path.name.split(".", 1)[0].casefold().rstrip(":")
-    if device_name in _BLOCKED_WINDOWS_DEVICE_NAMES:
-        return f"Cannot read Windows device path: {file_path}"
-    return None
 
 
 def _binary_file_error(file_path: Path) -> str | None:
@@ -109,35 +61,6 @@ def _binary_file_error(file_path: Path) -> str | None:
     if b"\x00" in sample:
         return f"Cannot read binary file '{file_path.name}' with read_file."
     return None
-
-
-def _similar_file_suggestions(file_path: Path, limit: int = 5) -> list[str]:
-    """Return deterministic nearby filename suggestions for a missing path."""
-    parent = file_path.parent
-    try:
-        candidates = [candidate for candidate in parent.iterdir() if candidate.is_file()]
-    except OSError:
-        return []
-    wanted_name = file_path.name.casefold()
-    wanted_stem = file_path.stem.casefold()
-
-    def score(candidate: Path) -> tuple[int, str]:
-        name = candidate.name.casefold()
-        stem = candidate.stem.casefold()
-        value = 0
-        if stem == wanted_stem:
-            value = 90
-        elif name.startswith(wanted_name) or wanted_name.startswith(name):
-            value = 70
-        elif wanted_name in name or name in wanted_name:
-            value = 60
-        else:
-            overlap = len(set(wanted_stem) & set(stem))
-            value = overlap
-        return value, candidate.name
-
-    ranked = sorted(candidates, key=lambda candidate: (-score(candidate)[0], score(candidate)[1]))
-    return [str(candidate) for candidate in ranked[:limit] if score(candidate)[0] > 0]
 
 
 def _resolve_from_active_root(
@@ -163,45 +86,6 @@ def _resolve_from_active_root(
     return relative_root_dir / file_path
 
 
-def _strip_number_prefix(line: str) -> str:
-    """Remove the read_file line-number prefix from one formatted line."""
-    if "|" not in line:
-        return line
-    prefix, rest = line.split("|", 1)
-    return rest if prefix.strip().isdigit() else line
-
-
-def _cap_preview_lines(lines: list[str], max_chars: int = 1200) -> list[str]:
-    """Keep preview snippets useful without retaining a large artifact body."""
-    capped: list[str] = []
-    used = 0
-    for line in lines:
-        remaining = max_chars - used
-        if remaining <= 0:
-            break
-        if len(line) > remaining:
-            capped.append(line[:remaining] + "...")
-            used = max_chars
-            break
-        capped.append(line)
-        used += len(line)
-    return capped
-
-
-def _looks_like_generated_artifact(file_path: Path, content: str) -> bool:
-    """Return true for files that should not be retained verbatim in model history."""
-    if is_model_instruction_source_path(file_path):
-        return False
-    suffix = file_path.suffix.lower()
-    if suffix in {".html", ".htm"}:
-        return True
-    if suffix in {".json", ".log"} and any(part in _MODEL_CONTEXT_PATH_PARTS for part in file_path.parts):
-        return True
-    if any(part in _MODEL_CONTEXT_PATH_PARTS for part in file_path.parts) and suffix in _MODEL_CONTEXT_EXTS:
-        return True
-    return len(content) > _MODEL_CONTEXT_SIZE_THRESHOLD and suffix in _MODEL_CONTEXT_EXTS
-
-
 def _model_history_placeholder_error(*values: str) -> str | None:
     """Reject internal history placeholders before they reach real files."""
     for value in values:
@@ -221,313 +105,23 @@ def _oversized_file_tool_argument_error(tool_name: str, argument_name: str, valu
         f"FILE_TOOL_ARGUMENT_TOO_LARGE: {tool_name}.{argument_name} is "
         f"{len(value)} characters; limit is {MAX_FILE_TOOL_CONTENT_CHARS}. "
         "For large generated artifacts such as HTML/CSS/JS, JSON manifests, "
-        "templates, base64, or file bodies, split the work into smaller chunks. "
-        "Use write_file for the first chunk and append_file for later chunks, "
-        "then validate with read_file or a render check."
+        "templates, base64, or file bodies, use staged_file_write: begin, append_text "
+        "or append_file in ordered chunks, then commit and validate with read_file "
+        "or a render check."
     )
 
 
-def _summarize_json_for_model(raw_text: str) -> list[str]:
-    """Extract a small, useful JSON summary without keeping the full payload."""
-    try:
-        data = json.loads(raw_text)
-    except json.JSONDecodeError:
-        return []
+def __getattr__(name: str) -> Any:
+    """Preserve legacy imports while file tool implementations live in a package."""
+    if name == "ReadTool":
+        from .file.read_tool import ReadTool
 
-    lines: list[str] = []
-    if isinstance(data, dict):
-        keys = list(data.keys())
-        lines.append(f"top_level_keys: {', '.join(map(str, keys[:20]))}")
-        for key in ("ok", "success", "status", "error", "errors", "warning", "warnings", "slideCount", "slide_count"):
-            if key in data:
-                value = data[key]
-                preview = json.dumps(value, ensure_ascii=False)
-                if len(preview) > 500:
-                    preview = preview[:500] + "..."
-                lines.append(f"{key}: {preview}")
-    elif isinstance(data, list):
-        lines.append(f"array_length: {len(data)}")
-        if data:
-            preview = json.dumps(data[0], ensure_ascii=False)
-            if len(preview) > 500:
-                preview = preview[:500] + "..."
-            lines.append(f"first_item: {preview}")
-    return lines
+        return ReadTool
+    if name == "JsonlQueryTool":
+        from .file.jsonl_tool import JsonlQueryTool
 
-
-def build_read_file_model_context(file_path: Path, content: str, total_lines: int) -> str | None:
-    """Build a compact model-history substitute for generated or QA artifacts."""
-    if not _looks_like_generated_artifact(file_path, content):
-        return None
-
-    raw_lines = [_strip_number_prefix(line) for line in content.splitlines()]
-    raw_text = "\n".join(raw_lines)
-    suffix = file_path.suffix.lower()
-    summary_lines = [
-        "[Full file content omitted from model history]",
-        f"Tool: read_file",
-        f"Path: {file_path}",
-        f"Type: {suffix or 'unknown'}",
-        f"Lines: {total_lines}",
-        f"Characters: {len(raw_text)}",
-        "Reason: generated/QA artifact content can bloat future LLM turns; read the file again with offset/limit if exact content is needed.",
-    ]
-
-    if suffix == ".json":
-        json_summary = _summarize_json_for_model(raw_text)
-        if json_summary:
-            summary_lines.append("")
-            summary_lines.append("JSON summary:")
-            summary_lines.extend(f"- {line}" for line in json_summary)
-
-    preview_limit = 20 if suffix not in {".html", ".htm"} else 12
-    preview = _cap_preview_lines(raw_lines[:preview_limit])
-    if preview:
-        summary_lines.append("")
-        summary_lines.append(f"Preview first {len(preview)} lines:")
-        summary_lines.extend(preview)
-
-    return "\n".join(summary_lines)
-
-
-class ReadTool(Tool):
-    """Read file content."""
-
-    def __init__(
-        self,
-        workspace_dir: str = ".",
-        allow_full_access: bool = True,
-        permission_engine: PermissionEngine | None = None,
-        relative_root_dir: str | None = None,
-    ):
-        """Initialize ReadTool with workspace directory.
-
-        Args:
-            workspace_dir: Security boundary for filesystem access
-            allow_full_access: If False, restrict reads to workspace directory
-            permission_engine: If provided, use capability-based permission checks
-            relative_root_dir: Optional base directory for resolving relative paths
-        """
-        self.workspace_dir = Path(workspace_dir).absolute()
-        self.relative_root_dir = (
-            Path(relative_root_dir).absolute() if relative_root_dir else self.workspace_dir
-        )
-        self.allow_full_access = allow_full_access
-        self._perm = permission_engine
-
-    @property
-    def name(self) -> str:
-        return "read_file"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Read a text file with line numbers and bounded pagination. Use this instead of "
-            "cat/head/tail or shell commands that print file contents. Output uses "
-            "'LINE_NUMBER|LINE_CONTENT' (1-indexed). The default page is 500 lines and the "
-            "maximum is 2000; use offset and limit to continue through large files. "
-            "Binary and structured document files are rejected with an actionable error. "
-            "Call it repeatedly to read different files or page through one file."
-        )
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute or relative path to the file",
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Starting line number (1-indexed, default: 1)",
-                    "default": 1,
-                    "minimum": 1,
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum lines to read (default: 500, max: 2000)",
-                    "default": DEFAULT_READ_LIMIT,
-                    "minimum": 1,
-                    "maximum": MAX_READ_LINES,
-                },
-                "refresh": {
-                    "type": "boolean",
-                    "description": (
-                        "Force the exact page back into model context even when the same "
-                        "file version and line range are already available"
-                    ),
-                    "default": False,
-                },
-            },
-            "required": ["path"],
-        }
-
-    async def execute(
-        self,
-        path: str,
-        offset: int | None = None,
-        limit: int | None = None,
-        refresh: bool = False,
-    ) -> ToolResult:
-        """Execute read file."""
-        try:
-            offset, limit = _normalize_read_pagination(offset, limit)
-            # Resolve relative paths from the active project/artifact root while
-            # retaining workspace_dir as the filesystem security boundary.
-            file_path = _resolve_from_active_root(
-                path,
-                workspace_dir=self.workspace_dir,
-                relative_root_dir=self.relative_root_dir,
-            )
-            if not file_path.exists() and not Path(path).is_absolute():
-                workspace_candidate = self.workspace_dir / path
-                if workspace_candidate.exists():
-                    file_path = workspace_candidate
-
-            # Path validation
-            if self._perm:
-                decision = self._perm.check(
-                    capability="filesystem.read",
-                    resource={"path": str(file_path)},
-                    tool_name=self.name,
-                )
-                if not decision.allowed:
-                    return ToolResult(
-                        success=False,
-                        error=decision.reason,
-                        permission_request=decision.permission_request,
-                    )
-            elif not self.allow_full_access:
-                error = validate_path_in_workspace(file_path, self.workspace_dir)
-                if error:
-                    return ToolResult(success=False, content="", error=error)
-
-            device_error = _blocked_device_error(file_path)
-            if device_error:
-                return ToolResult(success=False, content="", error=device_error)
-
-            if not file_path.exists():
-                suggestions = _similar_file_suggestions(file_path)
-                suggestion_text = (
-                    f" Did you mean: {', '.join(suggestions)}" if suggestions else ""
-                )
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error=f"File not found: {path}.{suggestion_text}",
-                )
-            if not file_path.is_file():
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error=(
-                        f"Path is not a file: {path}. Use search_files with "
-                        "target='files' to inspect a directory."
-                    ),
-                )
-
-            binary_error = _binary_file_error(file_path)
-            if binary_error:
-                return ToolResult(success=False, content="", error=binary_error)
-
-            # Count while retaining only the requested page. This keeps memory
-            # bounded even when the source file is very large.
-            start = offset - 1
-            end = start + limit
-            selected_lines: list[str] = []
-            source_char_count = 0
-            total_lines = 0
-            replacement_seen = False
-            content_hasher = hashlib.sha256()
-            with open(file_path, "rb") as stream:
-                for index, raw_line in enumerate(stream):
-                    content_hasher.update(raw_line)
-                    line = raw_line.decode("utf-8", errors="replace")
-                    # Match text-mode universal newline behavior while hashing
-                    # the original bytes for change detection.
-                    if line.endswith("\r\n"):
-                        line = line[:-2] + "\n"
-                    elif line.endswith("\r"):
-                        line = line[:-1] + "\n"
-                    total_lines = index + 1
-                    source_char_count += len(line)
-                    replacement_seen = replacement_seen or "\ufffd" in line
-                    if start <= index < end:
-                        selected_lines.append(line)
-
-            selected_char_count = sum(len(line) for line in selected_lines)
-            selected_line_count = len(selected_lines)
-
-            if selected_char_count > MAX_READ_CHARS:
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error=(
-                        f"Read produced {selected_char_count:,} characters, exceeding the "
-                        f"{MAX_READ_CHARS:,}-character safety limit. The file has "
-                        f"{total_lines:,} lines. Retry with a smaller limit from offset={offset}."
-                    ),
-                    raw_output={
-                        "source_char_count": source_char_count,
-                        "selected_char_count": selected_char_count,
-                        "selected_line_count": selected_line_count,
-                        "total_lines": total_lines,
-                        "truncated": False,
-                    },
-                )
-
-            # Format with line numbers (1-indexed)
-            numbered_lines: list[str] = []
-            for i, line in enumerate(selected_lines, start=start + 1):
-                # Remove trailing newline for formatting
-                line_content = line.rstrip("\n")
-                numbered_lines.append(f"{i:6d}|{line_content}")
-
-            if replacement_seen:
-                numbered_lines.insert(
-                    0,
-                    "[Warning: File contains non-UTF-8 bytes; invalid bytes were replaced with \ufffd.]",
-                )
-            content = "\n".join(numbered_lines)
-            has_more = end < total_lines
-            if has_more:
-                next_offset = offset + selected_line_count
-                content += (
-                    f"\n\n[Hint: showing lines {offset}-{offset + selected_line_count - 1} "
-                    f"of {total_lines}. Use offset={next_offset}, limit={limit} to continue.]"
-                )
-
-            model_context = build_read_file_model_context(file_path, content, total_lines)
-            descriptor = ResourceDescriptor(
-                resource_id=str(file_path.resolve()),
-                content_version=content_hasher.hexdigest(),
-                start_line=offset,
-                end_line=(offset + selected_line_count - 1),
-                total_lines=total_lines,
-                resource_class=classify_read_resource(
-                    str(file_path.resolve()),
-                    requested_path=path,
-                ),
-            )
-            return ToolResult(
-                success=True,
-                content=content,
-                model_context=model_context,
-                raw_output={
-                    "source_char_count": source_char_count,
-                    "selected_char_count": selected_char_count,
-                    "selected_line_count": selected_line_count,
-                    "total_lines": total_lines,
-                    "truncated": False,
-                    "has_more": has_more,
-                    "next_offset": offset + selected_line_count if has_more else None,
-                    CONTEXT_RESOURCE_RAW_KEY: descriptor.as_raw_output(),
-                },
-            )
-        except Exception as e:
-            return ToolResult(success=False, content="", error=str(e))
+        return JsonlQueryTool
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class SearchFilesTool(EventEmittingTool):
@@ -1060,8 +654,8 @@ class WriteTool(Tool):
             "For existing files, you should read the file first using read_file. "
             "Prefer editing existing files over creating new ones unless explicitly needed. "
             f"Keep content under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} characters; "
-            "for larger generated artifacts, write the first chunk with write_file "
-            "and continue with append_file."
+            "for larger generated artifacts, use staged_file_write from begin through "
+            "ordered append_text or append_file chunks to commit."
         )
 
     @property
@@ -1081,8 +675,8 @@ class WriteTool(Tool):
                         f"Keep this under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} "
                         "characters. For large generated artifacts such as HTML/CSS/JS, "
                         "JSON manifests, templates, base64, or file bodies, use "
-                        "write_file for the first chunk and append_file for later "
-                        "chunks, then validate."
+                        "staged_file_write with begin, ordered append_text or append_file "
+                        "chunks, and commit, then validate."
                     ),
                 },
             },
@@ -1168,8 +762,8 @@ class AppendTool(Tool):
         return (
             "Append content to a file, creating it if it does not exist. "
             f"Keep each content chunk under {MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} "
-            "characters. Use after write_file for large generated artifacts such "
-            "as HTML/CSS/JS, JSON manifests, templates, base64, or file bodies."
+            "characters. For a generated artifact whose complete body exceeds that "
+            "limit, use staged_file_write so the target changes only at commit."
         )
 
     @property
@@ -1187,8 +781,8 @@ class AppendTool(Tool):
                     "description": (
                         "Content chunk to append. Keep this under "
                         f"{MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY} characters. "
-                        "For large generated artifacts, split the file into "
-                        "multiple append_file calls and validate the final file."
+                        "For a large generated artifact, use staged_file_write with "
+                        "ordered chunks and commit, then validate the final file."
                     ),
                 },
             },

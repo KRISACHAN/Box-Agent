@@ -13,6 +13,7 @@ const {
 } = require("../layouts/registry.js");
 const {
   DEFAULT_THEME_ID,
+  TRUTH_TEXT_MAX_CHARACTERS,
   createDeckDesign,
   getTheme,
   listThemes,
@@ -43,9 +44,11 @@ const AUTO_COVER_IMAGE_BRIEF_RE = /(?:融资|路演|投资人|\bvc\b|fundrais|in
 const AUTO_COVER_VISUAL_STORY_RE = /(?:传奇|故事|人物|传记|纪实|biograph|profile|legend|story|documentary)/i;
 const AUTO_COVER_PRODUCT_VISUAL_RE = /(?:UI\s*截图|产品界面|客户端界面|主界面|工作台|编辑器界面|浏览器窗口|设备样机|产品主视觉|产品演示|功能演示|产品流程|UI\s*screenshot|product\s+interface|client\s+interface|browser\s+window|device\s+mockup|product\s+demo|feature\s+demo|product\s+flow)/i;
 const AUTO_COVER_TECH_VISUAL_RE = /(?:代码窗口|代码片段|协作节点|节点连接|系统架构|技术架构|架构图|运行时|编译链|code\s+window|code\s+snippet|collaboration\s+nodes?|system\s+architecture|technical\s+architecture|runtime|compiler)/i;
-const AUTO_GENERATIVE_VISUAL_MEDIUM_RE = /(?:主视觉|实景|照片|插画|卡通(?:形象|插画|插图)?|儿童插画|儿童插图|概念图|效果图|界面|截图|样机|地图|地理分布|空间分布|场景|实物|特写|肖像|包装视觉|hero\s+image|photo|illustration|cartoon(?:\s+illustration)?|concept\s+art|interface|screenshot|mockup|map|geographic\s+distribution|scene|product\s+shot|object\s+study|close[- ]?up|portrait|packaging\s+visual)/i;
+const AUTO_GENERATIVE_VISUAL_MEDIUM_RE = /(?:主视觉|缩略图|实景|照片|插画|卡通(?:形象|插画|插图)?|儿童插画|儿童插图|概念图|效果图|界面|截图|样机|地图|地理分布|空间分布|场景|实物|特写|肖像|包装视觉|hero\s+image|thumbnail|photo|illustration|cartoon(?:\s+illustration)?|concept\s+art|interface|screenshot|mockup|map|geographic\s+distribution|scene|product\s+shot|object\s+study|close[- ]?up|portrait|packaging\s+visual)/i;
+const AUTO_PRIMARY_BITMAP_VISUAL_RE = /(?:主视觉|缩略图|实景|照片|插画|卡通(?:形象|插画|插图)?|儿童插画|儿童插图|概念图|效果图|样机|地图|场景|实物|特写|肖像|包装视觉|hero\s+image|thumbnail|photo|illustration|cartoon(?:\s+illustration)?|concept\s+art|mockup|map|scene|product\s+shot|object\s+study|close[- ]?up|portrait|packaging\s+visual)/i;
 const AUTO_DATA_VISUAL_RE = /(?:图表|表格|数据看板|KPI|指标|chart|table|dashboard|metrics?)/i;
 const AUTO_COVER_IMAGE_OPTOUT_RE = /(?:不要|无需|不需要|不得|禁止|不)(?:生成|使用|添加)?(?:图片|生图|视觉图)|(?:纯文字|仅文字)|\b(?:no\s+(?:generated\s+)?images?|without\s+images?|text[- ]only)\b/i;
+const AUTO_SLIDE_LOCAL_IMAGE_OPTOUT_RE = /(?:第?\s*\d{1,2}\s*页|(?:页面|slide)\s*[:：#-]?\s*\d{1,2}|封面|首页|cover)[^。；;!?！？\n]{0,48}(?:纯文字|仅文字|无图片|不要图片|不使用图片|text[- ]only|without\s+images?)|(?:纯文字|仅文字|无图片|不要图片|不使用图片|text[- ]only|without\s+images?)[^。；;!?！？\n]{0,48}(?:封面|首页|cover)/i;
 const STRUCTURED_NEXT_STEPS_MATRIX_RE = /(?:表格|矩阵|table|matrix)|(?:(?:执行)?角色|负责人|责任人|owners?|assignees?|responsibilit(?:y|ies))[^\n。；;]{0,48}(?:姓名|成员|人员|names?|members?)/i;
 const THEME_ID_ALIASES = Object.freeze({
   carnival: "bold-poster",
@@ -283,6 +286,29 @@ function canonicalizeSourceFacts(sourceFacts) {
   return { facts: [...new Set(facts)], changes };
 }
 
+function splitDefaultRuntimeSourceFacts(value) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  const chunks = [];
+  let remaining = text;
+  const preferredBoundaryStart = Math.floor(TRUTH_TEXT_MAX_CHARACTERS * 0.6);
+  while (Array.from(remaining).length > TRUTH_TEXT_MAX_CHARACTERS) {
+    const characters = Array.from(remaining);
+    let splitAt = TRUTH_TEXT_MAX_CHARACTERS;
+    for (let index = splitAt; index >= preferredBoundaryStart; index -= 1) {
+      if (/[\n。！？!?；;]/.test(characters[index - 1])) {
+        splitAt = index;
+        break;
+      }
+    }
+    const chunk = characters.slice(0, splitAt).join("").trim();
+    if (chunk) chunks.push(chunk);
+    remaining = characters.slice(splitAt).join("").trimStart();
+  }
+  if (remaining.trim()) chunks.push(remaining.trim());
+  return chunks;
+}
+
 function parseArgs(argv) {
   const opts = {
     layoutIds: [],
@@ -505,7 +531,7 @@ function narrativeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function readOutlineBinding(outlineInput, expectedSlideCount) {
+function readOutlineBinding(outlineInput, expectedSlideCount = null) {
   const outlineFile = resolveArtifactPath(outlineInput);
   if (!isNonEmptyFile(outlineFile)) {
     throw new Error(`Outline file not found or empty: ${outlineFile}`);
@@ -533,7 +559,7 @@ function readOutlineBinding(outlineInput, expectedSlideCount) {
   if (!slides) {
     issues.push("outline.slides: required array");
   } else {
-    if (slides.length !== expectedSlideCount) {
+    if (Number.isInteger(expectedSlideCount) && slides.length !== expectedSlideCount) {
       issues.push(
         `outline.slides: contains ${slides.length} page(s), but the ordered layout plan ` +
         `contains ${expectedSlideCount}`
@@ -754,6 +780,17 @@ function imagePrompt(context, slotRole) {
   return parts.join(" ");
 }
 
+function hasDeckWideImageOptOut(text) {
+  return String(text || "")
+    .split(/[。；;!?！？\n]+/)
+    .map(clause => clause.trim())
+    .filter(Boolean)
+    .some(clause => (
+      AUTO_COVER_IMAGE_OPTOUT_RE.test(clause)
+      && !AUTO_SLIDE_LOCAL_IMAGE_OPTOUT_RE.test(clause)
+    ));
+}
+
 function buildImagePlanEntry(
   layout,
   index,
@@ -791,9 +828,8 @@ function buildImagePlanEntry(
       ? context.slide.visual
       : slideText
   );
-  const generationForbidden = context.generationForbidden === true || AUTO_COVER_IMAGE_OPTOUT_RE.test(
-    `${briefText}\n${slideText}`
-  );
+  const generationForbidden = context.generationForbidden === true
+    || AUTO_COVER_IMAGE_OPTOUT_RE.test(slideText);
   const creativeCover = !generationForbidden
     && imageMode === "creative_image_mode"
     && index === 0;
@@ -805,7 +841,10 @@ function buildImagePlanEntry(
   const productVisualBrief = AUTO_COVER_PRODUCT_VISUAL_RE.test(slideText);
   const technicalVisualBrief = AUTO_COVER_TECH_VISUAL_RE.test(slideText);
   const explicitGenerativeVisual = AUTO_GENERATIVE_VISUAL_MEDIUM_RE.test(slideVisualText)
-    && !AUTO_DATA_VISUAL_RE.test(slideVisualText);
+    && (
+      !AUTO_DATA_VISUAL_RE.test(slideVisualText)
+      || AUTO_PRIMARY_BITMAP_VISUAL_RE.test(slideVisualText)
+    );
   const explicitOptionalVisual = Boolean(slot) && explicitGenerativeVisual;
   const autoCover = imageMode === "auto"
     && index === 0
@@ -1071,7 +1110,7 @@ function main() {
     }
   });
   const outlineBinding = opts.outline
-    ? readOutlineBinding(opts.outline, opts.layoutIds.length)
+    ? readOutlineBinding(opts.outline, opts.layoutIds.length || null)
     : null;
   const assumptions = [...new Set(
     opts.assumptions.map(value => value.trim()).filter(Boolean)
@@ -1084,6 +1123,18 @@ function main() {
       || assumptionBinding.assumption_count > 0
     ),
   };
+  if (outlineBinding && opts.layoutIds.length === 0) {
+    opts.layoutIds = outlineBinding.slides.map(slide => {
+      const semantic = analyzeOutlineLayoutIntent(
+        slide,
+        outlineBinding.sourceMode,
+        layoutPolicy
+      );
+      return semantic && semantic.preferred_layout_id
+        ? semantic.preferred_layout_id
+        : "cards-grid-v1";
+    });
+  }
   const layoutResolution = normalizeOutlineDrivenLayoutIds(
     opts.layoutIds,
     outlineBinding,
@@ -1188,11 +1239,13 @@ function main() {
     ...opts.researchFacts.map(value => value.trim()).filter(Boolean),
     ...(outlineBinding ? outlineBinding.importedResearchFacts : []),
   ])];
-  // A short source-bound brief is itself the only user-provided provenance.
+  // A source-bound brief is itself the only user-provided provenance.
   // Models should still pass --fact explicitly when they extract multiple
   // claims, but never let an omitted flag produce an empty truth contract when
   // the ACP runtime has bound the exact current user request. Research evidence
-  // remains in its separate bucket and suppresses this fallback.
+  // remains in its separate bucket and suppresses this fallback. Long runtime
+  // requests are split into exact contiguous phrases so the deterministic
+  // fallback cannot violate the per-fact truth-contract limit.
   const defaultedSourceFacts = Boolean(
     opts.truthMode === "source_bound"
     && opts.sourceFacts.length === 0
@@ -1201,7 +1254,9 @@ function main() {
     && runtimeBinding.source_text.trim()
   );
   const sourceFactNormalization = canonicalizeSourceFacts(
-    defaultedSourceFacts ? [runtimeBinding.source_text] : opts.sourceFacts
+    defaultedSourceFacts
+      ? splitDefaultRuntimeSourceFacts(runtimeBinding.source_text)
+      : opts.sourceFacts
   );
   const skeleton = orderedLayouts.length
     ? {
@@ -1291,17 +1346,11 @@ function main() {
         ? outlineBinding.content.storyline
         : "",
     ].filter(Boolean).join("\n");
-    const generationForbidden = opts.noImages || AUTO_COVER_IMAGE_OPTOUT_RE.test(globalBriefText)
-      || Boolean(
-        outlineBinding
-        && outlineBinding.slides.some(slide => AUTO_COVER_IMAGE_OPTOUT_RE.test([
-          slide.title,
-          slide.message,
-          slide.layout,
-          slide.visual,
-          ...(Array.isArray(slide.bullets) ? slide.bullets : []),
-        ].filter(Boolean).join("\n")))
-      );
+    // A typography-led cover or another slide-local no-image direction must
+    // only skip that slide. Persist generation_forbidden=true solely for an
+    // explicit deck-wide constraint; buildImagePlanEntry applies local
+    // opt-outs independently to each slide.
+    const generationForbidden = opts.noImages || hasDeckWideImageOptOut(globalBriefText);
     const imageManifestPayload = {
       schema_version: 1,
       mode: opts.imageMode,
@@ -1321,7 +1370,6 @@ function main() {
             deckTitle: opts.title,
             briefText: globalBriefText,
             slideText: [
-              globalBriefText,
               outlineBinding ? outlineBinding.slides[index].title : "",
               outlineBinding ? outlineBinding.slides[index].message : "",
               outlineBinding ? outlineBinding.slides[index].visual : "",
