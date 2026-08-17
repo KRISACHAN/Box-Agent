@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 MAX_FILE_TOOL_CONTENT_CHARS = MAX_GENERATED_BODY_CHARS
 MAX_FILE_TOOL_CONTENT_CHARS_DISPLAY = f"{MAX_FILE_TOOL_CONTENT_CHARS:,}"
+MAX_WRITE_FILE_BYTES = 10 * 1024 * 1024
+MAX_WRITE_FILE_CHUNKS = 2_048
 DEFAULT_SEARCH_LIMIT = 50
 MAX_SEARCH_RESULTS = 200
 MAX_SEARCH_OFFSET = 10_000
@@ -631,6 +633,16 @@ class _PendingTextWrite:
     chunk_hashes: dict[int, str] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class _CommittedTextWrite:
+    """Terminal receipt retained for idempotent final-chunk replay."""
+
+    final_chunk_index: int
+    final_chunk_sha256: str
+    file_sha256: str
+    result: ToolResult
+
+
 class WriteTool(Tool):
     """Atomically write a UTF-8 file in one call or ordered chunks."""
 
@@ -656,6 +668,7 @@ class WriteTool(Tool):
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
         self._pending: dict[Path, _PendingTextWrite] = {}
+        self._committed: dict[Path, _CommittedTextWrite] = {}
 
     @property
     def name(self) -> str:
@@ -669,7 +682,9 @@ class WriteTool(Tool):
             "chunks to the same path. Start a new transaction with chunk_index=0 and "
             "final=false; after an accepted chunk, continue from the next_chunk_index "
             "returned by that successful result. Set final=true on the last chunk. "
-            "The target remains unchanged until the final chunk commits."
+            "The target remains unchanged until the final chunk commits. Transactions "
+            f"support at most {MAX_WRITE_FILE_CHUNKS:,} chunks and "
+            f"{MAX_WRITE_FILE_BYTES:,} total UTF-8 bytes."
         )
 
     @property
@@ -750,8 +765,13 @@ class WriteTool(Tool):
         temporary = target.parent / f".{target.name}.box-agent-{uuid.uuid4().hex}.part"
         self._write_bytes(temporary, b"", append=False)
         state = _PendingTextWrite(target=target, temporary=temporary)
+        self._committed.pop(target, None)
         self._pending[target] = state
         return state
+
+    def _discard(self, state: _PendingTextWrite) -> None:
+        state.temporary.unlink(missing_ok=True)
+        self._pending.pop(state.target, None)
 
     def _append_chunk(
         self,
@@ -793,6 +813,22 @@ class WriteTool(Tool):
                     f"got {chunk_index}."
                 ),
             )
+        if state.next_index >= MAX_WRITE_FILE_CHUNKS:
+            return ToolResult(
+                success=False,
+                error=(
+                    "WRITE_FILE_TOO_MANY_CHUNKS: limit is "
+                    f"{MAX_WRITE_FILE_CHUNKS:,} chunks."
+                ),
+            )
+        if state.size_bytes + len(data) > MAX_WRITE_FILE_BYTES:
+            return ToolResult(
+                success=False,
+                error=(
+                    "WRITE_FILE_TOTAL_SIZE_EXCEEDED: limit is "
+                    f"{MAX_WRITE_FILE_BYTES:,} UTF-8 bytes."
+                ),
+            )
         self._write_bytes(state.temporary, data, append=True)
         state.chunk_hashes[chunk_index] = digest
         state.next_index += 1
@@ -802,11 +838,22 @@ class WriteTool(Tool):
     def _commit(self, state: _PendingTextWrite) -> ToolResult:
         if error := self._permission_error(state.target):
             return error
+        assembled_content = state.temporary.read_text(encoding="utf-8")
+        placeholder_error = _model_history_placeholder_error(assembled_content)
+        if placeholder_error:
+            self._discard(state)
+            return ToolResult(success=False, error=placeholder_error)
+        bypass_error = detect_pptx_self_check_bypass(
+            str(state.target), assembled_content
+        )
+        if bypass_error:
+            self._discard(state)
+            return ToolResult(success=False, error=bypass_error)
         digest = self._sha256_file(state.temporary)
         backup_path = backup_file(state.target)
         os.replace(state.temporary, state.target)
         self._pending.pop(state.target, None)
-        return ToolResult(
+        result = ToolResult(
             success=True,
             content=(
                 f"Successfully wrote {state.target} "
@@ -822,6 +869,54 @@ class WriteTool(Tool):
                 "backup_path": str(backup_path) if backup_path is not None else None,
             },
         )
+        final_chunk_index = state.next_index - 1
+        self._committed[state.target] = _CommittedTextWrite(
+            final_chunk_index=final_chunk_index,
+            final_chunk_sha256=state.chunk_hashes[final_chunk_index],
+            file_sha256=digest,
+            result=result.model_copy(deep=True),
+        )
+        return result
+
+    def _committed_replay(
+        self,
+        target: Path,
+        chunk_index: int,
+        data: bytes,
+        *,
+        final: bool,
+    ) -> ToolResult | None:
+        if not final:
+            return None
+        receipt = self._committed.get(target)
+        if receipt is None or chunk_index != receipt.final_chunk_index:
+            return None
+        digest = hashlib.sha256(data).hexdigest()
+        if digest == receipt.final_chunk_sha256:
+            target_matches = (
+                target.is_file()
+                and self._sha256_file(target) == receipt.file_sha256
+            )
+            if not target_matches:
+                if chunk_index > 0:
+                    return ToolResult(
+                        success=False,
+                        error=(
+                            "WRITE_FILE_COMMITTED_STATE_CHANGED: the committed target "
+                            "no longer matches the final receipt."
+                        ),
+                    )
+                return None
+            return receipt.result.model_copy(deep=True)
+        if chunk_index > 0:
+            return ToolResult(
+                success=False,
+                error=(
+                    "WRITE_FILE_FINAL_CHUNK_CONFLICT: committed chunk_index="
+                    f"{chunk_index} had different content."
+                ),
+            )
+        return None
 
     async def execute(
         self,
@@ -835,8 +930,17 @@ class WriteTool(Tool):
             target = self._target(path)
             if error := self._permission_error(target):
                 return error
+            data = content.encode("utf-8")
             state = self._pending.get(target)
             if state is None:
+                replay = self._committed_replay(
+                    target,
+                    chunk_index,
+                    data,
+                    final=final,
+                )
+                if replay is not None:
+                    return replay
                 if chunk_index != 0:
                     return ToolResult(
                         success=False,
@@ -846,13 +950,18 @@ class WriteTool(Tool):
                         ),
                     )
                 state = self._start(target)
+                started = True
+            else:
+                started = False
 
             append_result = self._append_chunk(
                 state,
                 chunk_index,
-                content.encode("utf-8"),
+                data,
             )
             if append_result is not None:
+                if started and state.next_index == 0:
+                    self._discard(state)
                 return append_result
             if final:
                 return self._commit(state)
@@ -880,9 +989,9 @@ class WriteTool(Tool):
 
         cleaned: list[str] = []
         for target, state in list(self._pending.items()):
-            state.temporary.unlink(missing_ok=True)
-            self._pending.pop(target, None)
+            self._discard(state)
             cleaned.append(str(target))
+        self._committed.clear()
         return cleaned
 
 

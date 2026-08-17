@@ -22,6 +22,7 @@ def test_dashboard_skill_routes_large_html_to_write_file_chunks() -> None:
     assert "write_file" in instructions
     assert "chunk_index=0, final=false" in instructions
     assert "staged_file_write" not in instructions
+    assert "expected_chunks" not in instructions
     assert "禁止把整份 HTML" in instructions
     assert "禁止用 `bash` heredoc" in instructions
 
