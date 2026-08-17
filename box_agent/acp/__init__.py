@@ -82,7 +82,7 @@ from box_agent.tools.setup import (
     sync_mcp_tools,
 )
 from box_agent.tools.bash_tool import BashTool
-from box_agent.tools.staged_file_write_tool import StagedFileWriteTool
+from box_agent.tools.file_tools import WriteTool
 from box_agent.tools.browser_runtime_scope import (
     release_browser_runtime,
     reset_browser_runtime_owner,
@@ -2291,21 +2291,21 @@ class BoxACPAgent:
                         turn_id=turn_id,
                         error=str(cleanup_error),
                     )
-            staged_write_tool = state.agent.tools.get("staged_file_write")
-            if isinstance(staged_write_tool, StagedFileWriteTool):
+            write_tool = state.agent.tools.get("write_file")
+            if isinstance(write_tool, WriteTool):
                 try:
-                    discarded_write_ids = staged_write_tool.cleanup_pending_writes()
-                    if discarded_write_ids:
+                    discarded_paths = write_tool.cleanup_pending_writes()
+                    if discarded_paths:
                         log.info(
-                            "staged_write/session_cleanup",
+                            "write_file/session_cleanup",
                             session_id=session_id,
                             turn_id=turn_id,
-                            count=len(discarded_write_ids),
-                            write_ids=discarded_write_ids,
+                            count=len(discarded_paths),
+                            paths=discarded_paths,
                         )
                 except Exception as cleanup_error:
                     log.error(
-                        "staged_write/session_cleanup_failed",
+                        "write_file/session_cleanup_failed",
                         session_id=session_id,
                         turn_id=turn_id,
                         error=str(cleanup_error),

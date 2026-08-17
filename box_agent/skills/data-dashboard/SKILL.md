@@ -35,9 +35,9 @@ keywords: [dashboard, 数据看板, 看板, 仪表盘, demo, 可视化报告, ht
 
 ### 2.1 大文件落盘契约
 
-- 预计最终 HTML / CSS / JS 正文超过 8,000 字符时，从一开始就使用
-  `staged_file_write`：`begin` → 多次 `append_text` / `append_file` → `commit`，
-  每个生成块建议不超过 5,500 字符。
+- 若预计最终 HTML / CSS / JS 正文无法容纳在一次模型输出中，从一开始就对同一路径
+  使用 `write_file` 有序分块：首块 `chunk_index=0, final=false`，后续递增索引，
+  最后一块 `final=true`；每个生成块建议不超过 5,500 字符。
 - `execute_code` 只用于数据计算、短小的文件修正和交付校验；禁止把整份 HTML、
   CSS、JS 或模板正文放进 `execute_code`。同样禁止用 `bash` heredoc、base64 或超长
   命令写页面正文。
