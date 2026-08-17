@@ -5166,7 +5166,16 @@ async def run_agent_loop(
                 and workflow_policy.is_direct_evidence_read_tool(fn_name)
                 and (result.model_context or result.content or "").strip()
             ):
-                direct_url = _first_present(fn_args, ("url", "URL", "href"))
+                direct_evidence_url = getattr(
+                    workflow_policy,
+                    "direct_evidence_url",
+                    None,
+                )
+                direct_url = (
+                    direct_evidence_url(fn_name, fn_args, result)
+                    if callable(direct_evidence_url)
+                    else _first_present(fn_args, ("url", "URL", "href"))
+                )
                 normalized_direct_url = _normalize_search_url(direct_url)
                 if normalized_direct_url:
                     verified_evidence_urls.add(normalized_direct_url)
@@ -5777,7 +5786,16 @@ async def run_agent_loop(
                     and workflow_policy.is_direct_evidence_read_tool(fn_name)
                     and (result.model_context or result.content or "").strip()
                 ):
-                    direct_url = _first_present(par_fn_args, ("url", "URL", "href"))
+                    direct_evidence_url = getattr(
+                        workflow_policy,
+                        "direct_evidence_url",
+                        None,
+                    )
+                    direct_url = (
+                        direct_evidence_url(fn_name, par_fn_args, result)
+                        if callable(direct_evidence_url)
+                        else _first_present(par_fn_args, ("url", "URL", "href"))
+                    )
                     normalized_direct_url = _normalize_search_url(direct_url)
                     if normalized_direct_url:
                         verified_evidence_urls.add(normalized_direct_url)

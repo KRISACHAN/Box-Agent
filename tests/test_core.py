@@ -3185,7 +3185,7 @@ async def test_research_evidence_calls_preserve_controlled_deck_delivery_budget(
 
 
 @pytest.mark.asyncio
-async def test_controlled_research_batches_public_page_reads(tmp_path):
+async def test_controlled_research_serializes_public_page_reads(tmp_path):
     browser = CountingBrowserReadTool()
     calls = [
         ToolCall(
@@ -3220,21 +3220,197 @@ async def test_controlled_research_batches_public_page_reads(tmp_path):
         )
     )
 
-    assert browser.urls == [
-        "https://example.com/source-1",
-        "https://example.com/source-2",
-    ]
+    assert browser.urls == ["https://example.com/source-1"]
     results = {
         event.tool_call_id: event
         for event in events
         if isinstance(event, ToolCallResult)
     }
-    for call_id in ("browser-3", "browser-4"):
+    for call_id in ("browser-2", "browser-3", "browser-4"):
         assert results[call_id].success is False
         assert results[call_id].user_visible is False
         assert "page read deferred by runtime batching" in (
             results[call_id].error or ""
         )
+
+
+@pytest.mark.asyncio
+async def test_controlled_research_binds_snapshot_body_to_navigated_url(tmp_path):
+    source_url = "https://example.com/report"
+    excerpt = "Example Entity published verified information in 2026."
+    output_dir = tmp_path / "output"
+    research_dir = output_dir / "research"
+    research_dir.mkdir(parents=True)
+    (research_dir / "market_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "market",
+                "target_entities": [
+                    {
+                        "entity": "Example Entity",
+                        "aliases": ["Example"],
+                        "official_domains": ["example.com"],
+                    }
+                ],
+                "evidence": [
+                    {
+                        "entity": "Example Entity",
+                        "claim": excerpt,
+                        "source_url": source_url,
+                        "source_type": "first_party",
+                        "evidence_excerpt": excerpt,
+                        "confidence": "high",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class MetadataNavigateTool(Tool):
+        @property
+        def name(self):
+            return "browser_navigate"
+
+        @property
+        def description(self):
+            return "Navigate to one public URL"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"url": {"type": "string"}}}
+
+        async def execute(self, url: str = ""):
+            return ToolResult(
+                success=True,
+                content=(
+                    "### Page\n"
+                    f"- Page URL: {url}\n"
+                    "- Page Title: Example report\n"
+                    "### Snapshot\n"
+                    "- [Snapshot](.playwright-mcp/page.yml)"
+                ),
+            )
+
+    class SnapshotBodyTool(Tool):
+        @property
+        def name(self):
+            return "browser_snapshot"
+
+        @property
+        def description(self):
+            return "Return the current page body"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self):
+            return ToolResult(success=True, content=f"Page heading\n{excerpt}")
+
+    class CountingBashTool(Tool):
+        def __init__(self):
+            self.calls = 0
+
+        @property
+        def name(self):
+            return "bash"
+
+        @property
+        def description(self):
+            return "Run validator"
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {"command": {"type": "string"}}}
+
+        async def execute(self, command: str = ""):
+            self.calls += 1
+            return ToolResult(success=True, content="validator ran")
+
+    bash = CountingBashTool()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="navigate",
+                        type="function",
+                        function=FunctionCall(
+                            name="browser_navigate",
+                            arguments={"url": source_url},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="snapshot",
+                        type="function",
+                        function=FunctionCall(
+                            name="browser_snapshot",
+                            arguments={},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="validator",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={
+                                "command": (
+                                    "python validate_research_artifacts.py "
+                                    "--research-dir research --topic market"
+                                )
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "browser_navigate": MetadataNavigateTool(),
+                "browser_snapshot": SnapshotBodyTool(),
+                "bash": bash,
+            },
+            max_steps=8,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                workflow_options={"research_mode": "deep"},
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+            artifact_root_dir=output_dir,
+        )
+    )
+
+    assert bash.calls == 1
+    validator_result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.tool_call_id == "validator"
+    )
+    assert validator_result.success is True
 
 
 @pytest.mark.asyncio

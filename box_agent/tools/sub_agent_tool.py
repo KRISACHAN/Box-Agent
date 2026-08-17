@@ -282,6 +282,12 @@ class SubAgentTool(EventEmittingTool):
             "For managed Playwright tools, browser navigation/snapshot requires "
             "`constraints.network=true`; browser interaction or `browser_run_code` also requires "
             "`constraints.external_side_effect=true`.\n\n"
+            "Before delegating independent web research, the parent must activate the exact "
+            "search/browser tools first. A child that writes one research file must declare "
+            "`constraints={read_only:false, network:true, write_scope:[\"research/dim01.md\"], "
+            "external_side_effect:false}` and use a different exact path for every sibling. "
+            "Pass `budget` as an object such as `{max_steps:12, max_tool_calls:25}`; never pass "
+            "serialized JSON text.\n\n"
             "Give parallel calls a short distinct `title`; never assign two children to write the same "
             "path. Constraints and budgets are hard runtime boundaries, not suggestions."
         )
@@ -359,22 +365,55 @@ class SubAgentTool(EventEmittingTool):
                 },
                 "constraints": {
                     "type": "object",
+                    "description": (
+                        "Hard child boundaries. Defaults are read_only=true, network=false, "
+                        "write_scope=null, external_side_effect=false. When required_tools "
+                        "contains write_file/append_file/edit_file, explicitly set "
+                        "read_only=false and an exact artifact-root-relative write_scope. "
+                        "Independent public-web research also requires network=true."
+                    ),
                     "properties": {
-                        "read_only": {"type": "boolean"},
-                        "network": {"type": "boolean"},
+                        "read_only": {
+                            "type": "boolean",
+                            "description": (
+                                "Defaults true. Set false only when the child must use a "
+                                "declared write tool, and pair it with write_scope."
+                            ),
+                        },
+                        "network": {
+                            "type": "boolean",
+                            "description": (
+                                "Defaults false. Set true for web_search or public browser "
+                                "retrieval."
+                            ),
+                        },
                         "write_scope": {
+                            "description": (
+                                "Exact artifact-root-relative path or paths this child may "
+                                "write. Parallel siblings must use mutually exclusive paths."
+                            ),
                             "oneOf": [
                                 {"type": "null"},
                                 {"type": "string"},
                                 {"type": "array", "items": {"type": "string"}},
                             ]
                         },
-                        "external_side_effect": {"type": "boolean"},
+                        "external_side_effect": {
+                            "type": "boolean",
+                            "description": (
+                                "Defaults false. Public read-only research keeps this false."
+                            ),
+                        },
                     },
                     "additionalProperties": False,
                 },
                 "budget": {
                     "type": "object",
+                    "description": (
+                        "Optional numeric limits as a JSON object, for example "
+                        "{\"max_steps\":12,\"max_tool_calls\":25}. Never pass a "
+                        "serialized JSON string."
+                    ),
                     "properties": {
                         "max_steps": {"type": "integer", "minimum": 1},
                         "max_tool_calls": {"type": "integer", "minimum": 1},

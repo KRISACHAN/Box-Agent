@@ -199,6 +199,11 @@ class MCPToolCatalog:
                 score = 1
             elif normalized_query in normalized_server_name:
                 score = 2
+            elif len(normalized_name) >= 3 and normalized_name in normalized_query:
+                # A model may name several concrete tools in one discovery query.
+                # Treat each embedded exact name as a hit instead of requiring
+                # every query word to exist in one tool's metadata.
+                score = 2
             elif normalized_query in normalized_name:
                 score = 3
             elif normalized_query in normalized_desc:

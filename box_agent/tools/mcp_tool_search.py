@@ -56,7 +56,9 @@ class ToolSearchTool(Tool):
             "returned by this call is immediately activated for this session and "
             "only those activated hits are added to the next model step; other "
             "deferred catalog tools are not exposed, while alwaysLoad tools remain "
-            "visible without search. Set top_k to however many matching tool "
+            "visible without search. Prefer a short capability or one exact tool "
+            "name per search; when several concrete tools are needed, search each "
+            "name separately. Set top_k to however many matching tool "
             "schemas the task actually needs, including ten or more when appropriate. "
             "This search activates tools but does not execute them."
         )

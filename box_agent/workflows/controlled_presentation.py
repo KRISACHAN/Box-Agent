@@ -6,6 +6,7 @@ presentation-specific stage machine and command/evidence restrictions.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -38,6 +39,7 @@ DIRECT_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
         "browser_read_article",
         "browser_read_section",
         "browser_navigate",
+        "browser_snapshot",
     }
 )
 RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
@@ -46,9 +48,10 @@ RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
 GATEWAY_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
     {"browser_open_url", "browser_read_page", "browser_read_article"}
 )
-RESEARCH_READ_BATCH_SIZE: Final[int] = 2
+RESEARCH_READ_BATCH_SIZE: Final[int] = 1
 RESEARCH_DIRECT_READ_LIMIT: Final[int] = 5
 RESEARCH_UNPRODUCTIVE_DIRECT_READ_LIMIT: Final[int] = 2
+RESEARCH_DISCOVERY_ATTEMPT_LIMIT: Final[int] = 3
 RESEARCH_ROUND_LIMIT: Final[int] = ToolLimitsConfig().presentation.research_rounds
 
 _log = logging.getLogger(__name__)
@@ -233,11 +236,41 @@ _OUTLINE_TARGET_TOOL_ERROR = (
 )
 _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research searches "
-    "already returned candidate sources. Do not call web_search again. Search snippets "
-    "are discovery only: read a small set of unique exact authoritative candidate "
-    "URLs before marking their evidence rows verified. Do not require first-party "
-    "coverage when another suitable authoritative source supports the claim; then "
-    "complete the ledger and validation report."
+    "are complete. Do not call web_search or tool_search again. Search snippets are "
+    "discovery only: read a small set of unique exact authoritative candidate URLs "
+    "before marking their evidence rows verified. Do not require first-party coverage "
+    "when another suitable authoritative source supports the claim; then complete the "
+    "ledger and validation report."
+)
+_RESEARCH_EXECUTE_CODE_NETWORK_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_NETWORK_TOOL_REQUIRED: network access through "
+    "execute_code bypasses research accounting and source provenance. Do not use "
+    "Python network libraries, URL-reading data APIs, socket connections, or curl/wget "
+    "subprocesses for research retrieval. Call tool_search with one short capability or "
+    "exact tool name at a time, then use web_search or an activated browser_* tool."
+)
+_NETWORK_MODULE_PREFIXES: Final[tuple[str, ...]] = (
+    "requests",
+    "httpx",
+    "aiohttp",
+    "urllib3",
+    "urllib.request",
+    "http.client",
+    "socket",
+)
+_URL_READER_NAMES: Final[frozenset[str]] = frozenset(
+    {"read_csv", "read_excel", "read_html", "read_json", "read_parquet", "read_xml"}
+)
+_PROCESS_CALL_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "os.popen",
+        "os.system",
+        "subprocess.Popen",
+        "subprocess.call",
+        "subprocess.check_call",
+        "subprocess.check_output",
+        "subprocess.run",
+    }
 )
 _RESEARCH_DIRECT_READ_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_DIRECT_READ_COMPLETE: the bounded direct-source "
@@ -258,6 +291,16 @@ _RESEARCH_DIRECT_URL_ALREADY_ATTEMPTED_TOOL_ERROR = (
     "different exact candidate URL, use the alternate browser backend once, or mark "
     "the source unverified and continue."
 )
+_RESEARCH_SNAPSHOT_REQUIRED_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_SNAPSHOT_REQUIRED: browser_navigate reached an "
+    "exact source URL but returned navigation metadata only. Call browser_snapshot "
+    "now before navigating elsewhere; the snapshot body will be bound to that URL."
+)
+_RESEARCH_SNAPSHOT_NAVIGATION_REQUIRED_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_NAVIGATION_REQUIRED: browser_snapshot can verify "
+    "research evidence only immediately after one successful metadata-only "
+    "browser_navigate call. Navigate one exact candidate URL first."
+)
 _RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL: the evidence ledger marks URLs as "
     "verified even though this run has not successfully read those exact source pages, "
@@ -277,17 +320,19 @@ _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR = (
 _RESEARCH_BROWSER_REINSPECTION_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_BROWSER_REINSPECTION_COMPLETE: bounded "
     "research is complete. Do not inspect browser tabs, execute page scripts, "
-    "take snapshots, or use another browser-state side channel. Read only an "
+    "or use another browser-state side channel. Read only an "
     "exact candidate URL with browser_read_page, browser_read_article, "
-    "browser_read_section, browser_open_url, or browser_navigate, then write the "
-    "remaining research artifacts and run validate_research_artifacts.py."
+    "browser_read_section, or browser_open_url; for standalone Playwright, use one "
+    "browser_navigate followed by browser_snapshot before opening another URL. Then "
+    "write the remaining research artifacts and run validate_research_artifacts.py."
 )
 _RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE: the browser "
     "connector already returned source_unavailable in this research run. Do not "
     "retry browser_read_page, browser_read_article, or browser_open_url. Use the "
-    "available standalone Playwright browser_navigate tool with an exact candidate "
-    "URL, or mark the source unverified and continue to the research artifacts."
+    "available standalone Playwright browser_navigate plus browser_snapshot pair with "
+    "one exact candidate URL at a time, or mark the source unverified and continue to "
+    "the research artifacts."
 )
 _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_REVALIDATION_REQUIRED: research artifacts are "
@@ -1174,7 +1219,11 @@ def _research_direct_read_key(
     )
     if not url.startswith(("http://", "https://")):
         return None
-    backend = "playwright" if tool_name == "browser_navigate" else "gateway"
+    backend = (
+        "playwright"
+        if tool_name in {"browser_navigate", "browser_snapshot"}
+        else "gateway"
+    )
     return url, backend
 
 
@@ -1572,14 +1621,105 @@ def _research_result_is_empty(result: ToolResult) -> bool:
     content = (result.model_context or result.content or "").strip()
     if not content:
         return True
-    return content.casefold() in {
+    if content.casefold() in {
         "[]",
         "{}",
         "null",
         "no results",
         "no search results",
         "no results found",
-    }
+    }:
+        return True
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and "activated" in payload
+        and payload.get("activated") == []
+    )
+
+
+def _dotted_python_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _dotted_python_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _contains_http_literal(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Constant)
+        and isinstance(child.value, str)
+        and child.value.strip().casefold().startswith(("http://", "https://"))
+        for child in ast.walk(node)
+    )
+
+
+def _is_network_module(module_name: str) -> bool:
+    return any(
+        module_name == prefix or module_name.startswith(f"{prefix}.")
+        for prefix in _NETWORK_MODULE_PREFIXES
+    )
+
+
+def _execute_code_uses_network(arguments: dict[str, Any]) -> bool:
+    """Detect common network-capable Python operations structurally via AST."""
+    code = arguments.get("code")
+    if not isinstance(code, str) or not code.strip():
+        return False
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        folded = code.casefold()
+        return any(prefix in folded for prefix in _NETWORK_MODULE_PREFIXES) or bool(
+            re.search(r"(?m)^\s*!\s*(?:\S*/)?(?:curl|wget)\b", folded)
+        )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(_is_network_module(alias.name) for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if _is_network_module(module):
+                return True
+            if module in {"http", "urllib"} and any(
+                alias.name in {"client", "request"} for alias in node.names
+            ):
+                return True
+        elif isinstance(node, ast.Call):
+            call_name = _dotted_python_name(node.func) or ""
+            if call_name.rsplit(".", 1)[-1] == "__import__" and node.args:
+                imported = node.args[0]
+                if (
+                    isinstance(imported, ast.Constant)
+                    and isinstance(imported.value, str)
+                    and _is_network_module(imported.value)
+                ):
+                    return True
+            if _is_network_module(call_name):
+                return True
+            if (
+                call_name.rsplit(".", 1)[-1] in _URL_READER_NAMES
+                and _contains_http_literal(node)
+            ):
+                return True
+            if call_name in _PROCESS_CALL_NAMES and (
+                _contains_http_literal(node)
+                or any(
+                    isinstance(child, ast.Constant)
+                    and isinstance(child.value, str)
+                    and child.value.strip().casefold().rsplit("/", 1)[-1]
+                    in {"curl", "wget"}
+                    for child in ast.walk(node)
+                )
+            ):
+                return True
+    return False
 
 
 def _image_result_is_unauthorized(result: ToolResult) -> bool:
@@ -1649,6 +1789,10 @@ class ControlledPresentationPolicy:
     _research_successful_attempts: int = 0
     _research_failed_attempts: int = 0
     _research_empty_attempts: int = 0
+    _research_discovery_attempts: int = 0
+    _research_successful_discovery_attempts: int = 0
+    _research_failed_discovery_attempts: int = 0
+    _research_empty_discovery_attempts: int = 0
     _research_direct_read_attempts: int = 0
     _research_successful_direct_read_attempts: int = 0
     _research_consecutive_unproductive_direct_reads: int = 0
@@ -1659,6 +1803,8 @@ class ControlledPresentationPolicy:
     _research_browser_connector_unavailable: bool = False
     _research_direct_read_keys: set[tuple[str, str]] = field(default_factory=set)
     _research_direct_source_text: dict[str, str] = field(default_factory=dict)
+    _research_pending_playwright_url: str | None = None
+    _research_last_direct_source_url: str | None = None
     _successful_mutation_since_checkpoint: bool = False
     _no_progress_mutation_streak: int = 0
     _previous_outline_issue_classes: frozenset[str] = frozenset()
@@ -1675,6 +1821,17 @@ class ControlledPresentationPolicy:
             self._research_direct_read_attempts >= self.evidence_read_limit
             or self._research_consecutive_unproductive_direct_reads
             >= RESEARCH_UNPRODUCTIVE_DIRECT_READ_LIMIT
+        )
+
+    @property
+    def _research_discovery_exhausted(self) -> bool:
+        unavailable = (
+            self._research_failed_discovery_attempts
+            + self._research_empty_discovery_attempts
+        )
+        return bool(
+            self._research_discovery_attempts >= RESEARCH_DISCOVERY_ATTEMPT_LIMIT
+            and unavailable == self._research_discovery_attempts
         )
 
     def attach_resume_checkpoint(
@@ -1711,7 +1868,7 @@ class ControlledPresentationPolicy:
             self._policy_rejection_stage == "research"
             and self._policy_rejection_streak >= _REPEATED_EXECUTION_FAILURE_LIMIT
         )
-        fallback_allowed = (
+        research_fallback_allowed = (
             round_limit_reached
             and self._research_tool_attempts > 0
             and (
@@ -1720,6 +1877,9 @@ class ControlledPresentationPolicy:
                 or repeated_research_validation_failure
                 or repeated_research_progress_rejection
             )
+        )
+        fallback_allowed = (
+            self._research_discovery_exhausted or research_fallback_allowed
         )
         self.research_search_exhausted = round_limit_reached and not fallback_allowed
         attempt_summary = {
@@ -1737,19 +1897,23 @@ class ControlledPresentationPolicy:
         fallback_reason = None
         if fallback_allowed:
             fallback_reason = (
-                "research_artifacts_incomplete_or_validation_failed"
-                if repeated_research_validation_failure
+                "research_tools_unavailable_after_discovery"
+                if self._research_discovery_exhausted
                 else (
-                    "research_progress_stalled_after_bounded_search"
-                    if repeated_research_progress_rejection
+                    "research_artifacts_incomplete_or_validation_failed"
+                    if repeated_research_validation_failure
                     else (
-                        "direct_source_verification_unavailable"
-                        if direct_source_verification_unavailable
+                        "research_progress_stalled_after_bounded_search"
+                        if repeated_research_progress_rejection
                         else (
-                            "research_sources_unavailable"
-                            if unavailable == self._research_tool_attempts
+                            "direct_source_verification_unavailable"
+                            if direct_source_verification_unavailable
                             else (
-                                "research_round_limit_reached_without_validated_report"
+                                "research_sources_unavailable"
+                                if unavailable == self._research_tool_attempts
+                                else (
+                                    "research_round_limit_reached_without_validated_report"
+                                )
                             )
                         )
                     )
@@ -1766,6 +1930,7 @@ class ControlledPresentationPolicy:
             direct_research_read_complete=self._research_direct_read_complete,
             direct_research_read_available=(
                 self.available_tool_names is None
+                or "tool_search" in self.available_tool_names
                 or bool(self.available_tool_names & DIRECT_RESEARCH_READ_TOOLS)
             ),
         )
@@ -2117,6 +2282,24 @@ class ControlledPresentationPolicy:
             return research_revalidation_error
         if (
             self.stage == "research"
+            and tool_name == "execute_code"
+            and _execute_code_uses_network(arguments)
+        ):
+            return _RESEARCH_EXECUTE_CODE_NETWORK_TOOL_ERROR
+        if (
+            self.stage == "research"
+            and tool_name == "browser_navigate"
+            and self._research_pending_playwright_url is not None
+        ):
+            return _RESEARCH_SNAPSHOT_REQUIRED_TOOL_ERROR
+        if (
+            self.stage == "research"
+            and tool_name == "browser_snapshot"
+            and self._research_pending_playwright_url is None
+        ):
+            return _RESEARCH_SNAPSHOT_NAVIGATION_REQUIRED_TOOL_ERROR
+        if (
+            self.stage == "research"
             and tool_name in DIRECT_RESEARCH_READ_TOOLS
             and self._research_direct_read_complete
         ):
@@ -2158,6 +2341,12 @@ class ControlledPresentationPolicy:
                 return _RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR.format(urls=displayed)
         if (
             self.stage == "research"
+            and self._research_discovery_exhausted
+            and tool_name == "tool_search"
+        ):
+            return _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR
+        if (
+            self.stage == "research"
             and self.research_search_exhausted
             and tool_name == "web_search"
         ):
@@ -2167,6 +2356,8 @@ class ControlledPresentationPolicy:
             and self.research_search_exhausted
             and tool_name in DIRECT_RESEARCH_READ_TOOLS
         ):
+            if tool_name == "browser_snapshot":
+                return None
             direct_read_key = _research_direct_read_key(tool_name, arguments)
             if direct_read_key is None or not _is_substantive_research_url(
                 direct_read_key[0]
@@ -2406,20 +2597,53 @@ class ControlledPresentationPolicy:
                 "further_image_calls_stopped=true"
             )
 
+        if self.stage == "research" and tool_name == "tool_search":
+            self._research_discovery_attempts += 1
+            if not result.success:
+                self._research_failed_discovery_attempts += 1
+            elif _research_result_is_empty(result):
+                self._research_empty_discovery_attempts += 1
+            else:
+                self._research_successful_discovery_attempts += 1
+
         if self.stage == "research" and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS:
             self._research_tool_attempts += 1
             self._research_calls_since_checkpoint += 1
+            self._research_last_direct_source_url = None
             establishes_direct_source = False
-            if tool_name in DIRECT_RESEARCH_READ_TOOLS:
-                self._research_direct_read_attempts += 1
-                direct_read_key = _research_direct_read_key(tool_name, arguments)
-                if direct_read_key is not None:
-                    self._research_direct_read_keys.add(direct_read_key)
-                establishes_direct_source = _research_result_establishes_direct_source(
-                    tool_name,
+            counts_direct_read = tool_name in DIRECT_RESEARCH_READ_TOOLS
+            effective_arguments = arguments
+            if tool_name == "browser_navigate" and result.success:
+                page_text, resolved_url = _research_direct_source_content(
                     arguments,
                     result,
                 )
+                if (
+                    _research_navigation_result_is_metadata_only(page_text)
+                    and _is_substantive_research_url(resolved_url)
+                ):
+                    self._research_pending_playwright_url = resolved_url
+                    counts_direct_read = False
+            elif tool_name == "browser_snapshot":
+                pending_url = self._research_pending_playwright_url
+                self._research_pending_playwright_url = None
+                effective_arguments = {**arguments, "url": pending_url or ""}
+            if tool_name in DIRECT_RESEARCH_READ_TOOLS:
+                if counts_direct_read:
+                    self._research_direct_read_attempts += 1
+                    direct_read_key = _research_direct_read_key(
+                        tool_name,
+                        effective_arguments,
+                    )
+                    if direct_read_key is not None:
+                        self._research_direct_read_keys.add(direct_read_key)
+                    establishes_direct_source = (
+                        _research_result_establishes_direct_source(
+                            tool_name,
+                            effective_arguments,
+                            result,
+                        )
+                    )
             if not result.success:
                 self._research_failed_attempts += 1
             elif _research_result_is_empty(result):
@@ -2429,14 +2653,15 @@ class ControlledPresentationPolicy:
                 if establishes_direct_source:
                     self._research_successful_direct_read_attempts += 1
                     page_text, resolved_url = _research_direct_source_content(
-                        arguments,
+                        effective_arguments,
                         result,
                     )
                     if resolved_url:
                         self._research_direct_source_text[resolved_url] = (
                             _normalized_source_text(page_text)
                         )
-            if tool_name in DIRECT_RESEARCH_READ_TOOLS:
+                        self._research_last_direct_source_url = resolved_url
+            if tool_name in DIRECT_RESEARCH_READ_TOOLS and counts_direct_read:
                 if establishes_direct_source:
                     self._research_consecutive_unproductive_direct_reads = 0
                 else:
@@ -2581,6 +2806,17 @@ class ControlledPresentationPolicy:
     def is_direct_evidence_read_tool(tool_name: str) -> bool:
         """Return whether a successful result can establish URL provenance."""
         return tool_name in DIRECT_RESEARCH_READ_TOOLS
+
+    def direct_evidence_url(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+    ) -> str | None:
+        """Return the source URL established by the most recent direct-read result."""
+        if not result.success or tool_name not in DIRECT_RESEARCH_READ_TOOLS:
+            return None
+        return self._research_last_direct_source_url
 
     def allows_completion_continuation(self) -> bool:
         return self.stage not in {"complete", "repair_stalled", "image_auth_blocked"}

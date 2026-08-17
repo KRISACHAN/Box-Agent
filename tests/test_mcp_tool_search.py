@@ -201,6 +201,39 @@ async def test_search_activates_exactly_requested_hits_without_small_cap() -> No
 
 
 @pytest.mark.asyncio
+async def test_search_finds_multiple_exact_tool_names_inside_compound_query() -> None:
+    catalog = MCPToolCatalog()
+    navigate = FakeMCPTool(
+        "browser_navigate",
+        "playwright",
+        "Navigate to a URL",
+    )
+    snapshot = FakeMCPTool(
+        "browser_snapshot",
+        "playwright",
+        "Capture the current page snapshot",
+    )
+    catalog.replace_server("playwright", [navigate, snapshot])
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(catalog, activated).execute(
+        query=(
+            "playwright browser_navigate navigate URL and browser_snapshot "
+            "get exact page text"
+        ),
+        server_name="playwright",
+        top_k=10,
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert {item["name"] for item in payload["activated"]} == {
+        "browser_navigate",
+        "browser_snapshot",
+    }
+
+
+@pytest.mark.asyncio
 async def test_duplicate_model_names_are_reported_but_not_activated() -> None:
     catalog = MCPToolCatalog()
     first = FakeMCPTool("lookup", "crm", "CRM lookup")
