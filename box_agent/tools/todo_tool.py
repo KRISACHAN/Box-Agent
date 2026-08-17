@@ -291,8 +291,11 @@ class TodoStore:
 
     def replace(self, todos: list[dict[str, Any]]) -> list[dict]:
         current = self._items
+        current_items = list(current.values())
         supplied_ids = [
-            str(todo["id"]).strip() for todo in todos if todo.get("id") is not None
+            str(todo["id"]).strip()
+            for todo in todos
+            if todo.get("id") is not None
         ]
         seen_ids: set[str] = set()
         for todo_id in supplied_ids:
@@ -304,6 +307,45 @@ class TodoStore:
             raise ValueError(
                 f"Todo #{unknown_ids[0]} does not exist; omit id for a new todo."
             )
+
+        requested_tasks = [str(todo["task"]).strip() for todo in todos]
+        current_tasks = [str(item["task"]).strip() for item in current_items]
+        if current_items and requested_tasks == current_tasks:
+            requested_statuses = [
+                str(todo.get("status") or current_items[index]["status"])
+                for index, todo in enumerate(todos)
+            ]
+            current_statuses = [str(item["status"]) for item in current_items]
+            if requested_statuses != current_statuses:
+                raise ValueError(
+                    "Existing todo statuses must be advanced with action='transition'; "
+                    "call todo_read if canonical todo IDs are unavailable."
+                )
+
+        existing_ids_by_task: dict[str, list[str]] = {}
+        for item in current_items:
+            existing_ids_by_task.setdefault(str(item["task"]).strip(), []).append(
+                str(item["id"])
+            )
+        for todo in todos:
+            task = str(todo["task"]).strip()
+            matching_ids = existing_ids_by_task.get(task)
+            if not matching_ids:
+                continue
+            supplied_id = todo.get("id")
+            if supplied_id is None:
+                expected = ", ".join(f"#{todo_id}" for todo_id in matching_ids)
+                raise ValueError(
+                    f"Existing todo '{task}' must preserve its id ({expected}); "
+                    "call todo_read before rebuilding the list."
+                )
+            normalized_id = str(supplied_id).strip()
+            if normalized_id not in matching_ids:
+                expected = ", ".join(f"#{todo_id}" for todo_id in matching_ids)
+                raise ValueError(
+                    f"Existing todo '{task}' must preserve its original id "
+                    f"({expected}), not #{normalized_id}."
+                )
 
         candidate_state = []
         for todo in todos:
@@ -461,6 +503,11 @@ class TodoWriteTool(Tool):
             "'update' changes an existing item, and 'delete' removes an item. "
             "Use 'set' only for new or substantially revised multi-step work. Preserve "
             "the id of unchanged existing items in the complete ordered todos array. "
+            "Status-only changes to the same ordered list are rejected; use "
+            "'transition' for progress. Existing tasks submitted without their canonical "
+            "ids are also rejected; call todo_read first if the ids are unavailable. "
+            "When initializing an empty todo list, omit ids; any supplied ids are "
+            "ignored and canonical todo ids are assigned automatically. "
             "Use 'transition' for normal progress instead of rebuilding the whole list. "
             "If a current plan exists, call plan_read before setting todos. Derive the "
             "todos from plan steps in order and keep the plan's objective, scope, and "
@@ -501,7 +548,8 @@ class TodoWriteTool(Tool):
                                 "type": "string",
                                 "description": (
                                     "Existing todo ID to preserve during action='set'. "
-                                    "Omit for a new todo."
+                                    "Omit for a new todo and when initializing an empty "
+                                    "todo list; supplied ids are ignored during initialization."
                                 ),
                             },
                             "task": {"type": "string", "description": "Task description."},
@@ -569,10 +617,18 @@ class TodoWriteTool(Tool):
     ) -> ToolResult:
         try:
             if action == "set":
-                validation_error = self._validate_todos(todos)
+                normalized_todos = todos
+                if isinstance(todos, list) and not self._store.list():
+                    normalized_todos = [
+                        {key: value for key, value in todo.items() if key != "id"}
+                        if isinstance(todo, dict)
+                        else todo
+                        for todo in todos
+                    ]
+                validation_error = self._validate_todos(normalized_todos)
                 if validation_error:
                     return ToolResult(success=False, error=validation_error)
-                items = self._store.replace(todos or [])
+                items = self._store.replace(normalized_todos or [])
                 return self._result(
                     content=(
                         f"Set todo list with {len(items)} "

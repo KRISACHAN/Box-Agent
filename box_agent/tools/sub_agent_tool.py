@@ -45,6 +45,26 @@ from .sub_agent_capabilities import (
 
 _DEFAULT_SUB_AGENT_LIMITS = ToolLimitsConfig().sub_agent
 
+_DEFERRED_MCP_HEADING = "## Deferred MCP tools\n"
+_CHILD_MCP_BOUNDARY = (
+    "## Inherited MCP capability boundary\n"
+    "The parent agent owns deferred MCP discovery. Use only the real MCP tools "
+    "already present in this child tool list; `tool_search` is not available here."
+)
+
+
+def _child_safe_parent_prompt(system_prompt: str) -> str:
+    """Remove parent-only MCP discovery guidance before child inheritance."""
+    heading_index = system_prompt.find(_DEFERRED_MCP_HEADING)
+    if heading_index < 0:
+        return system_prompt
+    section_start = heading_index
+    if system_prompt[max(0, heading_index - 2) : heading_index] == "\n\n":
+        section_start = heading_index - 2
+    next_section = system_prompt.find("\n\n## ", heading_index + len(_DEFERRED_MCP_HEADING))
+    suffix = system_prompt[next_section:] if next_section >= 0 else ""
+    return f"{system_prompt[:section_start].rstrip()}\n\n{_CHILD_MCP_BOUNDARY}{suffix}"
+
 _SUB_AGENT_SYSTEM_PROMPT = """\
 You are a focused sub-agent executing a specific task delegated by the main agent.
 
@@ -190,17 +210,18 @@ class SubAgentTool(EventEmittingTool):
         self._artifact_root_dir = artifact_root_dir
 
     def set_parent_system_prompt(self, system_prompt: str) -> None:
-        """Attach the finalized parent prompt so child agents inherit constraints."""
-        self._parent_system_prompt = system_prompt
+        """Attach parent constraints without advertising parent-only MCP search."""
+        self._parent_system_prompt = _child_safe_parent_prompt(system_prompt)
 
     def set_tool_provider(self, provider: Callable[[], dict[str, Tool]]) -> None:
         """Wire a callable returning the parent agent's live tool map.
 
         The provider is invoked at ``execute`` time so child agents inherit the
-        parent's current toolset — including MCP tools (e.g. ``web_search``)
-        registered after this tool was constructed. Without this, the child
-        would be frozen with the construction-time snapshot and silently lose
-        late-loading tools, forcing it into brittle fallbacks (raw ``curl``).
+        parent's currently visible real tools, including MCP tools already
+        activated by the parent. Deferred discovery remains parent-owned, so
+        ``tool_search`` is intentionally absent from the child toolset. Without
+        the live provider, the child would be frozen with the construction-time
+        snapshot and silently lose late-activated tools.
         """
         self._tool_provider = provider
 
