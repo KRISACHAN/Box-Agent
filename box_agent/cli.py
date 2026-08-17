@@ -2590,7 +2590,7 @@ async def run_agent(
                         # Find the sandbox status tool and execute it
                         for tool in tools:
                             if isinstance(tool, SandboxStatusTool):
-                                result = await tool.execute()
+                                result = await tool.invoke({})
                                 if result.success:
                                     print(f"\n{Colors.BRIGHT_CYAN}{result.content}{Colors.RESET}\n")
                                 else:

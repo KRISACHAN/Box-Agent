@@ -32,6 +32,7 @@ from ..events import (
 from ..llm.model_routing import select_auto_model
 from ..schema import Message
 from .base import EventEmittingTool, Tool, ToolResult
+from .schema_validation import ToolArgumentIssue
 from .sub_agent_capabilities import (
     BATCH_AGGREGATE_MAX_CHARS,
     BATCH_FILE_MAX_CHARS,
@@ -516,6 +517,34 @@ class SubAgentTool(EventEmittingTool):
             raw_output=payload,
         )
 
+    def _invalid_arguments_result(
+        self,
+        issues: tuple[ToolArgumentIssue, ...],
+    ) -> ToolResult:
+        invalid_fields = tuple(
+            sorted(
+                {
+                    issue.path.split("/", 2)[1]
+                    .replace("~1", "/")
+                    .replace("~0", "~")
+                    for issue in issues
+                    if issue.path.startswith("/") and issue.path != "/"
+                }
+            )
+        )
+        return self._failure_result(
+            CapabilityFailure(
+                code="INVALID_DELEGATION_SPEC",
+                message=(
+                    "The sub-agent delegation does not match its declared schema; "
+                    "fix the listed fields and retry at most once."
+                ),
+                retryable=True,
+                invalid_fields=invalid_fields,
+                details={"schema_issues": [issue.to_dict() for issue in issues]},
+            )
+        )
+
     def _apply_write_scopes(
         self,
         tools: dict[str, Tool],
@@ -705,7 +734,7 @@ class SubAgentTool(EventEmittingTool):
 
         async def read_one(path: str) -> tuple[str, ToolResult | Exception]:
             try:
-                return path, await read_tool.execute(path=path)
+                return path, await read_tool.invoke({"path": path})
             except Exception as exc:
                 # Keep one ordinary read failure from cancelling siblings.
                 # asyncio.CancelledError is a BaseException and still propagates.
