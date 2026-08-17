@@ -36,6 +36,7 @@ from box_agent.tools.jupyter_tool import (
     SandboxStatusTool,
 )
 from box_agent.tools.mcp_loader import load_mcp_tools_async, set_mcp_timeout_config
+from box_agent.tools.mcp_tool_catalog import get_mcp_tool_catalog
 from box_agent.tools.memory_tool import MemoryReadTool, MemorySearchTool, MemoryWriteTool
 from box_agent.tools.obsidian_tool import create_obsidian_tools
 from box_agent.tools.plan_tool import PlanReadTool, PlanStore, PlanWriteTool
@@ -392,6 +393,7 @@ async def initialize_base_tools(
         _user_mcp = Path.home() / ".box-agent" / "config" / "mcp.json"
         mcp_config_path = _user_mcp if _user_mcp.exists() else Config.find_config_file(config.tools.mcp_config_path)
         if mcp_config_path:
+            get_mcp_tool_catalog().mark_loading()
             _out(f"{Colors.BRIGHT_CYAN}Loading MCP tools in background (from: {mcp_config_path})...{Colors.RESET}")
             _out(
                 f"{Colors.DIM}  MCP timeouts: connect={mcp_config.connect_timeout}s, "
@@ -458,6 +460,36 @@ async def await_mcp_tools(mcp_task: Optional[asyncio.Task]) -> List[Tool]:
 def register_mcp_tools(tool_map: dict[str, Tool], mcp_tools: list[Tool]) -> None:
     """Register MCP tools, allowing them to override same-named fallback tools."""
     for tool in mcp_tools:
+        existing = tool_map.get(tool.name)
+        if getattr(existing, "reserved_deferred_mcp_search", False):
+            # A remote MCP tool cannot replace the session-bound discovery
+            # control entry after background loading completes.
+            continue
+        tool_map[tool.name] = tool
+
+
+def sync_mcp_tools(
+    tool_map: dict[str, Tool],
+    mcp_tools: list[Tool],
+    fallback_tools: dict[str, Tool],
+) -> None:
+    """Rebuild MCP registrations while preserving overwritten stable tools."""
+    for name, tool in list(tool_map.items()):
+        if getattr(tool, "mcp_tool_id", None) is None:
+            continue
+        fallback = fallback_tools.get(name)
+        if fallback is None:
+            tool_map.pop(name, None)
+        else:
+            tool_map[name] = fallback
+
+    fallback_tools.clear()
+    for tool in mcp_tools:
+        existing = tool_map.get(tool.name)
+        if getattr(existing, "reserved_deferred_mcp_search", False):
+            continue
+        if existing is not None and getattr(existing, "mcp_tool_id", None) is None:
+            fallback_tools.setdefault(tool.name, existing)
         tool_map[tool.name] = tool
 
 
@@ -477,6 +509,17 @@ def merge_mcp_tools(base_tools: list[Tool], mcp_tools: list[Tool]) -> None:
     for tool in mcp_tools:
         if tool.name not in replaced_names:
             base_tools.append(tool)
+
+
+def sync_mcp_tool_list(
+    base_tools: list[Tool],
+    mcp_tools: list[Tool],
+    fallback_tools: dict[str, Tool],
+) -> None:
+    """List-form adapter for provenance-aware MCP registration rebuilds."""
+    tool_map = {tool.name: tool for tool in base_tools}
+    sync_mcp_tools(tool_map, mcp_tools, fallback_tools)
+    base_tools[:] = list(tool_map.values())
 
 
 def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, sandbox_mode: bool = False,

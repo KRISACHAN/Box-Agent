@@ -326,6 +326,24 @@ def test_agent_wires_system_prompt_into_sub_agent(tmp_path):
     assert "Current Workspace" in tool._parent_system_prompt
 
 
+def test_sub_agent_prompt_replaces_parent_only_mcp_search_guidance(tmp_path):
+    llm = AsyncMock()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+
+    agent = Agent(
+        llm_client=llm,
+        system_prompt="Parent constraint.",
+        tools=[tool],
+        workspace_dir=str(tmp_path),
+        deferred_mcp_loading_enabled=True,
+    )
+
+    assert tool._parent_system_prompt is not None
+    assert "Use `tool_search`" not in tool._parent_system_prompt
+    assert "The parent agent owns deferred MCP discovery" in tool._parent_system_prompt
+    assert "tool_search" not in agent._inherited_tools()
+
+
 async def test_sub_agent_read_ledger_is_local_to_child_context(tmp_path):
     from box_agent.schema import FunctionCall, ToolCall
 
