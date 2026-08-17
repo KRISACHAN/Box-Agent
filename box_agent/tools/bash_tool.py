@@ -1215,6 +1215,7 @@ Examples:
                 },
             },
             "required": ["command"],
+            "additionalProperties": False,
         }
 
     async def execute(
