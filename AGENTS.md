@@ -174,6 +174,30 @@ Pytest is the test runner, with `pytest-asyncio` enabled for async tests. Add or
 
 Use TPR in every non-trivial PR description: Task (what changed and what is out of scope), Proof (tests, probes, logs, screenshots, or generated-manifest checks), and Risk (compatibility, packaging, migration, config, or rollback notes). Keep PRs scoped to one behavior or subsystem. For shared behavior, prefer changes in the shared core (`core.py`, shared tools, config, or schema) and keep CLI / ACP code as thin adapters. If a change affects packaged runtime behavior used by officev3, call out whether source-only tests are enough or whether a runtime rebuild/install/probe is required.
 
+## Automated Review Contract
+
+Repository-specific review policy lives in `docs/PR_REVIEW_STANDARD.md` and
+`docs/PR_REVIEW_STANDARD_CN.md`. The deterministic local CI command lives at
+`general_review/ci/preflight.sh`. Deployment configuration for the generic
+`teamwork_review_agents` service is maintained outside this repository.
+
+Before reviewing a pull request:
+
+1. Read `docs/REVIEW_GUIDE_CN.md` and `docs/PR_REVIEW_STANDARD_CN.md`.
+2. Treat `general_review/ci/preflight.sh` as the source of truth for the local
+   `teamwork/local-ci` gate.
+3. Review the complete merge-base diff between the supplied target and change
+   refs, not only the latest commit or current checkout.
+4. Use the deployment-configured `general-reviewer` role. Its reusable Prompt
+   lives only in the `teamwork_review_agents` checkout and covers design,
+   history/target-branch consistency, and security in one review.
+5. Use `.understand-anything/` only as a navigation index and verify findings
+   against current source, Git history, tests, logs, or probes.
+6. Keep all automated Review Agents read-only. Human maintainers retain final
+   merge authority.
+7. Never commit deployment configuration, credentials, logs, or generated
+   local state.
+
 ## Commit & Pull Request Guidelines
 
 Recent history uses conventional-style subjects such as `feat(cli): ...`, `fix(skill): ...`, and `docs: ...`. Keep commits small and scoped. For pull requests, include a clear summary, link related issues when applicable, note config or skill-submodule impacts, and list the test command(s) you ran. Update `README.md`, `CONTRIBUTING.md`, or `docs/` when user-facing behavior changes.

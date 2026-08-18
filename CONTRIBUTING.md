@@ -88,6 +88,11 @@ Every non-trivial PR should be reviewable through TPR:
 - **Proof**: exact commands, tests, probes, screenshots, logs, regenerated manifests, or runtime checks.
 - **Risk**: compatibility, packaging/runtime impact, migration, config/secrets, rollback plan, and cross-repository follow-up.
 
+The PR must also identify affected architecture layers and record whether
+target-branch changes after the merge base were considered. The expanded
+[Pull Request Review Standard](docs/PR_REVIEW_STANDARD.md) defines the review
+gates used for non-trivial changes.
+
 #### Development Process
 
 1. **Write Code**
@@ -169,6 +174,9 @@ Before submitting a PR, please ensure:
 All Pull Requests will be reviewed. Maintainers use the detailed
 [Maintainer Review Guide](docs/REVIEW_GUIDE.md) for review order, blockers, and
 proof expectations:
+
+- For the full PR gate, severity, and verdict contract, also read the
+  [Pull Request Review Standard](docs/PR_REVIEW_STANDARD.md).
 
 - Review starts from the TPR evidence. Missing proof is treated as incomplete work, not as a reviewer task.
 - Reviewers should check behavior, ownership boundaries, tests, packaging/runtime implications, and documentation before style details.

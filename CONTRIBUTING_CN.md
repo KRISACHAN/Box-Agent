@@ -88,6 +88,9 @@
 - **Proof**：具体命令、测试、探针、截图、日志、重新生成的 manifest 或 runtime 验证。
 - **Risk**：兼容性、打包/runtime 影响、迁移、配置/密钥、回滚方案和跨仓库后续事项。
 
+PR 还必须说明受影响的架构层，并记录是否检查了 merge base 之后目标分支的相关变化。
+完整门禁与严重级别定义见 [PR 审查规范](docs/PR_REVIEW_STANDARD_CN.md)。
+
 #### 开发流程
 
 1. **编写代码**
@@ -167,6 +170,9 @@
 所有 Pull Request 需要经过代码审查。维护者使用详细的
 [维护者 Review 指南](docs/REVIEW_GUIDE_CN.md) 来确定 review 顺序、阻塞项和
 proof 要求：
+
+- 完整 PR 门禁、严重级别和 verdict 契约见
+  [PR 审查规范](docs/PR_REVIEW_STANDARD_CN.md)。
 
 - 审查从 TPR 证据开始。缺少 proof 视为工作未完成，而不是让 reviewer 代为确认。
 - Reviewer 应先检查行为、归属边界、测试、打包/runtime 影响和文档，再看代码风格细节。
