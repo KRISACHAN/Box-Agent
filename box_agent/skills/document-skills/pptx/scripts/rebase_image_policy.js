@@ -16,7 +16,7 @@ const {
 function usage(message) {
   if (message) console.error(message);
   console.error(
-    "Usage: rebase_image_policy.js deck.json --manifest assets/generated/manifest.json --policy forbidden"
+    "Usage: rebase_image_policy.js deck.json --manifest assets/generated/manifest.json --policy forbidden|unavailable"
   );
   process.exit(2);
 }
@@ -38,7 +38,9 @@ function parseArgs(argv) {
     }
   }
   if (!opts.manifest) usage("--manifest is required");
-  if (opts.policy !== "forbidden") usage("--policy must be forbidden");
+  if (!["forbidden", "unavailable"].includes(opts.policy)) {
+    usage("--policy must be forbidden or unavailable");
+  }
   return opts;
 }
 
@@ -126,6 +128,9 @@ function main() {
   manifest.generation_forbidden = true;
   const slidesById = new Map((deck.slides || []).map(slide => [slide.id, slide]));
   const imagePlan = Array.isArray(manifest.image_plan) ? manifest.image_plan : [];
+  const decisionReason = opts.policy === "unavailable"
+    ? "image generation service unavailable"
+    : "the user explicitly forbids images for this presentation";
   imagePlan.forEach(entry => {
     if (!entry || typeof entry !== "object") return;
     const slide = slidesById.get(entry.slide_id);
@@ -133,7 +138,7 @@ function main() {
     entry.required = false;
     entry.decision = "skip";
     entry.status = "skipped";
-    entry.decision_reason = "the user explicitly forbids images for this presentation";
+    entry.decision_reason = decisionReason;
     entry.prompt = "";
     entry.output_path = null;
     entry.allowed_strategies = ["skip"];
@@ -155,7 +160,7 @@ function main() {
   console.log(JSON.stringify({
     ok: true,
     changed,
-    policy: "forbidden",
+    policy: opts.policy,
     replaced_slides: replacedSlides,
     deck: deckPath,
     manifest: manifestPath,

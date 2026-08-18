@@ -66,6 +66,7 @@ FINALIZER_SCRIPT = (
 INSPECTOR_SCRIPT = FINALIZER_SCRIPT.parent / "inspect_deck_contract.js"
 APPLY_PATCH_SCRIPT = FINALIZER_SCRIPT.parent / "apply_deck_patch.js"
 VALIDATE_OUTLINE_SCRIPT = FINALIZER_SCRIPT.parent / "validate_outline.js"
+REBASE_IMAGE_POLICY_SCRIPT = FINALIZER_SCRIPT.parent / "rebase_image_policy.js"
 
 
 def _write_valid_research_report(
@@ -2251,6 +2252,14 @@ def test_framework_outline_checkpoint_exempts_structural_pages(tmp_path):
 
     assert "Cover, agenda, and section-divider pages are structural" in checkpoint
     assert "Every other public-research page must include" in checkpoint
+    assert (
+        "Removing numeric literals or rewriting unsupported claims as qualitative "
+        "prose does not make them verified"
+    ) in checkpoint
+    assert (
+        "put the exact placeholder 暂无可验证公开数据 in that page's message or bullets"
+        in checkpoint
+    )
 
 
 def test_research_validator_requires_successful_exact_page_reads(tmp_path):
@@ -2876,9 +2885,15 @@ def test_deep_research_checkpoint_accepts_validated_user_input_evidence(tmp_path
     assert "user-input:project-brief" in checkpoint
 
 
-def test_controlled_images_stop_after_http_401(tmp_path):
-    generated = tmp_path / "output" / "assets" / "generated"
+def test_controlled_auto_images_rebase_after_http_401(tmp_path):
+    output = tmp_path / "output"
+    generated = output / "assets" / "generated"
     generated.mkdir(parents=True)
+    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text('{"slides": []}', encoding="utf-8")
     manifest_path = generated / "manifest.json"
     manifest_path.write_text(
         json.dumps(
@@ -2915,25 +2930,75 @@ def test_controlled_images_stop_after_http_401(tmp_path):
     checkpoint = policy.build_checkpoint()
     assert checkpoint is not None
     policy.update_checkpoint(checkpoint)
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_auth_blocked" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_policy_rebase" in checkpoint
+    assert "--policy unavailable" in checkpoint
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["image_service"] == {
         "status": "blocked",
         "reason": "authorization_401",
     }
-    assert policy.allows_completion_continuation() is False
+    unavailable_command = (
+        "cd output && node "
+        f"{REBASE_IMAGE_POLICY_SCRIPT} deck.json "
+        "--manifest assets/generated/manifest.json --policy unavailable"
+    )
     assert (
         policy.tool_call_error(
-            "generate_image",
-            {"output_path": "assets/generated/cover.png", "watermark": False},
+            "bash",
+            {"command": unavailable_command},
             verified_evidence_urls=set(),
-            parallel=True,
         )
-        == "CONTROLLED_PRESENTATION_IMAGE_AUTH_BLOCKED: the image service returned "
-        "HTTP 401 for this presentation. Do not call generate_image or any other "
-        "tool again in this turn. End the turn and report that image generation is "
-        "blocked until the service authorization is refreshed."
+        is None
     )
+    assert policy.tool_call_error(
+        "bash",
+        {"command": unavailable_command.replace("unavailable", "forbidden")},
+        verified_evidence_urls=set(),
+    ) is not None
+    assert policy.allows_completion_continuation() is True
+
+
+def test_controlled_creative_images_stop_after_http_401(tmp_path):
+    generated = tmp_path / "output" / "assets" / "generated"
+    generated.mkdir(parents=True)
+    manifest_path = generated / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "mode": "creative_image_mode",
+                "image_plan": [
+                    {
+                        "decision": "generate",
+                        "status": "pending",
+                        "required": True,
+                        "output_path": "assets/generated/cover.png",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+        stage="images",
+    )
+
+    policy.record_tool_result(
+        "generate_image",
+        {"output_path": "assets/generated/cover.png", "watermark": False},
+        ToolResult(
+            success=False,
+            error="Image generation failed: HTTP 401 Unauthorized",
+        ),
+    )
+
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    policy.update_checkpoint(checkpoint)
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_auth_blocked" in checkpoint
+    assert policy.allows_completion_continuation() is False
 
 
 def test_controlled_successful_mutations_without_progress_stop_after_two(tmp_path):
@@ -3763,6 +3828,8 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert "may repeat layout ids" in checkpoint
     assert "inspector deterministically derives the ordered layout plan" in checkpoint
     assert "Do not pass layout ids, --theme, --image-mode" in checkpoint
+    assert "one physical command line using `cd <artifact-root> &&`" in checkpoint
+    assert "do not split `cd` and the inspector across lines" in checkpoint
     assert "automatically imports public outline evidence" in checkpoint
     assert "SCAFFOLD_INPUT=" in checkpoint
     assert '"registered_theme_ids"' in checkpoint
@@ -4590,7 +4657,7 @@ def test_controlled_image_policy_rebase_precedes_stale_image_checkpoint(tmp_path
     assert "IMAGE_INPUT=" not in checkpoint
 
 
-def test_controlled_persisted_image_401_blocks_new_policy_instance(tmp_path):
+def test_controlled_persisted_auto_image_401_rebases_new_policy_instance(tmp_path):
     output = tmp_path / "output"
     generated = output / "assets" / "generated"
     generated.mkdir(parents=True)
@@ -4607,6 +4674,50 @@ def test_controlled_persisted_image_401_blocks_new_policy_instance(tmp_path):
         json.dumps(
             {
                 "mode": "auto",
+                "generation_forbidden": False,
+                "image_service": {
+                    "status": "blocked",
+                    "reason": "authorization_401",
+                },
+                "image_plan": [
+                    {
+                        "decision": "generate",
+                        "status": "pending",
+                        "required": True,
+                        "output_path": "assets/generated/hero.png",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="content_ready",
+    )
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_policy_rebase" in checkpoint
+    assert "--policy unavailable" in checkpoint
+    assert "IMAGE_INPUT=" not in checkpoint
+
+
+def test_controlled_persisted_creative_image_401_blocks_new_policy_instance(tmp_path):
+    output = tmp_path / "output"
+    generated = output / "assets" / "generated"
+    generated.mkdir(parents=True)
+    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text('{"slides": []}', encoding="utf-8")
+    (generated / "manifest.json").write_text(
+        json.dumps(
+            {
+                "mode": "creative_image_mode",
                 "generation_forbidden": False,
                 "image_service": {
                     "status": "blocked",
@@ -5500,6 +5611,9 @@ async def test_controlled_scaffold_blocks_layout_ids_and_optional_flags(tmp_path
     assert blocked.success is False
     assert "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY" in (blocked.error or "")
     assert "only --outline outline.json and --out deck.json" in (blocked.error or "")
+    assert "one physical command line using `cd <artifact-root> &&`" in (
+        blocked.error or ""
+    )
 
 
 @pytest.mark.asyncio
@@ -5574,6 +5688,35 @@ async def test_controlled_scaffold_allows_minimal_contract_call(tmp_path):
         and event.tool_call_id == "auto-theme-scaffold"
     )
     assert result.success is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"node {INSPECTOR_SCRIPT} --outline outline.json --out deck.json",
+        (
+            "cd output &&\nnode "
+            f"{INSPECTOR_SCRIPT} --outline outline.json --out deck.json"
+        ),
+    ],
+)
+def test_controlled_scaffold_requires_single_line_cd_prefix(command):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=None,
+        artifact_root_dir=None,
+        stage="scaffold",
+        has_scaffold_input=True,
+        scaffold_input={"image_generation_policy": "auto"},
+    )
+
+    error = policy.tool_call_error(
+        "bash",
+        {"command": command},
+        verified_evidence_urls=set(),
+    )
+
+    assert error is not None
+    assert "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY" in error
 
 
 @pytest.mark.asyncio

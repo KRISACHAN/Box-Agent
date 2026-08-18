@@ -649,14 +649,14 @@ def _manifest_generation_progress(
 
 def _manifest_image_policy_state(
     manifest_path: Path,
-) -> tuple[bool, bool, bool]:
-    """Return generation-forbidden, needs-forbidden-rebase, and auth-blocked."""
+) -> tuple[bool, bool, bool, str | None]:
+    """Return generation state, auth state, and the declared image mode."""
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return (False, False, False)
+        return (False, False, False, None)
     if not isinstance(payload, dict):
-        return (False, False, False)
+        return (False, False, False, None)
     generation_forbidden = payload.get("generation_forbidden") is True
     image_plan = payload.get("image_plan")
     needs_rebase = not generation_forbidden or not isinstance(image_plan, list)
@@ -676,7 +676,13 @@ def _manifest_image_policy_state(
         and image_service.get("status") == "blocked"
         and image_service.get("reason") == "authorization_401"
     )
-    return (generation_forbidden, needs_rebase, auth_blocked)
+    mode = payload.get("mode")
+    return (
+        generation_forbidden,
+        needs_rebase,
+        auth_blocked,
+        mode if isinstance(mode, str) else None,
+    )
 
 
 def _json_document_error(path: Path) -> str | None:
@@ -1440,10 +1446,15 @@ def build_checkpoint_text(
         "rebase_image_policy.js",
         "deck.json --manifest assets/generated/manifest.json --policy forbidden",
     )
+    rebase_unavailable_image_policy_command = _controlled_pptx_command(
+        "rebase_image_policy.js",
+        "deck.json --manifest assets/generated/manifest.json --policy unavailable",
+    )
     (
         manifest_generation_forbidden,
         manifest_needs_forbidden_rebase,
         manifest_auth_blocked,
+        manifest_image_mode,
     ) = _manifest_image_policy_state(manifest_path)
     effective_image_generation_forbidden = (
         image_generation_policy == IMAGE_GENERATION_FORBIDDEN
@@ -1796,7 +1807,11 @@ def build_checkpoint_text(
                 "content claims. Cover, agenda, and section-divider pages are "
                 "structural and may keep evidence empty. Every other public-research "
                 "page must include at least one evidence item unless it explicitly "
-                "marks a required fact as unavailable; every non-empty item must "
+                "marks a required fact as unavailable. Removing numeric literals or "
+                "rewriting unsupported claims as qualitative prose does not make "
+                "them verified. For a required unsupported fact, put the exact "
+                "placeholder 暂无可验证公开数据 in that page's message or bullets. "
+                "Every non-empty item must "
                 "include the actual http(s) "
                 "source URL used for that claim. "
                 "Treat AuthLevel as a ranking hint, not proof of authority: when "
@@ -1855,6 +1870,8 @@ def build_checkpoint_text(
                 "registry, or invent an id. Your very next tool call must invoke "
                 "inspect_deck_contract.js once to create deck.json and its image "
                 "manifest, passing only `--outline outline.json --out deck.json`. "
+                "Invoke it on one physical command line using `cd <artifact-root> &&`; "
+                "do not split `cd` and the inspector across lines. "
                 "Do not pass layout ids, --theme, --image-mode, --title, facts, or "
                 "other optional flags; the inspector deterministically derives the "
                 "ordered layout plan and theme from the validated outline. The "
@@ -1909,6 +1926,23 @@ def build_checkpoint_text(
                 "references; replaces only required-media layouts with registered "
                 "no-image fallbacks; and persists generation_forbidden=true. Do not "
                 "read or rewrite deck.json or manifest.json yourself."
+            )
+        elif (
+            manifest_auth_blocked
+            and manifest_image_mode == "auto"
+            and not manifest_generation_forbidden
+            and image_generation_policy != IMAGE_GENERATION_EXPLICIT_RETRY
+        ):
+            stage = "image_policy_rebase"
+            next_action = (
+                "Image generation authorization failed, but this deck uses auto "
+                "image mode, so images are optional. Run exactly one bash tool call: `"
+                f"{rebase_unavailable_image_policy_command}`. The deterministic "
+                "helper records service-unavailable provenance, removes pending "
+                "media requirements, switches required-media layouts to registered "
+                "no-image fallbacks, and lets authoring/finalization continue. Do "
+                "not call generate_image again or edit deck.json/manifest.json "
+                "yourself."
             )
         elif (
             manifest_auth_blocked

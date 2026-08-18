@@ -99,8 +99,10 @@ _SCAFFOLD_TOOL_ERROR = (
     "intent. Invoke inspect_deck_contract.js once now with only --outline "
     "outline.json and --out deck.json; do not pass layout ids, --theme, "
     "--image-mode, --title, facts, or other optional flags, and do not reread files "
-    "or list the registry. Keep the inspector as the only shell command: do not "
-    "append a pipe, tail, redirection, or another command."
+    "or list the registry. Invoke it on one physical command line using "
+    "`cd <artifact-root> &&`; do not split `cd` and the inspector across lines. "
+    "Keep the inspector as the only shell command: do not append a pipe, tail, "
+    "redirection, or another command."
 )
 _SCAFFOLD_SHELL_SUFFIX_TOOL_ERROR = (
     f"{_SCAFFOLD_TOOL_ERROR} Rejected shell suffix: remove the entire pipe or "
@@ -150,10 +152,10 @@ _IMAGE_STATUS_TOOL_ERROR = (
     "manifest.json or regenerate an existing image."
 )
 _IMAGE_POLICY_REBASE_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_IMAGE_POLICY_REBASE_REQUIRED: the latest user "
-    "instruction forbids images. Run the exact rebase_image_policy.js command "
-    "from the latest checkpoint once; do not read or rewrite deck.json or the "
-    "image manifest manually."
+    "CONTROLLED_PRESENTATION_IMAGE_POLICY_REBASE_REQUIRED: the latest checkpoint "
+    "requires a deterministic image-policy rebase. Run the exact "
+    "rebase_image_policy.js command from that checkpoint once; do not read or "
+    "rewrite deck.json or the image manifest manually."
 )
 _FINALIZE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_FINALIZE_REQUIRED: run the single deterministic "
@@ -842,11 +844,14 @@ def _content_patch_repair_error(
 
 def _image_policy_rebase_error(
     stage: str | None,
+    expected_policy: str | None,
     tool_name: str,
     arguments: dict[str, Any],
 ) -> str | None:
     if stage != "image_policy_rebase":
         return None
+    if expected_policy not in {"forbidden", "unavailable"}:
+        return _IMAGE_POLICY_REBASE_TOOL_ERROR
     command = arguments.get("command")
     if tool_name != "bash" or not isinstance(command, str):
         return _IMAGE_POLICY_REBASE_TOOL_ERROR
@@ -887,7 +892,7 @@ def _image_policy_rebase_error(
         "--manifest",
         "assets/generated/manifest.json",
         "--policy",
-        "forbidden",
+        expected_policy,
     ]:
         return _IMAGE_POLICY_REBASE_TOOL_ERROR
     return None
@@ -1476,6 +1481,8 @@ def _scaffold_error(
     command = arguments.get("command")
     if tool_name != "bash" or not isinstance(command, str):
         return _SCAFFOLD_TOOL_ERROR
+    if "\n" in command or "\r" in command:
+        return _SCAFFOLD_TOOL_ERROR
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -1501,7 +1508,7 @@ def _scaffold_error(
     if not supplied_script.is_absolute() or supplied_script.resolve() != _INSPECT_SCRIPT:
         return _SCAFFOLD_TOOL_ERROR
     command_prefix = tokens[: script_index - 1]
-    if command_prefix and not (
+    if not (
         len(command_prefix) == 3
         and command_prefix[0] == "cd"
         and command_prefix[1]
@@ -1767,6 +1774,7 @@ class ControlledPresentationPolicy:
     research_revalidation: dict[str, Any] | None = None
     repair_stalled: bool = False
     image_auth_blocked: bool = False
+    image_policy_rebase_policy: str | None = None
     research_search_exhausted: bool = False
     apply_patch_repair_allowed: bool = False
     apply_patch_repair_paths: tuple[str, ...] = ()
@@ -1990,14 +1998,14 @@ class ControlledPresentationPolicy:
                 exc,
             )
 
-    def _persist_image_auth_blocked(self) -> None:
-        """Persist a non-retryable image authorization failure across turns."""
+    def _persist_image_auth_blocked(self) -> str | None:
+        """Persist image authorization failure and return the manifest mode."""
         root = artifact_scan_root(self.workspace_dir, self.artifact_root_dir)
         if root is None or not root.is_dir():
-            return
+            return None
         manifests = list(root.rglob("assets/generated/manifest.json"))
         if not manifests:
-            return
+            return None
         try:
             manifest_path = max(
                 manifests,
@@ -2005,13 +2013,15 @@ class ControlledPresentationPolicy:
             )
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
-                return
+                return None
+            mode = payload.get("mode")
+            manifest_mode = mode if isinstance(mode, str) else None
             image_service = {
                 "status": "blocked",
                 "reason": "authorization_401",
             }
             if payload.get("image_service") == image_service:
-                return
+                return manifest_mode
             payload["image_service"] = image_service
             serialized = json.dumps(
                 payload,
@@ -2023,12 +2033,14 @@ class ControlledPresentationPolicy:
             )
             temp_path.write_text(serialized, encoding="utf-8")
             temp_path.replace(manifest_path)
+            return manifest_mode
         except (OSError, json.JSONDecodeError) as exc:
             _log.warning(
                 "controlled_presentation/image_auth_state_write_failed "
                 "error=%s",
                 exc,
             )
+            return None
 
     def update_checkpoint(
         self,
@@ -2102,6 +2114,15 @@ class ControlledPresentationPolicy:
             self._content_patch_staged_write_id = None
         if next_stage != "apply_patch":
             self._apply_patch_staged_write_id = None
+        if next_stage == "image_policy_rebase":
+            if "--policy unavailable" in checkpoint_text:
+                self.image_policy_rebase_policy = "unavailable"
+            elif "--policy forbidden" in checkpoint_text:
+                self.image_policy_rebase_policy = "forbidden"
+            else:
+                self.image_policy_rebase_policy = None
+        else:
+            self.image_policy_rebase_policy = None
         self.stage = next_stage
         self.has_patch_input = "\nPATCH_INPUT=" in checkpoint_text
         self.has_scaffold_input = "\nSCAFFOLD_INPUT=" in checkpoint_text
@@ -2320,6 +2341,7 @@ class ControlledPresentationPolicy:
             return content_patch_repair_error
         image_policy_rebase_error = _image_policy_rebase_error(
             self.stage,
+            self.image_policy_rebase_policy,
             tool_name,
             arguments,
         )
@@ -2590,11 +2612,13 @@ class ControlledPresentationPolicy:
             and tool_name == "generate_image"
             and _image_result_is_unauthorized(result)
         ):
-            self.image_auth_blocked = True
-            self._persist_image_auth_blocked()
+            manifest_mode = self._persist_image_auth_blocked()
+            self.image_auth_blocked = manifest_mode != "auto"
             _log.warning(
                 "controlled_presentation/image_auth_blocked status=401 "
-                "further_image_calls_stopped=true"
+                "mode=%s hard_blocked=%s further_image_calls_stopped=true",
+                manifest_mode or "unknown",
+                self.image_auth_blocked,
             )
 
         if self.stage == "research" and tool_name == "tool_search":
