@@ -414,6 +414,7 @@ class MCPServerConnection:
         self.always_load = always_load
         # Connection state
         self.last_error: str | None = None
+        self.last_auth_status: int | None = None
         self.session: ClientSession | None = None
         self.exit_stack: AsyncExitStack | None = None
         self.tools: list[MCPTool] = []
@@ -432,6 +433,7 @@ class MCPServerConnection:
 
     async def connect(self) -> bool:
         """Connect to the MCP server with timeout protection."""
+        self.last_auth_status = None
         connect_timeout = self._get_connect_timeout()
         started_at = time.monotonic()
         stage = "open-transport"
@@ -529,7 +531,8 @@ class MCPServerConnection:
         except TimeoutError as e:
             self.last_error = f"Connection timed out after {connect_timeout}s during {stage}"
             cleanup_error = await _close_exit_stack()
-            auth_failure = _is_mcp_authentication_error(cleanup_error)
+            self.last_auth_status = _mcp_auth_status(e, cleanup_error)
+            auth_failure = self.last_auth_status is not None
             if auth_failure:
                 self.last_error = _mcp_connection_error_message(e, cleanup_error)
                 _warn(
@@ -546,8 +549,9 @@ class MCPServerConnection:
 
         except asyncio.CancelledError as e:
             cleanup_error = await _close_exit_stack()
+            self.last_auth_status = _mcp_auth_status(e, cleanup_error)
             self.last_error = _mcp_connection_error_message(e, cleanup_error)
-            if _is_mcp_authentication_error(cleanup_error):
+            if self.last_auth_status is not None:
                 _warn(
                     f"[mcp] connect:failed server={self.name!r} stage={stage} "
                     f"elapsed_ms={elapsed_ms()} error={self.last_error}"
@@ -562,6 +566,7 @@ class MCPServerConnection:
 
         except Exception as e:
             cleanup_error = await _close_exit_stack()
+            self.last_auth_status = _mcp_auth_status(e, cleanup_error)
             self.last_error = _mcp_connection_error_message(e, cleanup_error)
             _warn(
                 f"[mcp] connect:failed server={self.name!r} stage={stage} "
@@ -767,6 +772,7 @@ class McpServerStatus:
     tool_count: int = 0
     tools: list = field(default_factory=list)
     error: str | None = None
+    auth_status: int | None = None
 
 
 _mcp_status: dict[str, McpServerStatus] = {}
@@ -831,10 +837,17 @@ def _record_status(
     tool_count: int = 0,
     tools: list | None = None,
     error: str | None = None,
+    auth_status: int | None = None,
 ) -> None:
+    if auth_status is None and error:
+        if "HTTP 401" in error or "Authentication failed" in error:
+            auth_status = 401
+        elif "HTTP 403" in error or "Authorization failed" in error:
+            auth_status = 403
     _mcp_status[name] = McpServerStatus(
         name=name, state=state, transport=transport,
         tool_count=tool_count, tools=tools or [], error=error,
+        auth_status=auth_status,
     )
 
 
@@ -847,6 +860,7 @@ def get_mcp_status() -> list[dict]:
             "toolCount": s.tool_count,
             "tools": s.tools,
             "error": s.error,
+            "authStatus": s.auth_status,
         }
         for s in _mcp_status.values()
     ]
@@ -1036,6 +1050,7 @@ async def load_mcp_tools_async(
                     conn.name, "failed",
                     transport=conn.url or conn.command or "",
                     error=str(success),
+                    auth_status=_mcp_auth_status(success),
                 )
                 continue
             if success:
@@ -1053,6 +1068,7 @@ async def load_mcp_tools_async(
                     conn.name, "failed",
                     transport=conn.url or conn.command or "",
                     error=conn.last_error or "connect() returned False",
+                    auth_status=conn.last_auth_status,
                 )
 
         _warn(f"Total MCP tools loaded: {len(all_tools)}")
@@ -1089,7 +1105,7 @@ async def reconnect_mcp_server(name: str) -> dict:
 
 
 async def reconnect_auth_failed_mcp_servers_if_token_changed() -> list[dict]:
-    """Reconnect 401-failed MCP servers after the product login token rotates.
+    """Reconnect auth-failed MCP servers after the product login token rotates.
 
     Hosted MCP discovery happens once during CLI startup. If that initial
     connection receives a 401, there is no persistent HTTP client on which the
@@ -1109,11 +1125,7 @@ async def reconnect_auth_failed_mcp_servers_if_token_changed() -> list[dict]:
         status.name
         for status in _mcp_status.values()
         if status.state == "failed"
-        and status.error
-        and (
-            "HTTP 401" in status.error
-            or "Authentication failed" in status.error
-        )
+        and status.auth_status in {401, 403}
     ]
     results: list[dict] = []
     for name in failed_names:
@@ -1203,7 +1215,13 @@ async def _reconnect_mcp_server_locked(name: str) -> dict:
         try:
             success = await conn.connect()
         except Exception as e:
-            _record_status(name, "failed", transport=transport_label, error=str(e))
+            _record_status(
+                name,
+                "failed",
+                transport=transport_label,
+                error=str(e),
+                auth_status=_mcp_auth_status(e),
+            )
             return {"success": False, "error": str(e), "configPath": _mcp_config_path}
 
         if success:
@@ -1217,7 +1235,13 @@ async def _reconnect_mcp_server_locked(name: str) -> dict:
             )
             return {"success": True, "toolCount": len(conn.tools), "tools": [t.name for t in conn.tools], "configPath": _mcp_config_path}
 
-        _record_status(name, "failed", transport=transport_label, error=conn.last_error)
+        _record_status(
+            name,
+            "failed",
+            transport=transport_label,
+            error=conn.last_error,
+            auth_status=conn.last_auth_status,
+        )
         return {"success": False, "error": conn.last_error or "connect() returned False", "configPath": _mcp_config_path}
     finally:
         catalog.mark_server_ready(name)

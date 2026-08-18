@@ -1241,6 +1241,67 @@ async def test_mcp_reconnect_injects_hidden_deferred_state_into_active_turns_onl
 
 
 @pytest.mark.asyncio
+async def test_acp_auth_refresh_reconnects_and_injects_deferred_catalog_update(
+    tmp_path,
+    monkeypatch,
+):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_sub_agent=False,
+            mcp=MCPConfig(deferred_loading_enabled=True),
+        ),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+    session = await agent.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+    state = agent._sessions[session.sessionId]
+    state.turn_active = True
+    runtime_tool = EchoTool()
+    runtime_tool.mcp_always_load = False
+
+    async def reconnect_changed():
+        return [{"name": "hosted", "success": True}]
+
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.reconnect_auth_failed_mcp_servers_if_token_changed",
+        reconnect_changed,
+    )
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.get_mcp_tools_for_server",
+        lambda _name: [runtime_tool],
+    )
+
+    result = await agent._refresh_mcp_after_auth_change()
+
+    assert result == [{"name": "hosted", "success": True}]
+    update = state.inject_queue.get_nowait()
+    assert update["source"] == "runtime"
+    assert "hosted" in update["content"]
+    assert "tool_search" in update["content"]
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_checks_for_mcp_auth_refresh(acp_agent, monkeypatch):
+    agent, _ = acp_agent
+    session = await agent.newSession(SimpleNamespace(cwd=None, field_meta={}))
+    calls = 0
+
+    async def refresh():
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(agent, "_refresh_mcp_after_auth_change", refresh)
+
+    await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "hello"}])
+    )
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_initial_mcp_catalog_ready_is_injected_into_active_turn(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),

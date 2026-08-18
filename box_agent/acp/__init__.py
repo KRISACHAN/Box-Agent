@@ -1117,6 +1117,57 @@ class BoxACPAgent:
         if injected:
             log.info("mcp/catalog_ready_injected", sessions=injected)
 
+    async def _refresh_mcp_after_auth_change(self) -> list[dict]:
+        """Reconnect auth-failed MCP servers after the host refreshes auth.json."""
+
+        if not self._mcp_loaded:
+            return []
+        from box_agent.tools.mcp_loader import (
+            get_all_mcp_tools,
+            get_mcp_tools_for_server,
+            reconnect_auth_failed_mcp_servers_if_token_changed,
+        )
+
+        results = await reconnect_auth_failed_mcp_servers_if_token_changed()
+        if not results:
+            return []
+
+        if not self._config.tools.mcp.deferred_loading_enabled:
+            all_mcp_tools = get_all_mcp_tools()
+            sync_mcp_tool_list(
+                self._base_tools,
+                all_mcp_tools,
+                self._base_mcp_fallback_tools,
+            )
+            for state in self._sessions.values():
+                sync_mcp_tools(
+                    state.agent.tools,
+                    all_mcp_tools,
+                    state.mcp_fallback_tools,
+                )
+
+        for result in results:
+            name = str(result.get("name") or "")
+            success = bool(result.get("success"))
+            tools = get_mcp_tools_for_server(name) if success else []
+            injected = self._inject_mcp_runtime_update(
+                name=name,
+                state="connected" if success else "failed",
+                tool_count=len(tools),
+                always_load_count=sum(
+                    bool(getattr(tool, "mcp_always_load", False))
+                    for tool in tools
+                ),
+            )
+            log.info(
+                "mcp/auth_refresh_reconnect",
+                server=name,
+                success=success,
+                error=result.get("error"),
+                context_injected_sessions=injected,
+            )
+        return results
+
     async def _ensure_skills_loaded(self) -> None:
         """Await the background skill-discovery task before it's needed.
 
@@ -1950,6 +2001,7 @@ class BoxACPAgent:
 
         # Ensure background-loaded MCP tools are available before running the turn
         await self._ensure_mcp_loaded()
+        await self._refresh_mcp_after_auth_change()
 
         # Skills should already be ready (newSession awaited them), but
         # short-circuit any edge case where a session was created before
