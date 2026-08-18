@@ -52,7 +52,10 @@ except ImportError:
 from box_agent.auth import request_auth_headers, resolve_auth_token, should_attach_auth_header
 
 from .base import Tool, ToolResult
-from .browser_runtime_scope import acquire_browser_runtime_for_current_turn
+from .browser_runtime_scope import (
+    acquire_browser_runtime_for_current_turn,
+    release_browser_runtime_for_current_turn,
+)
 from .mcp_tool_catalog import get_mcp_tool_catalog
 
 
@@ -327,15 +330,26 @@ class MCPTool(Tool):
         """Execute MCP tool via the session with timeout protection."""
         timeout = self._execute_timeout or _default_timeout_config.execute_timeout
         browser_runtime_acquired = False
+        release_browser_runtime_after_call = False
 
         try:
-            # Browser-lease waiting is part of tool execution. Keeping it inside
-            # the same deadline prevents a busy shared Playwright runtime from
-            # outliving the host's liveness watchdog before call_tool even starts.
+            if self._server_name == "playwright":
+                try:
+                    async with _timeout(min(timeout, 5.0)):
+                        await acquire_browser_runtime_for_current_turn()
+                        browser_runtime_acquired = True
+                except TimeoutError:
+                    return ToolResult(
+                        success=False,
+                        content="",
+                        error=(
+                            "BROWSER_RUNTIME_BUSY: Playwright is currently used by "
+                            "another local-agent turn. Retry later or use a non-browser "
+                            "fallback."
+                        ),
+                    )
+
             async with _timeout(timeout):
-                if self._server_name == "playwright":
-                    await acquire_browser_runtime_for_current_turn()
-                    browser_runtime_acquired = True
                 result = await self._session.call_tool(self._name, arguments=kwargs)
 
             # MCP tool results are a list of content items
@@ -352,28 +366,28 @@ class MCPTool(Tool):
 
             structured_error = _structured_mcp_error_message(content_str)
             if is_error or structured_error:
+                release_browser_runtime_after_call = self._server_name == "playwright"
                 err_msg = structured_error or content_str.strip() or "Tool returned error"
                 return ToolResult(success=False, content=content_str, error=err_msg)
+            release_browser_runtime_after_call = (
+                self._server_name == "playwright"
+                and self._name == "browser_snapshot"
+            )
             return ToolResult(success=True, content=content_str, error=None)
 
         except TimeoutError:
-            if self._server_name == "playwright" and not browser_runtime_acquired:
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error=(
-                        "BROWSER_RUNTIME_BUSY: Playwright is currently used by "
-                        "another local-agent turn. Retry later or use a non-browser "
-                        "fallback."
-                    ),
-                )
+            release_browser_runtime_after_call = browser_runtime_acquired
             return ToolResult(
                 success=False,
                 content="",
                 error=f"MCP tool execution timed out after {timeout}s. The remote server may be slow or unresponsive.",
             )
         except Exception as e:
+            release_browser_runtime_after_call = browser_runtime_acquired
             return ToolResult(success=False, content="", error=f"MCP tool execution failed: {str(e)}")
+        finally:
+            if browser_runtime_acquired and release_browser_runtime_after_call:
+                await release_browser_runtime_for_current_turn()
 
 
 class MCPServerConnection:

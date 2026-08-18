@@ -256,11 +256,6 @@ class ToolResultStorage:
                 continue
             if tool_use_id in self._seen_ids:
                 continue
-            tool = tools.get(message.name or "")
-            declared_limit = getattr(tool, "max_result_size_chars", self.default_result_limit)
-            if isinstance(declared_limit, (int, float)) and math.isinf(declared_limit):
-                self._seen_ids.add(tool_use_id)
-                continue
             size = _content_size(message.content)
             self._seen_ids.add(tool_use_id)
             if size > 0:
@@ -280,6 +275,12 @@ class ToolResultStorage:
             )
             if replacement is None:
                 continue
+            if message.name == "read_file":
+                replacement += (
+                    "\nRead the original path from the matching tool call with a smaller "
+                    "offset/limit to recover exact content; do not reread this persisted "
+                    "output as one large page."
+                )
             replacement_size = len(replacement)
             if replacement_size >= size:
                 continue

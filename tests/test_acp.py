@@ -60,6 +60,48 @@ class DummyConn:
         self.updates.append(payload)
 
 
+def test_acp_context_summary_uses_output_bounded_lite_model(tmp_path):
+    class CloneTrackingLLM:
+        model = "lite-model"
+        max_output_tokens = 64_000
+
+        def __init__(self):
+            self.clones = []
+
+        def for_model(self, model, *, max_output_tokens=None):
+            clone = SimpleNamespace(
+                model=model,
+                max_output_tokens=max_output_tokens,
+            )
+            self.clones.append(clone)
+            return clone
+
+    lite_llm = CloneTrackingLLM()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DummyLLM(),
+        [],
+        "system",
+        lite_llm=lite_llm,
+    )
+
+    summary_llm = agent._summary_llm_for_session(
+        session_id="session-1",
+        title="Summary test",
+        client_info=None,
+    )
+
+    assert len(lite_llm.clones) == 1
+    assert summary_llm.model == "lite-model"
+    assert summary_llm.max_output_tokens == 4_096
+
+
 def test_acp_normalizes_structured_user_decision_response_meta():
     assert _user_decision_response_from_meta(
         {

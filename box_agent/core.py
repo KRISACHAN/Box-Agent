@@ -1132,8 +1132,10 @@ def _detect_tool_artifacts(
 
 
 _LOCAL_FALLBACK_CHAR_LIMIT = 12_000
+_SUMMARY_OUTPUT_CHAR_LIMIT = 8_000
 _RECENT_MESSAGE_LIMIT = 5
 _RECENT_MESSAGE_CHAR_LIMIT = 20000
+_RUNTIME_STATE_CHAR_LIMIT = 12_000
 _SUMMARY_MARKER = (
     "This session is being continued from a previous conversation that ran "
     "out of context. The summary below covers the earlier portion of the "
@@ -1148,6 +1150,7 @@ _SUMMARY_MESSAGE_SUFFIX = (
 )
 _LEGACY_SUMMARY_MARKER = "[Assistant Execution Summary]"
 _RUNTIME_STATE_MARKER = "[Post-Compaction Runtime State]"
+_WORKFLOW_CHECKPOINT_MARKER = "[Post-Compaction Workflow Checkpoint]"
 _SUMMARY_REQUEST = (
     "Create a detailed continuation summary of the conversation above using "
     "only the existing conversation. Do not call tools or perform new work. "
@@ -1167,9 +1170,10 @@ _SUMMARY_REQUEST = (
     "Do not reproduce system or developer prompts, hidden reasoning, "
     "chain-of-thought, secrets, credentials, authentication tokens, private "
     "keys, or unnecessary raw tool output.\n\n"
+    f"Keep the completed summary below {_SUMMARY_OUTPUT_CHAR_LIMIT:,} characters. "
     "Put all resulting structured analysis and continuation information inside "
     "one <summary>...</summary> block. Do not output a separate <analysis> "
-    "block, preamble, or commentary. There is no requested word or token limit.\n\n"
+    "block, preamble, or commentary.\n\n"
     "Follow this output shape:\n"
     "<example>\n"
     "<summary>\n"
@@ -1374,6 +1378,77 @@ def _message_chars(message: Message) -> int:
     return total + 16
 
 
+def _bound_text_middle(
+    text: str,
+    max_chars: int,
+    *,
+    label: str,
+) -> str:
+    """Keep the beginning and end of text inside one deterministic hard bound."""
+
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    marker = f"\n...[{label} content omitted to fit the context budget]...\n"
+    if len(marker) >= max_chars:
+        return text[:max_chars]
+    available = max(0, max_chars - len(marker))
+    head_chars = available * 2 // 3
+    tail_chars = available - head_chars
+    tail = text[-tail_chars:] if tail_chars else ""
+    return f"{text[:head_chars]}{marker}{tail}"
+
+
+def _bound_retained_messages(messages: list[Message]) -> list[Message]:
+    """Keep recent protocol structure while bounding already-summarized bodies."""
+
+    if sum(_message_chars(message) for message in messages) <= _RECENT_MESSAGE_CHAR_LIMIT:
+        return messages
+
+    bounded: list[Message] = []
+    for message in messages:
+        if message.role == "user":
+            # User intent is not replaceable by a generated summary.
+            bounded.append(message)
+            continue
+        if message.role == "assistant" and message.tool_calls:
+            # Tool-call arguments and IDs are the protocol contract. The summary
+            # already consumed the assistant body and hidden reasoning.
+            bounded.append(
+                message.model_copy(update={"content": "", "thinking": None})
+            )
+            continue
+        if message.role == "tool":
+            bounded.append(
+                message.model_copy(
+                    update={
+                        "content": (
+                            "[Tool result compacted after inclusion in the continuation "
+                            f"summary. Tool: {message.name or 'unknown'}; original model "
+                            f"serialized size: {_message_chars(message):,} characters. "
+                            "The matching "
+                            "tool call above retains its original arguments and identifier.]"
+                        )
+                    }
+                )
+            )
+            continue
+        bounded.append(
+            message.model_copy(
+                update={
+                    "content": (
+                        "[Assistant content compacted after inclusion in the continuation "
+                        f"summary; original model serialized size: {_message_chars(message):,} "
+                        "characters.]"
+                    ),
+                    "thinking": None,
+                }
+            )
+        )
+    return bounded
+
+
 def _fallback_context_estimate(
     messages: list[Message],
     tools: dict[str, Tool] | None,
@@ -1497,6 +1572,7 @@ async def _restore_runtime_state(
     """Render trusted read-only tool state without executing a tool call."""
 
     sections: list[str] = []
+    used_chars = len(_RUNTIME_STATE_MARKER) + 2
     if tools:
         for tool in tools.values():
             try:
@@ -1511,7 +1587,17 @@ async def _restore_runtime_state(
             if state is not None:
                 label, content = state
                 if content:
-                    sections.append(f"## {label}\n{content[:12_000]}")
+                    section = f"## {label}\n{content}"
+                    remaining = _RUNTIME_STATE_CHAR_LIMIT - used_chars
+                    if remaining <= 0:
+                        break
+                    section = _bound_text_middle(
+                        section,
+                        remaining,
+                        label="runtime state",
+                    )
+                    sections.append(section)
+                    used_chars += len(section) + 2
     if not sections:
         return None
     return Message(
@@ -1532,6 +1618,8 @@ async def _maybe_summarize(
     title: str = "",
     api_prompt_tokens: int | None = None,
     tools: dict[str, Tool] | None = None,
+    summary_llm: Any | None = None,
+    workflow_checkpoint: str | None = None,
     allow_llm_summary: bool = True,
 ) -> CompactionOutcome:
     """Compact once when the complete next request exceeds its safe limit."""
@@ -1568,7 +1656,64 @@ async def _maybe_summarize(
             trigger_source=trigger_source,
         )
 
+    if (
+        workflow_checkpoint
+        and len(workflow_checkpoint) <= _RECENT_MESSAGE_CHAR_LIMIT
+    ):
+        latest_user_index = user_indices[-1]
+        retained_messages, retained_indices = _select_recent_messages(messages)
+        if latest_user_index not in retained_indices:
+            retained_indices.add(latest_user_index)
+            retained_messages = [
+                messages[index] for index in sorted(retained_indices)
+            ]
+        retained_messages = _bound_retained_messages(retained_messages)
+        runtime_state = await _restore_runtime_state(messages, tools)
+        checkpoint_message = Message(
+            role="user",
+            content=(
+                f"{_WORKFLOW_CHECKPOINT_MARKER}\n\n"
+                f"{workflow_checkpoint}"
+            ),
+        )
+        checkpoint_messages = [
+            messages[0],
+            *retained_messages,
+            checkpoint_message,
+        ]
+        if runtime_state is not None:
+            checkpoint_messages.append(runtime_state)
+        checkpoint_estimate = _fallback_context_estimate(
+            checkpoint_messages,
+            tools,
+        )
+        if checkpoint_estimate <= token_limit:
+            _log.info(
+                "context compaction session=%s mode=checkpoint before=%d "
+                "after=%d limit=%d summary_calls=0 protected_messages=%d",
+                session_id,
+                estimated,
+                checkpoint_estimate,
+                token_limit,
+                len(retained_messages),
+            )
+            return CompactionOutcome(
+                checkpoint_messages,
+                estimated,
+                checkpoint_estimate,
+                mode="checkpoint",
+                summary_calls=0,
+                trigger_source=trigger_source,
+            )
+
+    latest_user_index = user_indices[-1]
     retained_messages, retained_indices = _select_recent_messages(messages)
+    if latest_user_index not in retained_indices:
+        retained_indices.add(latest_user_index)
+        retained_messages = [
+            messages[index] for index in sorted(retained_indices)
+        ]
+    retained_messages = _bound_retained_messages(retained_messages)
     compacted_messages = [
         message
         for index, message in enumerate(messages)
@@ -1584,7 +1729,7 @@ async def _maybe_summarize(
             raise RuntimeError("LLM summary disabled")
         summary_calls = 1
         summary = await _create_summary(
-            llm,
+            summary_llm or llm,
             messages,
             1,
             session_id=session_id,
@@ -1601,20 +1746,42 @@ async def _maybe_summarize(
             "summarization failed: %s — using deterministic bounded fallback",
             exc,
         )
-        summary = _deterministic_history_fallback(compacted_messages)
+        summary = _deterministic_history_fallback(messages[1:])
 
     runtime_state = await _restore_runtime_state(messages, tools)
-    new_messages: list[Message] = [
-        messages[0],
-        Message(
-            role="user",
-            content=f"{_SUMMARY_MESSAGE_PREFIX}{summary}{_SUMMARY_MESSAGE_SUFFIX}",
-        ),
-        *retained_messages,
-    ]
-    if runtime_state is not None:
-        new_messages.append(runtime_state)
+    bounded_summary = _bound_text_middle(
+        summary,
+        _SUMMARY_OUTPUT_CHAR_LIMIT,
+        label="summary",
+    )
+
+    def build_compacted_messages(summary_text: str) -> list[Message]:
+        rebuilt = [
+            messages[0],
+            Message(
+                role="user",
+                content=(
+                    f"{_SUMMARY_MESSAGE_PREFIX}{summary_text}{_SUMMARY_MESSAGE_SUFFIX}"
+                ),
+            ),
+            *retained_messages,
+        ]
+        if runtime_state is not None:
+            rebuilt.append(runtime_state)
+        return rebuilt
+
+    new_messages = build_compacted_messages(bounded_summary)
     estimated_after = _fallback_context_estimate(new_messages, tools)
+    for summary_limit in (8_000, 4_000, 2_000):
+        if estimated_after <= token_limit or len(bounded_summary) <= summary_limit:
+            continue
+        bounded_summary = _bound_text_middle(
+            summary,
+            summary_limit,
+            label="summary",
+        )
+        new_messages = build_compacted_messages(bounded_summary)
+        estimated_after = _fallback_context_estimate(new_messages, tools)
     if estimated_after > token_limit:
         mode = "blocked"
     _log.info(
@@ -1659,7 +1826,12 @@ def _is_compaction_metadata(msg: Message) -> bool:
     if msg.role != "user" or not isinstance(msg.content, str):
         return False
     return msg.content.startswith(
-        (_SUMMARY_MARKER, _LEGACY_SUMMARY_MARKER, _RUNTIME_STATE_MARKER)
+        (
+            _SUMMARY_MARKER,
+            _LEGACY_SUMMARY_MARKER,
+            _RUNTIME_STATE_MARKER,
+            _WORKFLOW_CHECKPOINT_MARKER,
+        )
     )
 
 
@@ -2331,6 +2503,7 @@ def _cleanup_incomplete_messages(messages: list[Message]) -> int:
 async def run_agent_loop(
     *,
     llm,
+    summary_llm: Any | None = None,
     messages: list[Message],
     tools: dict[str, Tool],
     max_steps: int = _DEFAULT_AGENT_CONFIG.max_steps,
@@ -2985,6 +3158,25 @@ async def run_agent_loop(
                 user_visible=False,
             )
 
+        checkpoint_text: str | None = None
+        checkpoint_changed = False
+        if (
+            completion_gate is not None
+            and workflow_policy is not None
+            and not wrapup_injected
+            and (max_tool_calls is None or tool_call_total < max_tool_calls)
+        ):
+            checkpoint_text = workflow_policy.build_checkpoint()
+            if checkpoint_text is not None:
+                checkpoint_update = workflow_policy.update_checkpoint(
+                    checkpoint_text
+                )
+                checkpoint_text = checkpoint_update.text
+                checkpoint_changed = checkpoint_update.changed
+                verified_evidence_urls.update(
+                    checkpoint_update.recovered_evidence_urls
+                )
+
         # ── Fresh tool-result aggregate budget (Layer 1) ───
         # This runs immediately before the next LLM request. Decisions are
         # frozen by tool_use_id so later turns keep the same cache prefix.
@@ -3014,10 +3206,21 @@ async def run_agent_loop(
             title=title,
             api_prompt_tokens=api_prompt_tokens,
             tools=tools,
+            summary_llm=summary_llm,
+            workflow_checkpoint=checkpoint_text,
             allow_llm_summary=summary_failure_cooldown_steps == 0,
         )
         if result.mode == "fallback" and result.summary_calls > 0 and result.error:
-            summary_failure_cooldown_steps = 3
+            summary_failure_cooldown_steps = (
+                max_steps
+                if result.error_type
+                in {
+                    "BadRequestError",
+                    "AuthenticationError",
+                    "PermissionDeniedError",
+                }
+                else 3
+            )
         elif summary_failure_cooldown_steps > 0:
             summary_failure_cooldown_steps -= 1
         new_msgs, _skip_next_token_check, est_before = result
@@ -3204,21 +3407,25 @@ async def run_agent_loop(
             and not wrapup_injected
             and (max_tool_calls is None or tool_call_total < max_tool_calls)
         ):
-            checkpoint_text = workflow_policy.build_checkpoint()
             if checkpoint_text is not None:
-                checkpoint_update = workflow_policy.update_checkpoint(
-                    checkpoint_text
-                )
-                checkpoint_text = checkpoint_update.text
-                checkpoint_changed = checkpoint_update.changed
-                verified_evidence_urls.update(
-                    checkpoint_update.recovered_evidence_urls
-                )
-                workflow_checkpoint_message = Message(
-                    role="user",
-                    content=format_injected_message(checkpoint_text),
-                )
-                messages.append(workflow_checkpoint_message)
+                if result.mode == "checkpoint":
+                    workflow_checkpoint_message = next(
+                        (
+                            message
+                            for message in messages
+                            if isinstance(message.content, str)
+                            and message.content.startswith(
+                                _WORKFLOW_CHECKPOINT_MARKER
+                            )
+                        ),
+                        None,
+                    )
+                else:
+                    workflow_checkpoint_message = Message(
+                        role="user",
+                        content=format_injected_message(checkpoint_text),
+                    )
+                    messages.append(workflow_checkpoint_message)
                 if checkpoint_changed:
                     yield InjectedMessageEvent(
                         content=checkpoint_text,
@@ -3246,6 +3453,14 @@ async def run_agent_loop(
             for tool in tool_list
             if browser_intent_policy.is_tool_visible(tool.name)
         ]
+        hidden_tool_names = getattr(
+            workflow_policy,
+            "hidden_tool_names",
+            None,
+        )
+        if callable(hidden_tool_names):
+            hidden = hidden_tool_names()
+            tool_list = [tool for tool in tool_list if tool.name not in hidden]
         if (
             completion_gate is not None
             and completion_gate.restrict_tools_until_required_succeed
@@ -3328,8 +3543,16 @@ async def run_agent_loop(
                 "turn_id": turn_id,
                 "title": title,
             }
-            if call_kind:
-                stream_kwargs["call_kind"] = call_kind
+            effective_call_kind = call_kind
+            workflow_call_kind = getattr(
+                workflow_policy,
+                "llm_call_kind",
+                None,
+            )
+            if callable(workflow_call_kind):
+                effective_call_kind = workflow_call_kind()
+            if effective_call_kind:
+                stream_kwargs["call_kind"] = effective_call_kind
             llm_stream = llm.generate_stream(**stream_kwargs)
             async for chunk in _stream_with_activity(llm_stream):
                 if cancelled():

@@ -232,9 +232,11 @@ def test_explicit_session_collision_never_points_at_stale_content(tmp_path: Path
     assert second_path.read_text(encoding="utf-8") == "second payload"
 
 
-def test_aggregate_budget_never_persists_read_results(tmp_path: Path) -> None:
-    storage = ToolResultStorage(tmp_path, aggregate_budget=10)
-    messages = [_message("x" * 1_000, "read-1", "read_file")]
+def test_aggregate_budget_persists_read_results_when_batch_exceeds_limit(
+    tmp_path: Path,
+) -> None:
+    storage = ToolResultStorage(tmp_path, aggregate_budget=500)
+    messages = [_message("x" * 10_000, "read-1", "read_file")]
 
     outcome = storage.enforce_fresh_budget(
         messages,
@@ -242,8 +244,15 @@ def test_aggregate_budget_never_persists_read_results(tmp_path: Path) -> None:
         session_id="s",
     )
 
-    assert outcome.persisted_count == 0
-    assert messages[0].content == "x" * 1_000
+    assert outcome.fresh_count == 1
+    assert outcome.persisted_count == 1
+    assert outcome.remaining_chars <= storage.aggregate_budget
+    assert "<persisted-output>" in messages[0].content
+    assert "original path" in messages[0].content
+    assert "smaller offset/limit" in messages[0].content
+    assert (
+        tmp_path / "s" / "tool-results" / "read-1.txt"
+    ).read_text(encoding="utf-8") == "x" * 10_000
 
 
 def test_existing_history_is_frozen_when_conversation_state_is_initialized(tmp_path: Path) -> None:

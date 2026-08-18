@@ -33,7 +33,7 @@ Box-Agent 在两个边界控制上下文增长：
 - `read_file`、`query_jsonl`、`search_files` 通过 Infinity 明确退出，它们分别依赖行/字符分页、cursor/结构化摘要、结果数/字符分页；
 - `bash`、`bash_output` 也通过 Infinity 退出，因为工具内部已经执行一次 50,000 字符的 40% head + 60% tail 截断。
 
-读取类工具不外置，是为了避免把读取结果写入文件后模型再次发起读取。Infinity 的含义只是退出通用压缩；工具仍可通过 `ToolResult.persistence_content` 请求统一落盘完整内容。
+读取类工具不会被单结果即时检查外置，避免每个普通分页结果都落盘后又诱导模型重新读取。Infinity 只退出这条即时检查；当多个并行结果的合计内容超过请求总预算时，聚合检查仍可外置其中最大的页面。工具也可通过 `ToolResult.persistence_content` 请求统一落盘完整内容。
 
 符合条件且超过上限时：
 
@@ -74,7 +74,7 @@ Preview (first 2.0KB):
 每次 LLM 请求前，对本会话首次出现的工具结果执行默认 50,000 字符总预算检查：
 
 1. 只处理 fresh `tool_use_id`；
-2. 排除已经采用 `model_context` 的结果和声明为 Infinity 的自处理工具；
+2. 排除已经采用 `model_context` 的结果，但仍统计单结果声明为 Infinity 的自处理工具；Infinity 只关闭即时单结果落盘，不代表并行批次可绕过聚合预算；
 3. 按可落盘结果大小从大到小排序；
 4. 总预算路径使用只含恢复路径的包装，并按包装后的模型侧实际长度记账；
 5. 依次持久化并替换最大结果，直到实际剩余 fresh 内容不超过预算。
@@ -106,7 +106,7 @@ input_tokens
 
 ### 压缩后的消息组织
 
-压缩时只调用一次摘要模型：在原始 message 列表末尾临时追加一条 `user` 摘要指令。历史不会被序列化进新 prompt，也不会分块或滚动摘要，因此摘要请求保留完整的 provider message 前缀，可以复用 KV cache。这次调用不提供工具并关闭 thinking。指令要求按时间顺序列出全部 user message，把所有结构化分析放进唯一的 `<summary>...</summary>` 块，并内置九节输出结构示例。响应必须严格由一个非空 summary 块组成；写入 `Summary:` 后只取标签内部文本，标签本身会被丢弃。正常摘要路径不设置应用层字数、token 或字符限制，但仍受 provider 输出上限约束。摘要调用失败、格式错误或返回空内容时，使用明确标注为有损的确定性有界摘要兜底。
+可恢复工作流若能提供一份来自当前文件系统、且未超过 checkpoint 预算的最新检查点，压缩会直接使用该 checkpoint、精确的最新用户消息、协议完整的有界近期消息组和运行状态重建历史；这种 `checkpoint` 模式不调用摘要模型。其他任务才调用一次摘要模型：在原始 message 列表末尾临时追加一条 `user` 摘要指令。历史不会被序列化进新 prompt，也不会分块或滚动摘要，因此摘要请求保留完整的 provider message 前缀，可以复用 KV cache。ACP 会话使用隔离的 lite LLM，并把输出上限限制为 4,096 tokens；其他 host 可传入独立摘要客户端，未提供时才回退主模型。这次调用不提供工具并关闭 thinking。指令要求按时间顺序列出全部 user message，把所有结构化分析放进唯一的 `<summary>...</summary>` 块，并内置九节输出结构示例。响应必须严格由一个非空 summary 块组成；写入 `Summary:` 后只取标签内部文本，标签本身会被丢弃。摘要请求和本地写回的上限均为 8,000 字符；若重建请求仍超过安全输入限制，同一份摘要会在不增加 provider 调用的前提下依次收紧到 4,000、2,000 字符。摘要调用失败、格式错误或返回空内容时，使用明确标注为有损的确定性有界摘要兜底。
 
 模型输出包装成以下合成 `user` message：
 
@@ -128,11 +128,11 @@ system message
 运行状态 user message
 ```
 
-recent 选择统一覆盖 user、assistant 和 tool message；assistant 工具调用与连续 tool results 按组保留。上限为 5 条消息、合计 20,000 字符。位于 recent 后缀内的 user message 原样保留，更早的 user message 不再复制到重建历史。这里不再设置第二个“单条 tool result”上限：近期结果直接复用通用 result processor 已经处理过的模型侧内容。即使最新完整协议组本身超过数量或字符上限，也至少完整保留这一组；若重建后仍放不下，由最终估算明确标记为 blocked。
+recent 选择统一覆盖 user、assistant 和 tool message；assistant 工具调用与连续 tool results 按组保留。目标上限为 5 条消息、合计 20,000 字符，并始终原样保留最新真实 user message。如果最新完整协议组本身超过字符上限，压缩会保留精确的 assistant 工具调用、参数、result ID、顺序和数量，同时将已经进入 continuation summary 的 assistant reasoning 与 tool-result 正文替换为有界 receipt。只有剩余的精确用户文本、工具调用参数、system 指令、工具 schema、有界摘要和运行状态仍无法放入安全窗口时，才标记为 blocked。
 
 上下文压缩不再发现、重新读取或重放近期文件。
 
-Goal、Todo 和 Plan 通过显式、无副作用的 `compaction_state` 契约读取；压缩不会执行普通工具调用。完整 active skill 指令继续固定在 system message 中，不再通过回放历史 `get_skill` 调用重建。控制策略查询“最新用户文本”时会排除内部摘要与运行状态消息。
+Goal、Todo 和 Plan 通过显式、无副作用的 `compaction_state` 契约读取；压缩不会执行普通工具调用，合并后的运行状态消息上限为 12,000 字符。完整 active skill 指令继续固定在 system message 中，不再通过回放历史 `get_skill` 调用重建。控制策略查询“最新用户文本”时会排除内部摘要与运行状态消息。
 
 若重建后的请求仍超过安全阈值，结果会标记为 blocked，不会静默发送一个已知超限的请求。
 
@@ -142,6 +142,6 @@ write/edit 工具调用参数会保留原文，直到整段历史压缩摘要其
 
 ## 验证
 
-- `tests/test_tool_result_storage.py`：类型处理、独占写入、预览、Read 豁免、失败保留、去重和总预算排序；
+- `tests/test_tool_result_storage.py`：类型处理、独占写入、预览、Read 单结果豁免、失败保留、去重和总预算排序；
 - `tests/test_core.py`：请求前执行、usage 加增量估算、原始前缀单次摘要、回退估算、近期消息边界与运行状态恢复；
 - `tests/test_auth.py`：阈值推导。

@@ -33,7 +33,7 @@ The following results are not processed a second time:
 - `read_file`, `query_jsonl`, and `search_files` declare infinity and rely on line/character pagination, cursor/structured summarization, and result-count/character pagination respectively;
 - `bash` and `bash_output` also declare infinity because they already apply one 50,000-character 40% head + 60% tail truncation inside the tool.
 
-Read-like tools are not externalized because persisting a read result only to make the model read it again would create a loop. Infinity only opts out of generic compression; a tool can still request persistence of complete recoverable text through `ToolResult.persistence_content`.
+Read-like tools are not externalized by the single-result check because persisting every normal page only to make the model read it again would create a loop. Infinity opts out of that immediate check, but a large parallel batch can still externalize its largest pages to satisfy the aggregate request budget. A tool can also request persistence of complete recoverable text through `ToolResult.persistence_content`.
 
 When an eligible result exceeds the limit:
 
@@ -76,7 +76,7 @@ For a self-bounded tool that supplies `persistence_content`, the body is labeled
 Before every LLM request, results first seen during the current conversation are checked against a default 50,000-character aggregate budget. The pass:
 
 1. Considers only fresh `tool_use_id` values.
-2. Excludes selected `model_context` projections and self-processed tools whose declaration is infinity.
+2. Excludes selected `model_context` projections, but still counts self-bounded tools whose per-result declaration is infinity. Infinity disables immediate per-result persistence; it does not exempt a parallel batch from the aggregate budget.
 3. Sorts eligible results from largest to smallest.
 4. Uses a path-only persisted wrapper for this aggregate pass and counts the wrapper's actual model-facing length.
 5. Persists and replaces the largest results until the actual remaining fresh content is at or below the budget.
@@ -112,7 +112,7 @@ It then estimates messages appended after that response conservatively. If no me
 
 ### Compacted message layout
 
-Compaction makes one summary request by appending a temporary `user` instruction to the exact existing message list. It does not serialize messages into a new prompt and does not split or roll the source. This preserves the complete provider message prefix so the summary request can reuse its KV cache. Tools and thinking are disabled for this one call. The instruction requires a chronological list of every user message and places all structured analysis inside one `<summary>...</summary>` block, with an embedded nine-section output example. The response must consist of exactly one non-empty summary block; only its inner text is written after `Summary:` and the tags are discarded. The normal summary path has no application-level word, token, or character limit; provider output limits still apply. If the call fails, is malformed, or returns empty output, an explicitly lossy deterministic bounded fallback is used.
+When a recoverable workflow provides a current filesystem-derived checkpoint that fits the bounded checkpoint budget, compaction rebuilds directly from that checkpoint, the exact latest user message, the protocol-complete bounded recent group, and runtime state. This `checkpoint` mode performs no summary-model call. Other turns make one summary request by appending a temporary `user` instruction to the exact existing message list. It does not serialize messages into a new prompt and does not split or roll the source. This preserves the complete provider message prefix so the summary request can reuse its KV cache. ACP sessions use their isolated lite LLM for this call, capped at 4,096 output tokens; other hosts may supply a dedicated summary client or fall back to the main client. Tools and thinking are disabled. The instruction requires a chronological list of every user message and places all structured analysis inside one `<summary>...</summary>` block, with an embedded nine-section output example. The response must consist of exactly one non-empty summary block; only its inner text is written after `Summary:` and the tags are discarded. The requested and locally enforced summary limit is 8,000 characters; if the rebuilt request still exceeds the safe input limit, the same summary is deterministically tightened to 4,000 and finally 2,000 characters without another provider call. If the call fails, is malformed, or returns empty output, an explicitly lossy deterministic bounded fallback is used.
 
 The model output is wrapped in this synthetic `user` message:
 
@@ -134,11 +134,11 @@ bounded recent messages
 runtime-state user message
 ```
 
-Recent selection applies to user, assistant, and tool messages. Assistant tool calls stay grouped with their contiguous tool results. Selection keeps at most 5 messages and 20,000 total characters. A user message inside that recent suffix is retained verbatim; an older user message is not copied into rebuilt history. There is no second per-tool-result size limit here: recent tool results reuse the output already produced by the shared result processor. At least the newest complete protocol group is retained even if that one group exceeds a cap; the rebuilt-request estimate then marks the result blocked if it still cannot fit.
+Recent selection applies to user, assistant, and tool messages. Assistant tool calls stay grouped with their contiguous tool results. Selection targets at most 5 messages and 20,000 total characters, and the latest real user message is always retained verbatim. When the newest complete protocol group alone exceeds the character cap, compaction keeps the exact assistant tool calls, arguments, result IDs, ordering, and result count while replacing already-summarized assistant reasoning and tool-result bodies with bounded receipts. A request is blocked only when the remaining exact user text, tool-call arguments, system instructions, tool schemas, bounded summary, and runtime state still cannot fit.
 
 Compaction does not discover, reread, or replay recent files.
 
-Current goal, todo, and plan state are read through their explicit, side-effect-free `compaction_state` contract; compaction never invokes a normal tool call. Full active skill instructions remain pinned in the system message and are not reconstructed by replaying historical `get_skill` calls. Internal summary/runtime-state messages are excluded whenever control policy asks for the latest real user text.
+Current goal, todo, and plan state are read through their explicit, side-effect-free `compaction_state` contract; compaction never invokes a normal tool call. Their combined runtime-state message is capped at 12,000 characters. Full active skill instructions remain pinned in the system message and are not reconstructed by replaying historical `get_skill` calls. Internal summary/runtime-state messages are excluded whenever control policy asks for the latest real user text.
 
 If the rebuilt request still exceeds the safe limit, the outcome is marked blocked instead of silently sending a known-oversized request.
 
@@ -150,6 +150,6 @@ Write/edit tool-call arguments remain verbatim until whole-history compaction su
 
 Direct regression coverage lives in:
 
-- `tests/test_tool_result_storage.py` for type handling, exclusive writes, previews, Read opt-out, failures, deduplication, and aggregate ordering;
+- `tests/test_tool_result_storage.py` for type handling, exclusive writes, previews, Read single-result opt-out, failures, deduplication, and aggregate ordering;
 - `tests/test_core.py` for pre-request enforcement, usage-plus-delta estimation, exact-prefix one-shot summarization, fallback estimation, bounded retention, and runtime-state restoration;
 - `tests/test_auth.py` for the derived threshold.

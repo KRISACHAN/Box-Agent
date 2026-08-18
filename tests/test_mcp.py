@@ -461,6 +461,48 @@ class TestMCPToolExecution:
         await release_browser_runtime(owner_b)
 
     @pytest.mark.asyncio
+    async def test_playwright_snapshot_releases_turn_lease(self):
+        owner_a = "session-a:turn-1"
+        owner_b = "session-b:turn-1"
+
+        class FakeSession:
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(
+                    content=[SimpleNamespace(text=f"{name} complete")],
+                    isError=False,
+                )
+
+        owner_token = set_browser_runtime_owner(owner_a)
+        try:
+            navigate = MCPTool(
+                name="browser_navigate",
+                description="navigate",
+                parameters={"type": "object"},
+                session=FakeSession(),
+                server_name="playwright",
+                execute_timeout=1,
+            )
+            snapshot = MCPTool(
+                name="browser_snapshot",
+                description="snapshot",
+                parameters={"type": "object"},
+                session=FakeSession(),
+                server_name="playwright",
+                execute_timeout=1,
+            )
+
+            assert (await navigate.execute(url="https://example.com")).success
+            waiting = asyncio.create_task(BrowserRuntimeCoordinator.acquire(owner_b))
+            await asyncio.sleep(0)
+            assert waiting.done() is False
+
+            assert (await snapshot.execute()).success
+            await asyncio.wait_for(waiting, timeout=0.5)
+            await release_browser_runtime(owner_b)
+        finally:
+            reset_browser_runtime_owner(owner_token)
+
+    @pytest.mark.asyncio
     async def test_playwright_call_timeout_is_not_reported_as_runtime_busy(self):
         class SlowSession:
             async def call_tool(self, name, arguments):

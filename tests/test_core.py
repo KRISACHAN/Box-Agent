@@ -5734,7 +5734,7 @@ async def test_create_summary_passes_thinking_disabled_and_no_tools():
     assert sent[-1].content == _SUMMARY_REQUEST
     assert "lists every user message" in _SUMMARY_REQUEST
     assert "<summary>...</summary>" in _SUMMARY_REQUEST
-    assert "no requested word or token limit" in _SUMMARY_REQUEST
+    assert "below 8,000 characters" in _SUMMARY_REQUEST
     assert "<analysis>" in _SUMMARY_REQUEST
     example = _SUMMARY_REQUEST.split("<example>", 1)[1].split("</example>", 1)[0]
     assert "<analysis>" not in example
@@ -5743,6 +5743,63 @@ async def test_create_summary_passes_thinking_disabled_and_no_tools():
     assert "1. Primary Request and Intent:" in example
     assert "6. All User Messages:" in example
     assert "9. Optional Next Step:" in example
+
+
+@pytest.mark.asyncio
+async def test_maybe_summarize_uses_dedicated_summary_llm():
+    from box_agent.core import _maybe_summarize
+
+    main_llm = _FakeSummaryLLM("main should not be called")
+    summary_llm = _FakeSummaryLLM("dedicated summary")
+    outcome = await _maybe_summarize(
+        main_llm,
+        [
+            Message(role="system", content="system"),
+            Message(role="user", content="task"),
+            Message(role="assistant", content="large " * 10_000),
+        ],
+        token_limit=1_000,
+        api_total_tokens=0,
+        skip_check=False,
+        summary_llm=summary_llm,
+    )
+
+    assert outcome.mode == "summary"
+    assert main_llm.calls == []
+    assert len(summary_llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_maybe_summarize_prefers_workflow_checkpoint_without_llm_call():
+    from box_agent.core import _maybe_summarize
+
+    latest_user = Message(role="user", content="继续完成演示文稿")
+    llm = _FakeSummaryLLM("should not be called")
+    outcome = await _maybe_summarize(
+        llm,
+        [
+            Message(role="system", content="system"),
+            latest_user,
+            Message(role="assistant", content="large " * 10_000),
+        ],
+        token_limit=2_000,
+        api_total_tokens=0,
+        skip_check=False,
+        workflow_checkpoint=(
+            "CONTROLLED_PRESENTATION_CHECKPOINT=content_patch\n"
+            "PATCH_INPUT={\"path\":\"deck.patch.json\"}"
+        ),
+    )
+
+    assert outcome.mode == "checkpoint"
+    assert outcome.summary_calls == 0
+    assert outcome.estimated_after < outcome.estimated_before
+    assert latest_user in outcome.messages
+    assert llm.calls == []
+    assert any(
+        "CONTROLLED_PRESENTATION_CHECKPOINT=content_patch" in str(message.content)
+        for message in outcome.messages
+    )
 
 
 @pytest.mark.asyncio
@@ -5899,7 +5956,7 @@ async def test_second_compaction_sends_prior_summary_in_original_message_prefix(
     )
     assert prior_fact in str(summary_input[1].content)
     assert "current request" in str(summary_input[2].content)
-    assert msgs[2] not in outcome.messages
+    assert msgs[2] in outcome.messages
     assert sum(
         1
         for message in outcome.messages
@@ -5934,7 +5991,7 @@ async def test_second_compaction_treats_runtime_state_as_metadata_not_real_user(
     )
 
     assert outcome.messages is not None
-    assert real_user not in outcome.messages
+    assert real_user in outcome.messages
     assert old_runtime_state not in outcome.messages
     assert all(
         sent is original
@@ -6067,7 +6124,7 @@ def test_recent_selection_reuses_processed_tool_result_without_second_size_limit
 
 
 @pytest.mark.asyncio
-async def test_maybe_summarize_keeps_newest_complete_group_even_over_recent_budget():
+async def test_maybe_summarize_bounds_newest_group_over_recent_budget():
     from box_agent.core import _maybe_summarize
 
     latest_user = Message(role="user", content="keep this request")
@@ -6092,10 +6149,92 @@ async def test_maybe_summarize_keeps_newest_complete_group_even_over_recent_budg
         skip_check=False,
     )
 
-    assert outcome.mode == "blocked"
+    assert outcome.mode == "summary"
     assert outcome.messages is not None
-    assert latest_user not in outcome.messages
-    assert outcome.messages[-1] is oversized_reasoning
+    assert latest_user in outcome.messages
+    compacted_reasoning = next(
+        message
+        for message in outcome.messages
+        if message.role == "assistant" and message is not outcome.messages[0]
+    )
+    assert compacted_reasoning is not oversized_reasoning
+    assert compacted_reasoning.thinking is None
+    assert "Assistant content compacted" in str(compacted_reasoning.content)
+
+
+@pytest.mark.asyncio
+async def test_maybe_summarize_bounds_large_parallel_read_group_and_keeps_user_exact():
+    from box_agent.core import (
+        _maybe_summarize,
+        _message_chars,
+        _RECENT_MESSAGE_CHAR_LIMIT,
+        _SUMMARY_MESSAGE_PREFIX,
+        _SUMMARY_MESSAGE_SUFFIX,
+        _SUMMARY_OUTPUT_CHAR_LIMIT,
+    )
+
+    class _LargeActivatedTool:
+        def to_openai_schema(self):
+            return {"description": "activated schema " * 2_500}
+
+        def compaction_state(self):
+            return None
+
+    latest_user = Message(role="user", content="制作十页融资 BP，所有事实必须可核验")
+    output_sizes = [19_456, 30_543, 57_418, 6_465, 7_463, 1_793]
+    calls = [
+        ToolCall(
+            id=f"call-{index}",
+            type="function",
+            function=FunctionCall(
+                name="read_file" if index < 5 else "tool_search",
+                arguments={"path": f"reference-{index}.md"},
+            ),
+        )
+        for index in range(len(output_sizes))
+    ]
+    messages = [
+        Message(role="system", content="pinned skill instructions " * 5_000),
+        latest_user,
+        Message(role="assistant", content="", tool_calls=calls),
+        *[
+            Message(
+                role="tool",
+                content="x" * size,
+                tool_call_id=call.id,
+                name=call.function.name,
+            )
+            for call, size in zip(calls, output_sizes)
+        ],
+    ]
+
+    outcome = await _maybe_summarize(
+        _FakeSummaryLLM("continuation summary " * 700),
+        messages,
+        token_limit=90_000,
+        api_total_tokens=0,
+        skip_check=False,
+        tools={"activated": _LargeActivatedTool()},
+    )
+
+    assert outcome.estimated_before >= 90_000
+    assert outcome.mode == "summary"
+    assert outcome.estimated_after < 90_000
+    assert outcome.messages is not None
+    assert latest_user in outcome.messages
+    retained_assistant = next(message for message in outcome.messages if message.tool_calls)
+    retained_tools = [message for message in outcome.messages if message.role == "tool"]
+    assert retained_assistant.tool_calls == calls
+    assert [message.tool_call_id for message in retained_tools] == [call.id for call in calls]
+    assert sum(_message_chars(message) for message in outcome.messages[2:]) <= (
+        _RECENT_MESSAGE_CHAR_LIMIT
+    )
+    summary_message = outcome.messages[1]
+    assert len(str(summary_message.content)) <= (
+        len(_SUMMARY_MESSAGE_PREFIX)
+        + _SUMMARY_OUTPUT_CHAR_LIMIT
+        + len(_SUMMARY_MESSAGE_SUFFIX)
+    )
 
 
 @pytest.mark.asyncio
@@ -6413,6 +6552,13 @@ def test_fallback_context_estimate_is_conservative_for_multibyte_text():
     messages = [Message(role="system", content="sys"), Message(role="user", content=content)]
 
     assert _fallback_context_estimate(messages, None) >= len(content.encode("utf-8")) // 3
+
+
+def test_bound_text_middle_never_exceeds_tiny_limit():
+    from box_agent.core import _bound_text_middle
+
+    assert _bound_text_middle("abcdef", 0, label="test") == ""
+    assert _bound_text_middle("abcdef", 3, label="test") == "abc"
 
 
 def test_generic_tool_result_reaches_storage_seam_without_loss():

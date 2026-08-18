@@ -632,6 +632,20 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
     assert gate.workflow_checkpoint_kind == "controlled_presentation"
 
 
+def test_build_auto_completion_gate_detects_investor_bp_as_presentation(tmp_path):
+    gate = build_auto_completion_gate(
+        "制作10页AI质检与智能排产平台融资BP，面向VC",
+        tmp_path,
+    )
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind == "controlled_presentation"
+    assert gate.required_changed_artifact_globs == (
+        "output/**/*.html",
+        "output/**/*.htm",
+    )
+
+
 @pytest.mark.parametrize(
     "prompt",
     [

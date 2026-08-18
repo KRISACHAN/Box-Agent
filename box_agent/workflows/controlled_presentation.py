@@ -1773,6 +1773,7 @@ class ControlledPresentationPolicy:
     _last_checkpoint_text: str | None = None
     _resume_checkpoint: WorkflowPauseCheckpoint | None = None
     _last_step_failure_signature: str | None = None
+
     _step_failure_streak: int = 0
     _repair_failure_stage: str | None = None
     _repair_failure_signature: str | None = None
@@ -1814,6 +1815,37 @@ class ControlledPresentationPolicy:
     checkpoint_injection_id: ClassVar[str] = CHECKPOINT_MARKER
     evidence_read_batch_size: ClassVar[int] = RESEARCH_READ_BATCH_SIZE
     evidence_read_limit: ClassVar[int] = RESEARCH_DIRECT_READ_LIMIT
+
+    def hidden_tool_names(self) -> frozenset[str]:
+        """Return tools that cannot contribute to the current deck stage."""
+
+        hidden = {
+            "create_scheduled_task",
+            "mcp_config",
+            "obsidian_create_note",
+            "obsidian_update_note",
+            "obsidian_daily_note",
+            "search",
+            "search_task",
+        }
+        if self.stage not in {None, "research"}:
+            hidden.update(
+                {
+                    "tool_search",
+                    "web_search",
+                    "browser_navigate",
+                    "browser_navigate_back",
+                    "browser_snapshot",
+                }
+            )
+        return frozenset(hidden)
+
+    def llm_call_kind(self) -> str:
+        """Expose the current stage for gateway routing and latency tracing."""
+
+        stage = (self.stage or "bootstrap").strip().lower()
+        normalized = re.sub(r"[^a-z0-9_]+", "_", stage).strip("_")
+        return f"presentation_{normalized or 'bootstrap'}"
 
     @property
     def _research_direct_read_complete(self) -> bool:

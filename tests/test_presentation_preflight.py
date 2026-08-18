@@ -196,6 +196,9 @@ def test_non_new_deck_requests_skip_preflight(text: str, has_existing: bool):
         "先生成一份哈利波特主题 PPT 提示词，然后根据它制作 PPT",
         "把分析结果整理成一份组会 PPT，并附 Excel 统计表",
         "把分析结果做成一份组会 PPT",
+        "制作10页AI质检与智能排产平台融资BP，面向VC",
+        "帮我生成一份商业计划书，包含市场和融资计划",
+        "Create an investor pitch deck for this product",
     ],
 )
 def test_new_deck_requests_enter_preflight(text: str):

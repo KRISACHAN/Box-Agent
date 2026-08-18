@@ -786,6 +786,7 @@ class SessionState:
     agent: Agent
     trace_writer: SessionTraceWriter | None = None
     session_llm: SessionBoundLLM | None = None
+    summary_llm: SessionBoundLLM | None = None
     cancelled: bool = False
     output_dir: str | None = None  # ``{workspace}/output/`` — the canonical artifact root
     artifact_mode: str = "output"
@@ -829,6 +830,7 @@ class SessionState:
 
 
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
+_CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 4_096
 
 def _bind_user_source_text(state: SessionState, user_request: str) -> None:
     """Expose accumulated real user text to local provenance-aware tools.
@@ -908,6 +910,39 @@ class BoxACPAgent:
             binding["model"],
             max_output_tokens=binding.get("maxTokens"),
         )
+
+    def _summary_llm_for_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        client_info: ClientInfo | None,
+    ) -> SessionBoundLLM:
+        """Return an isolated, output-bounded lite client for compaction."""
+
+        summary_client = self._lite_llm
+        clone_for_model = getattr(summary_client, "for_model", None)
+        model = str(getattr(summary_client, "model", "") or "").strip()
+        if callable(clone_for_model) and model:
+            configured_limit = int(
+                getattr(summary_client, "max_output_tokens", 0)
+                or _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS
+            )
+            summary_client = clone_for_model(
+                model,
+                max_output_tokens=min(
+                    configured_limit,
+                    _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
+                ),
+            )
+        bound = SessionBoundLLM(summary_client)
+        bound.set_request_context(
+            session_id=session_id,
+            title=title,
+            call_kind="context_summary",
+            client_info=client_info,
+        )
+        return bound
 
     def _set_agent_system_prompt(self, agent: Agent, system_prompt: str) -> None:
         """Update all live holders of the current system prompt."""
@@ -1312,6 +1347,11 @@ class BoxACPAgent:
             title=upstream_title,
             client_info=client_info,
         )
+        summary_llm = self._summary_llm_for_session(
+            session_id=upstream_session_id or session_id,
+            title=upstream_title,
+            client_info=client_info,
+        )
 
         # Canonical artifact directory is only part of output mode. Existing
         # project workspaces are edited in place and must not get an implicit
@@ -1611,6 +1651,7 @@ class BoxACPAgent:
         )
         self._sessions[session_id] = SessionState(
             agent=agent, session_llm=session_llm,
+            summary_llm=summary_llm,
             trace_writer=trace_writer,
             output_dir=output_dir, session_mode=session_mode,
             llm_binding=llm_binding,
@@ -1923,6 +1964,13 @@ class BoxACPAgent:
                 session_id=billing_session_id,
                 turn_id=turn_id,
                 title=state.upstream_title,
+            )
+        if state.summary_llm is not None:
+            state.summary_llm.set_request_context(
+                session_id=billing_session_id,
+                turn_id=turn_id,
+                title=state.upstream_title,
+                call_kind="context_summary",
             )
         if state.memory_extractor is not None and hasattr(state.memory_extractor, "set_turn_id"):
             state.memory_extractor.set_turn_id(turn_id)
@@ -3806,6 +3854,7 @@ class BoxACPAgent:
         run_options = replace(
             agent.default_run_options(),
             llm=llm,
+            summary_llm=state.summary_llm,
             is_cancelled=lambda: state.cancelled,
             logger=None,  # ACP uses its own logging via the connection
             permission_negotiator=negotiator,

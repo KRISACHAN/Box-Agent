@@ -76,6 +76,7 @@ class AgentRunOptions:
     """
 
     llm: Any
+    summary_llm: Any | None = None
     is_cancelled: Callable[[], bool] | None = None
     logger: AgentLogger | None = None
     permission_negotiator: Any | None = None
@@ -848,6 +849,7 @@ class Agent:
         """Return a complete snapshot of the default integration options."""
         return AgentRunOptions(
             llm=self.llm,
+            summary_llm=None,
             is_cancelled=self._check_cancelled,
             logger=self.logger,
             permission_negotiator=self._permission_negotiator,
@@ -906,6 +908,7 @@ class Agent:
 
         async for event in run_agent_loop(
             llm=effective_options.llm,
+            summary_llm=effective_options.summary_llm,
             messages=self.messages,
             tools=self.tools,
             max_steps=self.max_steps,
