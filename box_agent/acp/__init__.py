@@ -116,7 +116,7 @@ from box_agent.events import (
 )
 from box_agent.client_info import ClientInfo, scoped_client_info
 from box_agent.llm import LLMClient, SessionBoundLLM
-from box_agent.llm.model_routing import normalize_auto_routing
+from box_agent.llm.model_routing import normalize_auto_routing, resolve_model_client
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
 from box_agent.completion import (
@@ -914,33 +914,64 @@ class BoxACPAgent:
     def _summary_llm_for_session(
         self,
         *,
+        session_llm: SessionBoundLLM,
         session_id: str,
         title: str,
         client_info: ClientInfo | None,
     ) -> SessionBoundLLM:
-        """Return an isolated, output-bounded lite client for compaction."""
+        """Return a session-routed, output-bounded client for compaction."""
 
-        summary_client = self._lite_llm
-        clone_for_model = getattr(summary_client, "for_model", None)
-        model = str(getattr(summary_client, "model", "") or "").strip()
-        if callable(clone_for_model) and model:
-            configured_limit = int(
-                getattr(summary_client, "max_output_tokens", 0)
-                or _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS
-            )
-            summary_client = clone_for_model(
-                model,
-                max_output_tokens=min(
-                    configured_limit,
-                    _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
-                ),
-            )
-        bound = SessionBoundLLM(summary_client)
+        summary_client, diagnostic = resolve_model_client(
+            session_llm,
+            task="总结压缩会话上下文，保留关键事实与执行状态",
+            strategy="utility",
+            max_output_tokens_cap=_CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
+            task_tags=("summary",),
+            required_ability_level=1,
+        )
+        bound = (
+            summary_client
+            if isinstance(summary_client, SessionBoundLLM)
+            else SessionBoundLLM(summary_client)
+        )
         bound.set_request_context(
             session_id=session_id,
             title=title,
             call_kind="context_summary",
             client_info=client_info,
+        )
+        log.info(
+            "context_summary/model_routing",
+            session_id=session_id,
+            model=str(getattr(bound, "model", "") or ""),
+            routing=diagnostic,
+        )
+        return bound
+
+    def _utility_llm_for_meta(self, meta: dict[str, Any]) -> SessionBoundLLM:
+        """Resolve the session/manual binding carried by a utility request."""
+
+        binding = _normalize_llm_binding(meta)
+        raw_session_id = meta.get("session_id")
+        upstream_session_id = (
+            raw_session_id.strip() if isinstance(raw_session_id, str) else ""
+        )
+        if binding is None and upstream_session_id:
+            state = next(
+                (
+                    candidate
+                    for candidate in getattr(self, "_sessions", {}).values()
+                    if candidate.upstream_session_id == upstream_session_id
+                    and candidate.session_llm is not None
+                ),
+                None,
+            )
+            if state is not None and state.session_llm is not None:
+                return state.session_llm
+
+        bound = SessionBoundLLM(self._llm_for_binding(binding))
+        bound.set_auto_model_candidates(
+            (binding or {}).get("autoRouting", {}).get("models", [])
         )
         return bound
 
@@ -1348,6 +1379,7 @@ class BoxACPAgent:
             client_info=client_info,
         )
         summary_llm = self._summary_llm_for_session(
+            session_llm=session_llm,
             session_id=upstream_session_id or session_id,
             title=upstream_title,
             client_info=client_info,
@@ -1964,6 +1996,13 @@ class BoxACPAgent:
                 session_id=billing_session_id,
                 turn_id=turn_id,
                 title=state.upstream_title,
+            )
+        if state.session_llm is not None:
+            state.summary_llm = self._summary_llm_for_session(
+                session_llm=state.session_llm,
+                session_id=billing_session_id,
+                title=state.upstream_title,
+                client_info=self._client_info,
             )
         if state.summary_llm is not None:
             state.summary_llm.set_request_context(
@@ -3099,7 +3138,8 @@ class BoxACPAgent:
         prompt = params.get("prompt", "")
         system_prompt = params.get("systemPrompt") or None
         timeout_ms = params.get("timeoutMs")
-        meta = params.get("_meta") or {}
+        raw_meta = params.get("_meta")
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
         client_info = (
             ClientInfo.from_meta(meta.get("client_info"))
             if isinstance(meta, dict)
@@ -3141,12 +3181,58 @@ class BoxACPAgent:
             except (TypeError, ValueError):
                 return {"error": {"code": "invalid_args", "message": "timeoutMs must be a number"}}
 
-        provider = getattr(self._lite_llm, "provider", None)
-        model = getattr(self._lite_llm, "model", "")
+        if "title" in normalized_purpose:
+            routing_tags = ("summary", "rewrite", "fast")
+            routing_ability = 1
+        elif "presentation" in normalized_purpose:
+            routing_tags = ("presentation", "analysis")
+            routing_ability = 1
+        elif "summary" in normalized_purpose:
+            routing_tags = ("summary", "fast")
+            routing_ability = 1
+        elif "expert" in normalized_purpose:
+            routing_tags = ("analysis", "reasoning")
+            routing_ability = 2
+        else:
+            routing_tags = None
+            routing_ability = None
+
+        utility_llm = self._utility_llm_for_meta(meta)
+        utility_llm, routing_diagnostic = resolve_model_client(
+            utility_llm,
+            task=" ".join(
+                part
+                for part in (
+                    str(purpose).strip(),
+                    str(workspace_label).strip(),
+                    prompt[:2_000],
+                )
+                if part
+            ),
+            strategy="utility",
+            task_tags=routing_tags,
+            required_ability_level=routing_ability,
+        )
+        utility_llm.set_request_context(
+            session_id=session_id,
+            turn_id=turn_id,
+            title=title,
+            call_kind=call_kind,
+            client_info=client_info,
+        )
+        provider = getattr(utility_llm, "provider", None)
+        model = getattr(utility_llm, "model", "")
+        log.info(
+            "llm/prompt_model_routing",
+            purpose=purpose,
+            workspace=workspace_label,
+            model=model,
+            routing=routing_diagnostic,
+        )
         try:
             with scoped_client_info(client_info):
                 result = await run_lightweight_prompt(
-                    self._lite_llm,
+                    utility_llm,
                     prompt,
                     system_prompt=system_prompt,
                     session_id=session_id,
@@ -3752,9 +3838,16 @@ class BoxACPAgent:
             if not latest_user_request or not final_content.strip():
                 return []
 
+            suggestion_llm, routing_diagnostic = resolve_model_client(
+                state.session_llm or state.agent.llm,
+                task="根据本轮回答生成简短的下一步建议",
+                strategy="utility",
+                task_tags=("general", "chat", "fast"),
+                required_ability_level=1,
+            )
             try:
                 result = await run_lightweight_prompt(
-                    self._lite_llm,
+                    suggestion_llm,
                     build_follow_up_suggestions_generation_prompt(
                         latest_user_request,
                         final_content,
@@ -3780,6 +3873,8 @@ class BoxACPAgent:
                 session_id=session_id,
                 count=len(suggestions),
                 duration_ms=result.duration_ms,
+                model=str(getattr(suggestion_llm, "model", "") or ""),
+                routing=routing_diagnostic,
             )
             return suggestions
 
@@ -4818,34 +4913,9 @@ async def run_acp_server(config: Config | None = None) -> None:
             timeout=config.llm.timeout,
         )
 
-        # Lite LLM client for tool-free small tasks (titles / summaries).
-        # When `lite_llm:` is absent from config, fall back to the main client
-        # so call sites stay uniform.
-        if config.lite_llm._present:
-            lite_rcfg = config.lite_llm.retry
-            lite_provider = (
-                LLMProvider.ANTHROPIC
-                if config.lite_llm.provider.lower() == "anthropic"
-                else LLMProvider.OPENAI
-            )
-            lite_llm = LLMClient(
-                api_key=config.lite_llm.api_key,
-                provider=lite_provider,
-                api_base=config.lite_llm.api_base,
-                model=config.lite_llm.model,
-                retry_config=RetryConfigBase(
-                    enabled=lite_rcfg.enabled,
-                    max_retries=lite_rcfg.max_retries,
-                    initial_delay=lite_rcfg.initial_delay,
-                    max_delay=lite_rcfg.max_delay,
-                    exponential_base=lite_rcfg.exponential_base,
-                ),
-                max_output_tokens=config.lite_llm.max_output_tokens,
-                auth_file=config.lite_llm.auth_file,
-                timeout=config.lite_llm.timeout,
-            )
-        else:
-            lite_llm = llm
+        # Kept as a constructor compatibility alias only. Internal calls now
+        # resolve from the session binding and its host-provided auto pool.
+        lite_llm = llm
 
         # Create memory manager if enabled
         memory_mgr = None
@@ -4936,13 +5006,10 @@ async def run_acp_server(config: Config | None = None) -> None:
             system_prompt = system_prompt.replace("{SKILLS_METADATA}", "")
 
         log.info("server/start", message=f"LLM: {config.llm.model}, provider: {config.llm.provider}")
-        if config.lite_llm._present:
-            log.info(
-                "server/start",
-                message=f"Lite LLM: {config.lite_llm.model or '<server-default>'}, provider: {config.lite_llm.provider}, base: {config.lite_llm.api_base}",
-            )
-        else:
-            log.info("server/start", message="Lite LLM: <fallback to main>")
+        log.info(
+            "server/start",
+            message="Internal LLM routing: session binding / host auto model pool",
+        )
         log.info("server/start", message=f"Tools loaded: {len(base_tools)} base tools")
 
         # Restore real stdout for ACP transport, then re-guard sys.stdout

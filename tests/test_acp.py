@@ -36,6 +36,7 @@ from box_agent.config import (
     ToolsConfig,
 )
 from box_agent.memory import MemoryManager
+from box_agent.llm import SessionBoundLLM
 from box_agent.loop_guards import CompletionGate
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import Tool, ToolResult
@@ -60,9 +61,9 @@ class DummyConn:
         self.updates.append(payload)
 
 
-def test_acp_context_summary_uses_output_bounded_lite_model(tmp_path):
+def test_acp_context_summary_routes_auto_by_tags_and_locks_manual_model(tmp_path):
     class CloneTrackingLLM:
-        model = "lite-model"
+        model = "main-model"
         max_output_tokens = 64_000
 
         def __init__(self):
@@ -76,7 +77,7 @@ def test_acp_context_summary_uses_output_bounded_lite_model(tmp_path):
             self.clones.append(clone)
             return clone
 
-    lite_llm = CloneTrackingLLM()
+    main_llm = CloneTrackingLLM()
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(workspace_dir=str(tmp_path)),
@@ -85,21 +86,46 @@ def test_acp_context_summary_uses_output_bounded_lite_model(tmp_path):
     agent = BoxACPAgent(
         DummyConn(),
         config,
-        DummyLLM(),
+        main_llm,
         [],
         "system",
-        lite_llm=lite_llm,
+    )
+    auto_session_llm = SessionBoundLLM(main_llm)
+    auto_session_llm.set_auto_model_candidates(
+        [
+            {
+                "model": "analysis-model",
+                "tags": ["analysis"],
+                "abilityLevel": 3,
+            },
+            {
+                "model": "summary-model",
+                "tags": ["summary", "fast"],
+                "abilityLevel": 1,
+            },
+        ]
     )
 
     summary_llm = agent._summary_llm_for_session(
+        session_llm=auto_session_llm,
         session_id="session-1",
         title="Summary test",
         client_info=None,
     )
 
-    assert len(lite_llm.clones) == 1
-    assert summary_llm.model == "lite-model"
+    assert len(main_llm.clones) == 1
+    assert summary_llm.model == "summary-model"
     assert summary_llm.max_output_tokens == 4_096
+
+    manual_llm = CloneTrackingLLM()
+    locked_summary_llm = agent._summary_llm_for_session(
+        session_llm=SessionBoundLLM(manual_llm),
+        session_id="session-locked",
+        title="Locked model",
+        client_info=None,
+    )
+    assert locked_summary_llm.model == "main-model"
+    assert manual_llm.clones[0].model == "main-model"
 
 
 def test_acp_normalizes_structured_user_decision_response_meta():
