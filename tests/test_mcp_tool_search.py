@@ -480,6 +480,34 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server_name", "expected_server"),
+    [(" weather ", "weather"), ("", None), ("   ", None)],
+)
+async def test_search_normalizes_blank_and_padded_server_filters(
+    server_name, expected_server
+) -> None:
+    catalog = MCPToolCatalog()
+    catalog.replace_server(
+        "weather",
+        [FakeMCPTool("get_forecast", "weather", "Get weather forecast")],
+    )
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(catalog, activated).execute(
+        query="forecast",
+        server_name=server_name,
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["server_name"] == expected_server
+    assert payload["catalog_tool_count"] == 1
+    assert payload["matched_count"] == 1
+    assert payload["activated_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_duplicate_model_names_are_reported_but_not_activated() -> None:
     catalog = MCPToolCatalog()
     first = FakeMCPTool("lookup", "crm", "CRM lookup")
