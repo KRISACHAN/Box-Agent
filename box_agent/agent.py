@@ -55,6 +55,7 @@ from .tools.mcp_tool_search import (
     ToolSearchTool,
 )
 from .tools.skill_preload import build_active_skills_prompt
+from .tool_result_storage import ToolResultStorage
 from .utils import calculate_display_width
 from .workflow_policy import WorkflowPolicy
 
@@ -520,6 +521,9 @@ class Agent:
                 self.activated_mcp_tools,
                 protected_names_provider=lambda: frozenset(self.tools),
             )
+        self.tool_result_storage = ToolResultStorage(
+            Path.home() / ".box-agent" / "sessions"
+        )
         self.token_limit = token_limit
         self.workspace_dir = Path(workspace_dir)
         self.cancel_event: Optional[asyncio.Event] = None
@@ -945,6 +949,7 @@ class Agent:
             context_resource_ledger=self.context_resource_ledger,
             context_resource_dedup_enabled=self.context_resource_dedup_enabled,
             tool_exposure_manager=self.mcp_tool_exposure,
+            tool_result_storage=self.tool_result_storage,
         ):
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):

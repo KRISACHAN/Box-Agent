@@ -42,7 +42,7 @@ from box_agent.events import (
 from box_agent.workflow_policy import WorkflowCheckpointUpdate
 from box_agent.workflow_checkpoint_store import load_workflow_checkpoint
 from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND
-from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
+from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
 from box_agent.tools.staged_file_write_tool import StagedFileWriteTool
@@ -663,13 +663,39 @@ class LargeJsonWebSearchTool(Tool):
                             "Title": "Official policy result",
                             "Url": "https://example.gov/policy",
                             "Snippet": "A concise summary of the policy.",
-                            "Content": "RAW_SEARCH_BODY_" + ("x" * 20000),
+                            "Content": "RAW_SEARCH_BODY_" + ("x" * 15_000),
                         }
                     ],
                 },
                 ensure_ascii=False,
             ),
         )
+
+
+class SizedParallelTool(Tool):
+    parallel_safe = True
+
+    @property
+    def name(self):
+        return "sized_parallel"
+
+    @property
+    def description(self):
+        return "Return a bounded test payload."
+
+    @property
+    def parameters(self):
+        return {
+            "type": "object",
+            "properties": {
+                "fill": {"type": "string"},
+                "size": {"type": "integer"},
+            },
+            "required": ["fill", "size"],
+        }
+
+    async def execute(self, fill: str, size: int):
+        return ToolResult(success=True, content=fill * size)
 
 
 class RawOutputTool(Tool):
@@ -1657,7 +1683,9 @@ async def test_repeated_sub_agent_framework_error_is_compacted_only_for_model_hi
 
 
 @pytest.mark.asyncio
-async def test_tool_model_context_is_used_only_for_message_history():
+async def test_tool_model_context_is_used_only_for_message_history(tmp_path):
+    from box_agent.tool_result_storage import ToolResultStorage
+
     msgs = _msgs()
     llm = MockLLM([
         LLMResponse(
@@ -1679,6 +1707,11 @@ async def test_tool_model_context_is_used_only_for_message_history():
             messages=msgs,
             tools={"model_context": ModelContextTool()},
             max_steps=5,
+            tool_result_storage=ToolResultStorage(
+                tmp_path,
+                default_result_limit=5,
+                aggregate_budget=5,
+            ),
         )
     )
 
@@ -4506,7 +4539,7 @@ def test_web_search_logs_ranked_top_results_sent_to_model(caplog):
     )
 
 
-def test_large_web_search_compaction_uses_reranked_top_results():
+def test_web_search_normalization_reranks_before_storage_policy():
     from box_agent.core import (
         _dedupe_web_search_content,
         _tool_message_content_for_model,
@@ -4544,7 +4577,7 @@ def test_large_web_search_compaction_uses_reranked_top_results():
         visible_error=None,
     )
 
-    assert "Large web_search result bounded for model history" in model_content
+    assert model_content == normalized
     assert "https://example.com/product-one" in model_content
     assert model_content.index("https://example.com/product-one") < model_content.index(
         "https://generic.example/result-1"
@@ -4552,7 +4585,7 @@ def test_large_web_search_compaction_uses_reranked_top_results():
 
 
 @pytest.mark.asyncio
-async def test_web_search_tool_result_is_compacted_for_the_next_model_step():
+async def test_web_search_result_below_storage_threshold_stays_exact():
     tool_call = ToolCall(
         id="web-large",
         type="function",
@@ -4585,13 +4618,56 @@ async def test_web_search_tool_result_is_compacted_for_the_next_model_step():
         for m in llm.message_calls[1]
         if m.role == "tool" and m.name == "web_search" and m.tool_call_id == "web-large"
     )
-    assert tool_message.content != visible_result.content
-    assert "query=policy 400g" in tool_message.content
-    assert "Official policy result" in tool_message.content
-    assert "https://example.gov/policy" in tool_message.content
-    assert "A concise summary of the policy" in tool_message.content
-    assert "RAW_SEARCH_BODY_" not in tool_message.content
-    assert len(tool_message.content) < 10_000
+    assert tool_message.content == visible_result.content
+    assert "RAW_SEARCH_BODY_" in tool_message.content
+
+
+@pytest.mark.asyncio
+async def test_parallel_fresh_results_apply_aggregate_budget_before_next_llm_call(tmp_path):
+    from box_agent.tool_result_storage import ToolResultStorage
+
+    calls = [
+        ToolCall(
+            id=f"sized-{index}",
+            type="function",
+            function=FunctionCall(
+                name="sized_parallel",
+                arguments={"fill": chr(97 + index), "size": 40_000},
+            ),
+        )
+        for index in range(3)
+    ]
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(content="", tool_calls=calls, finish_reason="tool"),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+    storage = ToolResultStorage(
+        tmp_path,
+        default_result_limit=50_000,
+        aggregate_budget=100_000,
+    )
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"sized_parallel": SizedParallelTool()},
+            max_steps=5,
+            tool_result_storage=storage,
+            session_id="aggregate-test",
+        )
+    )
+
+    next_request_results = [
+        message
+        for message in llm.message_calls[1]
+        if message.role == "tool" and message.name == "sized_parallel"
+    ]
+    assert len(next_request_results) == 3
+    assert sum("<persisted-output>" in str(message.content) for message in next_request_results) == 1
+    assert len(list((tmp_path / "aggregate-test" / "tool-results").glob("*.txt"))) == 1
 
 
 @pytest.mark.asyncio
@@ -5418,328 +5494,6 @@ async def test_stream_interrupted_preserves_partial_assistant_message(tmp_path):
     assert assistant_msgs[-1].content == "第一篇：中国乘用车市场总览"
 
 
-# ── Micro-compact tests ──────────────────────────────────────────
-
-
-from box_agent.core import _micro_compact, _KEEP_RECENT_TOOL_RESULTS, _MIN_COMPACT_LEN
-
-
-def _make_tool_msg(name: str, content: str, tc_id: str = "tc-0") -> Message:
-    return Message(role="tool", content=content, tool_call_id=tc_id, name=name)
-
-
-def test_micro_compact_no_op_when_few_tool_msgs():
-    """Should not compact when tool messages <= KEEP_RECENT."""
-    msgs = [
-        Message(role="system", content="sys"),
-        Message(role="user", content="hi"),
-        Message(role="assistant", content="ok"),
-        _make_tool_msg("bash", "x" * 500, "tc-1"),
-        _make_tool_msg("bash", "y" * 500, "tc-2"),
-        _make_tool_msg("bash", "z" * 500, "tc-3"),
-    ]
-    assert _micro_compact(msgs).transformed_count == 0
-    # Content should be unchanged
-    assert msgs[3].content == "x" * 500
-
-
-def test_micro_compact_replaces_old_tool_results():
-    """Old tool results beyond KEEP_RECENT should be compacted."""
-    msgs = [
-        Message(role="system", content="sys"),
-        Message(role="user", content="analyze data"),
-        Message(role="assistant", content="calling tools"),
-        _make_tool_msg("execute_code", "DataFrame with 1000 rows\n" + "x" * 500, "tc-1"),
-        _make_tool_msg("execute_code", "Statistical summary\n" + "y" * 500, "tc-2"),
-        Message(role="assistant", content="more analysis"),
-        _make_tool_msg("bash", "file list\n" + "z" * 500, "tc-3"),
-        _make_tool_msg("execute_code", "Final chart\n" + "w" * 500, "tc-4"),
-        _make_tool_msg("read", "recent content\n" + "v" * 500, "tc-5"),
-        _make_tool_msg("execute_code", "latest result\n" + "u" * 500, "tc-6"),
-    ]
-    # 6 tool messages, keep last 3 → compact first 3
-    compacted = _micro_compact(msgs)
-    assert compacted.transformed_count == 3
-
-    # First 3 tool messages should be compacted
-    assert msgs[3].content.startswith("[Previous result from execute_code:")
-    assert msgs[4].content.startswith("[Previous result from execute_code:")
-    assert msgs[6].content.startswith("[Previous result from bash:")
-
-    # Last 3 tool messages should be intact
-    assert msgs[7].content.startswith("Final chart")
-    assert msgs[8].content.startswith("recent content")
-    assert msgs[9].content.startswith("latest result")
-
-
-@pytest.mark.parametrize("latest_todo_tool", ["todo_write", "todo_read"])
-def test_micro_compact_preserves_only_latest_todo_state(latest_todo_tool):
-    old_todo_content = "Old todo state\n" + "o" * 500
-    latest_todo_content = "Canonical todo state with ids and statuses\n" + "t" * 500
-    msgs = [
-        Message(role="system", content="sys"),
-        _make_tool_msg("todo_write", old_todo_content, "todo-old"),
-        _make_tool_msg(latest_todo_tool, latest_todo_content, "todo-latest"),
-        _make_tool_msg("bash", "one\n" + "a" * 500, "tc-1"),
-        _make_tool_msg("read_file", "two\n" + "b" * 500, "tc-2"),
-        _make_tool_msg("bash", "three\n" + "c" * 500, "tc-3"),
-        _make_tool_msg("write_file", "four\n" + "d" * 500, "tc-4"),
-    ]
-
-    compacted = _micro_compact(msgs)
-
-    assert compacted.transformed_count == 2
-    assert msgs[1].content.startswith("[Previous result from todo_write:")
-    assert msgs[2].content == latest_todo_content
-    assert msgs[2].tool_call_id == "todo-latest"
-
-
-def test_micro_compact_preserves_short_content():
-    """Tool results shorter than MIN_COMPACT_LEN should not be compacted."""
-    msgs = [
-        Message(role="system", content="sys"),
-        _make_tool_msg("bash", "short", "tc-1"),  # short, should be skipped
-        _make_tool_msg("execute_code", "x" * 500, "tc-2"),  # long, should be compacted
-        _make_tool_msg("bash", "z" * 500, "tc-3"),
-        _make_tool_msg("read", "a" * 500, "tc-4"),
-        _make_tool_msg("execute_code", "b" * 500, "tc-5"),
-    ]
-    compacted = _micro_compact(msgs)
-    # First 2 are candidates; tc-1 is short so only tc-2 gets compacted
-    assert compacted.transformed_count == 1
-    assert msgs[1].content == "short"  # preserved
-    assert msgs[2].content.startswith("[Previous result from execute_code:")
-
-
-def test_micro_compact_preserves_tool_call_id():
-    """Compacted messages must keep tool_call_id and name for protocol correctness."""
-    msgs = [
-        Message(role="system", content="sys"),
-        _make_tool_msg("bash", "x" * 500, "tc-42"),
-        _make_tool_msg("read", "y" * 500, "tc-43"),
-        _make_tool_msg("bash", "z" * 500, "tc-44"),
-        _make_tool_msg("read", "w" * 500, "tc-45"),
-    ]
-    _micro_compact(msgs)
-    # First message should be compacted but retain metadata
-    assert msgs[1].tool_call_id == "tc-42"
-    assert msgs[1].name == "bash"
-
-
-def test_micro_compact_first_line_hint():
-    """Compacted placeholder should include the first line as a hint."""
-    msgs = [
-        Message(role="system", content="sys"),
-        _make_tool_msg("execute_code", "Revenue: $1.2M\nRow 1: ...\n" + "x" * 500, "tc-1"),
-        _make_tool_msg("bash", "ok", "tc-2"),
-        _make_tool_msg("read", "a" * 500, "tc-3"),
-        _make_tool_msg("bash", "b" * 500, "tc-4"),
-    ]
-    _micro_compact(msgs)
-    assert "Revenue: $1.2M" in msgs[1].content
-
-
-def test_micro_compact_web_search_retains_evidence_from_json_payload():
-    """Old web_search results should keep useful evidence, not a bare JSON brace."""
-    payload = json.dumps(
-        {
-            "Query": "2026 AI model releases",
-            "ResultCount": 2,
-            "AuthLevel": 1,
-            "Results": [
-                {
-                    "Title": "OpenAI announces GPT example",
-                    "Url": "https://openai.com/example",
-                    "Snippet": "Official release notes for a model update.",
-                },
-                {
-                    "Title": "Anthropic announces Claude example",
-                    "Url": "https://anthropic.com/example",
-                    "Snippet": "Company news page for a model release.",
-                },
-            ],
-        },
-        indent=2,
-    )
-    msgs = [
-        Message(role="system", content="sys"),
-        _make_tool_msg("web_search", payload, "tc-1"),
-        _make_tool_msg("bash", "ok", "tc-2"),
-        _make_tool_msg("read", "a" * 500, "tc-3"),
-        _make_tool_msg("bash", "b" * 500, "tc-4"),
-    ]
-
-    _micro_compact(msgs)
-
-    assert "compacted evidence retained" in msgs[1].content
-    assert "query=2026 AI model releases" in msgs[1].content
-    assert "OpenAI announces GPT example" in msgs[1].content
-    assert "https://openai.com/example" in msgs[1].content
-    assert "Official release notes" in msgs[1].content
-    assert msgs[1].content != "[Previous result from web_search: {...]"
-
-
-def test_micro_compact_reports_replaced_resource_source_id():
-    from box_agent.context_resources import (
-        ContextResourceLedger,
-        ResourceClass,
-        ResourceDescriptor,
-    )
-
-    content = "resource body\n" + "x" * 500
-    descriptor = ResourceDescriptor(
-        resource_id="/workspace/source.txt",
-        content_version="a" * 64,
-        start_line=1,
-        end_line=2,
-        total_lines=2,
-        resource_class=ResourceClass.RECONSTRUCTABLE,
-    )
-    ledger = ContextResourceLedger()
-    ledger.register_full_source("source-1", descriptor, content)
-    msgs = [
-        Message(role="system", content="sys"),
-        _make_tool_msg("read_file", content, "source-1"),
-        _make_tool_msg("bash", "a" * 500, "tc-2"),
-        _make_tool_msg("bash", "b" * 500, "tc-3"),
-        _make_tool_msg("bash", "c" * 500, "tc-4"),
-    ]
-
-    result = _micro_compact(msgs, ledger)
-
-    assert result.replaced_source_tool_call_ids == ("source-1",)
-    ledger.invalidate_source_ids(result.replaced_source_tool_call_ids)
-    assert ledger.source_ids == ()
-
-
-def test_micro_compact_preserves_instruction_pinned_resource_source():
-    from box_agent.context_resources import (
-        ContextResourceLedger,
-        ResourceClass,
-        ResourceDescriptor,
-    )
-
-    content = "authoritative workflow\n" + "x" * 500
-    descriptor = ResourceDescriptor(
-        resource_id="/workspace/skills/ppt/references/contract.md",
-        content_version="a" * 64,
-        start_line=1,
-        end_line=2,
-        total_lines=2,
-        resource_class=ResourceClass.INSTRUCTION_PINNED,
-    )
-    ledger = ContextResourceLedger()
-    ledger.register_full_source("source-1", descriptor, content)
-    msgs = [
-        Message(role="system", content="sys"),
-        _make_tool_msg("read_file", content, "source-1"),
-        _make_tool_msg("bash", "a" * 500, "tc-2"),
-        _make_tool_msg("bash", "b" * 500, "tc-3"),
-        _make_tool_msg("bash", "c" * 500, "tc-4"),
-    ]
-
-    result = _micro_compact(msgs, ledger)
-
-    assert msgs[1].content == content
-    assert "source-1" not in result.replaced_source_tool_call_ids
-    assert ledger.source("source-1") is not None
-
-
-def test_resource_shedding_invalidates_only_reconstructable_source():
-    from box_agent.context_resources import (
-        ContextResourceLedger,
-        ResourceClass,
-        ResourceDescriptor,
-        build_resource_receipt,
-    )
-    from box_agent.core import (
-        _context_resource_history_decision,
-        _shed_reconstructable_read_resources,
-    )
-
-    descriptor = ResourceDescriptor(
-        resource_id="/workspace/reference.md",
-        content_version="a" * 64,
-        start_line=1,
-        end_line=1,
-        total_lines=1,
-        resource_class=ResourceClass.RECONSTRUCTABLE,
-    )
-    content = "large exact source " * 4_000
-    ledger = ContextResourceLedger()
-    ledger.register_full_source("source-a", descriptor, content)
-    receipt = build_resource_receipt(descriptor, ["source-a"])
-    ledger.register_receipt("receipt-b", ["source-a"])
-    msgs = [
-        Message(role="system", content="sys"),
-        Message(role="user", content="task"),
-        _make_tool_msg("read_file", content, "source-a"),
-        _make_tool_msg("read_file", receipt, "receipt-b"),
-    ]
-
-    result = _shed_reconstructable_read_resources(
-        msgs,
-        ledger,
-        token_limit=50,
-    )
-
-    assert result.replaced_source_tool_call_ids == ("source-a",)
-    assert msgs[2].content.startswith(
-        "[Reconstructable read_file content shed from model history]"
-    )
-    ledger.invalidate_source_ids(result.replaced_source_tool_call_ids)
-    assert ledger.covering_source_ids(descriptor, msgs) == ()
-    assert ledger.receipt_ids == ("receipt-b",)
-    reread_decision = _context_resource_history_decision(
-        tool_name="read_file",
-        arguments={"path": "reference.md"},
-        result=ToolResult(
-            success=True,
-            content=content,
-            raw_output={"context_resource": descriptor.as_raw_output()},
-        ),
-        messages=msgs,
-        ledger=ledger,
-    )
-    assert reread_decision.receipt is None
-
-
-def test_resource_shedding_never_replaces_instruction_pinned_source():
-    from box_agent.context_resources import (
-        ContextResourceLedger,
-        ResourceClass,
-        ResourceDescriptor,
-    )
-    from box_agent.core import _shed_reconstructable_read_resources
-
-    descriptor = ResourceDescriptor(
-        resource_id="/workspace/skills/ppt/references/contract.md",
-        content_version="a" * 64,
-        start_line=1,
-        end_line=1,
-        total_lines=1,
-        resource_class=ResourceClass.INSTRUCTION_PINNED,
-    )
-    content = "authoritative instruction " * 4_000
-    ledger = ContextResourceLedger()
-    ledger.register_full_source("source-a", descriptor, content)
-    msgs = [
-        Message(role="system", content="sys"),
-        Message(role="user", content="task"),
-        _make_tool_msg("read_file", content, "source-a"),
-    ]
-
-    result = _shed_reconstructable_read_resources(
-        msgs,
-        ledger,
-        token_limit=50,
-    )
-
-    assert result.transformed_count == 0
-    assert msgs[-1].content == content
-    assert ledger.source("source-a") is not None
-
-
 @pytest.mark.asyncio
 async def test_summary_rewrite_rotates_context_resource_epoch():
     from box_agent.context_resources import (
@@ -5776,7 +5530,12 @@ async def test_summary_rewrite_rotates_context_resource_epoch():
                 )
             ],
         ),
-        _make_tool_msg("read_file", content, "source-a"),
+        Message(
+            role="tool",
+            content=content,
+            tool_call_id="source-a",
+            name="read_file",
+        ),
         Message(role="user", content="current request"),
     ]
     class SummaryThenFinalLLM:
@@ -5858,8 +5617,18 @@ def test_artifact_envelope_shape(tmp_path):
 class _FakeSummaryLLM:
     """Records calls and returns a canned summary."""
 
-    def __init__(self, response: str = "concise summary", *, raise_exc: Exception | None = None):
-        self._response = response
+    def __init__(
+        self,
+        response: str = "concise summary",
+        *,
+        raise_exc: Exception | None = None,
+        raw_response: bool = False,
+    ):
+        self._response = (
+            response
+            if raw_response or response.lstrip().startswith("<summary>")
+            else f"<summary>{response}</summary>"
+        )
         self._raise = raise_exc
         self.calls: list[dict] = []
 
@@ -5881,14 +5650,79 @@ class _FakeSummaryLLM:
 
 @pytest.mark.asyncio
 async def test_create_summary_passes_thinking_disabled_and_no_tools():
-    """_create_summary must explicitly disable thinking and omit tools (cross-provider safety)."""
-    from box_agent.core import _create_summary
+    """Summary appends one instruction to the exact history for KV-cache reuse."""
+    from box_agent.core import _create_summary, _SUMMARY_REQUEST
+
+    original = [
+        Message(role="system", content="system"),
+        Message(role="user", content="do something"),
+        Message(role="assistant", content="did something"),
+    ]
     llm = _FakeSummaryLLM("ok")
-    out = await _create_summary(llm, [Message(role="assistant", content="did something")], 1)
+    out = await _create_summary(llm, original, 1)
     assert out == "ok"
     assert len(llm.calls) == 1
     assert llm.calls[0]["thinking_enabled"] is False
     assert llm.calls[0]["tools"] is None
+    sent = llm.calls[0]["messages"]
+    assert len(sent) == len(original) + 1
+    assert all(sent[index] is message for index, message in enumerate(original))
+    assert sent[-1].role == "user"
+    assert sent[-1].content == _SUMMARY_REQUEST
+    assert "lists every user message" in _SUMMARY_REQUEST
+    assert "<summary>...</summary>" in _SUMMARY_REQUEST
+    assert "no requested word or token limit" in _SUMMARY_REQUEST
+    assert "<analysis>" in _SUMMARY_REQUEST
+    example = _SUMMARY_REQUEST.split("<example>", 1)[1].split("</example>", 1)[0]
+    assert "<analysis>" not in example
+    assert example.strip().startswith("<summary>")
+    assert example.strip().endswith("</summary>")
+    assert "1. Primary Request and Intent:" in example
+    assert "6. All User Messages:" in example
+    assert "9. Optional Next Step:" in example
+
+
+@pytest.mark.asyncio
+async def test_create_summary_does_not_truncate_model_output():
+    from box_agent.core import _create_summary
+
+    body = "detail " * 5_000
+    complete = f"<summary>{body}</summary>"
+    llm = _FakeSummaryLLM(complete)
+    output = await _create_summary(
+        llm,
+        [Message(role="system", content="system"), Message(role="user", content="task")],
+        1,
+    )
+
+    assert len(output) > 12_000
+    assert output == body.strip()
+    assert "<summary>" not in output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        "summary without tags",
+        "preamble<summary>body</summary>",
+        "<summary></summary>",
+        "<summary>body</summary>trailing text",
+    ],
+)
+async def test_create_summary_rejects_output_outside_one_nonempty_summary_block(
+    response,
+):
+    from box_agent.core import _create_summary
+
+    llm = _FakeSummaryLLM(response, raw_response=True)
+
+    with pytest.raises(RuntimeError):
+        await _create_summary(
+            llm,
+            [Message(role="system", content="system"), Message(role="user", content="task")],
+            1,
+        )
 
 
 @pytest.mark.asyncio
@@ -5906,9 +5740,10 @@ async def test_maybe_summarize_uses_bounded_fallback_on_llm_failure():
     from box_agent.core import _maybe_summarize
     msgs = [
         Message(role="system", content="sys"),
-        Message(role="user", content="please do X"),
+        Message(role="user", content="old request"),
         Message(role="assistant", content="A" * 50_000),
         Message(role="tool", content="B" * 50_000, tool_call_id="t1", name="bash"),
+        Message(role="user", content="please do X"),
     ]
     llm = _FakeSummaryLLM(raise_exc=RuntimeError("network"))
     outcome = await _maybe_summarize(
@@ -5921,13 +5756,18 @@ async def test_maybe_summarize_uses_bounded_fallback_on_llm_failure():
     assert outcome.error == "network"
     assert [m.role for m in new_msgs] == ["system", "user", "user"]
     assert "Deterministic history fallback" in str(new_msgs[1].content)
-    assert "tool=bash" in str(new_msgs[1].content)
+    assert new_msgs[-1] is msgs[-1]
+    assert "fallback stopped: 1 source messages remain" in str(new_msgs[1].content)
     assert sum(len(str(m.content)) for m in new_msgs) < sum(len(str(m.content)) for m in msgs)
 
 
 @pytest.mark.asyncio
 async def test_maybe_summarize_inserts_summary_marker():
-    from box_agent.core import _maybe_summarize, _SUMMARY_MARKER
+    from box_agent.core import (
+        _maybe_summarize,
+        _SUMMARY_MARKER,
+        _SUMMARY_MESSAGE_SUFFIX,
+    )
     msgs = [
         Message(role="system", content="sys"),
         Message(role="user", content="task"),
@@ -5936,11 +5776,20 @@ async def test_maybe_summarize_inserts_summary_marker():
     llm = _FakeSummaryLLM("brief")
     new_msgs, _, _ = await _maybe_summarize(llm, msgs, token_limit=10, api_total_tokens=0, skip_check=False)
     assert new_msgs is not None
-    # The compact reference precedes the exact active user request.
     assert new_msgs[1].role == "user"
     assert new_msgs[1].content.startswith(_SUMMARY_MARKER)
     assert "brief" in new_msgs[1].content
-    assert new_msgs[2] is msgs[1]
+    assert "<summary>" not in str(new_msgs[1].content)
+    assert "</summary>" not in str(new_msgs[1].content)
+    assert str(new_msgs[1].content).endswith(_SUMMARY_MESSAGE_SUFFIX)
+    assert "Pick up the last task as if the break never happened." in str(
+        new_msgs[1].content
+    )
+    assert new_msgs[2:] == msgs[1:]
+    assert all(
+        sent is original
+        for sent, original in zip(llm.calls[0]["messages"][:-1], msgs)
+    )
 
 
 @pytest.mark.asyncio
@@ -5958,15 +5807,14 @@ async def test_maybe_summarize_collapses_orphan_summary_markers():
     llm = _FakeSummaryLLM("new sum")
     new_msgs, _, _ = await _maybe_summarize(llm, msgs, token_limit=10, api_total_tokens=0, skip_check=False)
     assert new_msgs is not None
-    # The orphan stale markers (no exec after) are dropped; only the active
-    # round (round 3 prompt + new summary) plus the initial user msg remain.
+    # Orphan stale markers are not retained as recent messages.
     summary_count = sum(1 for m in new_msgs if m.role == "user" and isinstance(m.content, str) and m.content.startswith(_SUMMARY_MARKER))
     # At most one summary marker (the freshly created one for round 3)
     assert summary_count == 1
 
 
 @pytest.mark.asyncio
-async def test_second_compaction_rolls_prior_summary_forward_once():
+async def test_second_compaction_sends_prior_summary_in_original_message_prefix():
     from box_agent.core import _maybe_summarize, _SUMMARY_MARKER
 
     prior_fact = "IMPORTANT_PRIOR_FACT_42"
@@ -5982,13 +5830,53 @@ async def test_second_compaction_rolls_prior_summary_forward_once():
     )
 
     assert outcome.messages is not None
-    summary_prompt = llm.calls[0]["messages"][1].content
-    assert prior_fact in summary_prompt
+    summary_input = llm.calls[0]["messages"]
+    assert all(
+        sent is original for sent, original in zip(summary_input[:-1], msgs)
+    )
+    assert prior_fact in str(summary_input[1].content)
+    assert "current request" in str(summary_input[2].content)
+    assert msgs[2] not in outcome.messages
     assert sum(
         1
         for message in outcome.messages
         if message.role == "user" and str(message.content).startswith(_SUMMARY_MARKER)
     ) == 1
+
+
+@pytest.mark.asyncio
+async def test_second_compaction_treats_runtime_state_as_metadata_not_real_user():
+    from box_agent.core import _maybe_summarize
+
+    real_user = Message(role="user", content="current request")
+    old_runtime_state = Message(
+        role="user",
+        content="[Post-Compaction Runtime State]\n\n## Todo\nstale",
+    )
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="[Assistant Execution Summary]\n\nold summary"),
+        real_user,
+        Message(role="assistant", content="new execution " * 5_000),
+        old_runtime_state,
+    ]
+
+    llm = _FakeSummaryLLM("rolled history")
+    outcome = await _maybe_summarize(
+        llm,
+        messages,
+        token_limit=1_000,
+        api_total_tokens=0,
+        skip_check=False,
+    )
+
+    assert outcome.messages is not None
+    assert real_user not in outcome.messages
+    assert old_runtime_state not in outcome.messages
+    assert all(
+        sent is original
+        for sent, original in zip(llm.calls[0]["messages"][:-1], messages)
+    )
 
 
 @pytest.mark.asyncio
@@ -6014,7 +5902,7 @@ async def test_maybe_summarize_below_threshold_noop():
 
 
 @pytest.mark.asyncio
-async def test_maybe_summarize_compacts_many_rounds_with_one_llm_call():
+async def test_maybe_summarize_large_history_uses_one_original_prefix_call():
     from box_agent.core import _maybe_summarize
 
     msgs = [Message(role="system", content="system")]
@@ -6025,7 +5913,7 @@ async def test_maybe_summarize_compacts_many_rounds_with_one_llm_call():
                 Message(role="assistant", content=(f"result-{index}-" * 700)),
             ]
         )
-    llm = _FakeSummaryLLM("one bounded summary")
+    llm = _FakeSummaryLLM("one-shot summary")
     outcome = await _maybe_summarize(
         llm, msgs, token_limit=1_000, api_total_tokens=0, skip_check=False
     )
@@ -6033,27 +5921,39 @@ async def test_maybe_summarize_compacts_many_rounds_with_one_llm_call():
     assert outcome.messages is not None
     assert outcome.summary_calls == 1
     assert len(llm.calls) == 1
-    assert outcome.messages[-1] is msgs[-2]
+    assert all(
+        sent is original
+        for sent, original in zip(llm.calls[0]["messages"][:-1], msgs)
+    )
+    assert outcome.messages[-2] is msgs[-2]
+    assert outcome.messages[-1] is msgs[-1]
 
 
 @pytest.mark.asyncio
-async def test_create_summary_bounds_provider_prompt():
-    from box_agent.core import _create_summary
+async def test_create_summary_does_not_serialize_or_chunk_original_messages():
+    from box_agent.core import _create_summary, _SUMMARY_REQUEST
 
     msgs = [
-        Message(role="tool", content=str(index) + "x" * 20_000, name="bash", tool_call_id=str(index))
+        Message(
+            role="tool",
+            content=f"BEGIN-{index}-" + "x" * 20_000 + f"-END-{index}",
+            name="bash",
+            tool_call_id=str(index),
+        )
         for index in range(30)
     ]
     llm = _FakeSummaryLLM("bounded")
     await _create_summary(llm, msgs, 1)
 
-    prompt = llm.calls[0]["messages"][1].content
-    assert len(prompt) < 65_000
-    assert "summary source limit reached" in prompt
+    assert len(llm.calls) == 1
+    sent = llm.calls[0]["messages"]
+    assert len(sent) == len(msgs) + 1
+    assert all(sent[index] is message for index, message in enumerate(msgs))
+    assert sent[-1].content == _SUMMARY_REQUEST
 
 
 @pytest.mark.asyncio
-async def test_maybe_summarize_preserves_latest_user_and_recent_tail_exactly():
+async def test_maybe_summarize_retains_latest_user_when_inside_recent_window():
     from box_agent.core import _maybe_summarize
 
     latest_user = Message(role="user", content="LATEST REQUEST MUST STAY EXACT")
@@ -6065,8 +5965,9 @@ async def test_maybe_summarize_preserves_latest_user_and_recent_tail_exactly():
         latest_user,
         recent_tail,
     ]
+    llm = _FakeSummaryLLM("old history")
     outcome = await _maybe_summarize(
-        _FakeSummaryLLM("old history"),
+        llm,
         msgs,
         token_limit=5_000,
         api_total_tokens=0,
@@ -6074,78 +5975,36 @@ async def test_maybe_summarize_preserves_latest_user_and_recent_tail_exactly():
     )
 
     assert outcome.messages is not None
-    assert outcome.messages[-2] is latest_user
+    assert latest_user in outcome.messages
     assert outcome.messages[-1] is recent_tail
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("latest_todo_tool", ["todo_write", "todo_read"])
-@pytest.mark.parametrize("summary_fails", [False, True])
-async def test_maybe_summarize_preserves_latest_todo_state_exactly(
-    latest_todo_tool,
-    summary_fails,
-):
-    from box_agent.core import _maybe_summarize, _TODO_STATE_MARKER
+def test_recent_selection_reuses_processed_tool_result_without_second_size_limit():
+    from box_agent.core import _select_recent_messages
 
-    todo_state = "Canonical todo state with ids and statuses\n" + "t" * 500
-    latest_user = Message(role="user", content="keep this request")
-    msgs = [
-        Message(role="system", content="sys"),
-        latest_user,
-        _make_tool_msg(latest_todo_tool, todo_state, "todo-latest"),
-        Message(role="assistant", content="large execution " * 8_000),
-    ]
-    llm = _FakeSummaryLLM(
-        "execution summarized",
-        raise_exc=RuntimeError("provider down") if summary_fails else None,
+    call = ToolCall(
+        id="recent-tool",
+        type="function",
+        function=FunctionCall(name="bash", arguments={"command": "demo"}),
     )
+    latest_user = Message(role="user", content="latest request")
+    assistant = Message(role="assistant", content="", tool_calls=[call])
+    processed_result = Message(
+        role="tool",
+        content="p" * 9_000,
+        tool_call_id="recent-tool",
+        name="bash",
+    )
+    messages = [Message(role="system", content="sys"), latest_user, assistant, processed_result]
 
-    outcome = await _maybe_summarize(
-        llm,
-        msgs,
-        token_limit=5_000,
-        api_total_tokens=0,
-        skip_check=False,
-    )
+    retained, indices = _select_recent_messages(messages)
 
-    assert outcome.messages is not None
-    checkpoints = [
-        message
-        for message in outcome.messages
-        if message.role == "user"
-        and str(message.content).startswith(_TODO_STATE_MARKER)
-    ]
-    assert len(checkpoints) == 1
-    assert checkpoints[0].content == (
-        f"{_TODO_STATE_MARKER}\nTool: {latest_todo_tool}\n\n{todo_state}"
-    )
-    assert outcome.messages[-1] is latest_user
-
-    second_input = [
-        *outcome.messages,
-        Message(role="assistant", content="more large execution " * 8_000),
-    ]
-    second_outcome = await _maybe_summarize(
-        llm,
-        second_input,
-        token_limit=5_000,
-        api_total_tokens=0,
-        skip_check=False,
-    )
-    assert second_outcome.messages is not None
-    repeated_checkpoints = [
-        message
-        for message in second_outcome.messages
-        if message.role == "user"
-        and str(message.content).startswith(_TODO_STATE_MARKER)
-    ]
-    assert [message.content for message in repeated_checkpoints] == [
-        f"{_TODO_STATE_MARKER}\nTool: {latest_todo_tool}\n\n{todo_state}"
-    ]
+    assert retained == [latest_user, assistant, processed_result]
+    assert indices == {1, 2, 3}
 
 
 @pytest.mark.asyncio
-async def test_maybe_summarize_counts_thinking_when_selecting_protected_tail():
+async def test_maybe_summarize_keeps_newest_complete_group_even_over_recent_budget():
     from box_agent.core import _maybe_summarize
 
     latest_user = Message(role="user", content="keep this request")
@@ -6170,10 +6029,10 @@ async def test_maybe_summarize_counts_thinking_when_selecting_protected_tail():
         skip_check=False,
     )
 
-    assert outcome.mode == "summary"
+    assert outcome.mode == "blocked"
     assert outcome.messages is not None
-    assert outcome.messages[-1] is latest_user
-    assert oversized_reasoning not in outcome.messages
+    assert latest_user not in outcome.messages
+    assert outcome.messages[-1] is oversized_reasoning
 
 
 @pytest.mark.asyncio
@@ -6195,7 +6054,7 @@ async def test_maybe_summarize_uses_prompt_tokens_not_total_tokens_when_provided
 
 
 @pytest.mark.asyncio
-async def test_provider_prompt_pressure_can_compact_current_execution_suffix():
+async def test_provider_prompt_pressure_uses_one_shot_summary_and_retains_recent_messages():
     from box_agent.core import _maybe_summarize
 
     latest_user = Message(role="user", content="keep this request")
@@ -6205,8 +6064,9 @@ async def test_provider_prompt_pressure_can_compact_current_execution_suffix():
         Message(role="assistant", content="current execution"),
         Message(role="tool", content="recent output", name="bash", tool_call_id="t1"),
     ]
+    llm = _FakeSummaryLLM("current execution summarized")
     outcome = await _maybe_summarize(
-        _FakeSummaryLLM("current execution summarized"),
+        llm,
         msgs,
         token_limit=1_000,
         api_total_tokens=50_000,
@@ -6216,7 +6076,11 @@ async def test_provider_prompt_pressure_can_compact_current_execution_suffix():
 
     assert outcome.mode == "summary"
     assert outcome.messages is not None
-    assert outcome.messages[-1] is latest_user
+    assert outcome.messages[2:] == msgs[1:]
+    assert all(
+        sent is original
+        for sent, original in zip(llm.calls[0]["messages"][:-1], msgs)
+    )
     assert outcome.summary_calls == 1
 
 
@@ -6229,8 +6093,9 @@ async def test_summary_cooldown_uses_local_fallback_without_provider_call():
         llm,
         [
             Message(role="system", content="sys"),
-            Message(role="user", content="task"),
+            Message(role="user", content="old task"),
             Message(role="assistant", content="large " * 10_000),
+            Message(role="user", content="task"),
         ],
         token_limit=5_000,
         api_total_tokens=0,
@@ -6244,20 +6109,176 @@ async def test_summary_cooldown_uses_local_fallback_without_provider_call():
     assert llm.calls == []
 
 
-def test_request_token_estimate_includes_tool_schemas():
-    from box_agent.core import _estimate_request_tokens, _estimate_tokens
+def test_context_pressure_uses_latest_response_usage_plus_new_messages():
+    from box_agent.core import _estimate_context_from_latest_response, _message_chars
+
+    response = Message(
+        role="assistant",
+        content="answer",
+        usage=TokenUsage(
+            input_tokens=100,
+            cache_creation_input_tokens=20,
+            cache_read_input_tokens=30,
+            output_tokens=10,
+        ),
+    )
+    added = Message(role="tool", content="x" * 400, tool_call_id="t1", name="bash")
+
+    estimated, source = _estimate_context_from_latest_response(
+        [Message(role="system", content="ignored"), response, added],
+        None,
+    )
+
+    assert estimated == 160 + _message_chars(added) // 4
+    assert source == "usage"
+
+
+def test_context_pressure_without_usage_falls_back_to_characters_over_four():
+    from box_agent.core import _estimate_context_from_latest_response, _message_chars
+
+    message = Message(role="system", content="x" * 400)
+    estimated, source = _estimate_context_from_latest_response([message], None)
+
+    assert estimated == _message_chars(message) // 4
+    assert source == "fallback"
+
+
+class _PostCompactStateTool(Tool):
+    def __init__(self, name: str, content: str):
+        self._name = name
+        self._content = content
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def description(self):
+        return "Read test runtime state."
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {}}
+
+    async def execute(self):
+        return ToolResult(success=True, content=self._content)
+
+
+class _PostCompactFileTool(Tool):
+    def __init__(self, name: str):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def description(self):
+        return "File tool that compaction must never replay."
+
+    @property
+    def parameters(self):
+        return {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["path", "content"],
+        }
+
+    async def execute(self, **_):
+        raise AssertionError("compaction must not replay file tools")
+
+
+@pytest.mark.asyncio
+async def test_compaction_restores_runtime_state_without_replaying_files():
+    from box_agent.core import _maybe_summarize
+
+    read_tool = _PostCompactFileTool("read_file")
+    write_tool = _PostCompactFileTool("write_file")
+    read_call = ToolCall(
+        id="read-old",
+        type="function",
+        function=FunctionCall(name="read_file", arguments={"path": "src/example.py"}),
+    )
+    skill_call = ToolCall(
+        id="skill-old",
+        type="function",
+        function=FunctionCall(name="get_skill", arguments={"skill_name": "codebase-design"}),
+    )
+    write_call = ToolCall(
+        id="write-new",
+        type="function",
+        function=FunctionCall(
+            name="write_file",
+            arguments={"path": "src/generated.py", "content": "generated"},
+        ),
+    )
+    messages = [
+        Message(role="system", content="system with pinned skill instructions"),
+        Message(role="user", content="old request"),
+        Message(role="assistant", content="", tool_calls=[read_call, skill_call]),
+        Message(role="tool", content="old file body " * 100, tool_call_id="read-old", name="read_file"),
+        Message(role="tool", content="skill loaded", tool_call_id="skill-old", name="get_skill"),
+        Message(role="assistant", content="", tool_calls=[write_call]),
+        Message(role="tool", content="write complete", tool_call_id="write-new", name="write_file"),
+        Message(role="user", content="latest request"),
+    ]
+    tools = {
+        "read_file": read_tool,
+        "write_file": write_tool,
+        "todo_read": _PostCompactStateTool("todo_read", "◑ implement compaction"),
+        "plan_read": _PostCompactStateTool("plan_read", "Plan #1: context compaction"),
+    }
+
+    outcome = await _maybe_summarize(
+        _FakeSummaryLLM("history summary"),
+        messages,
+        token_limit=100,
+        api_total_tokens=0,
+        skip_check=False,
+        tools=tools,
+    )
+
+    assert outcome.messages is not None
+    rendered = "\n".join(str(message.content) for message in outcome.messages)
+    assert any(message.tool_calls == [write_call] for message in outcome.messages)
+    assert any(
+        message.role == "tool" and message.tool_call_id == "write-new"
+        for message in outcome.messages
+    )
+    assert not any(
+        message.role == "tool" and message.tool_call_id == "read-old"
+        for message in outcome.messages
+    )
+    assert messages[-1] in outcome.messages
+    runtime_state = next(
+        message
+        for message in outcome.messages
+        if isinstance(message.content, str)
+        and message.content.startswith("[Post-Compaction Runtime State]")
+    )
+    assert runtime_state.role == "user"
+    assert "◑ implement compaction" in rendered
+    assert "Plan #1: context compaction" in rendered
+    assert "codebase-design" in rendered
+
+
+def test_fallback_context_estimate_includes_tool_schemas():
+    from box_agent.core import _fallback_context_estimate
 
     class _SchemaTool:
         def to_openai_schema(self):
             return {"description": "large schema " * 2_000}
 
     msgs = [Message(role="system", content="sys"), Message(role="user", content="small")]
-    message_tokens = _estimate_tokens(msgs)
-    request_tokens = _estimate_request_tokens(msgs, {"large": _SchemaTool()})
+    message_tokens = _fallback_context_estimate(msgs, None)
+    request_tokens = _fallback_context_estimate(msgs, {"large": _SchemaTool()})
     assert request_tokens > message_tokens + 1_000
 
 
-def test_generic_large_tool_result_is_bounded_only_for_model_history():
+def test_generic_tool_result_reaches_storage_seam_without_loss():
     from box_agent.core import _tool_message_content_for_model
     from box_agent.tools.base import ToolResult
 
@@ -6270,13 +6291,10 @@ def test_generic_large_tool_result_is_bounded_only_for_model_history():
         visible_error=None,
     )
 
-    assert len(model_content) < 24_000
-    assert "Characters returned: 100027" in model_content
-    assert "final exit status: 0" in model_content
-    assert full_content.endswith("final exit status: 0")
+    assert model_content == full_content
 
 
-def test_large_web_search_result_is_compact_for_synthesis_turn():
+def test_large_web_search_result_reaches_storage_seam_without_loss():
     from box_agent.core import _tool_message_content_for_model
     from box_agent.tools.base import ToolResult
 
@@ -6302,15 +6320,11 @@ def test_large_web_search_result_is_compact_for_synthesis_turn():
     )
 
     assert len(full_content) > 10_000
-    assert len(model_content) < 10_000
-    assert "Large web_search result bounded for model history" in model_content
-    assert "https://example.com/result-1" in model_content
-    assert "https://example.com/result-8" in model_content
-    assert "https://example.com/result-9" not in model_content
+    assert model_content == full_content
 
 
 @pytest.mark.parametrize("size", [12_000, 20_000, 50_000])
-def test_unstructured_web_search_compaction_is_smaller_than_input(size):
+def test_unstructured_web_search_is_not_destructively_truncated(size):
     from box_agent.core import _tool_message_content_for_model
     from box_agent.tools.base import ToolResult
 
@@ -6323,52 +6337,11 @@ def test_unstructured_web_search_compaction_is_smaller_than_input(size):
         visible_error=None,
     )
 
-    assert len(model_content) < len(full_content)
-    assert len(model_content) <= 10_000
-    assert f"Characters omitted: {size - 9_000}" in model_content
-    assert "Characters omitted: -" not in model_content
+    assert model_content == full_content
 
 
-def test_micro_compact_token_budget_shrinks_keep_window_when_recent_oversized():
-    """If the recent N tool results exceed the token budget, keep window shrinks
-    so a few enormous outputs cannot bypass Layer 1 compaction."""
-    from box_agent.core import (
-        _micro_compact,
-        _KEEP_RECENT_TOOL_RESULTS,
-        _KEEP_RECENT_TOOL_TOKEN_BUDGET,
-        _approx_tokens_for_content,
-    )
-
-    # Build incompressible-ish content (varied tokens). Each ~7000+ tokens so
-    # 3 of them blow past the 12k budget regardless of tokenizer.
-    import string
-    import random
-    rng = random.Random(0)
-    big_payload = " ".join(
-        "".join(rng.choices(string.ascii_letters + string.digits, k=6))
-        for _ in range(7000)
-    )
-    assert _approx_tokens_for_content(big_payload) > _KEEP_RECENT_TOOL_TOKEN_BUDGET // 2
-
-    msgs: list[Message] = [Message(role="system", content="sys")]
-    for i in range(_KEEP_RECENT_TOOL_RESULTS + 1):  # 4 tool messages
-        msgs.append(Message(role="assistant", content="", tool_calls=None))
-        msgs.append(Message(role="tool", content=big_payload, tool_call_id=f"t{i}", name="bash"))
-
-    compacted = _micro_compact(msgs)
-    # Strict-N keep would compact 4 - 3 = 1. Token-aware keep should compact more.
-    assert compacted.transformed_count >= 2, (
-        "token-aware keep should compact more than the strict N-recent baseline; "
-        f"got {compacted.transformed_count}"
-    )
-
-    # The most recent tool message must always be preserved verbatim.
-    last_tool = [m for m in msgs if m.role == "tool"][-1]
-    assert last_tool.content == big_payload
-
-
-def test_token_estimators_treat_special_token_text_as_plain_text():
-    from box_agent.core import _approx_tokens_for_content, _estimate_tokens
+def test_fallback_context_estimator_treats_special_token_text_as_plain_text():
+    from box_agent.core import _fallback_context_estimate
 
     special_text = "search result contains literal <|endoftext|> text"
     msgs = [
@@ -6389,21 +6362,7 @@ def test_token_estimators_treat_special_token_text_as_plain_text():
         Message(role="tool", content=special_text, tool_call_id="call_1", name="echo"),
     ]
 
-    assert _estimate_tokens(msgs) > 0
-    assert _approx_tokens_for_content({"text": special_text}) > 0
-
-
-def test_micro_compact_preserves_at_least_one_recent_when_single_giant():
-    """Single giant tool result must not be compacted (keep_count never < 1)."""
-    from box_agent.core import _micro_compact
-    msgs = [
-        Message(role="system", content="sys"),
-        Message(role="assistant", content=""),
-        Message(role="tool", content="y" * 100_000, tool_call_id="t0", name="bash"),
-    ]
-    result = _micro_compact(msgs)
-    assert result.transformed_count == 0
-    assert len(msgs[-1].content) == 100_000
+    assert _fallback_context_estimate(msgs, None) > 0
 
 
 # ── _cleanup_incomplete_messages ─────────────────────────────
