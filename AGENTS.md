@@ -123,6 +123,11 @@ any boundary, name the last completed boundary and the remaining validation.
 - Do not commit, push, merge, tag, or publish without explicit user authority.
 - Before a commit, inspect `git status`, the intended diff, and the staged diff.
   Stage explicit paths; never use `git add -A` in a dirty checkout.
+- Before opening or updating a pull request, rebase the contributor branch onto
+  the base repository's latest `main` (`upstream/main` for forks or `origin/main`
+  for direct clones). Do not merge `main` into the contributor branch. After
+  rebasing a published branch, push only with explicit user authority and use
+  `--force-with-lease`; never use `--force`.
 - Keep one commit focused on one behavior or subsystem. Use a conventional
   subject such as `feat(tools): ...`, `fix(acp): ...`, `test(memory): ...`, or
   `docs: ...`.

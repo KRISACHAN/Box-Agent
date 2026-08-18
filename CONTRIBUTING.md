@@ -123,12 +123,27 @@ Every non-trivial PR should be reviewable through TPR:
      - `test`: Test-related changes
      - `chore`: Build or auxiliary tools
 
-5. **Push to Your Fork**
+5. **Rebase onto the Latest `main`**
+   - Before opening or updating a Pull Request, rebase your branch onto the
+     latest `main` from the base repository. Do not merge `main` into your
+     feature branch.
+   - For a fork-based contribution, add the base repository as `upstream` once,
+     then rebase:
+     ```bash
+     git remote add upstream https://github.com/Raccoon-Office/Box-Agent.git  # once
+     git fetch upstream main
+     git rebase upstream/main
+     ```
+   - Direct collaborators may use `origin/main` instead. If the branch was
+     already pushed, coordinate before rewriting a shared branch and update it
+     with `git push --force-with-lease`; never use `--force`.
+
+6. **Push to Your Fork**
    ```bash
    git push origin feature/your-feature-name
    ```
 
-6. **Create a Pull Request**
+7. **Create a Pull Request**
    - Create a Pull Request on GitHub.
    - Clearly describe your changes.
    - Reference any related Issues if applicable.
@@ -147,6 +162,7 @@ Before submitting a PR, please ensure:
 - [ ] Runtime rebuild/install/probe status is stated when packaged runtime behavior is affected.
 - [ ] No unrelated changes, local config, logs, workspace files, or generated Understand Anything graph/cache files are included.
 - [ ] The commit message is clear and follows the conventional style used in this repository.
+- [ ] The branch was rebased onto the latest base `main` before this PR was opened or updated; `main` was not merged into the feature branch.
 
 ### Code Review
 

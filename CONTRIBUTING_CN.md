@@ -123,12 +123,25 @@
      - `test`: 测试相关
      - `chore`: 构建或辅助工具
 
-5. **推送到你的 fork**
+5. **Rebase 到最新 `main`**
+   - 创建或更新 Pull Request 前，必须将当前分支 rebase 到基础仓库最新的
+     `main`；不要把 `main` merge 进功能分支。
+   - 通过 Fork 贡献时，先将基础仓库添加为 `upstream`（只需执行一次），再进行
+     rebase：
+     ```bash
+     git remote add upstream https://github.com/Raccoon-Office/Box-Agent.git  # 仅首次需要
+     git fetch upstream main
+     git rebase upstream/main
+     ```
+   - 直接协作者可以改用 `origin/main`。如果分支已经推送，改写共享分支前需要先
+     协调，并使用 `git push --force-with-lease` 更新；禁止使用 `--force`。
+
+6. **推送到你的 fork**
    ```bash
    git push origin feature/your-feature-name
    ```
 
-6. **创建 Pull Request**
+7. **创建 Pull Request**
    - 在 GitHub 上创建 Pull Request
    - 清楚描述你的更改
    - 引用相关的 Issue（如果有）
@@ -147,6 +160,7 @@
 - [ ] 影响 packaged runtime 行为时，说明了 runtime rebuild/install/probe 状态。
 - [ ] 没有包含不相关改动、本地配置、日志、workspace 文件或 Understand Anything 生成图谱/cache。
 - [ ] 提交消息清晰，并遵循本仓库现有 conventional 风格。
+- [ ] 创建或更新 PR 前，当前分支已 rebase 到基础仓库最新的 `main`，且没有把 `main` merge 进功能分支。
 
 ### 代码审查
 

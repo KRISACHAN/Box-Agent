@@ -32,3 +32,4 @@
 - [ ] Built-in skill changes regenerated `box_agent/skills/_manifest.json`.
 - [ ] Packaged runtime impact is stated, including whether rebuild/install/probe was done.
 - [ ] No local config, logs, workspace files, or generated `.understand-anything` graph/cache files are included.
+- [ ] This branch was rebased onto the latest base `main` before this PR was opened or updated; `main` was not merged into the feature branch.
