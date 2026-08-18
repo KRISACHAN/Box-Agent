@@ -219,6 +219,63 @@ def test_catalog_search_uses_prefix_matching_and_name_boost() -> None:
     ]
 
 
+def test_catalog_search_weights_description_above_server_name() -> None:
+    catalog = MCPToolCatalog()
+    server_match = FakeMCPTool(
+        "lookup_company",
+        "financial",
+        "Look up a company profile",
+    )
+    description_match = FakeMCPTool(
+        "lookup_report",
+        "documents",
+        "Find a financial report",
+    )
+    catalog.replace_server("financial", [server_match])
+    catalog.replace_server("documents", [description_match])
+
+    hits = catalog.search("financial", top_k=2)
+
+    assert [entry.model_name for entry in hits] == [
+        "lookup_report",
+        "lookup_company",
+    ]
+
+
+def test_catalog_search_does_not_fuzzy_match_tool_id_prefix() -> None:
+    catalog = MCPToolCatalog()
+    catalog.replace_server(
+        "browser",
+        [FakeMCPTool("navigate", "browser", "Open a web page")],
+    )
+
+    assert catalog.search("mcp") == []
+    assert [
+        entry.model_name
+        for entry in catalog.search("mcp:browser/navigate")
+    ] == ["navigate"]
+
+
+def test_catalog_deduplicates_server_terms_already_present_in_model_name() -> None:
+    catalog = MCPToolCatalog()
+    duplicate = FakeMCPTool(
+        "search_alpha",
+        "zeta-search",
+        "Browse alpha documentation",
+    )
+    model_only = FakeMCPTool(
+        "search_beta",
+        "alpha",
+        "Browse beta documentation",
+    )
+    catalog.replace_server("zeta-search", [duplicate])
+    catalog.replace_server("alpha", [model_only])
+
+    hits = catalog.search("search", top_k=2)
+
+    assert [entry.model_name for entry in hits] == ["search_beta", "search_alpha"]
+
+
 def test_catalog_search_many_merges_independent_queries_without_duplicates() -> None:
     catalog = MCPToolCatalog()
     forecast = FakeMCPTool(

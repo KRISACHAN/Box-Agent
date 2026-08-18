@@ -61,7 +61,6 @@ class MCPToolEntry:
     tool_id: str
     model_name: str
     server_name: str
-    raw_tool_name: str
     description: str
     tool: Tool
     generation: int
@@ -166,7 +165,6 @@ class MCPToolCatalog:
                     tool_id=tool_id,
                     model_name=raw_name,
                     server_name=server_name,
-                    raw_tool_name=raw_name,
                     description=tool.description,
                     tool=tool,
                     generation=generation,
@@ -265,7 +263,7 @@ class MCPToolCatalog:
         *,
         server_name: str | None = None,
     ) -> tuple[list[MCPToolEntry], list[str]]:
-        """Resolve exact catalog IDs, qualified names, or model/raw names."""
+        """Resolve exact catalog IDs, qualified names, or model names."""
         entries = [
             entry
             for entry in self.snapshot()
@@ -284,10 +282,9 @@ class MCPToolCatalog:
                 if normalized_name
                 in {
                     _normalize(entry.tool_id),
-                    _normalize(f"{entry.server_name}/{entry.raw_tool_name}"),
-                    _normalize(f"{entry.server_name}:{entry.raw_tool_name}"),
+                    _normalize(f"{entry.server_name}/{entry.model_name}"),
+                    _normalize(f"{entry.server_name}:{entry.model_name}"),
                     _normalize(entry.model_name),
-                    _normalize(entry.raw_tool_name),
                 }
             ]
             if not matches:
@@ -314,27 +311,41 @@ class MCPToolCatalog:
         for entry in self.snapshot():
             if server_name and entry.server_name != server_name:
                 continue
+            model_terms = tuple(dict.fromkeys(_tokenize(entry.model_name)))
+            model_term_set = set(model_terms)
+            server_terms = tuple(
+                term
+                for term in dict.fromkeys(_tokenize(entry.server_name))
+                if term not in model_term_set
+            )
             documents.append(
                 (
                     entry,
                     _normalize(entry.model_name),
                     _normalize(entry.tool_id),
                     _normalize(f"{entry.server_name} {entry.model_name}"),
-                    _tokenize(f"{entry.server_name} {entry.model_name} {entry.tool_id}"),
-                    _tokenize(entry.description),
+                    model_terms,
+                    server_terms,
+                    tuple(dict.fromkeys(_tokenize(entry.description))),
                 )
             )
         if not documents:
             return []
 
-        average_name_length = sum(len(item[4]) for item in documents) / len(documents)
-        average_description_length = sum(len(item[5]) for item in documents) / len(
+        average_model_name_length = sum(len(item[4]) for item in documents) / len(
+            documents
+        )
+        average_server_name_length = sum(len(item[5]) for item in documents) / len(
+            documents
+        )
+        average_description_length = sum(len(item[6]) for item in documents) / len(
             documents
         )
         document_frequencies = {
             term: (
                 sum(_prefix_term_frequency(term, item[4]) > 0 for item in documents),
                 sum(_prefix_term_frequency(term, item[5]) > 0 for item in documents),
+                sum(_prefix_term_frequency(term, item[6]) > 0 for item in documents),
             )
             for term in query_terms
         }
@@ -345,7 +356,8 @@ class MCPToolCatalog:
             normalized_name,
             normalized_id,
             normalized_server_name,
-            name_terms,
+            model_name_terms,
+            server_name_terms,
             description_terms,
         ) in documents:
             exact_priority = 3
@@ -364,19 +376,29 @@ class MCPToolCatalog:
             relevance = 0.0
             matched_terms = 0
             for term in query_terms:
-                name_frequency = _prefix_term_frequency(term, name_terms)
+                model_name_frequency = _prefix_term_frequency(term, model_name_terms)
+                server_name_frequency = _prefix_term_frequency(term, server_name_terms)
                 description_frequency = _prefix_term_frequency(term, description_terms)
-                if name_frequency or description_frequency:
+                if model_name_frequency or server_name_frequency or description_frequency:
                     matched_terms += 1
-                name_document_frequency, description_document_frequency = (
-                    document_frequencies[term]
-                )
+                (
+                    model_name_document_frequency,
+                    server_name_document_frequency,
+                    description_document_frequency,
+                ) = document_frequencies[term]
                 relevance += 2.0 * _bm25_term_score(
-                    term_frequency=name_frequency,
-                    document_frequency=name_document_frequency,
+                    term_frequency=model_name_frequency,
+                    document_frequency=model_name_document_frequency,
                     document_count=len(documents),
-                    field_length=len(name_terms),
-                    average_field_length=average_name_length,
+                    field_length=len(model_name_terms),
+                    average_field_length=average_model_name_length,
+                )
+                relevance += 0.5 * _bm25_term_score(
+                    term_frequency=server_name_frequency,
+                    document_frequency=server_name_document_frequency,
+                    document_count=len(documents),
+                    field_length=len(server_name_terms),
+                    average_field_length=average_server_name_length,
                 )
                 relevance += _bm25_term_score(
                     term_frequency=description_frequency,
@@ -402,7 +424,6 @@ class MCPToolCatalog:
                 tool_id=entry.tool_id,
                 model_name=entry.model_name,
                 server_name=entry.server_name,
-                raw_tool_name=entry.raw_tool_name,
                 description=entry.description,
                 tool=entry.tool,
                 generation=entry.generation,
