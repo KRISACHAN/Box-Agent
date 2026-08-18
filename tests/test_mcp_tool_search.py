@@ -274,6 +274,10 @@ async def test_search_accepts_workbuddy_style_independent_queries() -> None:
         "get_weather_forecast",
         "search_stock_news",
     }
+    assert payload["server_name"] is None
+    assert payload["catalog_tool_count"] == 2
+    assert payload["matched_count"] == 2
+    assert payload["activated_count"] == 2
     assert payload["queries"] == ["天气预报", "weather forecast", "stock news"]
     assert search.parameters["anyOf"] == [
         {"required": ["query"]},
@@ -309,6 +313,9 @@ async def test_exact_tool_names_activate_only_explicit_selections() -> None:
         "get_air_quality",
     ]
     assert payload["missing"] == ["weather/get_missing_tool"]
+    assert payload["catalog_tool_count"] == 3
+    assert payload["matched_count"] == 2
+    assert payload["activated_count"] == 2
     assert exposure.offered_names == frozenset(
         {"get_forecast", "get_air_quality"}
     )
@@ -352,6 +359,9 @@ async def test_search_activates_exactly_requested_hits_without_small_cap() -> No
 
     assert search.parameters["properties"]["top_k"]["default"] == 1
     assert "maximum" not in search.parameters["properties"]["top_k"]
+    assert payload["catalog_tool_count"] == 12
+    assert payload["matched_count"] == 10
+    assert payload["activated_count"] == 10
     assert [item["name"] for item in payload["activated"]] == names[:10]
     assert [tool.name for tool in exposed.tools] == names[:10]
     assert set(names[10:]).isdisjoint(exposed.offered_names)
@@ -385,6 +395,10 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
         "playwright",
         [navigate, snapshot, page_content, page_reader],
     )
+    catalog.replace_server(
+        "unrelated",
+        [FakeMCPTool("search_docs", "unrelated", "Search documentation")],
+    )
     activated = OrderedDict()
 
     result = await ToolSearchTool(catalog, activated).execute(
@@ -398,6 +412,10 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
     payload = json.loads(result.content)
 
     assert result.success is True
+    assert payload["server_name"] == "playwright"
+    assert payload["catalog_tool_count"] == 4
+    assert payload["matched_count"] == 2
+    assert payload["activated_count"] == 2
     assert {item["name"] for item in payload["activated"]} == {
         "browser_navigate",
         "browser_snapshot",
@@ -420,6 +438,9 @@ async def test_duplicate_model_names_are_reported_but_not_activated() -> None:
     payload = json.loads(result.content)
 
     assert result.success is False
+    assert payload["catalog_tool_count"] == 2
+    assert payload["matched_count"] == 2
+    assert payload["activated_count"] == 0
     assert len(payload["conflicts"]) == 2
     assert payload["activated"] == []
     assert activated == OrderedDict()
@@ -483,6 +504,9 @@ async def test_search_reports_loading_instead_of_false_empty_result() -> None:
 
     assert result.success is False
     assert payload["state"] == "catalog_loading"
+    assert payload["catalog_tool_count"] is None
+    assert payload["matched_count"] == 0
+    assert payload["activated_count"] == 0
     assert payload["activated"] == []
     catalog.mark_ready()
 

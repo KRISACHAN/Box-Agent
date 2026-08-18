@@ -62,6 +62,9 @@ class ToolSearchTool(Tool):
             "keywords; task-specific operands are tolerated but should be omitted "
             "when possible. Set top_k to however many matching tool "
             "schemas the task actually needs, including ten or more when appropriate. "
+            "The response reports catalog_tool_count for the applied server scope, "
+            "matched_count after query limits, and activated_count after conflict "
+            "filtering; never infer the catalog total from top_k or matched_count. "
             "This search activates tools but does not execute them."
         )
 
@@ -144,11 +147,15 @@ class ToolSearchTool(Tool):
             "query": query,
             "queries": normalized_queries,
             "tool_names": normalized_tool_names,
+            "server_name": server_name,
         }
         if not normalized_queries and not normalized_tool_names:
             payload = {
                 "success": False,
                 **search_input,
+                "catalog_tool_count": None,
+                "matched_count": 0,
+                "activated_count": 0,
                 "activated": [],
                 "conflicts": [],
                 "missing": [],
@@ -165,6 +172,9 @@ class ToolSearchTool(Tool):
                 "success": False,
                 **search_input,
                 "state": "catalog_loading",
+                "catalog_tool_count": None,
+                "matched_count": 0,
+                "activated_count": 0,
                 "activated": [],
                 "conflicts": [],
                 "missing": [],
@@ -179,6 +189,11 @@ class ToolSearchTool(Tool):
                 error="MCP catalog is still loading; retry tool_search shortly.",
             )
 
+        catalog_tool_count = sum(
+            1
+            for entry in self._catalog.snapshot()
+            if server_name is None or entry.server_name == server_name
+        )
         missing: list[str] = []
         if normalized_tool_names:
             hits, missing = self._catalog.lookup_exact(
@@ -241,6 +256,9 @@ class ToolSearchTool(Tool):
         payload = {
             "success": not conflicts or bool(activated_results),
             **search_input,
+            "catalog_tool_count": catalog_tool_count,
+            "matched_count": len(hits),
+            "activated_count": len(activated_results),
             "activated": activated_results,
             "conflicts": conflicts,
             "missing": missing,
