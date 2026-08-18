@@ -547,7 +547,11 @@ class Agent:
             workspace_info = (
                 f"\n\n## Current Workspace\n"
                 f"You are currently working in: `{self.workspace_dir.absolute()}`\n"
-                f"All relative paths will be resolved relative to this directory."
+                "This directory is the session workspace and filesystem safety "
+                "boundary. Relative tool paths resolve from each tool's active "
+                "project/artifact root; in output mode, prefer the artifact-relative "
+                "paths named by the active Skill or checkpoint instead of deriving "
+                "absolute paths from this workspace."
             )
             system_prompt = system_prompt + workspace_info
 

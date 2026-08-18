@@ -236,6 +236,12 @@ _OUTLINE_TARGET_TOOL_ERROR = (
     "artifact-relative path outline.json; never use the absolute session-workspace "
     "path. For a large outline, every ordered write_file chunk must use that same path."
 )
+_RESEARCH_ARTIFACT_TARGET_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_RESEARCH_ARTIFACT_TARGET_REQUIRED: keep research "
+    "artifacts under the canonical presentation artifact root. Use an "
+    "artifact-relative research/... path; never use an absolute session-workspace "
+    "research path."
+)
 _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research searches "
     "are complete. Do not call web_search or tool_search again. Search snippets are "
@@ -338,9 +344,11 @@ _RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE_TOOL_ERROR = (
 )
 _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_REVALIDATION_REQUIRED: research artifacts are "
-    "newer than their QA report. Run exactly the single validate_research_artifacts.py "
-    "command from RESEARCH_INPUT.revalidation.command now. Do not search, browse, "
-    "read, list, rewrite files, append shell commands, or alter its arguments first."
+    "newer than their QA report. Run the single validate_research_artifacts.py "
+    "command from RESEARCH_INPUT.revalidation.command now. You may use it exactly as "
+    "shown or prefix only `cd <artifact-root> &&`; do not search, browse, read, list, "
+    "rewrite files, append shell commands, use pipes/redirections, or alter its "
+    "arguments first."
 )
 
 _PPTX_SCRIPTS_DIR = (
@@ -1333,18 +1341,17 @@ def _research_handoff_error(
     return _RESEARCH_HANDOFF_TOOL_ERROR
 
 
-def _is_canonical_artifact_target(
+def _resolved_artifact_target(
     value: Any,
-    expected_name: str,
     workspace_dir: str | None,
     artifact_root_dir: str | Path | None,
-) -> bool:
-    """Return whether a tool path resolves to the active artifact-root file."""
+) -> tuple[Path | None, Path | None]:
+    """Resolve a model-supplied path against the active artifact root."""
     if not isinstance(value, str) or not value.strip():
-        return False
+        return None, None
     root = artifact_scan_root(workspace_dir, artifact_root_dir)
     if root is None:
-        return _is_safe_named_path(value, expected_name)
+        return None, None
     root = root.resolve(strict=False)
     candidate = Path(value).expanduser()
     if candidate.is_absolute():
@@ -1370,7 +1377,60 @@ def _is_canonical_artifact_target(
             resolved = (workspace / candidate).resolve(strict=False)
         else:
             resolved = (root / candidate).resolve(strict=False)
+    return resolved, root
+
+
+def _is_canonical_artifact_target(
+    value: Any,
+    expected_name: str,
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> bool:
+    """Return whether a tool path resolves to the active artifact-root file."""
+    resolved, root = _resolved_artifact_target(
+        value,
+        workspace_dir,
+        artifact_root_dir,
+    )
+    if root is None:
+        return _is_safe_named_path(value, expected_name)
     return resolved == (root / expected_name).resolve(strict=False)
+
+
+def _research_artifact_target_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> str | None:
+    """Reject durable research writes outside artifact-root/research/."""
+    if stage != "research":
+        return None
+    candidate: Any = None
+    if tool_name in {"write_file", "append_file", "edit_file"}:
+        candidate = arguments.get("path")
+    elif tool_name == "staged_file_write" and arguments.get("action") == "begin":
+        candidate = arguments.get("path")
+    if not isinstance(candidate, str):
+        return None
+    if "research" not in {part.casefold() for part in Path(candidate).parts}:
+        return None
+    resolved, root = _resolved_artifact_target(
+        candidate,
+        workspace_dir,
+        artifact_root_dir,
+    )
+    if resolved is None or root is None:
+        return None
+    research_root = (root / "research").resolve(strict=False)
+    if resolved.is_relative_to(research_root):
+        return None
+    return (
+        f"{_RESEARCH_ARTIFACT_TARGET_TOOL_ERROR} "
+        f"actual_path={candidate!r}; expected_path='research/...'; "
+        f"artifact_root={str(root)!r}."
+    )
 
 
 def _outline_target_error(
@@ -1397,7 +1457,16 @@ def _outline_target_error(
         artifact_root_dir,
     ):
         return None
-    return _OUTLINE_TARGET_TOOL_ERROR
+    _, root = _resolved_artifact_target(
+        candidate,
+        workspace_dir,
+        artifact_root_dir,
+    )
+    return (
+        f"{_OUTLINE_TARGET_TOOL_ERROR} "
+        f"actual_path={candidate!r}; expected_path='outline.json'; "
+        f"artifact_root={str(root) if root is not None else None!r}."
+    )
 
 
 def _repair_artifact_name(stage: str | None) -> str | None:
@@ -2289,10 +2358,26 @@ class ControlledPresentationPolicy:
             or not isinstance(command, str)
         ):
             return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
+        if "\n" in command or "\r" in command:
+            return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
         try:
-            if shlex.split(command) != shlex.split(expected):
-                return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
+            actual_tokens = shlex.split(command)
+            expected_tokens = shlex.split(expected)
         except ValueError:
+            return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
+        if actual_tokens == expected_tokens:
+            return None
+        if len(actual_tokens) != len(expected_tokens) + 3:
+            return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
+        if actual_tokens[0] != "cd" or actual_tokens[2] != "&&":
+            return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
+        root = artifact_scan_root(self.workspace_dir, self.artifact_root_dir)
+        if root is None:
+            return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
+        supplied_root = Path(actual_tokens[1]).expanduser().resolve(strict=False)
+        if supplied_root != root.resolve(strict=False):
+            return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
+        if actual_tokens[3:] != expected_tokens:
             return _RESEARCH_REVALIDATION_REQUIRED_TOOL_ERROR
         return None
 
@@ -2321,14 +2406,23 @@ class ControlledPresentationPolicy:
             self.workspace_dir,
             self.artifact_root_dir,
         )
+        research_artifact_target_error = _research_artifact_target_error(
+            self.stage,
+            tool_name,
+            arguments,
+            self.workspace_dir,
+            self.artifact_root_dir,
+        )
         if self.stage == "repair_stalled":
             return _REPAIR_STALLED_TOOL_ERROR
         if self.stage == "image_auth_blocked":
             return _IMAGE_AUTH_BLOCKED_TOOL_ERROR
-        if handoff_error is not None:
-            return handoff_error
         if outline_target_error is not None:
             return outline_target_error
+        if research_artifact_target_error is not None:
+            return research_artifact_target_error
+        if handoff_error is not None:
+            return handoff_error
         research_revalidation_error = self._research_revalidation_error(
             tool_name,
             arguments,

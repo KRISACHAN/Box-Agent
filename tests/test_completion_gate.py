@@ -8,6 +8,7 @@ always releases rather than trapping the agent forever.
 
 import json
 import os
+import shlex
 from pathlib import Path
 
 import pytest
@@ -2182,6 +2183,31 @@ def test_stale_research_report_forces_one_exact_revalidation(tmp_path):
         )
         is None
     )
+    artifact_root = tmp_path / "output"
+    assert (
+        policy.tool_call_error(
+            "bash",
+            {"command": f"cd {shlex.quote(str(artifact_root))} && {command}"},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    for rejected_command in (
+        f"cd {shlex.quote(str(tmp_path))} && {command}",
+        f"cd {shlex.quote(str(artifact_root))} && {command} | tail -20",
+        f"cd {shlex.quote(str(artifact_root))} && {command} > validation.log",
+        f"cd {shlex.quote(str(artifact_root))} && {command} && echo done",
+        f"cd {shlex.quote(str(artifact_root))} &&\n{command}",
+        command.replace("--route B", "--route A"),
+    ):
+        assert (
+            policy.tool_call_error(
+                "bash",
+                {"command": rejected_command},
+                verified_evidence_urls=set(),
+            )
+            is not None
+        )
 
     refreshed = newer + 10_000_000
     os.utime(report, ns=(refreshed, refreshed))
@@ -3370,8 +3396,10 @@ def test_controlled_research_handoff_requires_artifact_root_outline_path(tmp_pat
     )
 
     assert blocked is not None
-    assert "CONTROLLED_PRESENTATION_RESEARCH_HANDOFF_READY" in blocked
-    assert "path=outline.json" in blocked
+    assert "CONTROLLED_PRESENTATION_OUTLINE_TARGET_REQUIRED" in blocked
+    assert f"actual_path='{tmp_path / 'outline.json'}'" in blocked
+    assert "expected_path='outline.json'" in blocked
+    assert f"artifact_root='{output}'" in blocked
     assert "absolute session-workspace path" in blocked
 
     content_ready_policy = ControlledPresentationPolicy(
@@ -3387,6 +3415,53 @@ def test_controlled_research_handoff_requires_artifact_root_outline_path(tmp_pat
     )
     assert content_ready_blocked is not None
     assert "CONTROLLED_PRESENTATION_OUTLINE_TARGET_REQUIRED" in content_ready_blocked
+
+
+def test_controlled_research_writes_stay_under_artifact_root(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=output,
+        research_mode="deep",
+        stage="research",
+    )
+
+    assert (
+        policy.tool_call_error(
+            "write_file",
+            {"path": "outline.json", "content": "{}"},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+
+    for path in (
+        "research/dim01.md",
+        "output/research/dim01.md",
+        str(output / "research" / "dim01.md"),
+    ):
+        assert (
+            policy.tool_call_error(
+                "write_file",
+                {"path": path, "content": "evidence"},
+                verified_evidence_urls=set(),
+            )
+            is None
+        )
+
+    escaped = str(tmp_path / "research" / "dim01.md")
+    blocked = policy.tool_call_error(
+        "write_file",
+        {"path": escaped, "content": "evidence"},
+        verified_evidence_urls=set(),
+    )
+
+    assert blocked is not None
+    assert "CONTROLLED_PRESENTATION_RESEARCH_ARTIFACT_TARGET_REQUIRED" in blocked
+    assert f"actual_path='{escaped}'" in blocked
+    assert "expected_path='research/...'" in blocked
+    assert f"artifact_root='{output}'" in blocked
 
 
 def test_controlled_research_handoff_allows_only_its_staged_outline_transaction(

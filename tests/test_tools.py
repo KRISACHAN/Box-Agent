@@ -768,6 +768,20 @@ async def test_write_tool():
         print("✅ WriteTool test passed")
 
 
+def test_write_tool_schema_names_active_relative_root(tmp_path):
+    artifact_root = tmp_path / "output"
+    tool = WriteTool(
+        workspace_dir=str(tmp_path),
+        relative_root_dir=str(artifact_root),
+    )
+
+    description = tool.parameters["properties"]["path"]["description"]
+
+    assert "Prefer a path relative to the active project/artifact root" in description
+    assert str(artifact_root) in description
+    assert "Absolute paths are used exactly as supplied" in description
+
+
 @pytest.mark.asyncio
 async def test_write_tool_blocks_pptx_skipcheck_exporter():
     with tempfile.TemporaryDirectory() as tmpdir:

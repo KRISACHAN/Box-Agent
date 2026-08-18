@@ -696,7 +696,11 @@ class WriteTool(Tool):
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Absolute or relative path to the file",
+                    "description": (
+                        "Prefer a path relative to the active project/artifact root "
+                        f"({self.relative_root_dir}). Absolute paths are used exactly "
+                        "as supplied."
+                    ),
                 },
                 "content": {
                     "type": "string",
