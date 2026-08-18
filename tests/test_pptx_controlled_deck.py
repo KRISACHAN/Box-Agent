@@ -11803,6 +11803,12 @@ def test_rebase_image_policy_converts_existing_required_media_deck_idempotently(
         json.dumps(deck, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    original_deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    original_manifest = json.loads(
+        (tmp_path / "assets" / "generated" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     rebased = _run(
         "rebase_image_policy.js",
@@ -11819,13 +11825,22 @@ def test_rebase_image_policy_converts_existing_required_media_deck_idempotently(
 
     manifest_path = tmp_path / "assets" / "generated" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["generation_forbidden"] is True
+    assert manifest["generation_forbidden"] is (policy == "forbidden")
     assert all(item["decision"] == "skip" for item in manifest["image_plan"])
     assert all(item["status"] == "skipped" for item in manifest["image_plan"])
     assert all(item["required"] is False for item in manifest["image_plan"])
     assert all(
         item["decision_reason"] == decision_reason for item in manifest["image_plan"]
     )
+    if policy == "unavailable":
+        assert manifest["image_generation_unavailable"] is True
+        recovery = manifest["image_unavailable_recovery"]
+        assert recovery["schema_version"] == 1
+        assert recovery["deck"] == original_deck
+        assert recovery["image_plan"] == original_manifest["image_plan"]
+    else:
+        assert "image_generation_unavailable" not in manifest
+        assert "image_unavailable_recovery" not in manifest
 
     rebased_deck = json.loads(deck_path.read_text(encoding="utf-8"))
     assert rebased_deck["slides"][1]["layout_id"] == "statement-focus-v1"
@@ -11872,6 +11887,27 @@ def test_rebase_image_policy_converts_existing_required_media_deck_idempotently(
     )
     assert rendered.returncode == 0, rendered.stdout + rendered.stderr
     assert (tmp_path / "index.html").is_file()
+
+    if policy == "unavailable":
+        restored = _run(
+            "rebase_image_policy.js",
+            "deck.json",
+            "--manifest",
+            "assets/generated/manifest.json",
+            "--policy",
+            "retry",
+            cwd=tmp_path,
+            env=env,
+        )
+        assert restored.returncode == 0, restored.stdout + restored.stderr
+        assert json.loads(restored.stdout)["changed"] is True
+        assert json.loads(deck_path.read_text(encoding="utf-8")) == original_deck
+        restored_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert restored_manifest["image_plan"] == original_manifest["image_plan"]
+        assert restored_manifest["generation_forbidden"] is False
+        assert "image_generation_unavailable" not in restored_manifest
+        assert "image_unavailable_recovery" not in restored_manifest
+        assert "image_service" not in restored_manifest
 
 
 def test_no_images_scaffold_uses_registered_required_media_fallback(

@@ -2958,6 +2958,108 @@ def test_controlled_auto_images_rebase_after_http_401(tmp_path):
     assert policy.allows_completion_continuation() is True
 
 
+def test_controlled_explicit_retry_restores_unavailable_plan_before_images(tmp_path):
+    output = tmp_path / "output"
+    generated = output / "assets" / "generated"
+    generated.mkdir(parents=True)
+    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    original_deck = {"slides": []}
+    (output / "deck.json").write_text(json.dumps(original_deck), encoding="utf-8")
+    original_plan = [
+        {
+            "slide_id": "slide-01",
+            "decision": "generate",
+            "status": "pending",
+            "required": True,
+            "prompt": "Generate a product hero image",
+            "output_path": "assets/generated/hero.png",
+        }
+    ]
+    manifest_path = generated / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "mode": "auto",
+                "generation_forbidden": False,
+                "image_generation_unavailable": True,
+                "image_service": {
+                    "status": "blocked",
+                    "reason": "authorization_401",
+                },
+                "image_plan": [
+                    {
+                        "slide_id": "slide-01",
+                        "decision": "skip",
+                        "status": "skipped",
+                        "required": False,
+                        "prompt": "",
+                        "output_path": None,
+                    }
+                ],
+                "image_unavailable_recovery": {
+                    "schema_version": 1,
+                    "deck": original_deck,
+                    "image_plan": original_plan,
+                    "has_mode": True,
+                    "mode": "auto",
+                    "has_generation_forbidden": True,
+                    "generation_forbidden": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gate = CompletionGate(
+        workflow_checkpoint_kind="controlled_presentation",
+        workflow_options={
+            IMAGE_GENERATION_POLICY_OPTION: IMAGE_GENERATION_EXPLICIT_RETRY,
+        },
+    )
+
+    restore_checkpoint = completion_gate_progress_text(gate, str(tmp_path))
+
+    assert restore_checkpoint is not None
+    assert (
+        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}image_policy_rebase"
+        in restore_checkpoint
+    )
+    assert "--policy retry" in restore_checkpoint
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+    )
+    policy.update_checkpoint(restore_checkpoint)
+    retry_command = (
+        "cd output && node "
+        f"{REBASE_IMAGE_POLICY_SCRIPT} deck.json "
+        "--manifest assets/generated/manifest.json --policy retry"
+    )
+    assert (
+        policy.tool_call_error(
+            "bash",
+            {"command": retry_command},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["image_plan"] = original_plan
+    manifest.pop("image_generation_unavailable")
+    manifest.pop("image_unavailable_recovery")
+    manifest.pop("image_service")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    resumed_checkpoint = completion_gate_progress_text(gate, str(tmp_path))
+
+    assert resumed_checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}images" in resumed_checkpoint
+    assert "IMAGE_INPUT=" in resumed_checkpoint
+
+
 def test_controlled_creative_images_stop_after_http_401(tmp_path):
     generated = tmp_path / "output" / "assets" / "generated"
     generated.mkdir(parents=True)

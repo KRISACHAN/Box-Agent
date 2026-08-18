@@ -649,14 +649,14 @@ def _manifest_generation_progress(
 
 def _manifest_image_policy_state(
     manifest_path: Path,
-) -> tuple[bool, bool, bool, str | None]:
-    """Return generation state, auth state, and the declared image mode."""
+) -> tuple[bool, bool, bool, str | None, bool]:
+    """Return generation, rebase, auth, mode, and retry-recovery state."""
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return (False, False, False, None)
+        return (False, False, False, None, False)
     if not isinstance(payload, dict):
-        return (False, False, False, None)
+        return (False, False, False, None, False)
     generation_forbidden = payload.get("generation_forbidden") is True
     image_plan = payload.get("image_plan")
     needs_rebase = not generation_forbidden or not isinstance(image_plan, list)
@@ -677,11 +677,20 @@ def _manifest_image_policy_state(
         and image_service.get("reason") == "authorization_401"
     )
     mode = payload.get("mode")
+    recovery = payload.get("image_unavailable_recovery")
+    unavailable_recoverable = bool(
+        payload.get("image_generation_unavailable") is True
+        and isinstance(recovery, dict)
+        and recovery.get("schema_version") == 1
+        and isinstance(recovery.get("deck"), dict)
+        and isinstance(recovery.get("image_plan"), list)
+    )
     return (
         generation_forbidden,
         needs_rebase,
         auth_blocked,
         mode if isinstance(mode, str) else None,
+        unavailable_recoverable,
     )
 
 
@@ -1450,11 +1459,16 @@ def build_checkpoint_text(
         "rebase_image_policy.js",
         "deck.json --manifest assets/generated/manifest.json --policy unavailable",
     )
+    restore_unavailable_image_policy_command = _controlled_pptx_command(
+        "rebase_image_policy.js",
+        "deck.json --manifest assets/generated/manifest.json --policy retry",
+    )
     (
         manifest_generation_forbidden,
         manifest_needs_forbidden_rebase,
         manifest_auth_blocked,
         manifest_image_mode,
+        manifest_unavailable_recoverable,
     ) = _manifest_image_policy_state(manifest_path)
     effective_image_generation_forbidden = (
         image_generation_policy == IMAGE_GENERATION_FORBIDDEN
@@ -1913,6 +1927,19 @@ def build_checkpoint_text(
                 patch_needs_apply = False
 
         if (
+            image_generation_policy == IMAGE_GENERATION_EXPLICIT_RETRY
+            and manifest_unavailable_recoverable
+        ):
+            stage = "image_policy_rebase"
+            next_action = (
+                "The user explicitly requested image generation again after a "
+                "temporary service failure. Run exactly one bash tool call: `"
+                f"{restore_unavailable_image_policy_command}`. The deterministic "
+                "helper restores the original image plan and media layouts, clears "
+                "the persisted authorization failure, and resumes image generation. "
+                "Do not edit deck.json or manifest.json yourself."
+            )
+        elif (
             effective_image_generation_forbidden
             and manifest_path.is_file()
             and manifest_needs_forbidden_rebase
@@ -1931,6 +1958,7 @@ def build_checkpoint_text(
             manifest_auth_blocked
             and manifest_image_mode == "auto"
             and not manifest_generation_forbidden
+            and not manifest_unavailable_recoverable
             and image_generation_policy != IMAGE_GENERATION_EXPLICIT_RETRY
         ):
             stage = "image_policy_rebase"
@@ -1947,6 +1975,7 @@ def build_checkpoint_text(
         elif (
             manifest_auth_blocked
             and not effective_image_generation_forbidden
+            and not manifest_unavailable_recoverable
             and image_generation_policy != IMAGE_GENERATION_EXPLICIT_RETRY
         ):
             stage = "image_auth_blocked"

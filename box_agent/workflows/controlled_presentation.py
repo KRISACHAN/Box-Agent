@@ -850,7 +850,7 @@ def _image_policy_rebase_error(
 ) -> str | None:
     if stage != "image_policy_rebase":
         return None
-    if expected_policy not in {"forbidden", "unavailable"}:
+    if expected_policy not in {"forbidden", "unavailable", "retry"}:
         return _IMAGE_POLICY_REBASE_TOOL_ERROR
     command = arguments.get("command")
     if tool_name != "bash" or not isinstance(command, str):
@@ -2115,7 +2115,9 @@ class ControlledPresentationPolicy:
         if next_stage != "apply_patch":
             self._apply_patch_staged_write_id = None
         if next_stage == "image_policy_rebase":
-            if "--policy unavailable" in checkpoint_text:
+            if "--policy retry" in checkpoint_text:
+                self.image_policy_rebase_policy = "retry"
+            elif "--policy unavailable" in checkpoint_text:
                 self.image_policy_rebase_policy = "unavailable"
             elif "--policy forbidden" in checkpoint_text:
                 self.image_policy_rebase_policy = "forbidden"
