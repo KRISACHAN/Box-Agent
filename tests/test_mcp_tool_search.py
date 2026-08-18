@@ -176,6 +176,164 @@ def test_catalog_retains_real_schema_without_putting_tool_in_candidates() -> Non
     assert MCPToolExposureManager(catalog, OrderedDict()).prepare_tools([]).tools == []
 
 
+def test_catalog_search_tolerates_unmatched_business_operands() -> None:
+    catalog = MCPToolCatalog()
+    financials = FakeMCPTool(
+        "get_global_stock_financials",
+        "hexin-ifind-ds-global-stock-mcp",
+        "Retrieve financial statements for global equities",
+    )
+    news = FakeMCPTool(
+        "search_company_news",
+        "hexin-ifind-ds-news-mcp",
+        "Search company news and announcements",
+    )
+    catalog.replace_server("hexin-ifind-ds-global-stock-mcp", [financials])
+    catalog.replace_server("hexin-ifind-ds-news-mcp", [news])
+
+    hits = catalog.search("ifind global stock financial 腾讯 财报", top_k=1)
+
+    assert [entry.model_name for entry in hits] == ["get_global_stock_financials"]
+
+
+def test_catalog_search_uses_prefix_matching_and_name_boost() -> None:
+    catalog = MCPToolCatalog()
+    name_match = FakeMCPTool(
+        "find_financial_report",
+        "finance",
+        "Look up a company report",
+    )
+    description_match = FakeMCPTool(
+        "company_lookup",
+        "crm",
+        "Find a financial report for a company",
+    )
+    catalog.replace_server("finance", [name_match])
+    catalog.replace_server("crm", [description_match])
+
+    hits = catalog.search("finan", top_k=2)
+
+    assert [entry.model_name for entry in hits] == [
+        "find_financial_report",
+        "company_lookup",
+    ]
+
+
+def test_catalog_search_many_merges_independent_queries_without_duplicates() -> None:
+    catalog = MCPToolCatalog()
+    forecast = FakeMCPTool(
+        "get_weather_forecast",
+        "weather-pro",
+        "Get an hourly weather forecast for a location",
+    )
+    news = FakeMCPTool(
+        "search_stock_news",
+        "market-data",
+        "Search stock market news and announcements",
+    )
+    catalog.replace_server("weather-pro", [forecast])
+    catalog.replace_server("market-data", [news])
+
+    hits = catalog.search_many(
+        ["weather forecast", "stock news", "weather forecast"],
+        top_k=2,
+    )
+
+    assert {entry.model_name for entry in hits} == {
+        "get_weather_forecast",
+        "search_stock_news",
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_accepts_workbuddy_style_independent_queries() -> None:
+    catalog = MCPToolCatalog()
+    forecast = FakeMCPTool(
+        "get_weather_forecast",
+        "weather-pro",
+        "Get an hourly weather forecast for a location",
+    )
+    news = FakeMCPTool(
+        "search_stock_news",
+        "market-data",
+        "Search stock market news and announcements",
+    )
+    catalog.replace_server("weather-pro", [forecast])
+    catalog.replace_server("market-data", [news])
+    activated = OrderedDict()
+    search = ToolSearchTool(catalog, activated)
+
+    result = await search.execute(
+        queries=["天气预报", "weather forecast", "stock news"],
+        top_k=2,
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert {item["name"] for item in payload["activated"]} == {
+        "get_weather_forecast",
+        "search_stock_news",
+    }
+    assert payload["queries"] == ["天气预报", "weather forecast", "stock news"]
+    assert search.parameters["anyOf"] == [
+        {"required": ["query"]},
+        {"required": ["queries"]},
+        {"required": ["tool_names"]},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_exact_tool_names_activate_only_explicit_selections() -> None:
+    catalog = MCPToolCatalog()
+    selected = FakeMCPTool("get_forecast", "weather", "Get a forecast")
+    also_selected = FakeMCPTool("get_air_quality", "weather", "Get air quality")
+    hidden = FakeMCPTool("get_weather_alerts", "weather", "Get weather alerts")
+    catalog.replace_server("weather", [selected, also_selected, hidden])
+    activated = OrderedDict()
+    search = ToolSearchTool(catalog, activated)
+
+    result = await search.execute(
+        tool_names=[
+            "mcp:weather/get_forecast",
+            "weather/get_air_quality",
+            "weather/get_missing_tool",
+        ],
+        top_k=1,
+    )
+    payload = json.loads(result.content)
+    exposure = MCPToolExposureManager(catalog, activated).prepare_tools([])
+
+    assert result.success is True
+    assert [item["name"] for item in payload["activated"]] == [
+        "get_forecast",
+        "get_air_quality",
+    ]
+    assert payload["missing"] == ["weather/get_missing_tool"]
+    assert exposure.offered_names == frozenset(
+        {"get_forecast", "get_air_quality"}
+    )
+    assert "get_weather_alerts" not in exposure.offered_names
+
+
+@pytest.mark.asyncio
+async def test_exact_tool_names_do_not_fall_back_to_fuzzy_activation() -> None:
+    catalog = MCPToolCatalog()
+    catalog.replace_server(
+        "weather",
+        [FakeMCPTool("get_forecast", "weather", "Get a forecast")],
+    )
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(catalog, activated).execute(
+        tool_names=["weather/get_forecas"],
+    )
+    payload = json.loads(result.content)
+
+    assert payload["activated"] == []
+    assert payload["missing"] == ["weather/get_forecas"]
+    assert activated == OrderedDict()
+
+
 @pytest.mark.asyncio
 async def test_search_activates_exactly_requested_hits_without_small_cap() -> None:
     catalog = MCPToolCatalog()
@@ -213,7 +371,20 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
         "playwright",
         "Capture the current page snapshot",
     )
-    catalog.replace_server("playwright", [navigate, snapshot])
+    page_content = FakeMCPTool(
+        "extract_page_content",
+        "playwright",
+        "Playwright browser get exact page text from URL",
+    )
+    page_reader = FakeMCPTool(
+        "read_rendered_page",
+        "playwright",
+        "Navigate URL and get exact page text",
+    )
+    catalog.replace_server(
+        "playwright",
+        [navigate, snapshot, page_content, page_reader],
+    )
     activated = OrderedDict()
 
     result = await ToolSearchTool(catalog, activated).execute(
@@ -222,7 +393,7 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
             "get exact page text"
         ),
         server_name="playwright",
-        top_k=10,
+        top_k=2,
     )
     payload = json.loads(result.content)
 
