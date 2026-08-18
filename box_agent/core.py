@@ -340,7 +340,7 @@ def _message_text(content: str | list[dict[str, Any]]) -> str:
 
 def _latest_user_text(messages: list[Message]) -> str:
     for msg in reversed(messages):
-        if msg.role == "user":
+        if msg.role == "user" and not _is_compaction_metadata(msg):
             return _message_text(msg.content)
     return ""
 
@@ -1357,15 +1357,21 @@ def _fallback_context_estimate(
     """Estimate a complete request as characters / 4 when usage is absent."""
 
     chars = sum(_message_chars(message) for message in messages)
+    serialized_parts = [
+        _summary_message_text(message)
+        for message in messages
+    ]
     if tools:
-        chars += len(
+        serialized_parts.append(
             json.dumps(
                 [tool.to_openai_schema() for tool in tools.values()],
                 ensure_ascii=False,
                 default=str,
             )
         )
-    return max(1, chars // 4)
+        chars += len(serialized_parts[-1])
+    utf8_bytes = sum(len(part.encode("utf-8")) for part in serialized_parts)
+    return max(1, chars // 4, utf8_bytes // 3)
 
 
 def _estimate_context_from_latest_response(
@@ -1381,8 +1387,17 @@ def _estimate_context_from_latest_response(
         usage = messages[index].usage
         if messages[index].role != "assistant" or usage is None:
             continue
-        added_chars = sum(_message_chars(message) for message in messages[index + 1 :])
-        return usage.context_tokens + added_chars // 4, "usage"
+        added_messages = messages[index + 1 :]
+        added_tokens = (
+            _fallback_context_estimate(added_messages, None)
+            if added_messages
+            else 0
+        )
+        usage_estimate = usage.context_tokens + added_tokens
+        # Deferred MCP activation can change the next request's tool schemas
+        # after the provider usage boundary. Compare with the complete current
+        # request estimate so newly exposed schemas are never omitted.
+        return max(usage_estimate, _fallback_context_estimate(messages, tools)), "usage"
 
     # Backward-compatible low-level callers may still provide a usage total
     # without response metadata attached to a Message. There is no safe delta
@@ -1452,41 +1467,27 @@ def _select_recent_messages(
 
 
 async def _restore_runtime_state(
-    messages: list[Message],
+    _messages: list[Message],
     tools: dict[str, Tool] | None,
 ) -> Message | None:
-    """Render current todo, plan, and invoked-skill state as one user message."""
+    """Render trusted read-only tool state without executing a tool call."""
 
     sections: list[str] = []
     if tools:
-        for tool_name, label in (("todo_read", "Todo"), ("plan_read", "Plan")):
-            tool = tools.get(tool_name)
-            if tool is None:
-                continue
+        for tool in tools.values():
             try:
-                result = await tool.invoke({})
+                state = tool.compaction_state()
             except Exception as exc:
-                _log.warning("post-compact %s restore failed: %s", tool_name, exc)
+                _log.warning(
+                    "post-compact state restore failed for %s: %s",
+                    getattr(tool, "name", type(tool).__name__),
+                    exc,
+                )
                 continue
-            if result.success and result.content:
-                sections.append(f"## {label}\n{result.content[:12_000]}")
-
-    skill_names: list[str] = []
-    for message in messages:
-        if message.role != "assistant" or not message.tool_calls:
-            continue
-        for call in message.tool_calls:
-            if call.function.name != "get_skill":
-                continue
-            name = call.function.arguments.get("skill_name")
-            if isinstance(name, str) and name and name not in skill_names:
-                skill_names.append(name)
-    if skill_names:
-        sections.append(
-            "## Active Skills\n"
-            + ", ".join(skill_names)
-            + "\nFull active skill instructions remain pinned in the system message."
-        )
+            if state is not None:
+                label, content = state
+                if content:
+                    sections.append(f"## {label}\n{content[:12_000]}")
     if not sections:
         return None
     return Message(
@@ -4986,7 +4987,7 @@ async def run_agent_loop(
                 tool=tools.get(fn_name),
                 session_id=session_id,
                 persistence_content=(
-                    result.persistence_content if result.success else None
+                    result.persistence_content
                 ),
                 content_already_processed=(
                     result.success
@@ -5621,7 +5622,7 @@ async def run_agent_loop(
                     tool=tools.get(fn_name),
                     session_id=session_id,
                     persistence_content=(
-                        result.persistence_content if result.success else None
+                        result.persistence_content
                     ),
                     content_already_processed=(
                         result.success

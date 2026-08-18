@@ -1293,7 +1293,12 @@ class BoxACPAgent:
         grant_store = GrantStore()
         effective_policy: CapabilityPolicy | None = None
         raw_permission_mode = meta.get("permission_mode") if isinstance(meta, dict) else None
-        permission_mode = raw_permission_mode if raw_permission_mode in {"default", "full_access"} else None
+        permission_mode = (
+            raw_permission_mode
+            if isinstance(raw_permission_mode, str)
+            and raw_permission_mode in {"default", "full_access"}
+            else None
+        )
         if raw_permission_mode is not None and permission_mode is None:
             log.warn(
                 "session/permissions",
@@ -1301,19 +1306,37 @@ class BoxACPAgent:
                 message=f"Invalid permission_mode={raw_permission_mode!r}; using default permissions",
             )
             permission_mode = "default"
-        session_allow_full_access = (
+        if (
             permission_mode == "full_access"
-            or (permission_mode is None and self._config.tools.allow_full_access)
+            and not self._config.tools.allow_full_access
+        ):
+            log.warn(
+                "session/permissions",
+                session_id=session_id,
+                message=(
+                    "Session requested full_access but the server disables "
+                    "tools.allow_full_access; using default permissions"
+                ),
+            )
+            permission_mode = "default"
+        session_allow_full_access = (
+            self._config.tools.allow_full_access
+            and permission_mode != "default"
         )
-        # Keep the managed Python/Jupyter runtime available in every ACP
-        # permission mode. Full access bypasses the host permission engine via
-        # session_allow_full_access/perm_engine; it must not require users to
-        # have a separate host Python installation.
-        session_sandbox_mode = True
+        # execute_code is a real Python process, not an OS filesystem sandbox.
+        # Expose it only when the server has explicitly enabled full access.
+        session_sandbox_mode = session_allow_full_access
 
-        if self._has_officev3_policy() and permission_mode != "full_access":
+        if (
+            permission_mode != "full_access"
+            and (self._has_officev3_policy() or permission_mode == "default")
+        ):
             try:
-                base_policy = CapabilityPolicy.from_config(self._config)
+                base_policy = (
+                    CapabilityPolicy.from_config(self._config)
+                    if self._has_officev3_policy()
+                    else CapabilityPolicy()
+                )
                 if permission_mode == "default":
                     # Explicit session-default mode must fail closed even when
                     # the host omits its filesystem context. Host-provided
@@ -1386,19 +1409,6 @@ class BoxACPAgent:
                 )
                 effective_policy = fallback_policy
                 perm_engine = PermissionEngine(fallback_policy, workspace, grant_store=grant_store)
-        elif permission_mode == "default":
-            fallback_policy = CapabilityPolicy(
-                filesystem_scope="session_workspace",
-                session_workspace_root=str(workspace),
-            )
-            effective_policy = fallback_policy
-            perm_engine = PermissionEngine(fallback_policy, workspace, grant_store=grant_store)
-            session_allow_full_access = False
-            log.warn(
-                "session/permissions",
-                session_id=session_id,
-                message="No officev3 policy configured; using restrictive session policy",
-            )
         elif permission_mode == "full_access":
             log.warn(
                 "session/permissions",
@@ -1483,7 +1493,6 @@ class BoxACPAgent:
                 artifact_root_dir=output_dir,
                 env_context=env_context,
                 process_owner_id=session_id,
-                bypass_dangerous_command_approval=permission_mode == "full_access",
             )
             system_prompt = (
                 f"{system_prompt.rstrip()}\n\n"

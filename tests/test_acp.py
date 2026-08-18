@@ -325,7 +325,7 @@ async def test_acp_session_update_send_times_out(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
-        tools=ToolsConfig(),
+        tools=ToolsConfig(allow_full_access=True),
     )
     agent = BoxACPAgent(HangingConn(), config, DummyLLM(), [], "system")
     agent._SESSION_UPDATE_TIMEOUT_SECONDS = 0.01
@@ -2299,7 +2299,7 @@ async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
-        tools=ToolsConfig(),
+        tools=ToolsConfig(allow_full_access=True),
     )
     conn = DummyConn()
     agent = BoxACPAgent(conn, config, DoneLLM(), [], "system")
@@ -3886,6 +3886,7 @@ async def test_acp_default_permission_mode_replaces_global_allowed_directories(t
     assert bash_tool._perm is not None
     assert bash_tool._perm.policy.filesystem_scope == "session_workspace"
     assert bash_tool._perm.policy.allowed_directories == (str(session_allowed),)
+    assert "execute_code" not in agent._sessions[session.sessionId].agent.tools
 
 
 @pytest.mark.asyncio
@@ -3921,15 +3922,72 @@ async def test_acp_default_permission_mode_without_filesystem_policy_fails_close
     bash_tool = agent._sessions[session.sessionId].agent.tools["bash"]
 
     assert bash_tool.allow_full_access is False
-    assert bash_tool.bypass_dangerous_command_approval is False
     assert bash_tool._perm is not None
     assert bash_tool._perm.policy.filesystem_scope == "session_workspace"
     assert bash_tool._perm.policy.session_workspace_root == str(workspace)
     assert bash_tool._perm.policy.allowed_directories == ()
+    assert "execute_code" not in agent._sessions[session.sessionId].agent.tools
 
 
 @pytest.mark.asyncio
-async def test_acp_full_access_mode_bypasses_permission_engine(tmp_path):
+async def test_acp_default_mode_applies_session_directories_without_global_policy(tmp_path):
+    workspace = tmp_path / "workspace"
+    allowed = tmp_path / "session-allowed"
+    allowed.mkdir()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
+        tools=ToolsConfig(allow_full_access=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(workspace),
+            field_meta={
+                "permission_mode": "default",
+                "filesystem_policy": {
+                    "filesystem_scope": "session_workspace",
+                    "session_workspace_root": str(workspace),
+                    "allowed_directories": [str(allowed)],
+                },
+            },
+        )
+    )
+    bash_tool = agent._sessions[session.sessionId].agent.tools["bash"]
+
+    assert bash_tool._perm is not None
+    assert bash_tool._perm.policy.allowed_directories == (str(allowed),)
+    assert "execute_code" not in agent._sessions[session.sessionId].agent.tools
+    assert "仅 `execute_code` 沙箱可用" not in agent._sessions[session.sessionId].agent.system_prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_mode", [[], {}, 1])
+async def test_acp_non_string_permission_mode_fails_closed(tmp_path, invalid_mode):
+    workspace = tmp_path / "workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
+        tools=ToolsConfig(allow_full_access=True),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(workspace),
+            field_meta={"permission_mode": invalid_mode},
+        )
+    )
+    tools = agent._sessions[session.sessionId].agent.tools
+
+    assert tools["bash"].allow_full_access is False
+    assert tools["bash"]._perm is not None
+    assert "execute_code" not in tools
+
+
+@pytest.mark.asyncio
+async def test_acp_full_access_request_respects_server_cap(tmp_path):
     workspace = tmp_path / "workspace"
     config = Config(
         llm=LLMConfig(api_key="test-key"),
@@ -3947,8 +4005,32 @@ async def test_acp_full_access_mode_bypasses_permission_engine(tmp_path):
     bash_tool = agent._sessions[session.sessionId].agent.tools["bash"]
     session_tools = agent._sessions[session.sessionId].agent.tools
 
+    assert bash_tool.allow_full_access is False
+    assert bash_tool._perm is not None
+    assert "execute_code" not in session_tools
+    assert "sandbox_status" not in session_tools
+
+
+@pytest.mark.asyncio
+async def test_acp_full_access_mode_requires_server_opt_in(tmp_path):
+    workspace = tmp_path / "workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
+        tools=ToolsConfig(allow_full_access=True),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(workspace),
+            field_meta={"permission_mode": "full_access"},
+        )
+    )
+    bash_tool = agent._sessions[session.sessionId].agent.tools["bash"]
+    session_tools = agent._sessions[session.sessionId].agent.tools
+
     assert bash_tool.allow_full_access is True
-    assert bash_tool.bypass_dangerous_command_approval is True
     assert bash_tool._perm is None
     assert "execute_code" in session_tools
     assert "sandbox_status" in session_tools
@@ -3978,7 +4060,7 @@ async def test_acp_prompt_includes_skill_runtime_context(tmp_path, monkeypatch):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
-        tools=ToolsConfig(),
+        tools=ToolsConfig(allow_full_access=True),
     )
     agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
 
@@ -4029,7 +4111,7 @@ async def test_acp_prompt_and_bash_env_include_self_managed_node_runtime(tmp_pat
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
-        tools=ToolsConfig(),
+        tools=ToolsConfig(allow_full_access=True),
     )
     agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
 
@@ -4117,7 +4199,7 @@ async def test_acp_host_env_context_feeds_bash_and_execute_code_runtime_env(tmp_
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
-        tools=ToolsConfig(),
+        tools=ToolsConfig(allow_full_access=True),
     )
     agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
 

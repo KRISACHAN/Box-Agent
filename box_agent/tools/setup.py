@@ -528,8 +528,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         use_output_dir: bool = True,
                         artifact_root_dir: str | Path | None = None,
                         env_context=None,
-                        process_owner_id: str | None = None,
-                        bypass_dangerous_command_approval: bool = False):
+                        process_owner_id: str | None = None):
     """Add workspace-dependent tools
 
     These tools need to know the workspace directory.
@@ -589,7 +588,6 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             permission_engine=permission_engine,
             runtime_env=runtime_env,
             process_owner_id=process_owner_id,
-            bypass_dangerous_command_approval=bypass_dangerous_command_approval,
         )
         tools.append(bash_tool)
         if process_owner_id is not None:
@@ -683,11 +681,11 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             runtime_env=runtime_context.env(),
             use_output_dir=use_output_dir,
             output_dir=str(artifact_root) if artifact_root else None,
+            process_owner_id=process_owner_id,
         )
         tools.append(sandbox_tool)
         # Also add sandbox status tool
-        status_tool = SandboxStatusTool()
-        SandboxStatusTool.set_sandbox_tool(sandbox_tool)
+        status_tool = SandboxStatusTool(sandbox_tool)
         tools.append(status_tool)
         _out(f"{Colors.GREEN}✅ Loaded Jupyter sandbox tool (execute_code){Colors.RESET}")
         _out(f"{Colors.GREEN}✅ Loaded sandbox status tool{Colors.RESET}")

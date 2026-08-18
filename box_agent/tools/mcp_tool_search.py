@@ -133,6 +133,11 @@ class ToolSearchTool(Tool):
         server_name: str | None = None,
         top_k: int = 1,
     ) -> ToolResult:
+        normalized_server_name = (
+            server_name.strip()
+            if isinstance(server_name, str) and server_name.strip()
+            else None
+        )
         normalized_queries = [
             item
             for item in ([query] if query else []) + (queries or [])
@@ -147,7 +152,7 @@ class ToolSearchTool(Tool):
             "query": query,
             "queries": normalized_queries,
             "tool_names": normalized_tool_names,
-            "server_name": server_name,
+            "server_name": normalized_server_name,
         }
         if not normalized_queries and not normalized_tool_names:
             payload = {
@@ -192,18 +197,19 @@ class ToolSearchTool(Tool):
         catalog_tool_count = sum(
             1
             for entry in self._catalog.snapshot()
-            if server_name is None or entry.server_name == server_name
+            if normalized_server_name is None
+            or entry.server_name == normalized_server_name
         )
         missing: list[str] = []
         if normalized_tool_names:
             hits, missing = self._catalog.lookup_exact(
                 normalized_tool_names,
-                server_name=server_name,
+                server_name=normalized_server_name,
             )
         else:
             hits = self._catalog.search_many(
                 normalized_queries,
-                server_name=server_name,
+                server_name=normalized_server_name,
                 top_k=top_k,
             )
         activated_results = []

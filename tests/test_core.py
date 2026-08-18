@@ -4671,6 +4671,69 @@ async def test_parallel_fresh_results_apply_aggregate_budget_before_next_llm_cal
 
 
 @pytest.mark.asyncio
+async def test_failed_tool_persistence_content_is_saved_before_next_llm_call(tmp_path):
+    from box_agent.tool_result_storage import ToolResultStorage
+
+    class FailedLargeTool(Tool):
+        @property
+        def name(self):
+            return "failed_large"
+
+        @property
+        def description(self):
+            return "Return bounded failure output with a complete persisted payload."
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self):
+            return ToolResult(
+                success=False,
+                content="bounded failure",
+                error="command failed",
+                persistence_content="complete failure output\n" + "e" * 60_000,
+            )
+
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="failed-large-1",
+                        type="function",
+                        function=FunctionCall(name="failed_large", arguments={}),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+    storage = ToolResultStorage(tmp_path)
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"failed_large": FailedLargeTool()},
+            max_steps=5,
+            tool_result_storage=storage,
+            session_id="failed-result",
+        )
+    )
+
+    saved = tmp_path / "failed-result" / "tool-results" / "failed-large-1.txt"
+    assert saved.read_text(encoding="utf-8").startswith("complete failure output")
+    tool_message = next(
+        message for message in llm.message_calls[1] if message.role == "tool"
+    )
+    assert "<persisted-output>" in str(tool_message.content)
+    assert str(saved) in str(tool_message.content)
+
+
+@pytest.mark.asyncio
 async def test_no_progress_breaker_injects_wrapup_and_stops():
     """After no_progress_limit consecutive failing steps, the breaker injects a
     synthesis nudge so the agent stops flailing instead of running to max_steps."""
@@ -6110,7 +6173,10 @@ async def test_summary_cooldown_uses_local_fallback_without_provider_call():
 
 
 def test_context_pressure_uses_latest_response_usage_plus_new_messages():
-    from box_agent.core import _estimate_context_from_latest_response, _message_chars
+    from box_agent.core import (
+        _estimate_context_from_latest_response,
+        _fallback_context_estimate,
+    )
 
     response = Message(
         role="assistant",
@@ -6129,17 +6195,42 @@ def test_context_pressure_uses_latest_response_usage_plus_new_messages():
         None,
     )
 
-    assert estimated == 160 + _message_chars(added) // 4
+    assert estimated == 160 + _fallback_context_estimate([added], None)
     assert source == "usage"
 
 
+def test_context_pressure_includes_tools_activated_after_latest_usage():
+    from box_agent.core import _estimate_context_from_latest_response
+
+    class _LargeActivatedTool:
+        def to_openai_schema(self):
+            return {"description": "new deferred schema " * 5_000}
+
+    response = Message(
+        role="assistant",
+        content="tool search complete",
+        usage=TokenUsage(input_tokens=100, output_tokens=10),
+    )
+
+    estimated, source = _estimate_context_from_latest_response(
+        [Message(role="system", content="sys"), response],
+        {"activated": _LargeActivatedTool()},
+    )
+
+    assert source == "usage"
+    assert estimated > 10_000
+
+
 def test_context_pressure_without_usage_falls_back_to_characters_over_four():
-    from box_agent.core import _estimate_context_from_latest_response, _message_chars
+    from box_agent.core import (
+        _estimate_context_from_latest_response,
+        _fallback_context_estimate,
+    )
 
     message = Message(role="system", content="x" * 400)
     estimated, source = _estimate_context_from_latest_response([message], None)
 
-    assert estimated == _message_chars(message) // 4
+    assert estimated == _fallback_context_estimate([message], None)
     assert source == "fallback"
 
 
@@ -6160,8 +6251,11 @@ class _PostCompactStateTool(Tool):
     def parameters(self):
         return {"type": "object", "properties": {}}
 
+    def compaction_state(self):
+        return self._name.removesuffix("_read").title(), self._content
+
     async def execute(self):
-        return ToolResult(success=True, content=self._content)
+        raise AssertionError("compaction must not execute runtime-state tools")
 
 
 class _PostCompactFileTool(Tool):
@@ -6262,7 +6356,41 @@ async def test_compaction_restores_runtime_state_without_replaying_files():
     assert runtime_state.role == "user"
     assert "◑ implement compaction" in rendered
     assert "Plan #1: context compaction" in rendered
-    assert "codebase-design" in rendered
+    assert "codebase-design" not in rendered
+
+
+def test_latest_user_text_ignores_post_compaction_runtime_state():
+    from box_agent.core import _latest_user_text
+
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="继续"),
+        Message(
+            role="user",
+            content="[Post-Compaction Runtime State]\n\n## Todo\nactive",
+        ),
+    ]
+
+    assert _latest_user_text(messages) == "继续"
+
+
+def test_goal_read_exposes_side_effect_free_compaction_state(tmp_path):
+    from box_agent.agent import Agent
+
+    agent = Agent(
+        llm_client=object(),
+        system_prompt="system",
+        tools=[],
+        workspace_dir=str(tmp_path),
+        deferred_mcp_loading_enabled=False,
+    )
+    agent.set_goal("Finish the repair", progress=["tests added"])
+
+    label, content = agent.tools["goal_read"].compaction_state()
+
+    assert label == "Goal"
+    assert "Finish the repair" in content
+    assert "tests added" in content
 
 
 def test_fallback_context_estimate_includes_tool_schemas():
@@ -6276,6 +6404,15 @@ def test_fallback_context_estimate_includes_tool_schemas():
     message_tokens = _fallback_context_estimate(msgs, None)
     request_tokens = _fallback_context_estimate(msgs, {"large": _SchemaTool()})
     assert request_tokens > message_tokens + 1_000
+
+
+def test_fallback_context_estimate_is_conservative_for_multibyte_text():
+    from box_agent.core import _fallback_context_estimate
+
+    content = "测试" * 1_000
+    messages = [Message(role="system", content="sys"), Message(role="user", content=content)]
+
+    assert _fallback_context_estimate(messages, None) >= len(content.encode("utf-8")) // 3
 
 
 def test_generic_tool_result_reaches_storage_seam_without_loss():

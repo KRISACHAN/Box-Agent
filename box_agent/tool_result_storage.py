@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import uuid4
 
 from .schema import Message
 from .tools.base import Tool
@@ -62,15 +64,15 @@ def build_persisted_output(
 ) -> str:
     """Build the stable preview shown to the model for a persisted result."""
 
-    label = preview_label or f"Preview (first {_format_size(PREVIEW_SIZE_CHARS)})"
     message = (
         f"{PERSISTED_OUTPUT_TAG}\n"
         f"Output too large ({_format_size(result.original_size)}). "
-        f"Full output saved to: {result.path}\n\n"
-        f"{label}:\n"
-        f"{result.preview}"
+        f"Full output saved to: {result.path}\n"
     )
-    message += "\n...\n" if result.has_more else "\n"
+    if result.preview:
+        label = preview_label or f"Preview (first {_format_size(PREVIEW_SIZE_CHARS)})"
+        message += f"\n{label}:\n{result.preview}"
+        message += "\n...\n" if result.has_more else "\n"
     return message + PERSISTED_OUTPUT_CLOSING_TAG
 
 
@@ -141,6 +143,7 @@ class ToolResultStorage:
         self.root_dir = Path(root_dir)
         self.default_result_limit = default_result_limit
         self.aggregate_budget = aggregate_budget
+        self._default_session_id = f"local-{uuid4().hex}"
         self._seen_ids: set[str] = set()
         self._replacements: dict[str, str] = {}
         self._initialized = False
@@ -273,12 +276,16 @@ class ToolResultStorage:
                 message.content,
                 message.tool_call_id or "tool-result",
                 session_id=session_id,
+                include_preview=False,
             )
             if replacement is None:
                 continue
+            replacement_size = len(replacement)
+            if replacement_size >= size:
+                continue
             self._replacements[message.tool_call_id or ""] = replacement
             messages[index] = message.model_copy(update={"content": replacement})
-            remaining_chars -= size
+            remaining_chars += replacement_size - size
             persisted_count += 1
 
         return ToolResultBudgetOutcome(
@@ -295,12 +302,14 @@ class ToolResultStorage:
         *,
         session_id: str,
         model_content: str | list[dict[str, Any]] | None = None,
+        include_preview: bool = True,
     ) -> str | None:
         serialized = _content_text(content)
         if serialized is None:
             return None
         content_text, is_json = serialized
-        session = _safe_path_segment(session_id, "default")
+        effective_session_id = session_id or self._default_session_id
+        session = _safe_path_segment(effective_session_id, "local")
         identifier = _safe_path_segment(tool_use_id, "tool-result")
         path = self.root_dir / session / "tool-results" / (
             f"{identifier}.json" if is_json else f"{identifier}.txt"
@@ -311,11 +320,28 @@ class ToolResultStorage:
                 with path.open("x", encoding="utf-8") as stream:
                     stream.write(content_text)
             except FileExistsError:
-                pass
+                try:
+                    existing = path.read_text(encoding="utf-8")
+                except OSError:
+                    return None
+                if existing != content_text:
+                    digest = hashlib.sha256(content_text.encode("utf-8")).hexdigest()[:12]
+                    path = path.with_name(f"{path.stem}-{digest}{path.suffix}")
+                    try:
+                        with path.open("x", encoding="utf-8") as stream:
+                            stream.write(content_text)
+                    except FileExistsError:
+                        try:
+                            if path.read_text(encoding="utf-8") != content_text:
+                                return None
+                        except OSError:
+                            return None
         except OSError:
             return None
         preview_label = None
-        if model_content is None:
+        if not include_preview:
+            preview, has_more = "", True
+        elif model_content is None:
             preview, has_more = generate_preview(content_text)
         else:
             serialized_model_content = _content_text(model_content)

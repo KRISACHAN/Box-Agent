@@ -47,7 +47,7 @@ Box-Agent 在两个边界控制上下文增长：
 
 每个 `tool_use_id` 只做一次决策。成功落盘后的替换文本会被缓存，后续循环直接复用，不会重复写文件。恢复会话时已经存在的结果会被冻结，不会被追溯外置。
 
-工具仍可自行保留有界输出；此时通过 `ToolResult.persistence_content` 把完整可落盘文本交给统一边界，真正的写入仍只由 `ToolResultStorage` 完成。Bash 使用的就是这条路径：完整输出保存到磁盘，模型继续看到工具已经生成的 head/tail，并额外得到完整输出路径，不会再被替换成通用的 2,000 字符 head 预览。工具提供的语义化 `model_context` 属于另一层职责，一旦采用也不会被即时检查或 fresh 总预算重复处理。
+工具仍可自行保留有界输出；此时通过 `ToolResult.persistence_content` 把完整可落盘文本交给统一边界，真正的写入仍只由 `ToolResultStorage` 完成。Bash 的成功和失败命令都使用这条路径：完整输出保存到磁盘，模型继续看到工具已经生成的 head/tail，并额外得到完整输出路径，不会再被替换成通用的 2,000 字符 head 预览。工具提供的语义化 `model_context` 属于另一层职责，一旦采用也不会被即时检查或 fresh 总预算重复处理。
 
 ### 预览策略
 
@@ -76,7 +76,8 @@ Preview (first 2.0KB):
 1. 只处理 fresh `tool_use_id`；
 2. 排除已经采用 `model_context` 的结果和声明为 Infinity 的自处理工具；
 3. 按可落盘结果大小从大到小排序；
-4. 依次持久化并替换最大结果，直到剩余 fresh 内容不超过预算。
+4. 总预算路径使用只含恢复路径的包装，并按包装后的模型侧实际长度记账；
+5. 依次持久化并替换最大结果，直到实际剩余 fresh 内容不超过预算。
 
 不支持的 block 和落盘失败结果保持不变。检查时 ID 会被标记为已见，因此后续请求不会反复处理。这条路径专门覆盖并行工具调用：单个结果都没有超限，但合计内容过大。
 
@@ -101,7 +102,7 @@ input_tokens
 + output_tokens
 ```
 
-然后对这条响应之后新增的消息追加 `字符数 / 4` 估算。若没有真实 API usage，则对整个待发送请求（包括工具 schema）使用 `字符数 / 4`。
+然后对这条响应之后新增的消息做保守估算。若没有真实 API usage，则对整个待发送请求（包括工具 schema）取 `字符数 / 4` 与 UTF-8 字节数 `/ 3` 中较大者，避免中文及其他多字节文本被严重低估。
 
 ### 压缩后的消息组织
 
@@ -127,11 +128,11 @@ system message
 运行状态 user message
 ```
 
-recent 选择统一覆盖 user、assistant 和 tool message；assistant 工具调用与连续 tool results 按组保留。上限为 3 条消息、合计 12,000 字符。位于 recent 后缀内的 user message 原样保留，更早的 user message 不再复制到重建历史。这里不再设置第二个“单条 tool result”上限：近期结果直接复用通用 result processor 已经处理过的模型侧内容。即使最新完整协议组本身超过数量或字符上限，也至少完整保留这一组；若重建后仍放不下，由最终估算明确标记为 blocked。
+recent 选择统一覆盖 user、assistant 和 tool message；assistant 工具调用与连续 tool results 按组保留。上限为 5 条消息、合计 20,000 字符。位于 recent 后缀内的 user message 原样保留，更早的 user message 不再复制到重建历史。这里不再设置第二个“单条 tool result”上限：近期结果直接复用通用 result processor 已经处理过的模型侧内容。即使最新完整协议组本身超过数量或字符上限，也至少完整保留这一组；若重建后仍放不下，由最终估算明确标记为 blocked。
 
 上下文压缩不再发现、重新读取或重放近期文件。
 
-Todo 和 Plan 通过各自原始读取工具恢复；已请求的 skill 名称与它们一起写入合成的运行状态 `user` message，完整 skill 指令仍固定在 system message 中。
+Goal、Todo 和 Plan 通过显式、无副作用的 `compaction_state` 契约读取；压缩不会执行普通工具调用。完整 active skill 指令继续固定在 system message 中，不再通过回放历史 `get_skill` 调用重建。控制策略查询“最新用户文本”时会排除内部摘要与运行状态消息。
 
 若重建后的请求仍超过安全阈值，结果会标记为 blocked，不会静默发送一个已知超限的请求。
 

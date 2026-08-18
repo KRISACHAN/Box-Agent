@@ -849,6 +849,8 @@ async def test_foreground_large_stderr_failure_is_bounded_without_error_duplicat
     assert result.raw_output is not None
     assert result.raw_output["dropped_chars"] > 0
     assert result.raw_output["original_stderr_chars"] >= 60_000
+    assert result.persistence_content is not None
+    assert len(result.persistence_content) > MAX_BASH_OUTPUT_CHARS
 
 
 @pytest.mark.asyncio
