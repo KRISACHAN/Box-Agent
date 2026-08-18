@@ -155,27 +155,81 @@ def test_fresh_aggregate_budget_persists_largest_then_freezes_ids(tmp_path: Path
     storage = ToolResultStorage(
         tmp_path,
         default_result_limit=1_000,
-        aggregate_budget=100,
+        aggregate_budget=1_000,
     )
     messages = [
-        _message("a" * 80, "a"),
-        _message("b" * 60, "b"),
-        _message("c" * 40, "c"),
+        _message("a" * 600, "a"),
+        _message("b" * 500, "b"),
+        _message("c" * 400, "c"),
     ]
     tools = {"bash": _Tool()}
 
     first = storage.enforce_fresh_budget(messages, tools=tools, session_id="s")
     assert first.fresh_count == 3
-    assert first.persisted_count == 1
-    assert first.remaining_chars == 100
+    assert first.persisted_count == 2
+    assert first.remaining_chars == sum(len(str(message.content)) for message in messages)
+    assert first.remaining_chars <= storage.aggregate_budget
     assert "<persisted-output>" in messages[0].content
-    assert messages[1].content == "b" * 60
+    assert "<persisted-output>" in messages[1].content
 
-    messages[1] = _message("b" * 500, "b")
+    messages[2] = _message("c" * 900, "c")
     second = storage.enforce_fresh_budget(messages, tools=tools, session_id="s")
     assert second.fresh_count == 0
     assert second.persisted_count == 0
-    assert messages[1].content == "b" * 500
+    assert messages[2].content == "c" * 900
+
+
+def test_default_aggregate_budget_counts_actual_persisted_wrappers(tmp_path: Path) -> None:
+    storage = ToolResultStorage(tmp_path)
+    messages = [
+        _message("x" * 1_000, f"call-{index}")
+        for index in range(100)
+    ]
+
+    outcome = storage.enforce_fresh_budget(
+        messages,
+        tools={"bash": _Tool()},
+        session_id="batch",
+    )
+
+    actual_chars = sum(len(str(message.content)) for message in messages)
+    assert outcome.remaining_chars == actual_chars
+    assert actual_chars <= DEFAULT_TOOL_RESULTS_BUDGET_CHARS
+    assert outcome.persisted_count > 0
+
+
+def test_empty_session_ids_use_isolated_storage_namespaces(tmp_path: Path) -> None:
+    first_storage = ToolResultStorage(tmp_path, default_result_limit=5)
+    second_storage = ToolResultStorage(tmp_path, default_result_limit=5)
+
+    first = first_storage.process_message(_message("first payload"), tool=_Tool())
+    second = second_storage.process_message(_message("second payload"), tool=_Tool())
+
+    first_path = Path(str(first.content).split("Full output saved to: ", 1)[1].splitlines()[0])
+    second_path = Path(str(second.content).split("Full output saved to: ", 1)[1].splitlines()[0])
+    assert first_path != second_path
+    assert first_path.read_text(encoding="utf-8") == "first payload"
+    assert second_path.read_text(encoding="utf-8") == "second payload"
+
+
+def test_explicit_session_collision_never_points_at_stale_content(tmp_path: Path) -> None:
+    first_storage = ToolResultStorage(tmp_path, default_result_limit=5)
+    second_storage = ToolResultStorage(tmp_path, default_result_limit=5)
+    first_storage.process_message(
+        _message("first payload"),
+        tool=_Tool(),
+        session_id="shared",
+    )
+
+    second = second_storage.process_message(
+        _message("second payload"),
+        tool=_Tool(),
+        session_id="shared",
+    )
+
+    second_path = Path(str(second.content).split("Full output saved to: ", 1)[1].splitlines()[0])
+    assert second_path.name.startswith("call-1-")
+    assert second_path.read_text(encoding="utf-8") == "second payload"
 
 
 def test_aggregate_budget_never_persists_read_results(tmp_path: Path) -> None:

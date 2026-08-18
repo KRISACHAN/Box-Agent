@@ -283,6 +283,9 @@ class _GoalReadTool(Tool):
     def parameters(self) -> dict:
         return {"type": "object", "properties": {}}
 
+    def compaction_state(self) -> tuple[str, str]:
+        return "Goal", json.dumps(_goal_snapshot(self._agent), ensure_ascii=False)
+
     async def execute(self) -> ToolResult:
         goal = self._agent.goal
         if goal is None:

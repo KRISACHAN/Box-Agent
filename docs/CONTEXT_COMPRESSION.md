@@ -47,7 +47,7 @@ The original result is preserved when it is below the limit, contains an image o
 
 Each `tool_use_id` receives one decision. A persisted replacement is cached and reused in later loop iterations, so the result is not written repeatedly. Results already present when a session is resumed are frozen and are not retroactively externalized.
 
-Tools may still bound their own output for operational reasons. When they do, they pass the complete persistable text through `ToolResult.persistence_content`; only `ToolResultStorage` writes it. Bash uses this path: the complete output is saved, while the model keeps the tool-generated head/tail plus the saved path instead of receiving a second generic 2,000-character head preview. Semantic `model_context` projections remain a separate tool concern; once selected, neither the immediate check nor the fresh aggregate budget processes them again.
+Tools may still bound their own output for operational reasons. When they do, they pass the complete persistable text through `ToolResult.persistence_content`; only `ToolResultStorage` writes it. Bash uses this path for both successful and failed commands: the complete output is saved, while the model keeps the tool-generated head/tail plus the saved path instead of receiving a second generic 2,000-character head preview. Semantic `model_context` projections remain a separate tool concern; once selected, neither the immediate check nor the fresh aggregate budget processes them again.
 
 ### Preview format
 
@@ -78,7 +78,8 @@ Before every LLM request, results first seen during the current conversation are
 1. Considers only fresh `tool_use_id` values.
 2. Excludes selected `model_context` projections and self-processed tools whose declaration is infinity.
 3. Sorts eligible results from largest to smallest.
-4. Persists and replaces the largest results until the remaining fresh content is at or below the budget.
+4. Uses a path-only persisted wrapper for this aggregate pass and counts the wrapper's actual model-facing length.
+5. Persists and replaces the largest results until the actual remaining fresh content is at or below the budget.
 
 Unsupported blocks and persistence failures remain unchanged. Since IDs are marked seen during the pass, later requests do not reconsider the same results. This handles a batch of parallel tool calls whose individual results are below the per-result limit but are too large together.
 
@@ -107,7 +108,7 @@ input_tokens
 + output_tokens
 ```
 
-It then adds `characters / 4` for messages appended after that response. If no message has real API usage, the entire pending request—including tool schemas—is estimated with `characters / 4`.
+It then estimates messages appended after that response conservatively. If no message has real API usage, the entire pending request—including tool schemas—is estimated with the larger of `characters / 4` and UTF-8 bytes `/ 3`. This avoids severe under-counting for CJK and other multibyte text.
 
 ### Compacted message layout
 
@@ -133,11 +134,11 @@ bounded recent messages
 runtime-state user message
 ```
 
-Recent selection applies to user, assistant, and tool messages. Assistant tool calls stay grouped with their contiguous tool results. Selection keeps at most 3 messages and 12,000 total characters. A user message inside that recent suffix is retained verbatim; an older user message is not copied into rebuilt history. There is no second per-tool-result size limit here: recent tool results reuse the output already produced by the shared result processor. At least the newest complete protocol group is retained even if that one group exceeds a cap; the rebuilt-request estimate then marks the result blocked if it still cannot fit.
+Recent selection applies to user, assistant, and tool messages. Assistant tool calls stay grouped with their contiguous tool results. Selection keeps at most 5 messages and 20,000 total characters. A user message inside that recent suffix is retained verbatim; an older user message is not copied into rebuilt history. There is no second per-tool-result size limit here: recent tool results reuse the output already produced by the shared result processor. At least the newest complete protocol group is retained even if that one group exceeds a cap; the rebuilt-request estimate then marks the result blocked if it still cannot fit.
 
 Compaction does not discover, reread, or replay recent files.
 
-Current todo and plan state are re-read through their original tools. Requested skill names are appended to the same synthetic runtime-state `user` message; full skill instructions remain pinned in the system message.
+Current goal, todo, and plan state are read through their explicit, side-effect-free `compaction_state` contract; compaction never invokes a normal tool call. Full active skill instructions remain pinned in the system message and are not reconstructed by replaying historical `get_skill` calls. Internal summary/runtime-state messages are excluded whenever control policy asks for the latest real user text.
 
 If the rebuilt request still exceeds the safe limit, the outcome is marked blocked instead of silently sending a known-oversized request.
 

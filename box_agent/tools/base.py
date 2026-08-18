@@ -49,6 +49,11 @@ class Tool:
     # through ``ToolResult.persistence_content``.
     max_result_size_chars: float = 50_000
 
+    def compaction_state(self) -> tuple[str, str] | None:
+        """Return trusted read-only runtime state for history compaction."""
+
+        return None
+
     @property
     def name(self) -> str:
         """Tool name."""
