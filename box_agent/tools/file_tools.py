@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import os
 import re
 import threading
@@ -133,6 +134,7 @@ class SearchFilesTool(EventEmittingTool):
 
     parallel_safe = True
     cancel_on_agent_cancel = True
+    max_result_size_chars = math.inf
 
     def __init__(
         self,

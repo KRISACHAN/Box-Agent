@@ -641,6 +641,8 @@ class OpenAIClient(LLMClientBase):
                 prompt_tokens=response.usage.prompt_tokens or 0,
                 completion_tokens=response.usage.completion_tokens or 0,
                 total_tokens=response.usage.total_tokens or 0,
+                input_tokens=response.usage.prompt_tokens or 0,
+                output_tokens=response.usage.completion_tokens or 0,
             )
 
         return LLMResponse(
@@ -846,6 +848,8 @@ class OpenAIClient(LLMClientBase):
                             prompt_tokens=chunk.usage.prompt_tokens or 0,
                             completion_tokens=chunk.usage.completion_tokens or 0,
                             total_tokens=chunk.usage.total_tokens or 0,
+                            input_tokens=chunk.usage.prompt_tokens or 0,
+                            output_tokens=chunk.usage.completion_tokens or 0,
                         )
 
                     if not chunk.choices:
