@@ -41,13 +41,6 @@ is still current.
   `box_agent/__init__.py`, and `uv.lock` identify source version `0.8.87`.
   Therefore the release document must not be used to claim the current source
   version, publication, or an installed officev3 runtime.
-- [Local CI validation](../LOCAL_CI_VALIDATION.md) is a historical report for
-  one 2026-08-17 Head SHA. Its results, including pre-existing failures, are not
-  current CI status.
-- [The original review-integration plan](../superpowers/plans/2026-08-18-box-agent-review-integration.md)
-  describes an earlier dual-CI approach. The current contract is the
-  [Teamwork local-CI integration](../AUTOMATED_REVIEW.md), with Box-Agent's
-  `general_review/ci/preflight.sh` as the repository-owned CI command.
 
 ## Recent material changes on `main`
 

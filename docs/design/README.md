@@ -1,18 +1,18 @@
 # Review Design Index
 
-This directory is the bounded design source configured for the automated
-`general-reviewer`. It is a routing index, not a duplicate documentation tree
-and not evidence that an implementation is correct. Open only the documents
-relevant to the changed paths, then verify their claims against the current
-merge-base diff, source, tests, and runtime evidence.
+This directory is a routing index for active design sources, not a duplicate
+documentation tree and not evidence that an implementation is correct. Open
+only the documents relevant to the changed paths, then verify their claims
+against the current merge-base diff, source, tests, and runtime evidence.
 
 ## Evidence and ownership rules
 
 Use the following order when sources disagree:
 
 1. Repository policy in `AGENTS.md`, `CONTRIBUTING.md`, the pull-request
-   template, and the [maintainer review standard](../REVIEW_GUIDE.md) defines
-   contribution and review gates.
+   template, the [maintainer review guide](../REVIEW_GUIDE.md), and the
+   [pull request review standard](../PR_REVIEW_STANDARD.md) define contribution
+   and review gates.
 2. Current source, focused regression tests, and the merge-base diff define
    implemented behavior.
 3. The active design and protocol documents below define intended boundaries
@@ -36,7 +36,7 @@ cached summary is not design authority and must not be edited by hand.
 | Memory matching, promotion, persistence, or host cards | [Memory integration](../MEMORY_INTEGRATION.md), [Memory Match](../MEMORY_MATCH_PROTOCOL.md), and [Memory Proposal](../MEMORY_PROPOSAL_PROTOCOL.md) | Keep model-facing retrieval, persistence/promotion, and ACP rendering contracts distinct; preserve configuration gates and structured diagnostics. | Focused memory tests and applicable ACP/configuration tests |
 | Controlled PPTX routing, research, checkpoints, repair, rendering, or document Skills | [Controlled HTML PPTX architecture](../PPTX_CONTROLLED_HTML_ARCHITECTURE.md) / [受控 HTML PPTX 架构](../PPTX_CONTROLLED_HTML_ARCHITECTURE_CN.md), then [development guide](../PPTX_CONTROLLED_HTML_DEVELOPMENT.md) / [开发指南](../PPTX_CONTROLLED_HTML_DEVELOPMENT_CN.md) | PPT-specific recognition, checkpoint state, recovery, tool restrictions, and evidence stay in workflows/Skills rather than the generic kernel. Durable artifacts are the recovery source of truth. | PPT contract tests, manifest checks when a built-in Skill changes, and render/visual/runtime proof when behavior is user-visible |
 | Packaging, dependency pins, version surfaces, frozen runtime, officev3 consumption | [Production guide](../PRODUCTION_GUIDE.md) / [生产指南](../PRODUCTION_GUIDE_CN.md) and [Release state](../RELEASE_STATE.md) | Source tests do not prove packaged behavior. Report build, install, probe, host restart, and fresh live-task verification as separate boundaries. | Lock/build checks, artifact manifests/hashes, install/probe logs, and host restart/live-task evidence |
-| Review configuration, local CI, prompts, or Review Agent behavior | [Automated review integration](../AUTOMATED_REVIEW.md) and [maintainer review standard](../REVIEW_GUIDE.md) / [维护者 Review 标准](../REVIEW_GUIDE_CN.md) | Box-Agent owns its rules and deterministic `general_review/ci/preflight.sh`; `teamwork_review_agents` owns the generic orchestration and prompts. A successful Preflight result is Head-SHA-specific and does not approve design. | Config validation, shell syntax, exact-Head Preflight, Review Agent output, and human approval |
+| Pull request review policy or repository CI command | [Pull request review standard](../PR_REVIEW_STANDARD.md) / [PR 审查规范](../PR_REVIEW_STANDARD_CN.md) and [`general_review/ci/preflight.sh`](../../general_review/ci/preflight.sh) | Box-Agent owns its review policy and deterministic CI command; deployment-specific orchestration and prompts stay outside this repository. | Shell syntax, exact-Head CI result, review output, and human approval |
 
 ## ACP and host protocol contracts
 
@@ -77,6 +77,5 @@ retired. Keep English/Chinese document pairs aligned when both exist. Record the
 corresponding migration, compatibility impact, known gap, and rollback reference
 in `../changes/README.md` or in a focused history document linked from it.
 
-Do not add every implementation note here. Do not copy generic Review Agent
-prompts into Box-Agent; configure the review engine to read them from the
-`teamwork_review_agents` repository.
+Do not add every implementation note here or copy deployment-specific Review
+Agent prompts and configuration into Box-Agent.
