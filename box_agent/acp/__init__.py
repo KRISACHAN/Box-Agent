@@ -2619,6 +2619,7 @@ class BoxACPAgent:
                     "completion_gate/complete",
                     session_id=session_id,
                 )
+        delivery_incomplete = delivery_status in {"incomplete", "waiting_for_user"}
         turn_total_tokens = turn_meter.total_tokens if turn_meter else 0
         duration_ms = int((perf_counter() - prompt_start) * 1000)
 
@@ -2636,6 +2637,8 @@ class BoxACPAgent:
                         "calls": turn_meter.calls if turn_meter else 0,
                     },
                     "goal_autopilot_continuations": auto_continuations,
+                    "delivery_status": delivery_status,
+                    "delivery_gap_count": len(delivery_gaps),
                 },
             )
 
@@ -2651,6 +2654,8 @@ class BoxACPAgent:
             goal_autopilot_budget_exhausted=auto_budget_exhausted,
             goal_autopilot_no_progress_exhausted=auto_no_progress_exhausted,
             goal_autopilot_no_progress_turns=auto_no_progress_turns,
+            delivery_status=delivery_status,
+            delivery_gap_count=len(delivery_gaps),
         )
         # Map box-agent stop reasons to ACP-valid StopReason values.
         # ACP only accepts: "end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"
@@ -2680,8 +2685,16 @@ class BoxACPAgent:
                 else None
             ),
             "lastStopReason": stop_reason,
-            "runStatus": "paused" if paused else ("error" if failed else "completed"),
-            "completed": not failed and not paused,
+            "runStatus": (
+                "paused"
+                if paused
+                else "error"
+                if failed
+                else delivery_status
+                if delivery_incomplete
+                else "completed"
+            ),
+            "completed": not failed and not paused and not delivery_incomplete,
             "paused": paused,
             "usage": {
                 "totalTokens": turn_total_tokens,

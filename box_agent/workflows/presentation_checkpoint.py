@@ -1487,7 +1487,9 @@ def build_checkpoint_text(
             )
             if path
         ),
-        "deck_contract.json": (),
+        "deck_contract.json": tuple(
+            path for path in (deck_path, outline_path) if path
+        ),
         "deck_spec.json": tuple(
             path for path in (deck_path, outline_path) if path
         ),
@@ -1731,6 +1733,19 @@ def build_checkpoint_text(
             "The prior deck-spec or image report contains only degradable findings; "
             "the finalizer will preserve them as warnings, refresh downstream QA, "
             "and keep a usable HTML artifact instead of starting another repair loop."
+        )
+    elif (
+        html_path is not None
+        and html_current
+        and report_states["deck_contract.json"] != "ok"
+    ):
+        stage = "finalize"
+        next_action = (
+            f"Keep the existing HTML and run exactly `{finalize_command}` once. "
+            "The deck contract report is missing or stale relative to the current "
+            "deck/outline. The finalizer will validate the current deck, refresh the "
+            "contract receipt, and rerun downstream delivery QA. Do not recreate the "
+            "deck or run the scaffold command."
         )
     elif html_path is not None and html_current:
         missing_reports = [

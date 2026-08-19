@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { createHash } = require("crypto");
 
 const { resolveArtifactPath } = require("./deck_spec_core.js");
 
@@ -42,6 +43,80 @@ function readJson(filePath) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function hashJson(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function refreshDeckContractReport(deckPath, reportPath, deckSpecReport) {
+  const artifactRoot = path.dirname(deckPath);
+  const outlinePath = path.join(artifactRoot, "outline.json");
+  let previous = {};
+  try {
+    const value = readJson(reportPath);
+    if (value && typeof value === "object" && !Array.isArray(value)) previous = value;
+  } catch (_error) {
+    // A structurally valid deck can reconstruct the current contract receipt.
+  }
+  const deck = readJson(deckPath);
+  const slides = Array.isArray(deck.slides) ? deck.slides : [];
+  let outline = null;
+  try {
+    outline = readJson(outlinePath);
+  } catch (_error) {
+    outline = null;
+  }
+  const outlineSlides = outline && Array.isArray(outline.slides) ? outline.slides : [];
+  const outlineIssues = deckSpecReport
+    && deckSpecReport.outlineBinding
+    && Array.isArray(deckSpecReport.outlineBinding.issues)
+      ? deckSpecReport.outlineBinding.issues
+      : [];
+  const priorOutlineBinding = previous.outline_binding
+    && typeof previous.outline_binding === "object"
+    && !Array.isArray(previous.outline_binding)
+      ? previous.outline_binding
+      : {};
+  const outlineBinding = outline
+    ? {
+      ...priorOutlineBinding,
+      outline_file: outlinePath,
+      outline_hash: hashJson(outline),
+      source_mode: outline.source_mode || priorOutlineBinding.source_mode || null,
+      page_count: outlineSlides.length,
+      ok: outlineIssues.length === 0,
+      issues: outlineIssues,
+    }
+    : null;
+  const contractVersion = Math.max(2, Number(previous.contract_version || 1));
+  const refreshed = {
+    ...previous,
+    ok: true,
+    contract_version: contractVersion,
+    deck_file: deckPath,
+    slide_count: slides.length,
+    layout_plan: slides.map(slide => slide.layout_id),
+    deck_hash: hashJson(deck),
+    outline_binding: outlineBinding,
+    refreshed_by: "finalize_controlled_deck",
+    issues: [],
+    warnings: Array.isArray(previous.warnings) ? previous.warnings : [],
+  };
+  refreshed.contract_hash = hashJson({
+    contract_version: contractVersion,
+    theme_id: deck.theme_id || null,
+    design: deck.design || null,
+    layout_plan: refreshed.layout_plan,
+    outline_binding: outlineBinding,
+    truth_contract: deck.truth_contract || null,
+  });
+  writeJson(reportPath, refreshed);
+  console.log(
+    `${outlineIssues.length ? "FINALIZE_ADVISORY" : "FINALIZE_PASS"} `
+    + `stage=deck_contract warnings=${outlineIssues.length}`
+  );
+  return refreshed;
 }
 
 function reportSummary(reportPath) {
@@ -287,6 +362,7 @@ function main() {
     : path.join(artifactRoot, "assets", "generated", "manifest.json");
   const reportDir = path.join(artifactRoot, "qa");
   const reports = {
+    contract: path.join(reportDir, "deck_contract.json"),
     spec: path.join(reportDir, "deck_spec.json"),
     truth: path.join(reportDir, "truth_check.json"),
     image: path.join(reportDir, "image_manifest.json"),
@@ -296,6 +372,7 @@ function main() {
   fs.mkdirSync(reportDir, { recursive: true });
 
   const deckSpecReport = runDeckSpecStage(deckPath, reports.spec);
+  refreshDeckContractReport(deckPath, reports.contract, deckSpecReport);
   let manifestMode = "auto";
   try {
     const manifest = readJson(manifestPath);

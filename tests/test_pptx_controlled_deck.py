@@ -9032,6 +9032,7 @@ def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> Non
         )
         for stage in (
             "deck_spec",
+            "deck_contract",
             "image_manifest",
             "render",
             "html_self_check",
@@ -9045,6 +9046,7 @@ def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> Non
     assert '"ok":true' in result.stdout
     assert (tmp_path / "index.html").is_file()
     for report_name in (
+        "deck_contract.json",
         "deck_spec.json",
         "truth_check.json",
         "image_manifest.json",
@@ -9053,6 +9055,11 @@ def test_controlled_finalizer_runs_compact_complete_chain(tmp_path: Path) -> Non
     ):
         report = json.loads((tmp_path / "qa" / report_name).read_text())
         assert report["ok"] is True
+    contract_report = json.loads(
+        (tmp_path / "qa" / "deck_contract.json").read_text(encoding="utf-8")
+    )
+    assert contract_report["refreshed_by"] == "finalize_controlled_deck"
+    assert len(contract_report["deck_hash"]) == 64
     truth_report = json.loads((tmp_path / "qa" / "truth_check.json").read_text())
     assert truth_report["advisory"] is True
     assert truth_report["warnings"]
@@ -9259,6 +9266,8 @@ def test_controlled_finalizer_delivers_degraded_html_for_outline_binding_drift(
     )
     applied = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
     assert applied.returncode == 0, applied.stdout + applied.stderr
+    contract_path = tmp_path / "qa" / "deck_contract.json"
+    contract_mtime_before = contract_path.stat().st_mtime_ns
     html_path = tmp_path / "index.html"
 
     result = _run(
@@ -9280,6 +9289,14 @@ def test_controlled_finalizer_delivers_degraded_html_for_outline_binding_drift(
     assert spec_report["advisory"] is True
     assert spec_report["degraded_reason"] == "outline_binding"
     assert spec_report["warnings"]
+    contract_report = json.loads(contract_path.read_text(encoding="utf-8"))
+    assert contract_path.stat().st_mtime_ns > contract_mtime_before
+    assert contract_path.stat().st_mtime_ns >= deck_path.stat().st_mtime_ns
+    assert contract_report["ok"] is True
+    assert contract_report["refreshed_by"] == "finalize_controlled_deck"
+    assert contract_report["outline_binding"]["ok"] is False
+    assert contract_report["outline_binding"]["issues"]
+    assert len(contract_report["deck_hash"]) == 64
 
 
 def test_truth_validator_keeps_unapproved_illustrative_mode_blocking(

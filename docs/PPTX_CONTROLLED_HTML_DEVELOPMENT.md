@@ -130,9 +130,11 @@ node /Users/malin1/Dev/ai/Box-Agent/box_agent/skills/document-skills/pptx/script
 node /Users/malin1/Dev/ai/Box-Agent/box_agent/skills/document-skills/pptx/scripts/finalize_controlled_deck.js deck.json --out index.html
 ```
 
-The finalizer refreshes spec, truth, image, HTML self-check, and runtime-probe
-reports in dependency order. After a focused repair, rerun it rather than using
-stale individual QA reports. Visual/editor/export changes also need a manual
+The finalizer refreshes the deck contract, spec, truth, image, HTML self-check,
+and runtime-probe reports in dependency order. The deck contract depends on the
+current `deck.json` and `outline.json`; changing either invalidates the old
+receipt. After a focused repair, rerun the finalizer rather than using stale
+individual QA reports. Visual/editor/export changes also need a manual
 check for overflow, stable `data-prop-path` editing, chart playback, and
 recoverable PPTX data.
 

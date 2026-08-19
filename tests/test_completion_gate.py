@@ -4133,7 +4133,8 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     (output / "index.html").write_text("<html></html>", encoding="utf-8")
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
-    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}qa" in checkpoint
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
+    assert "deck contract report is missing or stale" in checkpoint
 
     for report_name in (
         "outline_check.json",
@@ -4214,6 +4215,55 @@ def test_controlled_checkpoint_does_not_reapply_older_patch_for_honest_placehold
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}apply_patch" not in checkpoint
+
+
+def test_controlled_checkpoint_refreshes_stale_deck_contract(tmp_path):
+    output = tmp_path / "output"
+    qa = output / "qa"
+    qa.mkdir(parents=True)
+    outline = output / "outline.json"
+    deck = output / "deck.json"
+    html = output / "index.html"
+    outline.write_text('{"slides":[]}', encoding="utf-8")
+    deck.write_text('{"slides":[]}', encoding="utf-8")
+    html.write_text("<html></html>", encoding="utf-8")
+    report_names = (
+        "outline_check.json",
+        "deck_contract.json",
+        "deck_spec.json",
+        "truth_check.json",
+        "image_manifest.json",
+        "html_self_check.json",
+        "runtime_probe.json",
+    )
+    for report_name in report_names:
+        (qa / report_name).write_text('{"ok":true}', encoding="utf-8")
+
+    base = max(path.stat().st_mtime_ns for path in (outline, deck, html, *qa.iterdir()))
+    os.utime(qa / "deck_contract.json", ns=(base, base))
+    for dependency in (outline, deck, html):
+        os.utime(dependency, ns=(base + 10_000_000, base + 10_000_000))
+    for report_name in report_names:
+        if report_name == "deck_contract.json":
+            continue
+        os.utime(
+            qa / report_name,
+            ns=(base + 20_000_000, base + 20_000_000),
+        )
+
+    gate = CompletionGate(workflow_checkpoint_kind="controlled_presentation")
+    checkpoint = completion_gate_progress_text(gate, str(tmp_path))
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
+    assert "qa_ok=6/7" in checkpoint
+
+    os.utime(
+        qa / "deck_contract.json",
+        ns=(base + 30_000_000, base + 30_000_000),
+    )
+    checkpoint = completion_gate_progress_text(gate, str(tmp_path))
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}complete" in checkpoint
 
 
 def test_controlled_checkpoint_completes_with_current_failed_truth_report(tmp_path):

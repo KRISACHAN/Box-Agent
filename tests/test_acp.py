@@ -2796,6 +2796,9 @@ async def test_acp_output_html_followup_reuses_pending_presentation_gate(tmp_pat
     assert response.field_meta["deliveryStatus"] == "incomplete"
     assert response.field_meta["recoverable"] is True
     assert response.field_meta["deliveryGaps"]
+    assert response.field_meta["ok"] is True
+    assert response.field_meta["runStatus"] == "incomplete"
+    assert response.field_meta["completed"] is False
 
 
 @pytest.mark.asyncio
