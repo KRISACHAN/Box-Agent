@@ -67,6 +67,45 @@ If you have an idea for a new feature, please create an Issue first to discuss i
 - Do not include local credentials or user config. `config.yaml`, `mcp.json`, logs, and `workspace/` are local runtime files.
 - If a change affects officev3 or any packaged runtime, say whether you verified only source behavior or also rebuilt/installed/probed the runtime artifact.
 
+#### Maintaining Design and Change Records
+
+The [design index](docs/design/README.md) and
+[change-history index](docs/changes/README.md) are shared project records for
+contributors, maintainers, and reviewers. They should make the current design
+and the decisions that shaped it easy to understand, but they are not a log of
+every implementation detail or commit.
+
+Update `docs/design/README.md` when a change adds, changes, renames, or retires
+a material subsystem, ownership boundary, public or host protocol,
+compatibility rule, or source-of-truth design document. Add or revise the
+applicable routing row with recognizable areas or paths, the documents to read
+first, the current boundary to preserve, and the primary proof anchors. Keep
+English/Chinese document pairs aligned when both exist. An internal refactor or
+bug fix that preserves the documented design normally does not require an
+index update.
+
+Update `docs/changes/README.md` when a change has lasting relevance to a public
+or host protocol, stable kernel or tool contract, security boundary,
+compatibility default, migration, release/runtime expectation, rollback, or
+cross-repository dependency. A detailed entry should record the available
+change or PR reference, durable effect, compatibility or migration impact,
+proof anchors, residual gaps, and rollback direction. Do not invent a future
+merge SHA when the change is still under review; use the PR and available
+implementation commit, then reconcile merge information later.
+
+When adding or revising a detailed history entry, update the quick-routing
+table if the current effective decision or its relationship to earlier entries
+has changed. Use stable, searchable module, path, protocol, and configuration
+names, but keep the summary readable. State whether an entry supersedes,
+hardens, rolls back, or must be read together with an earlier decision instead
+of silently replacing history.
+
+Update both indexes when one PR changes a design boundary and also establishes
+a durable compatibility, migration, security, release, or rollback decision.
+Ordinary implementation notes, commits with no lasting contract impact, and
+changes already covered accurately by the indexes do not need separate
+entries.
+
 #### Ownership Boundaries
 
 - `box_agent/core.py` is a changeable but low-churn kernel owned by the core team. Product and capability modules must use `Agent.run_events()` or the explicit shared APIs; they must not import the Core implementation directly.
@@ -163,6 +202,7 @@ Before submitting a PR, please ensure:
 - [ ] Broader tests were run when shared core, tools, MCP, memory, CLI, ACP, skills, or packaging behavior changed.
 - [ ] Necessary regression tests were added or an explicit reason is given.
 - [ ] Relevant documentation was updated.
+- [ ] The design and change-history indexes were assessed and updated when design boundaries or durable decisions were affected.
 - [ ] Generated manifests were regenerated when built-in skills changed.
 - [ ] Runtime rebuild/install/probe status is stated when packaged runtime behavior is affected.
 - [ ] No unrelated changes, local config, logs, workspace files, or generated Understand Anything graph/cache files are included.
