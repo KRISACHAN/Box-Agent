@@ -583,6 +583,15 @@ _WINDOWS_CMD_SWITCH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ``exit /b`` is valid cmd syntax even when the command string is passed
+# directly instead of being wrapped in ``cmd.exe /c``. In that form the
+# general cmd-wrapper check above cannot identify the dialect, but ``/b`` is
+# still unambiguously an option to the ``exit`` builtin rather than a path.
+_WINDOWS_EXIT_SWITCH_RE = re.compile(
+    r'(?P<prefix>(?:^|[\s;&|])exit\s+)/b(?=\s|["\');&|]|$)',
+    re.IGNORECASE,
+)
+
 # sed/perl-style substitution: `s<delim>pattern<delim>replacement<delim>[flags]`.
 # Stripped before path extraction so the regex bodies of `sed 's/.../.../g'`,
 # `perl -pe 's|...|...|'` etc. don't get scanned for absolute paths.
@@ -660,6 +669,8 @@ def extract_absolute_paths(command: str) -> list[str]:
     # get mis-parsed as absolute paths (e.g. the `/g` flag at the end of
     # `sed 's|a|b|g'` or the literal `/` delimiters in `s/foo/bar/`).
     sanitized = _SED_SUBST_RE.sub(" ", command)
+
+    sanitized = _WINDOWS_EXIT_SWITCH_RE.sub(r'\g<prefix> ', sanitized)
 
     if _WINDOWS_CMD_INVOKE_RE.search(command):
         sanitized = _WINDOWS_CMD_SWITCH_RE.sub(" ", sanitized)

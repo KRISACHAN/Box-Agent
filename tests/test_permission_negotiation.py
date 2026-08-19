@@ -513,6 +513,93 @@ class TestSafetyPermissionNegotiation:
         assert results[0].policy_decision["scope"] == "safety"
 
     @pytest.mark.asyncio
+    async def test_dangerous_outside_command_negotiates_both_gates_before_execution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A safety approval survives the following filesystem approval gate."""
+        from box_agent.tools.bash_tool import BashTool
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside_dir = tmp_path / "outside-empty-dir"
+        outside_dir.mkdir()
+        grant_store = GrantStore()
+        engine = PermissionEngine(
+            CapabilityPolicy(
+                filesystem_scope="session_workspace",
+                session_workspace_root=str(workspace),
+            ),
+            workspace,
+            grant_store=grant_store,
+        )
+        engine._home_dir = tmp_path.resolve()
+        spawned: list[str] = []
+
+        class SuccessfulProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return b"DELETED\n", b""
+
+        async def fake_spawn(command: str, *, merge_stderr: bool = False):
+            del merge_stderr
+            spawned.append(command)
+            return SuccessfulProcess()
+
+        class ChainedNegotiator:
+            def __init__(self):
+                self.requests: list[dict] = []
+
+            async def negotiate(self, permission_request: dict) -> bool:
+                self.requests.append(permission_request)
+                if permission_request.get("scope") == "filesystem":
+                    requested_path = Path(permission_request["path"])
+                    grant_store.add_filesystem_dir_grant(
+                        requested_path.parent,
+                        "prompt",
+                    )
+                return True
+
+        monkeypatch.setattr("box_agent.tools.bash_tool.backup_file", lambda _path: None)
+        tool = BashTool(
+            workspace_dir=str(workspace),
+            allow_full_access=False,
+            permission_engine=engine,
+            non_interactive=True,
+        )
+        monkeypatch.setattr(tool, "_create_subprocess", fake_spawn)
+        windows_path = str(outside_dir)
+        command = (
+            f'rmdir "{windows_path}" && '
+            f'if exist "{windows_path}" '
+            '(echo DELETE_FAILED & exit /b 1) else (echo DELETED)'
+        )
+        negotiator = ChainedNegotiator()
+
+        events = await collect(run_agent_loop(
+            llm=_llm_with_tool_call("bash", {"command": command}),
+            messages=_msgs(),
+            tools={"bash": tool},
+            max_steps=5,
+            permission_negotiator=negotiator,
+            workspace_dir=str(workspace),
+        ))
+
+        assert [request["scope"] for request in negotiator.requests] == [
+            "safety",
+            "filesystem",
+        ]
+        assert spawned == [command]
+        assert tool._approved_safety_commands == set()
+        results = [e for e in events if isinstance(e, ToolCallResult)]
+        assert len(results) == 1
+        assert results[0].success is True
+        assert results[0].policy_decision is not None
+        assert results[0].policy_decision["scope"] == "filesystem"
+        assert results[0].policy_decision["decision"] == "approved"
+        assert results[0].policy_decision["retry_count"] == 2
+
+    @pytest.mark.asyncio
     async def test_unrestricted_filesystem_retries_dangerous_windows_command_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ):

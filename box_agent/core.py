@@ -118,6 +118,7 @@ TOOL_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
 # mature long-running agents while retaining bounded recovery below.
 LLM_PROVIDER_STALE_SECONDS: Final[float] = 180.0
 MAX_PROVIDER_STALE_RECOVERIES: Final[int] = 3
+MAX_TOOL_PERMISSION_RETRIES: Final[int] = 4
 
 
 async def _stream_with_activity(
@@ -894,6 +895,131 @@ def _policy_decision_payload(
     if error:
         payload["error"] = error
     return payload
+
+
+async def _negotiate_tool_permission_chain(
+    *,
+    result: ToolResult,
+    permission_negotiator: Any,
+    tool_name: str,
+    tool: Tool | None,
+    arguments: dict[str, Any],
+    retry_offer_error: Callable[[], str | None],
+    on_retry: Callable[[ToolResult], None] | None = None,
+) -> tuple[ToolResult, dict[str, Any] | None]:
+    """Negotiate distinct permission gates until the tool can execute.
+
+    One invocation can legitimately cross more than one independent gate, for
+    example a dangerous command that also targets an out-of-workspace path.
+    Repeated identical requests are stopped rather than prompting forever when
+    a tool or negotiator failed to apply an approved grant.
+    """
+    policy_decision: dict[str, Any] | None = None
+    retry_count = 0
+    seen_requests: set[str] = set()
+
+    while not result.success and result.permission_request:
+        permission_request = result.permission_request
+        request_key = json.dumps(
+            permission_request,
+            sort_keys=True,
+            ensure_ascii=True,
+            default=str,
+        )
+        if request_key in seen_requests:
+            policy_decision = _policy_decision_payload(
+                tool_name=tool_name,
+                permission_request=permission_request,
+                decision="error",
+                retry_count=retry_count,
+                error="Permission request repeated after approval",
+            )
+            _log.warning(
+                "permission/repeated_after_approval tool=%s retry_count=%d",
+                tool_name,
+                retry_count,
+            )
+            break
+        if retry_count >= MAX_TOOL_PERMISSION_RETRIES:
+            policy_decision = _policy_decision_payload(
+                tool_name=tool_name,
+                permission_request=permission_request,
+                decision="error",
+                retry_count=retry_count,
+                error="Permission retry limit reached",
+            )
+            _log.warning(
+                "permission/retry_limit tool=%s retry_count=%d",
+                tool_name,
+                retry_count,
+            )
+            break
+
+        seen_requests.add(request_key)
+        policy_decision = _policy_decision_payload(
+            tool_name=tool_name,
+            permission_request=permission_request,
+            decision="requested",
+            retry_count=retry_count,
+        )
+        try:
+            granted = await permission_negotiator.negotiate(permission_request)
+        except Exception as exc:
+            policy_decision = _policy_decision_payload(
+                tool_name=tool_name,
+                permission_request=permission_request,
+                decision="error",
+                retry_count=retry_count,
+                error=str(exc),
+            )
+            _log.warning(
+                "permission/negotiator_error tool=%s error=%s",
+                tool_name,
+                exc,
+            )
+            break
+
+        if not granted:
+            policy_decision = _policy_decision_payload(
+                tool_name=tool_name,
+                permission_request=permission_request,
+                decision="denied",
+                retry_count=retry_count,
+            )
+            break
+
+        retry_count += 1
+        policy_decision = _policy_decision_payload(
+            tool_name=tool_name,
+            permission_request=permission_request,
+            decision="approved",
+            retry_count=retry_count,
+        )
+        offer_error = retry_offer_error()
+        if offer_error is not None:
+            result = ToolResult(success=False, content="", error=offer_error)
+        elif tool is None:
+            result = ToolResult(
+                success=False,
+                content="",
+                error=f"Unknown tool: {tool_name}",
+            )
+        else:
+            _approve_tool_permission(tool, permission_request)
+            try:
+                result = await tool.invoke(arguments)
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc!s}"
+                trace = traceback.format_exc()
+                result = ToolResult(
+                    success=False,
+                    content="",
+                    error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
+                )
+        if on_retry is not None:
+            on_retry(result)
+
+    return result, policy_decision
 
 
 def _extract_web_search_payload(tool_name: str, content: str) -> dict[str, Any] | None:
@@ -5019,77 +5145,36 @@ async def run_agent_loop(
 
             # ── Permission negotiation + retry ──────────────
             if not result.success and result.permission_request and permission_negotiator:
-                policy_decision = _policy_decision_payload(
-                    tool_name=fn_name,
-                    permission_request=result.permission_request,
-                    decision="requested",
-                )
-                try:
-                    granted = await permission_negotiator.negotiate(result.permission_request)
-                except Exception as exc:
-                    policy_decision = _policy_decision_payload(
-                        tool_name=fn_name,
-                        permission_request=result.permission_request,
-                        decision="error",
-                        error=str(exc),
-                    )
-                    _log.warning(
-                        "permission/negotiator_error tool=%s error=%s",
-                        fn_name,
-                        exc,
-                    )
-                    granted = False
-                if granted:
-                    policy_decision = _policy_decision_payload(
-                        tool_name=fn_name,
-                        permission_request=result.permission_request,
-                        decision="approved",
-                        retry_count=1,
-                    )
-                    retry_offer_error = (
-                        f"Unknown tool: {fn_name}"
-                        if fn_name not in offered_tools_by_name
-                        else _tool_offer_error(fn_name)
-                    )
-                    if retry_offer_error is not None:
-                        result = ToolResult(
-                            success=False,
-                            content="",
-                            error=retry_offer_error,
-                        )
-                    else:
-                        _approve_tool_permission(
-                            offered_tools_by_name[fn_name],
-                            result.permission_request,
-                        )
-                        try:
-                            result = await offered_tools_by_name[fn_name].invoke(fn_args)
-                        except Exception as exc:
-                            detail = f"{type(exc).__name__}: {exc!s}"
-                            trace = traceback.format_exc()
-                            result = ToolResult(
-                                success=False,
-                                content="",
-                                error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
-                            )
-                    # Re-log after retry
+                def log_permission_retry(retry_result: ToolResult) -> None:
                     if logger:
                         logger.log_tool_result(
                             tool_name=fn_name,
                             arguments=fn_args,
-                            result_success=result.success,
-                            result_content=result.content if result.success else None,
-                            result_error=result.error if not result.success else None,
-                            raw_output=result.raw_output,
+                            result_success=retry_result.success,
+                            result_content=(
+                                retry_result.content if retry_result.success else None
+                            ),
+                            result_error=(
+                                retry_result.error if not retry_result.success else None
+                            ),
+                            raw_output=retry_result.raw_output,
                             tool_id=tool_id,
                             server_name=server_name,
                         )
-                elif policy_decision is not None and policy_decision.get("decision") != "error":
-                    policy_decision = _policy_decision_payload(
-                        tool_name=fn_name,
-                        permission_request=result.permission_request,
-                        decision="denied",
-                    )
+
+                result, policy_decision = await _negotiate_tool_permission_chain(
+                    result=result,
+                    permission_negotiator=permission_negotiator,
+                    tool_name=fn_name,
+                    tool=offered_tools_by_name.get(fn_name),
+                    arguments=fn_args,
+                    retry_offer_error=lambda: (
+                        f"Unknown tool: {fn_name}"
+                        if fn_name not in offered_tools_by_name
+                        else _tool_offer_error(fn_name)
+                    ),
+                    on_retry=log_permission_retry,
+                )
             elif not result.success and result.permission_request:
                 policy_decision = _policy_decision_payload(
                     tool_name=fn_name,
@@ -5664,76 +5749,36 @@ async def run_agent_loop(
 
                 # ── Permission negotiation + retry ──────────────
                 if not result.success and result.permission_request and permission_negotiator:
-                    policy_decision = _policy_decision_payload(
-                        tool_name=fn_name,
-                        permission_request=result.permission_request,
-                        decision="requested",
-                    )
-                    try:
-                        granted = await permission_negotiator.negotiate(result.permission_request)
-                    except Exception as exc:
-                        policy_decision = _policy_decision_payload(
-                            tool_name=fn_name,
-                            permission_request=result.permission_request,
-                            decision="error",
-                            error=str(exc),
-                        )
-                        _log.warning(
-                            "permission/negotiator_error tool=%s error=%s",
-                            fn_name,
-                            exc,
-                        )
-                        granted = False
-                    if granted:
-                        policy_decision = _policy_decision_payload(
-                            tool_name=fn_name,
-                            permission_request=result.permission_request,
-                            decision="approved",
-                            retry_count=1,
-                        )
-                        retry_offer_error = (
-                            f"Unknown tool: {fn_name}"
-                            if fn_name not in offered_tools_by_name
-                            else _tool_offer_error(fn_name)
-                        )
-                        if retry_offer_error is not None:
-                            result = ToolResult(
-                                success=False,
-                                content="",
-                                error=retry_offer_error,
-                            )
-                        else:
-                            _approve_tool_permission(
-                                offered_tools_by_name[fn_name],
-                                result.permission_request,
-                            )
-                            try:
-                                result = await offered_tools_by_name[fn_name].invoke(fn_args)
-                            except Exception as exc:
-                                detail = f"{type(exc).__name__}: {exc!s}"
-                                trace = traceback.format_exc()
-                                result = ToolResult(
-                                    success=False,
-                                    content="",
-                                    error=f"Tool execution failed: {detail}\n\nTraceback:\n{trace}",
-                                )
+                    def log_parallel_permission_retry(retry_result: ToolResult) -> None:
                         if logger:
                             logger.log_tool_result(
                                 tool_name=fn_name,
                                 arguments=fn_args,
-                                result_success=result.success,
-                                result_content=result.content if result.success else None,
-                                result_error=result.error if not result.success else None,
-                                raw_output=result.raw_output,
+                                result_success=retry_result.success,
+                                result_content=(
+                                    retry_result.content if retry_result.success else None
+                                ),
+                                result_error=(
+                                    retry_result.error if not retry_result.success else None
+                                ),
+                                raw_output=retry_result.raw_output,
                                 tool_id=tool_id,
                                 server_name=server_name,
                             )
-                    elif policy_decision is not None and policy_decision.get("decision") != "error":
-                        policy_decision = _policy_decision_payload(
-                            tool_name=fn_name,
-                            permission_request=result.permission_request,
-                            decision="denied",
-                        )
+
+                    result, policy_decision = await _negotiate_tool_permission_chain(
+                        result=result,
+                        permission_negotiator=permission_negotiator,
+                        tool_name=fn_name,
+                        tool=offered_tools_by_name.get(fn_name),
+                        arguments=fn_args,
+                        retry_offer_error=lambda: (
+                            f"Unknown tool: {fn_name}"
+                            if fn_name not in offered_tools_by_name
+                            else _tool_offer_error(fn_name)
+                        ),
+                        on_retry=log_parallel_permission_retry,
+                    )
                 elif not result.success and result.permission_request:
                     policy_decision = _policy_decision_payload(
                         tool_name=fn_name,
