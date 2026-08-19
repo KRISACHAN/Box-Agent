@@ -42,6 +42,27 @@ is still current.
   Therefore the release document must not be used to claim the current source
   version, publication, or an installed officev3 runtime.
 
+## Quick routing by affected area
+
+Use this table to find the history most likely to affect a change. It is a
+starting point for contributors and reviewers, not a substitute for the
+current source, tests, or linked details. When a row names more than one
+decision, read those entries together.
+
+| Area | Affected paths or keywords | Current effective decision | Relationship | Details |
+| --- | --- | --- | --- | --- |
+| File writes | `box_agent/tools/file_tools.py`, `write_file` | Ordered chunks commit atomically, with bounded transactions, replay protection, and whole-body safety checks. | PR #37 hardens PR #34; both remain relevant. | [PR #37](#2026-08-17--transactional-write-safety-follow-up-pr-37), [PR #34](#2026-08-17--unified-transactional-write_file-protocol-pr-34) |
+| Tool invocation | `box_agent/tools/base.py`, `schema_validation.py`, `Tool.invoke` | Tool schemas and arguments fail closed before `execute()` is called. | Current at this baseline. | [PR #33](#2026-08-17--validate-tool-arguments-before-execution-pr-33) |
+| Context compression | `box_agent/core.py`, tool-call arguments, history summarization | Normal unsummarized history retains exact tool-call arguments; whole-history summarization remains a separate boundary. | Current at this baseline. | [PR #35](#2026-08-17--preserve-tool-call-arguments-in-normal-history-pr-35) |
+| MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
+| Model routing and controlled presentations | `box_agent/llm/model_routing.py`, `box_agent/workflows/presentation_*`, controlled PPTX | Automatic child-model routing uses a host allowlist, while presentation-specific state and recovery remain outside the generic kernel. | PR #30 is the main record; later research hardening must be checked where relevant. | [PR #30](#2026-08-14--runtime-routing-and-presentation-reliability-pr-30), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
+
+For research execution, Todo/progress behavior, browser routing, or contributor
+branch history, also check
+[other target-branch changes](#other-target-branch-changes-after-or-adjacent-to-those-prs).
+Release, provider API, and ACP compatibility have their own sources under
+[long-lived release and compatibility history](#long-lived-release-and-compatibility-history).
+
 ## Recent material changes on `main`
 
 ### 2026-08-17 — transactional write safety follow-up (PR #37)
@@ -206,6 +227,12 @@ kernel/tool contract, security boundary, compatibility default, migration,
 release artifact, rollback procedure, cross-repository dependency, or packaged
 runtime expectation. Include the change/merge reference, durable effect,
 compatibility or migration impact, proof anchors, residual gap, and rollback.
+
+Keep the quick-routing table aligned with the detailed history. Add or revise a
+row when a new entry changes the current effective decision or creates a
+superseding, hardening, rollback, or read-together relationship. Prefer stable,
+searchable path, module, protocol, and configuration names, while keeping the
+summary useful to a human reader.
 
 Do not copy every commit, paste generated release notes, or claim that a PR's
 tests passed for a later Head. Retire obsolete entries only after their
