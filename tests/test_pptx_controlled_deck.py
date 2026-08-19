@@ -3248,6 +3248,62 @@ def test_scaffold_accepts_user_provided_quantitative_outline_without_links(
     assert json.loads(outline_check.stdout)["warnings"] == []
 
 
+def test_scaffold_normalizes_chart_with_only_one_real_value_to_cards(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline_path.write_text(
+        json.dumps(
+            {
+                "deck_goal": "说明 APS 市场数据现状",
+                "audience": "业务决策者",
+                "source_mode": "user_provided",
+                "storyline": "仅呈现已有事实，不构造虚假趋势。",
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "APS 市场规模",
+                        "message": "目前只有 2024 年市场规模数据。",
+                        "bullets": ["其他年份待补充，不制作虚假趋势。"],
+                        "layout": "可编辑图表页",
+                        "visual": "可编辑折线图",
+                        "evidence": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    result = _run(
+        "inspect_deck_contract.js",
+        "chart-data-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["layout_normalizations"] == [
+        {
+            "slide": 1,
+            "from": "chart-data-v1",
+            "to": "cards-grid-v1",
+            "reason": (
+                "outline names a quantitative visual without quantitative evidence "
+                "or an authorized illustrative assumption, so preserve the qualitative "
+                "argument in editable cards instead of inventing values"
+            ),
+        }
+    ]
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == "cards-grid-v1"
+
+
 def test_scaffold_keeps_project_media_and_metrics_as_project_case_study(
     tmp_path: Path,
 ) -> None:
@@ -4038,6 +4094,69 @@ def test_deck_spec_rejects_chart_placeholder_as_data(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "placeholders are not valid data" in result.stdout
+    assert "Keep a complete factual category/series subset" in result.stdout
+    assert "never invent a missing baseline or forecast" in result.stdout
+
+
+def test_chart_patch_keeps_complete_series_and_moves_isolated_metric_to_highlight(
+    tmp_path: Path,
+) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "chart-data-v1",
+        "--fact",
+        "AI 工业质检市场从 2017 年 9 亿元增长到 2024 年 454 亿元",
+        "--fact",
+        "APS 2024 年市场规模为 25.11 亿元",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "props": {
+                            "categories": ["2017", "2024"],
+                            "series": [
+                                {
+                                    "name": "AI 工业质检（亿元）",
+                                    "values": ["9", "454"],
+                                }
+                            ],
+                            "highlights": [
+                                {
+                                    "value": "25.11 亿元",
+                                    "label": "APS 市场规模",
+                                    "note": "2024 年单点数据",
+                                }
+                            ],
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    applied = _run(
+        "apply_deck_patch.js",
+        str(deck_path),
+        str(patch_path),
+    )
+
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    props = deck["slides"][0]["props"]
+    assert props["categories"] == ["2017", "2024"]
+    assert props["series"] == [
+        {"name": "AI 工业质检（亿元）", "values": ["9", "454"]}
+    ]
+    assert props["highlights"][0]["value"] == "25.11 亿元"
 
 
 def test_strict_source_kpi_sanitizer_uses_local_fact_fragments(

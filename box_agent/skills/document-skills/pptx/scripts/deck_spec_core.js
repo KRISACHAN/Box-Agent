@@ -634,7 +634,9 @@ function validateChartDataProps(props, fieldPath, issues) {
       if (!/-?\d+(?:,\d{3})*(?:\.\d+)?/.test(String(value == null ? "" : value))) {
         issues.push(
           `${fieldPath}.series.${seriesIndex}.values.${valueIndex}: expected a numeric ` +
-          "chart value; units may be included, but placeholders are not valid data"
+          "chart value; units may be included, but placeholders are not valid data. " +
+          "Keep a complete factual category/series subset, move isolated metrics to " +
+          "highlights or narrative fields, and never invent a missing baseline or forecast"
         );
       }
     });

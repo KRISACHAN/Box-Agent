@@ -53,3 +53,6 @@ def test_pptx_skill_makes_scaffold_and_framework_fallback_executable() -> None:
         "the exact unavailable-data placeholder must appear in `message` or `bullets`"
         in skill
     )
+    assert "every included series must contain a real numeric value" in skill
+    assert "Never pad a gap with" in skill
+    assert "or an invented baseline/forecast" in skill

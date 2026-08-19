@@ -893,6 +893,7 @@ def _content_patch_input(
             return None
         props = deck_slide.get("props")
         props_dict = props if isinstance(props, dict) else {}
+        layout_id = deck_slide.get("layout_id")
         missing_fact_evidence = _missing_fact_evidence(
             outline_slide.get("evidence")
         )
@@ -902,7 +903,7 @@ def _content_patch_input(
         pages.append(
             {
                 "slide_id": deck_slide.get("id") or f"slide-{index + 1:02d}",
-                "layout_id": deck_slide.get("layout_id"),
+                "layout_id": layout_id,
                 "source_outline_page": outline_index + 1,
                 "title": outline_slide.get("title"),
                 "title_prop_path": _outline_title_prop_path(
@@ -926,6 +927,19 @@ def _content_patch_input(
                 # evidence. It is safe only in cover metadata explicitly labelled
                 # as a page/slide count.
                 "structural_numeric_literals": structural_numeric_literals,
+                **(
+                    {
+                        "chart_data_policy": (
+                            "Every included series must have a real numeric value for "
+                            "every included category. Keep the strongest complete "
+                            "factual subset; move isolated metrics to highlights, "
+                            "insight, or subtitle. Never pad gaps with 0, placeholders, "
+                            "or an invented baseline/forecast."
+                        )
+                    }
+                    if layout_id == "chart-data-v1"
+                    else {}
+                ),
                 "prop_shape": _json_field_shape(props_dict),
                 "props_template": props_dict,
             }

@@ -34,6 +34,7 @@ const {
 const {
   analyzeOutlineLayoutIntent,
   expectedVisualItemCount,
+  outlineHasPlottableChartEvidence,
   outlineHasQuantitativeEvidence,
   outlineIntentRecord,
 } = require("./outline_layout_contract.js");
@@ -710,7 +711,9 @@ function normalizeOutlineDrivenLayoutIds(
     }
     if (
       ["chart-bar-v1", "chart-data-v1", "kpi-grid-v1"].includes(layoutId)
-      && !outlineHasQuantitativeEvidence(slide, outlineBinding.sourceMode)
+      && !(layoutId === "chart-data-v1"
+        ? outlineHasPlottableChartEvidence(slide, outlineBinding.sourceMode)
+        : outlineHasQuantitativeEvidence(slide, outlineBinding.sourceMode))
       && !layoutPolicy.allowIllustrativeQuantitative
     ) {
       normalizations.push({
@@ -745,10 +748,15 @@ function validateOutlineLayoutFit(orderedLayouts, outlineBinding, layoutPolicy =
     }
     if (
       quantitativeLayouts.has(layout.id)
-      && !outlineHasQuantitativeEvidence(
-        outlineBinding.slides[index],
-        outlineBinding.sourceMode
-      )
+      && !(layout.id === "chart-data-v1"
+        ? outlineHasPlottableChartEvidence(
+          outlineBinding.slides[index],
+          outlineBinding.sourceMode
+        )
+        : outlineHasQuantitativeEvidence(
+          outlineBinding.slides[index],
+          outlineBinding.sourceMode
+        ))
       && !layoutPolicy.allowIllustrativeQuantitative
     ) {
       issues.push(

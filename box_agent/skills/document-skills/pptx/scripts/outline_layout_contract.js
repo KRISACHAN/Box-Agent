@@ -64,7 +64,7 @@ function semanticRule(kind, preferred, allowed, reason) {
   };
 }
 
-function outlineHasQuantitativeEvidence(slide, sourceMode = "") {
+function outlineQuantitativeEvidenceCount(slide, sourceMode = "") {
   const evidence = Array.isArray(slide && slide.evidence) ? slide.evidence : [];
   const userProvidedContent = sourceMode === "user_provided"
     ? [
@@ -76,7 +76,17 @@ function outlineHasQuantitativeEvidence(slide, sourceMode = "") {
   const content = [...evidence, ...userProvidedContent]
     .map(value => String(value || ""))
     .join(" ");
-  return /\d|%|％|[$¥￥€£]|[一二三四五六七八九十百千万]+(?:次|年|届|名|个|项|座|枚|金牌|冠军)/.test(content);
+  return (content.match(
+    /\d+(?:,\d{3})*(?:\.\d+)?(?:[%％])?|[$¥￥€£]|[一二三四五六七八九十百千万]+(?:次|年|届|名|个|项|座|枚|金牌|冠军)/g
+  ) || []).length;
+}
+
+function outlineHasQuantitativeEvidence(slide, sourceMode = "") {
+  return outlineQuantitativeEvidenceCount(slide, sourceMode) > 0;
+}
+
+function outlineHasPlottableChartEvidence(slide, sourceMode = "") {
+  return outlineQuantitativeEvidenceCount(slide, sourceMode) >= 2;
 }
 
 function analyzeOutlineLayoutIntent(
@@ -87,10 +97,11 @@ function analyzeOutlineLayoutIntent(
   const all = selectionText(slide);
   const visual = visualSelectionText(slide);
   const layout = text(slide && slide.layout);
-  const hasQuantitativeEvidence = outlineHasQuantitativeEvidence(slide, sourceMode);
+  const quantitativeEvidenceCount = outlineQuantitativeEvidenceCount(slide, sourceMode);
+  const hasQuantitativeEvidence = quantitativeEvidenceCount > 0;
 
-  const quantitativeRule = (kind, preferred, allowed, reason) => {
-    if (hasQuantitativeEvidence || allowIllustrativeQuantitative) {
+  const quantitativeRule = (kind, preferred, allowed, reason, minimumEvidence = 1) => {
+    if (quantitativeEvidenceCount >= minimumEvidence || allowIllustrativeQuantitative) {
       return semanticRule(kind, preferred, allowed, reason);
     }
     return semanticRule(
@@ -166,7 +177,8 @@ function analyzeOutlineLayoutIntent(
       "data-chart",
       "chart-data-v1",
       ["chart-data-v1"],
-      "outline names a specific editable data-chart geometry"
+      "outline names a specific editable data-chart geometry",
+      2
     );
   }
   if (ARCHITECTURE_RE.test(visual)) {
@@ -410,6 +422,7 @@ function validateOutlineVisualCardinality(slide, outlineSlide, basePath) {
 module.exports = {
   analyzeOutlineLayoutIntent,
   expectedVisualItemCount,
+  outlineHasPlottableChartEvidence,
   outlineHasQuantitativeEvidence,
   outlineIntentRecord,
   validateOutlineVisualCardinality,

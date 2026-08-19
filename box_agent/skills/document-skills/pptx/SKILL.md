@@ -163,6 +163,14 @@ or content collection. The patch normalizer may compact an overlong optional
 source caption, so a source-caption length issue is not a reason to retry an
 unchanged patch or block the whole deck.
 
+For `chart-data-v1`, every included series must contain a real numeric value for
+every included category. When the available facts do not form a complete shared
+grid, keep the strongest complete factual category/series subset and move an
+isolated metric into `highlights`, `insight`, or `subtitle`. Never pad a gap with
+`0`, `—`, `待补充`, or an invented baseline/forecast. If no series has at least
+two real values, use the scaffold's effective non-chart layout instead of
+forcing a chart.
+
 Treat “做一版汇报用的”, “换一种版式/构图”, “重新设计”, or a request for a
 visually distinct version as a **controlled redesign**, not as a content-only
 patch. Write one `deck.redesign.json` with optional top-level `design`

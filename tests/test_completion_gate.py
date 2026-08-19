@@ -4729,6 +4729,7 @@ def test_controlled_content_patch_maps_statement_title_and_numeric_evidence(tmp_
     assert '"structural_numeric_literals":["1"]' in checkpoint
     assert '"research_facts":["公开资料确认 1958 年夺冠。"]' in checkpoint
     assert "Do not translate Chinese number words into new Arabic metrics" in checkpoint
+    assert "chart_data_policy" not in checkpoint
 
 
 def test_user_provided_content_patch_allows_page_copy_quantities_without_links(
@@ -4776,6 +4777,12 @@ def test_user_provided_content_patch_allows_page_copy_quantities_without_links(
     assert payload is not None
     page = json.loads(payload)["pages"][0]
     assert page["allowed_numeric_literals"] == ["18", "7", "68%", "81%"]
+    assert page["chart_data_policy"] == (
+        "Every included series must have a real numeric value for every included "
+        "category. Keep the strongest complete factual subset; move isolated metrics "
+        "to highlights, insight, or subtitle. Never pad gaps with 0, placeholders, or "
+        "an invented baseline/forecast."
+    )
 
 
 def test_controlled_content_patch_requires_visible_missing_fact_disclosure(tmp_path):
