@@ -4665,9 +4665,73 @@ class _PermissionNegotiator:
         self._conn = conn
         self._session_id = session_id
         self._store = grant_store
+        self._inflight_lock = asyncio.Lock()
+        self._prompt_lock = asyncio.Lock()
+        self._inflight: dict[tuple[str, str, str], asyncio.Task[bool]] = {}
+        self._inflight_waiters: dict[tuple[str, str, str], int] = {}
 
     async def negotiate(self, permission_request: dict) -> bool:
-        """Negotiate a permission request.  Returns ``True`` if granted."""
+        """Coalesce identical requests and serialize host approval prompts."""
+        if permission_request.get("scope") == "safety":
+            async with self._prompt_lock:
+                return await self._negotiate_once(permission_request.copy())
+
+        key = self._request_key(permission_request)
+        async with self._inflight_lock:
+            task = self._inflight.get(key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._negotiate_serialized(permission_request.copy())
+                )
+                self._inflight[key] = task
+                task.add_done_callback(
+                    lambda completed, request_key=key: self._clear_inflight(
+                        request_key,
+                        completed,
+                    )
+                )
+            self._inflight_waiters[key] = self._inflight_waiters.get(key, 0) + 1
+        try:
+            return await asyncio.shield(task)
+        finally:
+            async with self._inflight_lock:
+                remaining = self._inflight_waiters.get(key, 1) - 1
+                if remaining > 0:
+                    self._inflight_waiters[key] = remaining
+                else:
+                    self._inflight_waiters.pop(key, None)
+                    if not task.done():
+                        task.cancel()
+                    if self._inflight.get(key) is task:
+                        self._inflight.pop(key, None)
+
+    def _clear_inflight(
+        self,
+        key: tuple[str, str, str],
+        task: asyncio.Task[bool],
+    ) -> None:
+        if self._inflight.get(key) is task:
+            self._inflight.pop(key, None)
+
+    @staticmethod
+    def _request_key(permission_request: dict) -> tuple[str, str, str]:
+        scope = str(permission_request.get("scope", ""))
+        requested_scope = str(permission_request.get("requested_scope", ""))
+        raw_path = permission_request.get("path", "")
+        path = str(raw_path) if raw_path else ""
+        if path:
+            try:
+                path = str(Path(path).expanduser().resolve())
+            except (OSError, RuntimeError):
+                pass
+        return scope, requested_scope, path
+
+    async def _negotiate_serialized(self, permission_request: dict) -> bool:
+        async with self._prompt_lock:
+            return await self._negotiate_once(permission_request)
+
+    async def _negotiate_once(self, permission_request: dict) -> bool:
+        """Negotiate one permission request. Returns ``True`` if granted."""
         scope = permission_request.get("scope", "")
         requested_scope = permission_request.get("requested_scope", "")
         path_hint = permission_request.get("path", "")

@@ -910,6 +910,15 @@ class Agent:
         if legacy_overrides:
             effective_options = replace(effective_options, **legacy_overrides)
 
+        sub_agent_tool = self.tools.get("sub_agent")
+        set_child_negotiator = getattr(
+            sub_agent_tool,
+            "set_permission_negotiator",
+            None,
+        )
+        if callable(set_child_negotiator):
+            set_child_negotiator(effective_options.permission_negotiator)
+
         async for event in run_agent_loop(
             llm=effective_options.llm,
             summary_llm=effective_options.summary_llm,

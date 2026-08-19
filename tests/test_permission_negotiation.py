@@ -450,6 +450,133 @@ class TestLegacyPermissionEvent:
         assert perm_events[0].requested_scope == "user_home"
 
 
+class TestACPConversationPermissionBroker:
+    @pytest.mark.asyncio
+    async def test_identical_concurrent_requests_share_one_host_prompt(self, tmp_path):
+        from acp.schema import AllowedOutcome, RequestPermissionResponse
+        from box_agent.acp import _PermissionNegotiator
+
+        target = tmp_path / "Downloads"
+        target.mkdir()
+        prompt_started = asyncio.Event()
+        release_prompt = asyncio.Event()
+
+        class Connection:
+            def __init__(self):
+                self.calls = 0
+
+            async def requestPermission(self, request):
+                self.calls += 1
+                prompt_started.set()
+                await release_prompt.wait()
+                return RequestPermissionResponse(
+                    outcome=AllowedOutcome(
+                        outcome="selected",
+                        optionId="approve",
+                    )
+                )
+
+        connection = Connection()
+        store = GrantStore()
+        negotiator = _PermissionNegotiator(connection, "session-1", store)
+        request = {
+            "scope": "filesystem",
+            "requested_scope": "user_home",
+            "path": str(target),
+            "reason": "Read Downloads",
+        }
+
+        first = asyncio.create_task(negotiator.negotiate(request))
+        second = asyncio.create_task(negotiator.negotiate(dict(request)))
+        await prompt_started.wait()
+        release_prompt.set()
+
+        assert await asyncio.gather(first, second) == [True, True]
+        assert connection.calls == 1
+        assert store.has_filesystem_dir_grant(target.resolve())
+
+    @pytest.mark.asyncio
+    async def test_concurrent_safety_requests_remain_one_shot(self):
+        from acp.schema import AllowedOutcome, RequestPermissionResponse
+        from box_agent.acp import _PermissionNegotiator
+
+        class Connection:
+            def __init__(self):
+                self.calls = 0
+
+            async def requestPermission(self, request):
+                self.calls += 1
+                await asyncio.sleep(0)
+                return RequestPermissionResponse(
+                    outcome=AllowedOutcome(
+                        outcome="selected",
+                        optionId="approve",
+                    )
+                )
+
+        connection = Connection()
+        negotiator = _PermissionNegotiator(connection, "session-1", GrantStore())
+        request = {
+            "scope": "safety",
+            "requested_scope": "dangerous_command",
+            "reason": "Run a dangerous command",
+        }
+
+        assert await asyncio.gather(
+            negotiator.negotiate(request),
+            negotiator.negotiate(dict(request)),
+        ) == [True, True]
+        assert connection.calls == 2
+
+    @pytest.mark.asyncio
+    async def test_shared_prompt_survives_one_waiter_cancellation_and_stops_after_last(
+        self,
+        tmp_path,
+    ):
+        from box_agent.acp import _PermissionNegotiator
+
+        target = tmp_path / "Downloads"
+        target.mkdir()
+        prompt_started = asyncio.Event()
+        prompt_cancelled = asyncio.Event()
+
+        class Connection:
+            def __init__(self):
+                self.calls = 0
+
+            async def requestPermission(self, request):
+                self.calls += 1
+                prompt_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    prompt_cancelled.set()
+
+        connection = Connection()
+        negotiator = _PermissionNegotiator(connection, "session-1", GrantStore())
+        request = {
+            "scope": "filesystem",
+            "requested_scope": "user_home",
+            "path": str(target),
+            "reason": "Read Downloads",
+        }
+
+        first = asyncio.create_task(negotiator.negotiate(request))
+        second = asyncio.create_task(negotiator.negotiate(dict(request)))
+        await prompt_started.wait()
+
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert second.done() is False
+        assert connection.calls == 1
+
+        second.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await second
+        await prompt_cancelled.wait()
+
+
 class TestSafetyPermissionNegotiation:
     @pytest.mark.asyncio
     async def test_dangerous_bash_command_retries_after_approval(self, tmp_path: Path):

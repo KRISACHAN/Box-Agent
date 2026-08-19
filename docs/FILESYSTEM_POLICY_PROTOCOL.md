@@ -150,6 +150,8 @@ def _path_allowed_by_scope(self, resolved: Path, scope: str) -> bool:
 
 `workspace_dir`（ACP `cwd`）始终允许。`session_workspace_root` 与 `allowed_directories` 是叠加白名单。落在外面会触发 `permission_request` 协商（escalation 到 `user_home` 或 `custom`），而不是直接拒绝。
 
+主 Agent 与其子 Agent 共用同一个父会话权限协商器。子 Agent 不会自行扩权；批准后只重试触发请求的工具调用。相同的并发文件权限请求会合并，不同请求会串行弹出，避免多个子 Agent 同时展示重复审批框；危险命令的一次性安全审批不会合并。
+
 **0.8.29 起：`~/.box-agent/` 在所有 scope 下都被引擎硬编码放行，不需要进入 `allowed_directories`。**这是 Box-Agent 自有的运行数据目录（skills 内嵌资源、runtime-packages、browsers cache、log、trash 等），属于框架内部，不是用户业务数据。宿主无需为这个目录单独申请权限或在 `_meta.filesystem_policy` 里追加它。
 
 ---
