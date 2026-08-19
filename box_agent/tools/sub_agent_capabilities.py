@@ -32,6 +32,7 @@ TRUSTED_NETWORK_TOOL_NAMES = frozenset(
     {"generate_image", "vision_review", "web_search"}
 )
 TRUSTED_UNSCOPED_WRITE_TOOLS = frozenset({"generate_image"})
+PERMISSION_GATED_PROCESS_TOOL_NAMES = frozenset({"bash"})
 
 MINIMAL_DELEGATION_EXAMPLE: dict[str, Any] = {
     "task": "Read the provided files and summarize them.",
@@ -380,10 +381,15 @@ def parse_delegation_spec(
         read_only=not bool(
             requested_path_writes
             or set(normalized_required_tools) & TRUSTED_UNSCOPED_WRITE_TOOLS
+            or set(normalized_required_tools) & PERMISSION_GATED_PROCESS_TOOL_NAMES
         ),
         network=bool(
             set(normalized_required_tools)
-            & (TRUSTED_NETWORK_TOOL_NAMES | _PLAYWRIGHT_READ_ONLY_TOOLS)
+            & (
+                TRUSTED_NETWORK_TOOL_NAMES
+                | _PLAYWRIGHT_READ_ONLY_TOOLS
+                | PERMISSION_GATED_PROCESS_TOOL_NAMES
+            )
         ),
         write_scope=normalized_write_scope,
         external_side_effect=False,
@@ -485,6 +491,7 @@ def _tool_denial_reason(
     *,
     strategy: str,
     constraints: DelegationConstraints,
+    permission_negotiator_available: bool,
 ) -> str | None:
     if strategy == "batch_files" and name not in _BATCH_FILES_ALLOWED_TOOLS:
         return "not_allowed_by_strategy"
@@ -493,17 +500,25 @@ def _tool_denial_reason(
     if metadata is None:
         return "unknown_capability_metadata"
 
+    permission_gated_process = name in PERMISSION_GATED_PROCESS_TOOL_NAMES
+    if metadata.process:
+        if not permission_gated_process:
+            return "process_not_delegable"
+        if not permission_negotiator_available:
+            return "permission_negotiator_unavailable"
+
     if constraints.read_only and (metadata.write or metadata.process):
         return "read_only"
     if not constraints.network and metadata.network:
         return "network_disabled"
     if not constraints.external_side_effect and metadata.external_side_effect:
         return "external_side_effect_disabled"
-    if constraints.write_scope is not None and metadata.write and name not in {
-        "write_file",
-        "append_file",
-        "edit_file",
-    }:
+    if (
+        constraints.write_scope is not None
+        and metadata.write
+        and not permission_gated_process
+        and name not in {"write_file", "append_file", "edit_file"}
+    ):
         return "write_scope_unenforceable"
     return None
 
@@ -518,6 +533,7 @@ class CapabilityResolver:
         parent_tools: Mapping[str, Tool],
         skill_loader: Any | None = None,
         capability_state: Any = "ready",
+        permission_negotiator_available: bool = False,
     ) -> ResolvedCapabilityBundle | CapabilityFailure:
         skills_or_failure = self._resolve_skills(spec, skill_loader)
         if isinstance(skills_or_failure, CapabilityFailure):
@@ -572,6 +588,7 @@ class CapabilityResolver:
                 tool,
                 strategy=spec.strategy,
                 constraints=spec.constraints,
+                permission_negotiator_available=permission_negotiator_available,
             )
             if reason:
                 denied.append({"name": name, "origin": origin, "reason": reason})

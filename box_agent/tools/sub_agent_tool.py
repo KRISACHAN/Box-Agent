@@ -283,10 +283,12 @@ class SubAgentTool(EventEmittingTool):
             "Pass a complete `task` brief. `required_tools` defaults only to available trusted "
             "local read tools (`read_file`, `query_jsonl`, `search_files`); pass an explicit "
             "minimal list for other work or an empty list for a tool-free task. Explicit tools "
-            "still pass a fail-closed runtime policy: process tools, external side effects, and "
-            "unknown MCP tools are not delegated. Known read-only network tools are enabled only "
-            "when named explicitly. Path-based write tools require an exact `write_scope`, with "
-            "disjoint scopes for parallel children.\n\n"
+            "still pass a fail-closed runtime policy: external side effects and unknown MCP tools "
+            "are not delegated. Known read-only network tools are enabled only when named "
+            "explicitly. `bash` is available only when named explicitly and every protected "
+            "command remains subject to the parent session's permission approval. Path-based "
+            "write tools require an exact `write_scope`, with disjoint scopes for parallel "
+            "children.\n\n"
             "For the same read-only operation over known local text files, pass their paths in "
             "`files`; the runtime uses its bounded completeness-checked batch fast path. Pass "
             "`budget` as an object such as `{max_steps:12, max_tool_calls:25}`."
@@ -1043,6 +1045,7 @@ class SubAgentTool(EventEmittingTool):
             parent_tools=live_tools,
             skill_loader=self._resolve_skill_loader(),
             capability_state=self._resolve_capability_state(),
+            permission_negotiator_available=self._permission_negotiator is not None,
         )
         if isinstance(resolved, CapabilityFailure):
             return self._failure_result(resolved, parsed)

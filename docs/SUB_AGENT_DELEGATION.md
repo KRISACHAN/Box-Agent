@@ -56,7 +56,10 @@ only; Skill metadata cannot add tools or widen policy.
 The runtime derives policy from explicitly selected tools instead of asking the
 model to author permission booleans:
 
-- process tools such as `bash` and `execute_code` are not delegated;
+- `bash` is delegated only when explicitly selected and a parent-session
+  permission negotiator is available; protected commands still require parent
+  approval;
+- `execute_code` and other process tools are not delegated;
 - tools with external side effects are not delegated;
 - unknown MCP tools fail closed;
 - known read-only network tools are enabled only when selected explicitly;
@@ -85,6 +88,8 @@ artifact-root-relative `write_scope`:
 The runtime wraps those tools and rejects paths outside the delegated scope
 before invoking the live parent tool. Parallel children must receive disjoint
 scopes. A scope without a path-based write tool is invalid.
+`write_scope` does not constrain shell semantics; explicitly delegated `bash`
+commands remain governed one by one by the parent permission engine.
 
 ## Bounded local-file batch fast path
 

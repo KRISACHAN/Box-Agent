@@ -207,24 +207,35 @@ def test_missing_required_tool_distinguishes_loading_from_not_found() -> None:
     assert ready.code == "REQUIRED_TOOL_NOT_FOUND"
 
 
-def test_derived_policy_allows_trusted_network_and_denies_process_tools() -> None:
+def test_derived_policy_allows_trusted_network_and_permission_gated_bash() -> None:
     web_spec = _parse(required_tools=["web_search"])
     bash_spec = _parse(required_tools=["bash"])
     assert isinstance(web_spec, DelegationSpec)
     assert isinstance(bash_spec, DelegationSpec)
+    assert bash_spec.constraints.read_only is False
+    assert bash_spec.constraints.network is True
 
     web_result = CapabilityResolver().resolve(
         web_spec,
         parent_tools={"web_search": NamedTool("web_search")},
     )
-    bash_result = CapabilityResolver().resolve(
+    bash_without_broker = CapabilityResolver().resolve(
         bash_spec,
         parent_tools={"bash": NamedTool("bash")},
     )
+    bash_with_broker = CapabilityResolver().resolve(
+        bash_spec,
+        parent_tools={"bash": NamedTool("bash")},
+        permission_negotiator_available=True,
+    )
 
     assert isinstance(web_result, ResolvedCapabilityBundle)
-    assert isinstance(bash_result, CapabilityFailure)
-    assert bash_result.details["denied_reason"] == "read_only"
+    assert isinstance(bash_without_broker, CapabilityFailure)
+    assert (
+        bash_without_broker.details["denied_reason"]
+        == "permission_negotiator_unavailable"
+    )
+    assert isinstance(bash_with_broker, ResolvedCapabilityBundle)
 
 
 def test_unknown_mcp_tools_fail_closed_even_when_explicitly_selected() -> None:

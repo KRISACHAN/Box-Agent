@@ -585,6 +585,54 @@ async def test_general_loop_uses_parent_permission_negotiator_and_retries(tmp_pa
     assert len(negotiator.requests) == 1
 
 
+async def test_explicit_bash_with_write_scope_uses_parent_permission_boundary(
+    tmp_path,
+):
+    class BashTool(Tool):
+        @property
+        def name(self) -> str:
+            return "bash"
+
+        @property
+        def description(self) -> str:
+            return "Run a command"
+
+        @property
+        def parameters(self) -> dict:
+            return {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+            }
+
+        async def execute(self, command: str) -> ToolResult:
+            return ToolResult(success=True, content=command)
+
+    class ApprovingNegotiator:
+        async def negotiate(self, permission_request: dict) -> bool:
+            return True
+
+    llm = _make_llm("delegation ready")
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={
+            "bash": BashTool(),
+            "write_file": WriteTool(workspace_dir=str(tmp_path)),
+        },
+        workspace_dir=str(tmp_path),
+    )
+    tool.set_permission_negotiator(ApprovingNegotiator())
+
+    result = await tool.execute(
+        task="Download one asset and write it to the assigned path",
+        required_tools=["bash", "write_file"],
+        write_scope=["assets/hero.jpg"],
+    )
+
+    assert result.success is True
+    assert result.raw_output["resolved_tools"] == ["bash", "write_file"]
+    assert result.raw_output["constraints"]["write_scope"] == ["assets/hero.jpg"]
+
+
 async def test_general_loop_uses_only_resolved_tools_and_inherits_parent_prompt(tmp_path):
     captured = {}
 

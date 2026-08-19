@@ -76,10 +76,12 @@ Release, provider API, and ACP compatibility have their own sources under
   `capabilities`, `inputs`, and `constraints` objects are rejected rather than
   selecting a legacy or weaker execution mode.
 - Security boundary: omitted tools resolve only to available trusted local
-  readers. Explicit tools still pass runtime capability classification; process
-  tools, external side effects, and unknown MCP tools fail closed. Path-based
-  write tools require a non-empty scope enforced by a wrapper before the live
-  parent tool runs. Parent `PermissionEngine` checks remain final authority.
+  readers. Explicit tools still pass runtime capability classification;
+  `bash` additionally requires a parent-session permission negotiator and each
+  protected command remains approval-gated. Other process tools, external side
+  effects, and unknown MCP tools fail closed. Path-based write tools require a
+  non-empty scope enforced by a wrapper before the live parent tool runs.
+  Parent `PermissionEngine` checks remain final authority.
 - Batch behavior: `files` infers the existing completeness-checked local batch
   path; its file-count, per-file, aggregate, cancellation, and synthesis-timeout
   boundaries remain intact.
