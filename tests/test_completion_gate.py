@@ -2068,6 +2068,15 @@ def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
     assert '"fallback":true' not in checkpoint
     assert "bounded search rounds already returned candidate sources" in checkpoint
+    assert "This ends only the search-query discovery phase" in checkpoint
+    assert "it does not stop the task or prohibit direct reading" in checkpoint
+    assert "Do not describe this checkpoint to the user as a stop or cancel" in checkpoint
+    assert (
+        "successful exact-page content obtained during the allowed direct-read phase"
+        in checkpoint
+    )
+    assert "Do not introduce evidence from new search queries" in checkpoint
+    assert "Use only the evidence already present" not in checkpoint
     assert "recommended dimension count is a research-quality target" in checkpoint
     assert "target_entities entry uses entity, aliases (array)" in checkpoint
     assert "Do not inspect tabs, execute page scripts" in checkpoint

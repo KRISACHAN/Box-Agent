@@ -1613,13 +1613,19 @@ def build_checkpoint_text(
             )
             next_action = (
                 "The bounded search rounds already returned candidate sources, so do "
-                "not call web_search again. "
+                "not call web_search again. This ends only the search-query discovery "
+                "phase; it does not stop the task or prohibit direct reading of "
+                "already-discovered candidate URLs. Do not describe this checkpoint "
+                "to the user as a stop or cancel instruction. "
                 + direct_read_instruction
                 + "Do not create outline.json before writing the fresh research "
                 "handoff report. Do not inspect/list files or reread skill "
-                "references, validator source, or Markdown research notes. Use only "
-                "the evidence already present in model context and research/ to "
-                "finish the route's cross-verification, "
+                "references, validator source, or Markdown research notes. Use the "
+                "candidate URLs and evidence already present in model context and "
+                "research/ to finish the route's cross-verification; successful "
+                "exact-page content obtained during the allowed direct-read phase may "
+                "be added to the ledger. Do not introduce evidence from new search "
+                "queries. Finish the route's "
                 "insight, structured evidence ledger, and fresh "
                 "research/qa/*_research_check.json via "
                 "validate_research_artifacts.py --report. The report may hand off a "
