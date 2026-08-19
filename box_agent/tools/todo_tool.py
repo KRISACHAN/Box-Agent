@@ -61,6 +61,17 @@ def _todo_state_error(items: list[dict]) -> str | None:
     )
 
 
+def _activate_first_unfinished(items: list[dict]) -> bool:
+    """Activate the first unfinished item when no current item was supplied."""
+    unfinished = [item for item in items if item.get("status") != "completed"]
+    if not unfinished:
+        return False
+    if any(item.get("status") == "in_progress" for item in unfinished):
+        return False
+    unfinished[0]["status"] = "in_progress"
+    return True
+
+
 def _validate_todo_records(items: Any) -> None:
     """Validate todo record shapes without enforcing workflow state."""
     if not isinstance(items, list):
@@ -151,13 +162,12 @@ def _todo_next_instruction(items: list[dict]) -> str:
     if not has_pending:
         return (
             f"Continue only with todo #{current.get('id')}. After completing and verifying "
-            "it, use action='transition' without next_todo_id to complete the final "
-            "unfinished item."
+            "it, use action='transition' to complete the final unfinished item."
         )
     return (
         f"Continue only with todo #{current.get('id')}. After completing and verifying "
-        "it, use action='transition' to complete it and activate the next pending item "
-        "atomically. Use action='set' only to initialize or materially rebuild the list."
+        "it, use action='transition' to complete it and automatically activate the first "
+        "pending item. Use action='set' only to initialize or materially rebuild the list."
     )
 
 
@@ -358,12 +368,13 @@ class TodoStore:
                     or "pending"
                 )
             })
+        _activate_first_unfinished(candidate_state)
         state_error = _todo_state_error(candidate_state)
         if state_error:
             raise ValueError(state_error)
 
         items: list[dict] = []
-        for todo in todos:
+        for index, todo in enumerate(todos):
             supplied_id = todo.get("id")
             if supplied_id is None:
                 todo_id = self._next_id()
@@ -377,9 +388,7 @@ class TodoStore:
                 "id": todo_id,
                 "task": str(todo["task"]).strip(),
                 "status": str(
-                    todo.get("status")
-                    or (existing or {}).get("status")
-                    or "pending"
+                    candidate_state[index]["status"]
                 ),
                 "priority": str(
                     todo.get("priority")
@@ -430,7 +439,12 @@ class TodoStore:
         current["status"] = "completed"
 
         next_item = None
-        if next_todo_id is not None:
+        if next_todo_id is None:
+            next_item = next(
+                (item for item in items if item["status"] == "pending"),
+                None,
+            )
+        else:
             next_item = next(
                 (item for item in items if item["id"] == next_todo_id),
                 None,
@@ -439,6 +453,7 @@ class TodoStore:
                 raise ValueError(f"Todo #{next_todo_id} not found.")
             if next_item["status"] != "pending":
                 raise ValueError(f"Todo #{next_todo_id} is not pending.")
+        if next_item is not None:
             next_item["status"] = "in_progress"
 
         self._commit(items)
@@ -458,7 +473,7 @@ class TodoStore:
 # ── Tools ───────────────────────────────────────────────────
 
 class TodoWriteTool(Tool):
-    """Create, replace, transition, update, or delete todo items."""
+    """Initialize or transition todo items."""
 
     def __init__(self, store: TodoStore):
         self._store = store
@@ -498,14 +513,16 @@ class TodoWriteTool(Tool):
     def description(self) -> str:
         return (
             "Manage a todo list for tracking multi-step tasks. "
-            "Actions: 'set' the full current list in one call, 'create' a new item, "
-            "'transition' atomically completes the active item and starts the next, "
-            "'update' changes an existing item, and 'delete' removes an item. "
+            "Actions: 'set' initializes or substantially revises the full current "
+            "list in one call, and 'transition' atomically completes the active item "
+            "and starts the next. "
             "Use 'set' only for new or substantially revised multi-step work. Preserve "
             "the id of unchanged existing items in the complete ordered todos array. "
             "Status-only changes to the same ordered list are rejected; use "
             "'transition' for progress. Existing tasks submitted without their canonical "
             "ids are also rejected; call todo_read first if the ids are unavailable. "
+            "If a set payload has unfinished work but no in_progress item, the first "
+            "unfinished item is activated automatically. "
             "When initializing an empty todo list, omit ids; any supplied ids are "
             "ignored and canonical todo ids are assigned automatically. "
             "Use 'transition' for normal progress instead of rebuilding the whole list. "
@@ -529,7 +546,7 @@ class TodoWriteTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["set", "create", "transition", "update", "delete"],
+                    "enum": ["set", "transition"],
                     "description": "Operation to perform.",
                 },
                 "todos": {
@@ -537,9 +554,10 @@ class TodoWriteTool(Tool):
                     "description": (
                         "Complete ordered todo list for action='set'. This replaces the "
                         "current list. Each item requires task and status, with optional "
-                        "priority. When unfinished work remains, the complete list must "
-                        "contain exactly one in_progress item; an empty or fully completed "
-                        "list must contain none."
+                        "priority. When unfinished work remains, zero in_progress items "
+                        "activates the first unfinished item automatically; more than one "
+                        "in_progress item is invalid. An empty or fully completed list "
+                        "must contain none."
                     ),
                     "items": {
                         "type": "object",
@@ -557,8 +575,9 @@ class TodoWriteTool(Tool):
                                 "type": "string",
                                 "enum": list(_VALID_STATUSES),
                                 "description": (
-                                    "Required task status. Across the complete set payload, "
-                                    "unfinished work requires exactly one in_progress item."
+                                    "Required task status. If no unfinished item is marked "
+                                    "in_progress, the first unfinished item is activated "
+                                    "automatically."
                                 ),
                             },
                             "priority": {
@@ -570,36 +589,17 @@ class TodoWriteTool(Tool):
                         "required": ["task", "status"],
                     },
                 },
-                "task": {
-                    "type": "string",
-                    "description": "Task description (required for 'create', optional for 'update').",
-                },
                 "todo_id": {
                     "type": "string",
-                    "description": (
-                        "ID of the todo item (required for 'transition', 'update', "
-                        "and 'delete')."
-                    ),
+                    "description": "ID of the active todo item for action='transition'.",
                 },
                 "next_todo_id": {
                     "type": "string",
                     "description": (
-                        "Pending todo to activate for action='transition'. Omit only "
-                        "when completing the final unfinished todo."
+                        "Pending todo to activate for action='transition'. Omit to "
+                        "activate the first pending item in list order automatically, "
+                        "or when completing the final unfinished todo."
                     ),
-                },
-                "status": {
-                    "type": "string",
-                    "enum": list(_VALID_STATUSES),
-                    "description": (
-                        "Status to set for 'create' or 'update'. One of: pending, "
-                        "in_progress, completed."
-                    ),
-                },
-                "priority": {
-                    "type": "string",
-                    "enum": list(_VALID_PRIORITIES),
-                    "description": "Priority level (for 'create'). Default: medium.",
                 },
             },
             "required": ["action"],

@@ -323,24 +323,34 @@ async def test_set_requires_valid_todos(writer):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "todos, active_count",
-    [
-        ([{"task": "Pending only", "status": "pending"}], 0),
-        (
-            [
-                {"task": "Active A", "status": "in_progress"},
-                {"task": "Active B", "status": "in_progress"},
-            ],
-            2,
-        ),
-    ],
-)
-async def test_set_rejects_invalid_active_item_count(writer, todos, active_count):
-    result = await writer.execute(action="set", todos=todos)
+async def test_set_activates_first_unfinished_when_all_items_are_pending(writer):
+    result = await writer.execute(
+        action="set",
+        todos=[
+            {"task": "First", "status": "pending"},
+            {"task": "Second", "status": "pending"},
+        ],
+    )
+
+    assert result.success
+    assert [item["status"] for item in result.raw_output["items"]] == [
+        "in_progress",
+        "pending",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_set_rejects_multiple_active_items(writer):
+    result = await writer.execute(
+        action="set",
+        todos=[
+            {"task": "Active A", "status": "in_progress"},
+            {"task": "Active B", "status": "in_progress"},
+        ],
+    )
 
     assert not result.success
-    assert f"found {active_count}" in result.error
+    assert "found 2" in result.error
 
 
 @pytest.mark.asyncio
@@ -368,7 +378,8 @@ async def test_failed_set_does_not_consume_ids_or_change_existing_state(writer):
     failed = await writer.execute(
         action="set",
         todos=[
-            {"task": "Invalid pending", "status": "pending"},
+            {"task": "Invalid active A", "status": "in_progress"},
+            {"task": "Invalid active B", "status": "in_progress"},
         ],
     )
 
@@ -451,7 +462,7 @@ async def test_transition_atomically_advances_to_next_todo(writer):
     assert "Inspect implementation" in result.model_context
     assert "Run verification" in result.model_context
     assert "action='transition'" in result.model_context
-    assert "without next_todo_id" in result.model_context
+    assert "complete the final unfinished item" in result.model_context
     assert "complete current todo list" not in result.model_context
 
 
@@ -473,16 +484,21 @@ async def test_transition_completes_final_todo_without_next_id(writer):
 
 
 @pytest.mark.asyncio
-async def test_transition_requires_next_id_when_pending_work_remains(writer):
+async def test_transition_activates_first_pending_when_next_id_is_omitted(writer):
     await writer.execute(action="create", task="Current")
     await writer.execute(action="create", task="Next")
 
     result = await writer.execute(action="transition", todo_id="1")
 
-    assert not result.success
-    assert "found 0" in result.error
-    items = writer._store.list()
-    assert [item["status"] for item in items] == ["in_progress", "pending"]
+    assert result.success
+    assert result.raw_output["transition"] == {
+        "completed_id": "1",
+        "in_progress_id": "2",
+    }
+    assert [item["status"] for item in result.raw_output["items"]] == [
+        "completed",
+        "in_progress",
+    ]
 
 
 @pytest.mark.asyncio
@@ -821,14 +837,17 @@ def test_anthropic_schema(writer, reader):
     schema = writer.to_schema()
     assert schema["name"] == "todo_write"
     assert "input_schema" in schema
-    assert "set" in schema["input_schema"]["properties"]["action"]["enum"]
-    assert "transition" in schema["input_schema"]["properties"]["action"]["enum"]
-    assert "todos" in schema["input_schema"]["properties"]
-    assert "id" in schema["input_schema"]["properties"]["todos"]["items"]["properties"]
-    todo_items_schema = schema["input_schema"]["properties"]["todos"]["items"]
+    properties = schema["input_schema"]["properties"]
+    assert properties["action"]["enum"] == ["set", "transition"]
+    assert "todos" in properties
+    assert "id" in properties["todos"]["items"]["properties"]
+    assert "task" not in properties
+    assert "status" not in properties
+    assert "priority" not in properties
+    todo_items_schema = properties["todos"]["items"]
     assert todo_items_schema["required"] == ["task", "status"]
-    assert "exactly one in_progress" in schema["input_schema"]["properties"]["todos"]["description"]
-    assert "next_todo_id" in schema["input_schema"]["properties"]
+    assert "activates the first unfinished item automatically" in properties["todos"]["description"]
+    assert "next_todo_id" in properties
 
     schema = reader.to_schema()
     assert schema["name"] == "todo_read"
@@ -857,3 +876,6 @@ def test_todo_write_description_keeps_todo_as_progress_tracker(writer):
     assert "Use 'set' only" in description
     assert "Use 'transition' for normal progress" in description
     assert "Preserve the id" in description
+    assert "'create'" not in description
+    assert "'update'" not in description
+    assert "'delete'" not in description
