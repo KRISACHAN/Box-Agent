@@ -159,6 +159,7 @@ def select_auto_model(
     files: Iterable[str] = (),
     task_tags: Iterable[str] | None = None,
     required_ability_level: int | None = None,
+    estimated_input_tokens: int | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Choose one allowlisted model for an isolated child task."""
 
@@ -193,19 +194,31 @@ def select_auto_model(
         if isinstance(required_ability_level, int) and required_ability_level > 0
         else 2 if complex_task else 1
     )
-    estimated_input_tokens = max(
+    if (
+        estimated_input_tokens is not None
+        and _positive_int(estimated_input_tokens) is None
+    ):
+        raise ValueError("estimated_input_tokens must be positive")
+    resolved_input_tokens = estimated_input_tokens or max(
         1,
         math.ceil(len(task) / 2) + min(len(file_names), 8) * 16_000,
     )
 
-    context_pool = [
-        model
-        for model in pool
-        if not model.get("contextWindow")
-        or estimated_input_tokens <= model["contextWindow"] * 0.8
-    ]
+    known_context_models = [model for model in pool if model.get("contextWindow")]
+    if estimated_input_tokens is not None and known_context_models:
+        context_pool = [
+            model
+            for model in known_context_models
+            if resolved_input_tokens <= model["contextWindow"] * 0.8
+        ]
+    else:
+        context_pool = [
+            model
+            for model in pool
+            if not model.get("contextWindow")
+            or resolved_input_tokens <= model["contextWindow"] * 0.8
+        ]
     if not context_pool:
-        known_context_models = [model for model in pool if model.get("contextWindow")]
         if known_context_models:
             largest_context_window = max(
                 model["contextWindow"] for model in known_context_models
@@ -242,7 +255,7 @@ def select_auto_model(
         "selected_model": selected["model"],
         "task_tags": resolved_task_tags,
         "required_ability_level": required_ability,
-        "estimated_input_tokens": estimated_input_tokens,
+        "estimated_input_tokens": resolved_input_tokens,
     }
 
 
@@ -258,6 +271,7 @@ def resolve_model_client(
     auto_model_candidates: Iterable[dict[str, Any]] | None = None,
     task_tags: Iterable[str] | None = None,
     required_ability_level: int | None = None,
+    estimated_input_tokens: int | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Resolve one task client without violating the session routing mode.
 
@@ -283,6 +297,7 @@ def resolve_model_client(
         files=files,
         task_tags=task_tags,
         required_ability_level=required_ability_level,
+        estimated_input_tokens=estimated_input_tokens,
     )
     if selected is None and max_output_tokens_cap is None:
         return llm, diagnostic

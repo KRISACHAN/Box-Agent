@@ -118,11 +118,14 @@ def test_internal_model_resolver_uses_tags_only_with_auto_pool():
             "model": "reasoning-model",
             "tags": ["analysis", "reasoning"],
             "abilityLevel": 3,
+            "contextWindow": 180_000,
+            "maxTokens": 16_000,
         },
         {
             "model": "summary-fast-model",
             "tags": ["summary", "fast"],
             "abilityLevel": 1,
+            "contextWindow": 64_000,
             "maxTokens": 8_000,
         },
     )
@@ -135,6 +138,17 @@ def test_internal_model_resolver_uses_tags_only_with_auto_pool():
     assert routed.max_output_tokens == 4_096
     assert diagnostic["mode"] == "auto"
     assert diagnostic["selected_model"] == "summary-fast-model"
+
+    large_context_client, large_context_diagnostic = resolve_model_client(
+        automatic,
+        task="压缩一个较大的会话上下文",
+        max_output_tokens_cap=4_096,
+        task_tags=("summary",),
+        estimated_input_tokens=100_000,
+    )
+    assert large_context_client.model == "reasoning-model"
+    assert large_context_client.max_output_tokens == 4_096
+    assert large_context_diagnostic["estimated_input_tokens"] == 100_000
 
 
 def test_llm_client_for_model_preserves_endpoint_auth_and_default(tmp_path):
@@ -188,7 +202,8 @@ async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp
                 "llm_binding": {
                     "source": "builtin",
                     "model": "model-lite",
-                    "maxTokens": 63999,
+                    "contextWindow": 128000,
+                    "maxTokens": 16000,
                 }
             },
         )
@@ -204,9 +219,12 @@ async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp
     assert second_state.llm_binding == {
         "source": "builtin",
         "model": "model-lite",
-        "maxTokens": 63999,
+        "contextWindow": 128000,
+        "maxTokens": 16000,
     }
-    assert second_state.agent.llm.max_output_tokens == 63999
+    assert second_state.agent.llm.max_output_tokens == 16000
+    assert first_state.agent.token_limit == 92800
+    assert second_state.agent.token_limit == 89600
 
 
 @pytest.mark.asyncio
@@ -222,6 +240,38 @@ async def test_session_binding_rejects_invalid_max_tokens(tmp_path):
                         "source": "builtin",
                         "model": "model-lite",
                         "maxTokens": 0,
+                    }
+                },
+            )
+        )
+
+    with pytest.raises(ValueError, match="llm_binding.contextWindow is invalid"):
+        await agent.newSession(
+            SimpleNamespace(
+                cwd=str(tmp_path),
+                field_meta={
+                    "llm_binding": {
+                        "source": "builtin",
+                        "model": "model-lite",
+                        "contextWindow": 0,
+                    }
+                },
+            )
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="llm_binding.maxTokens must be smaller than contextWindow",
+    ):
+        await agent.newSession(
+            SimpleNamespace(
+                cwd=str(tmp_path),
+                field_meta={
+                    "llm_binding": {
+                        "source": "builtin",
+                        "model": "model-lite",
+                        "contextWindow": 16000,
+                        "maxTokens": 16000,
                     }
                 },
             )
@@ -345,7 +395,8 @@ async def test_session_switches_model_between_turns_without_recreating_agent(tmp
                 "llm_binding": {
                     "source": "builtin",
                     "model": "model-lite",
-                    "maxTokens": 63999,
+                    "contextWindow": 128000,
+                    "maxTokens": 16000,
                 }
             },
         )
@@ -359,9 +410,11 @@ async def test_session_switches_model_between_turns_without_recreating_agent(tmp
     assert state.llm_binding == {
         "source": "builtin",
         "model": "model-lite",
-        "maxTokens": 63999,
+        "contextWindow": 128000,
+        "maxTokens": 16000,
     }
-    assert state.agent.llm.max_output_tokens == 63999
+    assert state.agent.llm.max_output_tokens == 16000
+    assert state.agent.token_limit == 89600
     assert main.model == "model-main"
 
 

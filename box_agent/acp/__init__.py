@@ -88,7 +88,7 @@ from box_agent.tools.browser_runtime_scope import (
     reset_browser_runtime_owner,
     set_browser_runtime_owner,
 )
-from box_agent.config import Config
+from box_agent.config import Config, derive_context_token_limit
 from box_agent.turn_policy import (
     text_is_short_acknowledgement,
     text_requests_plan_start,
@@ -414,13 +414,28 @@ def _normalize_llm_binding(meta: Any) -> dict[str, Any] | None:
     if not model or len(model) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in model):
         raise ValueError("llm_binding.model is invalid")
     raw_max_tokens = raw.get("maxTokens", raw.get("max_tokens"))
+    raw_context_window = raw.get("contextWindow", raw.get("context_window"))
     if raw_max_tokens is not None and (
         isinstance(raw_max_tokens, bool)
         or not isinstance(raw_max_tokens, int)
         or raw_max_tokens <= 0
     ):
         raise ValueError("llm_binding.maxTokens is invalid")
+    if raw_context_window is not None and (
+        isinstance(raw_context_window, bool)
+        or not isinstance(raw_context_window, int)
+        or raw_context_window <= 0
+    ):
+        raise ValueError("llm_binding.contextWindow is invalid")
+    if (
+        raw_context_window is not None
+        and raw_max_tokens is not None
+        and raw_max_tokens >= raw_context_window
+    ):
+        raise ValueError("llm_binding.maxTokens must be smaller than contextWindow")
     binding: dict[str, Any] = {"source": source, "model": model}
+    if raw_context_window is not None:
+        binding["contextWindow"] = raw_context_window
     if raw_max_tokens is not None:
         binding["maxTokens"] = raw_max_tokens
     auto_routing = normalize_auto_routing(
@@ -911,6 +926,22 @@ class BoxACPAgent:
             max_output_tokens=binding.get("maxTokens"),
         )
 
+    def _context_capabilities_for_binding(
+        self,
+        binding: dict[str, Any] | None,
+    ) -> tuple[int, int]:
+        """Resolve active-model capabilities with config fallback."""
+
+        context_window = (binding or {}).get(
+            "contextWindow",
+            self._config.llm.context_window,
+        )
+        max_output_tokens = (binding or {}).get(
+            "maxTokens",
+            self._config.llm.max_output_tokens,
+        )
+        return context_window, max_output_tokens
+
     def _summary_llm_for_session(
         self,
         *,
@@ -918,6 +949,7 @@ class BoxACPAgent:
         session_id: str,
         title: str,
         client_info: ClientInfo | None,
+        required_input_tokens: int | None = None,
     ) -> SessionBoundLLM:
         """Return a session-routed, output-bounded client for compaction."""
 
@@ -928,6 +960,7 @@ class BoxACPAgent:
             max_output_tokens_cap=_CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
             task_tags=("summary",),
             required_ability_level=1,
+            estimated_input_tokens=required_input_tokens,
         )
         bound = (
             summary_client
@@ -1370,6 +1403,13 @@ class BoxACPAgent:
 
         llm_binding = _normalize_llm_binding(meta)
         session_llm = SessionBoundLLM(self._llm_for_binding(llm_binding))
+        session_context_window, session_max_output_tokens = (
+            self._context_capabilities_for_binding(llm_binding)
+        )
+        session_token_limit = derive_context_token_limit(
+            session_context_window,
+            session_max_output_tokens,
+        )
         session_llm.set_auto_model_candidates(
             (llm_binding or {}).get("autoRouting", {}).get("models", [])
         )
@@ -1383,6 +1423,7 @@ class BoxACPAgent:
             session_id=upstream_session_id or session_id,
             title=upstream_title,
             client_info=client_info,
+            required_input_tokens=session_token_limit,
         )
 
         # Canonical artifact directory is only part of output mode. Existing
@@ -1406,6 +1447,9 @@ class BoxACPAgent:
                 f"require_plan_approval={require_plan_approval}, "
                 f"llm_source={llm_binding['source'] if llm_binding else 'default'}, "
                 f"llm_model={getattr(session_llm, 'model', '')}, "
+                f"context_window={session_context_window}, "
+                f"max_output_tokens={session_max_output_tokens}, "
+                f"context_token_limit={session_token_limit}, "
                 f"artifact_root={output_dir}, "
                 f"expert={expert_context.to_metadata() if expert_context else None}"
             ),
@@ -1628,7 +1672,7 @@ class BoxACPAgent:
             max_steps=self._config.agent.max_steps,
             tool_limits=self._config.tool_limits,
             workspace_dir=str(workspace),
-            token_limit=self._config.llm.context_token_limit,
+            token_limit=session_token_limit,
             thinking_enabled=deep_think,
             max_parallel_tools=self._config.agent.max_parallel_tools,
             parallel_tool_timeout_seconds=self._config.agent.parallel_tool_timeout_seconds,
@@ -1712,6 +1756,9 @@ class BoxACPAgent:
                 "artifact_mode": artifact_mode,
                 "title": upstream_title,
                 "utility": utility,
+                "context_window": session_context_window,
+                "max_output_tokens": session_max_output_tokens,
+                "context_token_limit": session_token_limit,
             },
         )
 
@@ -1956,17 +2003,28 @@ class BoxACPAgent:
                 raise ValueError("cannot switch llm_binding while a turn is active")
             if state.session_llm is None:
                 raise ValueError("session LLM binding is unavailable")
-            state.session_llm.bind(self._llm_for_binding(requested_llm_binding))
+            requested_llm = self._llm_for_binding(requested_llm_binding)
+            requested_context_window, requested_max_output_tokens = (
+                self._context_capabilities_for_binding(requested_llm_binding)
+            )
+            requested_token_limit = derive_context_token_limit(
+                requested_context_window,
+                requested_max_output_tokens,
+            )
+            state.session_llm.bind(requested_llm)
             state.session_llm.set_auto_model_candidates(
                 requested_llm_binding.get("autoRouting", {}).get("models", [])
             )
+            state.agent.token_limit = requested_token_limit
             state.llm_binding = requested_llm_binding
             log.info(
                 "session/model_binding",
                 session_id=session_id,
                 source=requested_llm_binding["source"],
                 model=requested_llm_binding["model"],
-                max_tokens=requested_llm_binding.get("maxTokens"),
+                context_window=requested_context_window,
+                max_tokens=requested_max_output_tokens,
+                context_token_limit=requested_token_limit,
             )
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")
@@ -2003,6 +2061,7 @@ class BoxACPAgent:
                 session_id=billing_session_id,
                 title=state.upstream_title,
                 client_info=self._client_info,
+                required_input_tokens=state.agent.token_limit,
             )
         if state.summary_llm is not None:
             state.summary_llm.set_request_context(

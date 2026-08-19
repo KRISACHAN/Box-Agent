@@ -49,7 +49,7 @@ async def test_agent_compacts_above_derived_limit_and_resumes_from_synthetic_use
         tools=[],
         max_steps=2,
         workspace_dir=str(tmp_path),
-        token_limit=104_400,
+        token_limit=92_800,
         deferred_mcp_loading_enabled=False,
     )
     old_user = Message(role="user", content="old user request")
@@ -61,8 +61,8 @@ async def test_agent_compacts_above_derived_limit_and_resumes_from_synthetic_use
     events = [event async for event in agent.run_events()]
 
     compaction = next(event for event in events if isinstance(event, SummarizationEvent))
-    assert compaction.token_limit == 104_400
-    assert compaction.estimated_tokens >= 104_400
+    assert compaction.token_limit == 92_800
+    assert compaction.estimated_tokens >= 92_800
     assert compaction.mode == "summary"
     assert compaction.summary_calls == 1
 

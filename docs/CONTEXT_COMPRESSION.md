@@ -90,12 +90,18 @@ Unsupported blocks and persistence failures remain unchanged. Since IDs are mark
 The trigger is derived from the model's input budget:
 
 ```text
-autoCompactThreshold = 0.9 * (context_window - max_output_tokens)
+autoCompactThreshold = 0.8 * (context_window - max_output_tokens)
 ```
 
 `LLMConfig.context_token_limit` reserves the configured maximum output budget,
-then keeps 10% of the remaining input budget as headroom for estimation drift
+then keeps 20% of the remaining input budget as headroom for estimation drift
 and the summary request.
+
+ACP model bindings may override both values with the selected model's
+`contextWindow` and `maxTokens`. The Agent derives its input limit when the
+session is created and recomputes it whenever the binding changes between
+turns. Missing binding capabilities fall back to `config.yaml`, which remains
+the capability source for user-configured model presets.
 
 ### Estimating the next request
 
@@ -112,7 +118,7 @@ It then estimates messages appended after that response conservatively. If no me
 
 ### Compacted message layout
 
-When a recoverable workflow provides a current filesystem-derived checkpoint that fits the bounded checkpoint budget, compaction rebuilds directly from that checkpoint, the exact latest user message, the protocol-complete bounded recent group, and runtime state. This `checkpoint` mode performs no summary-model call. Other turns make one summary request by appending a temporary `user` instruction to the exact existing message list. It does not serialize messages into a new prompt and does not split or roll the source. This preserves the complete provider message prefix so the summary request can reuse its KV cache. ACP resolves this call through the session model router and caps it at 4,096 output tokens. Automatic sessions may select only from the host-provided `autoRouting.models` pool, ranked by the summary task tags, ability, and context fit. Explicitly selected sessions stay on that exact model; there is no independent lite-model switch. Other hosts may supply a dedicated summary client or fall back to the main client. Tools and thinking are disabled. The instruction requires a chronological list of every user message and places all structured analysis inside one `<summary>...</summary>` block, with an embedded nine-section output example. The response must consist of exactly one non-empty summary block; only its inner text is written after `Summary:` and the tags are discarded. The requested and locally enforced summary limit is 8,000 characters; if the rebuilt request still exceeds the safe input limit, the same summary is deterministically tightened to 4,000 and finally 2,000 characters without another provider call. If the call fails, is malformed, or returns empty output, an explicitly lossy deterministic bounded fallback is used.
+When a recoverable workflow provides a current filesystem-derived checkpoint that fits the bounded checkpoint budget, compaction rebuilds directly from that checkpoint, the exact latest user message, the protocol-complete bounded recent group, and runtime state. This `checkpoint` mode performs no summary-model call. Other turns make one summary request by appending a temporary `user` instruction to the exact existing message list. It does not serialize messages into a new prompt and does not split or roll the source. This preserves the complete provider message prefix so the summary request can reuse its KV cache. ACP resolves this call through the session model router and caps it at 4,096 output tokens. Automatic sessions may select only from the host-provided `autoRouting.models` pool, ranked by the summary task tags, ability, and context fit. Context fit uses the active Agent's safe input limit so a small-window utility model is not selected for a larger history. Explicitly selected sessions stay on that exact model; there is no independent lite-model switch. Other hosts may supply a dedicated summary client or fall back to the main client. Tools and thinking are disabled. The instruction requires a chronological list of every user message and places all structured analysis inside one `<summary>...</summary>` block, with an embedded nine-section output example. The response must consist of exactly one non-empty summary block; only its inner text is written after `Summary:` and the tags are discarded. The requested and locally enforced summary limit is 8,000 characters; if the rebuilt request still exceeds the safe input limit, the same summary is deterministically tightened to 4,000 and finally 2,000 characters without another provider call. If the call fails, is malformed, or returns empty output, an explicitly lossy deterministic bounded fallback is used.
 
 The model output is wrapped in this synthetic `user` message:
 

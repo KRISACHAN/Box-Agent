@@ -15,7 +15,7 @@ from box_agent.auth import (
     resolve_auth_token,
     should_attach_auth_header,
 )
-from box_agent.config import Config, LLMConfig
+from box_agent.config import Config, LLMConfig, derive_context_token_limit
 from box_agent.llm import AnthropicClient, OpenAIClient
 from box_agent.tools import mcp_loader
 
@@ -34,7 +34,23 @@ def test_resolve_auth_token_reads_supported_env(monkeypatch: pytest.MonkeyPatch)
 def test_context_compaction_limit_uses_original_input_budget_formula() -> None:
     config = LLMConfig(context_window=180_000, max_output_tokens=63_999)
 
-    assert config.context_token_limit == 104_400
+    assert config.context_token_limit == 92_800
+
+
+def test_context_compaction_limit_uses_selected_model_capabilities() -> None:
+    assert derive_context_token_limit(128_000, 16_000) == 89_600
+
+
+@pytest.mark.parametrize(
+    ("context_window", "max_output_tokens"),
+    [(0, 1), (128_000, 0), (128_000, 128_000), (128_000, 128_001)],
+)
+def test_context_compaction_limit_rejects_invalid_capabilities(
+    context_window: int,
+    max_output_tokens: int,
+) -> None:
+    with pytest.raises(ValueError):
+        derive_context_token_limit(context_window, max_output_tokens)
 
 
 def test_resolve_auth_token_reads_auth_json_before_env(
