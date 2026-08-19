@@ -1,6 +1,7 @@
 """Host-neutral workflow policies composed by the shared runtime."""
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from ..config import ToolLimitsConfig
 from ..loop_guards import CompletionGate
 from ..workflow_policy import WorkflowPolicy
 from ..workflow_checkpoint_store import load_workflow_checkpoint
+from ..workflow_owner_store import WorkflowOwner
 from .controlled_presentation import RESEARCH_ROUND_LIMIT, ControlledPresentationPolicy
 from .external_skill import (
     EXTERNAL_SKILL_WORKFLOW_KIND,
@@ -33,6 +35,7 @@ from .presentation_provider import (
     parse_host_presentation_config,
     resolve_presentation_skill_provider,
 )
+from .presentation_routing import build_presentation_completion_gate
 
 
 def create_workflow_policy(
@@ -102,27 +105,79 @@ def recover_completion_gate(
     """Recover the first incomplete built-in workflow from durable artifacts."""
     from .presentation_recovery import recover_presentation_completion_gate
 
+    external_checkpoint = load_workflow_checkpoint(
+        workspace_dir=workspace_dir,
+        workflow_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
+    )
+    controlled_checkpoint = load_workflow_checkpoint(
+        workspace_dir=workspace_dir,
+        workflow_kind=CONTROLLED_PRESENTATION_WORKFLOW_KIND,
+    )
+    if external_checkpoint is not None and controlled_checkpoint is not None:
+        return None
+    if external_checkpoint is not None:
+        return build_external_skill_completion_gate_from_options(
+            workspace_dir=workspace_dir,
+            workflow_options=external_checkpoint.workflow_options,
+            tool_limits=tool_limits,
+        )
+    if controlled_checkpoint is not None:
+        gate = build_presentation_completion_gate(
+            "继续制作 PPT",
+            workspace_dir,
+            confirmed_presentation=True,
+            tool_limits=tool_limits,
+        )
+        if gate is not None:
+            return replace(
+                gate,
+                workflow_options={
+                    **gate.workflow_options,
+                    **controlled_checkpoint.workflow_options,
+                },
+            )
+
     controlled = recover_presentation_completion_gate(
         workspace_dir,
         tool_limits=tool_limits,
     )
     if controlled is not None:
         return controlled
-    checkpoint = load_workflow_checkpoint(
-        workspace_dir=workspace_dir,
-        workflow_kind=EXTERNAL_SKILL_WORKFLOW_KIND,
-    )
-    if checkpoint is None:
-        return None
-    return build_external_skill_completion_gate_from_options(
-        workspace_dir=workspace_dir,
-        workflow_options=checkpoint.workflow_options,
-        tool_limits=tool_limits,
-    )
+    return None
+
+
+def completion_gate_from_owner(
+    owner: WorkflowOwner,
+    *,
+    workspace_dir: str | Path,
+    tool_limits: ToolLimitsConfig | None = None,
+) -> CompletionGate | None:
+    """Rebuild exactly the runtime-selected workflow kind for a new ACP session."""
+    if owner.workflow_kind == EXTERNAL_SKILL_WORKFLOW_KIND:
+        return build_external_skill_completion_gate_from_options(
+            workspace_dir=workspace_dir,
+            workflow_options=owner.workflow_options,
+            tool_limits=tool_limits,
+        )
+    if owner.workflow_kind == CONTROLLED_PRESENTATION_WORKFLOW_KIND:
+        gate = build_presentation_completion_gate(
+            "继续制作 PPT",
+            workspace_dir,
+            confirmed_presentation=True,
+            tool_limits=tool_limits,
+        )
+        if gate is None:
+            return None
+        return replace(
+            gate,
+            workflow_options={**gate.workflow_options, **owner.workflow_options},
+        )
+    return None
 
 
 __all__ = [
     "ControlledPresentationPolicy",
+    "completion_gate_from_owner",
     "CONTROLLED_PRESENTATION_WORKFLOW_KIND",
     "EXTERNAL_SKILL_WORKFLOW_KIND",
     "ExternalSkillRunPolicy",

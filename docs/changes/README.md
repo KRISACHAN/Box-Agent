@@ -56,6 +56,7 @@ decision, read those entries together.
 | Context compression | `box_agent/core.py`, tool-call arguments, history summarization | Normal unsummarized history retains exact tool-call arguments; whole-history summarization remains a separate boundary. | Current at this baseline. | [PR #35](#2026-08-17--preserve-tool-call-arguments-in-normal-history-pr-35) |
 | MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 | Sub-agent delegation | `sub_agent_tool.py`, `sub_agent_capabilities.py`, `required_tools`, `write_scope`, `files` | The public request is flat; runtime-derived policy limits implicit tools to trusted local readers, keeps process/external/unknown MCP capabilities fail-closed, and scopes path writes. | Supersedes the caller-authored nested constraint contract while retaining its runtime enforcement goals. | [2026-08-19 flattened contract](#2026-08-19--flattened-sub-agent-contract-with-derived-policy) |
+| Workflow ownership | `workflow_owner_store.py`, explicit Skills, ACP decisions, presentation recovery | Runtime-selected owner precedes artifact discovery. Unknown Skills use the generic external lifecycle; foreign `deck.json` files cannot activate controlled finalization. | Pending implementation; hardens external-Skill and controlled-presentation recovery. | [2026-08-20 owner hardening](#2026-08-20--workflow-owner-precedence-for-third-party-skills) |
 | Model routing and controlled presentations | `box_agent/llm/model_routing.py`, `box_agent/workflows/presentation_*`, controlled PPTX | Automatic child-model routing uses a host allowlist, while presentation-specific state and recovery remain outside the generic kernel. | PR #30 is the main record; later research hardening must be checked where relevant. | [PR #30](#2026-08-14--runtime-routing-and-presentation-reliability-pr-30), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 
 For research execution, Todo/progress behavior, browser routing, or contributor
@@ -91,6 +92,28 @@ Release, provider API, and ACP compatibility have their own sources under
   tests, and the repository preflight.
 - Rollback: revert the eventual implementation commit and rebuild the previous
   packaged runtime; no data migration is required.
+
+### 2026-08-20 — workflow owner precedence for third-party Skills
+
+- Change: implementation on `codex/fix-workflow-ownership`; no merge or release
+  reference exists yet.
+- Durable contract: explicit third-party Skills select the generic external
+  lifecycle and persist a runtime-owned session record before execution. New
+  ACP handles resume that owner before any filesystem heuristic.
+- Safety boundary: Skill files and same-named artifacts cannot select executable
+  workflow adapters. Controlled legacy recovery accepts only canonical,
+  structurally compatible outline/deck files; foreign nested schemas are logged
+  and ignored.
+- Artifact-root boundary: registered controlled checkpoints may use nested roots,
+  but emitted scaffold/validate/patch/finalize commands carry absolute paths so
+  `BOX_AGENT_OUTPUT_DIR` cannot redirect them.
+- Compatibility: ownerless legacy controlled sessions retain a narrow canonical
+  fallback. Existing third-party Skills require no metadata change and continue
+  under `external_skill`.
+- Proof anchors: workflow-owner/checkpoint store tests, ACP cross-session Skill
+  tests, foreign-deck recovery tests, and controlled checkpoint command tests.
+- Runtime boundary: source verification does not prove OfficeV3 adoption until
+  the runtime is rebuilt, installed, restarted, and replayed with a fresh task.
 
 ## Recent material changes on `main`
 

@@ -2668,22 +2668,33 @@ def test_pending_completion_gate_resume_detection_is_session_scoped():
     )
 
 
-def test_recover_controlled_presentation_gate_from_deep_research_checkpoint(tmp_path):
+def test_recover_controlled_presentation_gate_does_not_claim_research_only(tmp_path):
     research = tmp_path / "output" / "research"
     research.mkdir(parents=True)
     (research / "topic_insight.md").write_text("validated evidence", encoding="utf-8")
 
     gate = recover_completion_gate(tmp_path)
 
-    assert gate is not None
-    assert gate.workflow_checkpoint_kind == "controlled_presentation"
-    assert gate.workflow_options["research_mode"] == "deep"
+    assert gate is None
 
 
 def test_recover_controlled_presentation_gate_from_source_first_outline(tmp_path):
     output = tmp_path / "output"
     output.mkdir()
-    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "title": "Intro",
+                        "message": "Message",
+                        "bullets": ["One"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     gate = recover_completion_gate(tmp_path)
 
@@ -2692,12 +2703,59 @@ def test_recover_controlled_presentation_gate_from_source_first_outline(tmp_path
     assert gate.workflow_options["research_mode"] == "auto"
 
 
+def test_recover_controlled_presentation_gate_rejects_foreign_nested_deck(
+    tmp_path,
+    caplog,
+):
+    foreign = tmp_path / "output" / "vendor" / ".workbench" / "deck.json"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text(
+        json.dumps(
+            {
+                "deckFormat": "static-html-v2",
+                "slides": [
+                    {
+                        "pageNo": 1,
+                        "htmlPath": "slides/slide_01.html",
+                        "htmlReady": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("INFO"):
+        assert recover_completion_gate(tmp_path) is None
+    assert "reason=foreign_deck_schema" in caplog.text
+
+
 def test_recover_controlled_presentation_gate_does_not_reopen_complete_deck(tmp_path):
     output = tmp_path / "output"
     qa = output / "qa"
     qa.mkdir(parents=True)
-    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
-    (output / "deck.json").write_text('{"slides": []}', encoding="utf-8")
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {"title": "Intro", "message": "Message", "bullets": ["One"]}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output / "deck.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "theme_id": "soft-editorial",
+                "slides": [
+                    {"id": "slide-1", "layout_id": "cover-hero-v1", "props": {}}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     (output / "index.html").write_text("<html></html>", encoding="utf-8")
     for report_name in (
         "outline_check.json",
@@ -2720,6 +2778,16 @@ async def test_acp_recovers_controlled_deck_after_new_session_from_filesystem(tm
     research = tmp_path / "output" / "research"
     research.mkdir(parents=True)
     (research / "topic_insight.md").write_text("validated evidence", encoding="utf-8")
+    (tmp_path / "output" / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {"title": "Intro", "message": "Message", "bullets": ["One"]}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
@@ -3205,6 +3273,128 @@ async def test_acp_explicit_external_skill_gets_lifecycle_and_stays_preloaded_on
     assert resumed_gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
     assert resumed_gate.workflow_options["skill_name"] == "ppt-master"
     assert state.preloaded_skill_names == ["ppt-master"]
+
+
+@pytest.mark.asyncio
+async def test_acp_external_skill_owner_survives_new_acp_session(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOX_AGENT_WORKFLOW_OWNER_DIR", str(tmp_path / "owners"))
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "ppt-master"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: ppt-master\n"
+        "description: Generate editable PPTX presentations.\n"
+        "---\n"
+        "# PPT MASTER RULES\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader([(skills_dir, "user")])
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    captured: list[CompletionGate | None] = []
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured.append(kwargs.get("completion_gate"))
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+    first_session = await agent.newSession(
+        SimpleNamespace(
+            cwd=None,
+            field_meta={"session_mode": "general", "session_id": "stable-session"},
+        )
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=first_session.sessionId,
+            prompt=[{"text": "请使用 /ppt-master 制作内马尔演示"}],
+        )
+    )
+    second_session = await agent.newSession(
+        SimpleNamespace(
+            cwd=None,
+            field_meta={"session_mode": "general", "session_id": "stable-session"},
+        )
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=second_session.sessionId,
+            prompt=[{"text": "确认制作"}],
+        )
+    )
+
+    assert len(captured) == 2
+    assert all(isinstance(gate, CompletionGate) for gate in captured)
+    assert captured[0].workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
+    assert captured[1].workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
+    assert captured[1].workflow_options["skill_name"] == "ppt-master"
+
+
+@pytest.mark.asyncio
+async def test_acp_user_skill_cannot_select_builtin_controlled_adapter(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "foreign-ppt"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: foreign-ppt\n"
+        "description: Generate editable PPTX presentations.\n"
+        "workflow: controlled_presentation\n"
+        "---\n"
+        "# FOREIGN RULES\n",
+        encoding="utf-8",
+    )
+    loader = SkillLoader([(skills_dir, "user")])
+    loader.discover_skills()
+    agent = BoxACPAgent(
+        DummyConn(),
+        Config(
+            llm=LLMConfig(api_key="test-key"),
+            agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+            tools=ToolsConfig(),
+        ),
+        DoneLLM(),
+        [],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+    captured = {}
+
+    async def capture_run_turn(state_arg, session_id, **kwargs):
+        captured["gate"] = kwargs.get("completion_gate")
+        return "end_turn"
+
+    agent._run_turn = capture_run_turn  # type: ignore[method-assign]
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "使用 /foreign-ppt 制作演示"}],
+        )
+    )
+
+    gate = captured["gate"]
+    assert isinstance(gate, CompletionGate)
+    assert gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
+    assert gate.workflow_options["skill_name"] == "foreign-ppt"
 
 
 @pytest.mark.asyncio

@@ -1445,37 +1445,58 @@ def build_checkpoint_text(
         if research_report_path is not None
         else ""
     )
+    outline_argument = shlex.quote(str(artifact_root / "outline.json"))
+    deck_argument = shlex.quote(str(artifact_root / "deck.json"))
+    patch_argument = shlex.quote(str(artifact_root / "deck.patch.json"))
+    html_argument = shlex.quote(str(artifact_root / "index.html"))
+    manifest_argument = shlex.quote(
+        str(artifact_root / "assets" / "generated" / "manifest.json")
+    )
+    outline_report_argument = shlex.quote(
+        str(artifact_root / "qa" / "outline_check.json")
+    )
+    scaffold_command = _controlled_pptx_command(
+        "inspect_deck_contract.js",
+        (
+            f"--outline {outline_argument} --out {deck_argument}"
+            + (
+                " --no-images"
+                if image_generation_policy == IMAGE_GENERATION_FORBIDDEN
+                else ""
+            )
+        ),
+    )
     validate_outline_command = _controlled_pptx_command(
         "validate_outline.js",
         (
-            "outline.json"
-            f"{research_report_argument}"
-            " --report qa/outline_check.json"
+            outline_argument
+            + research_report_argument
+            + f" --report {outline_report_argument}"
         ),
     )
     apply_patch_command = _controlled_pptx_command(
         "apply_deck_patch.js",
-        "deck.json deck.patch.json",
+        f"{deck_argument} {patch_argument}",
     )
     finalize_command = _controlled_pptx_command(
         "finalize_controlled_deck.js",
-        "deck.json --out index.html",
+        f"{deck_argument} --out {html_argument}",
     )
     sync_image_status_command = _controlled_pptx_command(
         "sync_image_manifest_status.js",
-        "assets/generated/manifest.json",
+        manifest_argument,
     )
     rebase_image_policy_command = _controlled_pptx_command(
         "rebase_image_policy.js",
-        "deck.json --manifest assets/generated/manifest.json --policy forbidden",
+        f"{deck_argument} --manifest {manifest_argument} --policy forbidden",
     )
     rebase_unavailable_image_policy_command = _controlled_pptx_command(
         "rebase_image_policy.js",
-        "deck.json --manifest assets/generated/manifest.json --policy unavailable",
+        f"{deck_argument} --manifest {manifest_argument} --policy unavailable",
     )
     restore_unavailable_image_policy_command = _controlled_pptx_command(
         "rebase_image_policy.js",
-        "deck.json --manifest assets/generated/manifest.json --policy retry",
+        f"{deck_argument} --manifest {manifest_argument} --policy retry",
     )
     (
         manifest_generation_forbidden,
@@ -1918,9 +1939,7 @@ def build_checkpoint_text(
                 "id and every page intent. Do not read outline.json, inspect/list the "
                 "registry, or invent an id. Your very next tool call must invoke "
                 "inspect_deck_contract.js once to create deck.json and its image "
-                "manifest, passing only `--outline outline.json --out deck.json`. "
-                "Invoke it on one physical command line using `cd <artifact-root> &&`; "
-                "do not split `cd` and the inspector across lines. "
+                f"manifest by running exactly `{scaffold_command}`. "
                 "Do not pass layout ids, --theme, --image-mode, --title, facts, or "
                 "other optional flags; the inspector deterministically derives the "
                 "ordered layout plan and theme from the validated outline. The "
@@ -1929,7 +1948,8 @@ def build_checkpoint_text(
                 "ordered plan may repeat layout "
                 "ids; semantic fidelity is more important than forced variety. "
                 + (
-                    "The latest user constraint forbids images: pass `--no-images`, "
+                    "The latest user constraint forbids images; the command already "
+                    "includes `--no-images`. "
                     "never select a required-media layout without its registered "
                     "fallback, and do not request image generation. "
                     if image_generation_policy == IMAGE_GENERATION_FORBIDDEN

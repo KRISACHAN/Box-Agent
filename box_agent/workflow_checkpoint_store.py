@@ -1,8 +1,9 @@
 """Trusted, durable checkpoints for recoverable workflow pauses.
 
-The registry in this module is deliberately built in.  A third-party Skill may
-select a declared workflow kind through the normal completion-gate contract,
-but it cannot provide executable checkpoint code.
+The registry in this module is deliberately built in. Third-party Skills use
+the registered generic external adapter; only trusted runtime routing may
+select another built-in workflow kind. Skills cannot provide executable
+checkpoint code.
 """
 
 from __future__ import annotations

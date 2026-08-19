@@ -119,6 +119,11 @@ from box_agent.llm import LLMClient, SessionBoundLLM
 from box_agent.llm.model_routing import normalize_auto_routing, resolve_model_client
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
+from box_agent.workflow_owner_store import (
+    clear_workflow_owner,
+    load_workflow_owner,
+    save_workflow_owner,
+)
 from box_agent.completion import (
     build_auto_completion_gate,
     cancels_pending_completion_gate,
@@ -135,6 +140,7 @@ from box_agent.workflows import (
     CONTROLLED_PRESENTATION_WORKFLOW_KIND,
     EXTERNAL_SKILL_WORKFLOW_KIND,
     build_external_skill_completion_gate,
+    completion_gate_from_owner,
     build_presentation_preflight_analysis_text,
     build_presentation_preflight_result,
     build_presentation_recommendation_prompt,
@@ -2212,6 +2218,11 @@ class BoxACPAgent:
             state.skill_loader,
             plan_detection_text,
         )
+        explicit_skill_uses_controlled_workflow = (
+            explicit_skill is not None
+            and explicit_skill.source == "builtin"
+            and explicit_skill.workflow == CONTROLLED_PRESENTATION_WORKFLOW_KIND
+        )
         if explicit_skill is not None:
             log.info(
                 "skill/invocation",
@@ -2221,8 +2232,7 @@ class BoxACPAgent:
                 workflow=explicit_skill.workflow,
                 lifecycle=(
                     "controlled"
-                    if explicit_skill.workflow
-                    == CONTROLLED_PRESENTATION_WORKFLOW_KIND
+                    if explicit_skill_uses_controlled_workflow
                     else "external"
                 ),
             )
@@ -2269,6 +2279,7 @@ class BoxACPAgent:
 
         provider_uses_controlled_workflow = (
             presentation_provider is not None
+            and presentation_provider.source == "builtin"
             and presentation_provider.uses_controlled_workflow
         )
         presentation_provider_skill = (
@@ -2286,7 +2297,7 @@ class BoxACPAgent:
                 tool_limits=self._config.tool_limits,
             )
             if explicit_skill is not None
-            and explicit_skill.workflow == CONTROLLED_PRESENTATION_WORKFLOW_KIND
+            and explicit_skill_uses_controlled_workflow
             else build_external_skill_completion_gate(
                 user_text=plan_detection_text,
                 workspace_dir=state.agent.workspace_dir,
@@ -2349,11 +2360,33 @@ class BoxACPAgent:
             plan_detection_text,
             waiting_for_user_input=False,
         )
+        workflow_owner_session_id = state.upstream_session_id
+        owned_completion_gate = None
+        if (
+            explicit_skill is None
+            and workflow_owner_session_id
+            and recover_from_workspace
+        ):
+            owner = load_workflow_owner(session_id=workflow_owner_session_id)
+            if owner is not None:
+                owned_completion_gate = completion_gate_from_owner(
+                    owner,
+                    workspace_dir=state.agent.workspace_dir,
+                    tool_limits=self._config.tool_limits,
+                )
+                if owned_completion_gate is not None:
+                    log.info(
+                        "workflow/owner_resumed",
+                        session_id=session_id,
+                        owner_session_id=workflow_owner_session_id,
+                        workflow=owner.workflow_kind,
+                    )
         recovered_completion_gate = (
             None
             if (
                 state.artifact_mode == "project"
                 or resume_pending_gate
+                or owned_completion_gate is not None
                 or not recover_from_workspace
             )
             else recover_completion_gate(
@@ -2365,6 +2398,11 @@ class BoxACPAgent:
             completion_gate = state.pending_completion_gate
             state.waiting_for_user_input = False
             completion_gate_source = "resumed"
+        elif owned_completion_gate is not None:
+            completion_gate = owned_completion_gate
+            state.pending_completion_gate = owned_completion_gate
+            state.waiting_for_user_input = False
+            completion_gate_source = "owner"
         elif recovered_completion_gate is not None:
             completion_gate = recovered_completion_gate
             state.pending_completion_gate = recovered_completion_gate
@@ -2385,6 +2423,8 @@ class BoxACPAgent:
             elif cancels_pending_completion_gate(plan_detection_text):
                 state.pending_completion_gate = None
                 state.waiting_for_user_input = False
+                if workflow_owner_session_id:
+                    clear_workflow_owner(session_id=workflow_owner_session_id)
         if was_waiting_for_user_input:
             # The first subsequent user prompt resumes a paused decision or
             # missing-input request. This also supports a host-side "cancel
@@ -2400,6 +2440,20 @@ class BoxACPAgent:
                 state.pending_completion_gate = pending_completion_gate_for_storage(
                     completion_gate
                 )
+                if workflow_owner_session_id:
+                    saved_owner = save_workflow_owner(
+                        session_id=workflow_owner_session_id,
+                        workflow_kind=completion_gate.workflow_checkpoint_kind,
+                        workflow_options=completion_gate.workflow_options,
+                    )
+                    if saved_owner is not None:
+                        log.info(
+                            "workflow/owner_selected",
+                            session_id=session_id,
+                            owner_session_id=workflow_owner_session_id,
+                            workflow=saved_owner.workflow_kind,
+                            source=completion_gate_source,
+                        )
         if completion_gate is not None:
             log.info(
                 "completion_gate/enabled",
@@ -2627,6 +2681,8 @@ class BoxACPAgent:
                 state.pending_completion_gate = None
                 state.waiting_for_user_input = False
                 delivery_status = "complete"
+                if state.upstream_session_id:
+                    clear_workflow_owner(session_id=state.upstream_session_id)
                 log.info(
                     "completion_gate/complete",
                     session_id=session_id,

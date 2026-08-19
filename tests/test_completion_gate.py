@@ -3971,7 +3971,8 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert "actual http(s) source URL" in checkpoint
     assert "AuthLevel as a ranking hint" in checkpoint
     assert "site:-constrained query" in checkpoint
-    assert "validate_outline.js outline.json" in checkpoint
+    assert "validate_outline.js" in checkpoint
+    assert str(tmp_path / "output" / "outline.json") in checkpoint
 
     output = tmp_path / "output"
     output.mkdir()
@@ -4024,12 +4025,14 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}scaffold" in checkpoint
-    assert "--outline outline.json --out deck.json" in checkpoint
+    assert "--outline" in checkpoint
+    assert str(output / "outline.json") in checkpoint
+    assert "--out" in checkpoint
+    assert str(output / "deck.json") in checkpoint
     assert "may repeat layout ids" in checkpoint
     assert "inspector deterministically derives the ordered layout plan" in checkpoint
     assert "Do not pass layout ids, --theme, --image-mode" in checkpoint
-    assert "one physical command line using `cd <artifact-root> &&`" in checkpoint
-    assert "do not split `cd` and the inspector across lines" in checkpoint
+    assert "running exactly" in checkpoint
     assert "automatically imports public outline evidence" in checkpoint
     assert "SCAFFOLD_INPUT=" in checkpoint
     assert '"registered_theme_ids"' in checkpoint
@@ -4102,7 +4105,9 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}apply_patch" in checkpoint
-    assert "apply_deck_patch.js deck.json deck.patch.json" in checkpoint
+    assert "apply_deck_patch.js" in checkpoint
+    assert str(output / "deck.json") in checkpoint
+    assert str(output / "deck.patch.json") in checkpoint
     assert str(FINALIZER_SCRIPT.parent / "apply_deck_patch.js") in checkpoint
 
     deck_path.write_text(
@@ -4116,7 +4121,9 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
-    assert "finalize_controlled_deck.js deck.json --out index.html" in checkpoint
+    assert "finalize_controlled_deck.js" in checkpoint
+    assert str(tmp_path / "output" / "deck.json") in checkpoint
+    assert str(tmp_path / "output" / "index.html") in checkpoint
     assert "Do not split it into individual validators" in checkpoint
 
     (qa / "deck_spec.json").write_text('{"ok": true}', encoding="utf-8")
@@ -7208,9 +7215,12 @@ async def test_controlled_stale_deck_spec_report_requires_single_finalizer(tmp_p
     )
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
-    assert "finalize_controlled_deck.js deck.json --out index.html" in checkpoint
+    assert "finalize_controlled_deck.js" in checkpoint
+    assert str(tmp_path / "output" / "deck.json") in checkpoint
+    assert str(tmp_path / "output" / "index.html") in checkpoint
     assert "Do not split it into individual validators" in checkpoint
     assert "REPAIR_INPUT=" not in checkpoint
+
 
     llm = MockLLM(
         [
@@ -7255,6 +7265,57 @@ async def test_controlled_stale_deck_spec_report_requires_single_finalizer(tmp_p
     assert blocked.success is False
     assert "CONTROLLED_PRESENTATION_FINALIZE_REQUIRED" in (blocked.error or "")
     assert "finalize_controlled_deck.js" in (blocked.error or "")
+
+
+def test_controlled_nested_artifact_root_uses_absolute_finalizer_paths(tmp_path):
+    artifact_root = tmp_path / "output" / "nested" / "controlled"
+    qa = artifact_root / "qa"
+    qa.mkdir(parents=True)
+    (artifact_root / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "Intro",
+                        "message": "Message",
+                        "bullets": ["One"],
+                        "layout": "cover",
+                        "visual": "hero",
+                        "evidence": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (artifact_root / "deck.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "theme_id": "soft-editorial",
+                "slides": [
+                    {
+                        "id": "slide-1",
+                        "layout_id": "cover-hero-v1",
+                        "props": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+
+    checkpoint = completion_gate_progress_text(
+        CompletionGate(workflow_checkpoint_kind="controlled_presentation"),
+        str(tmp_path),
+    )
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}finalize" in checkpoint
+    assert str(artifact_root / "deck.json") in checkpoint
+    assert str(artifact_root / "index.html") in checkpoint
 
 
 @pytest.mark.asyncio
@@ -7814,10 +7875,9 @@ async def test_controlled_presentation_checkpoint_stays_fresh_without_duplicate_
     assert len(first_checkpoint_messages) == 1
     assert llm.messages_seen[0][-1] is first_checkpoint_messages[0]
     assert "NEXT_ACTION=Run `" in first_checkpoint_messages[0].content
-    assert (
-        "apply_deck_patch.js deck.json deck.patch.json"
-        in first_checkpoint_messages[0].content
-    )
+    assert "apply_deck_patch.js" in first_checkpoint_messages[0].content
+    assert str(output / "deck.json") in first_checkpoint_messages[0].content
+    assert str(output / "deck.patch.json") in first_checkpoint_messages[0].content
     assert str(FINALIZER_SCRIPT.parent / "apply_deck_patch.js") in (
         first_checkpoint_messages[0].content
     )
