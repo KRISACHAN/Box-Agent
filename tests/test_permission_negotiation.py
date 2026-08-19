@@ -511,3 +511,110 @@ class TestSafetyPermissionNegotiation:
         assert results[0].policy_decision["type"] == "policy_decision"
         assert results[0].policy_decision["decision"] == "denied"
         assert results[0].policy_decision["scope"] == "safety"
+
+    @pytest.mark.asyncio
+    async def test_unrestricted_filesystem_retries_dangerous_windows_command_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Mode 2 prompts for danger, then retries without a filesystem gate."""
+        from box_agent.tools.bash_tool import BashTool
+
+        command = (
+            'rmdir "D:\\fly\\2026-08-17-7e45db75" && '
+            'if exist "D:\\fly\\2026-08-17-7e45db75" '
+            '(echo DELETE_FAILED & exit /b 1) else (echo DELETED)'
+        )
+        spawned: list[str] = []
+
+        class SuccessfulProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return b"DELETED\n", b""
+
+        async def fake_spawn(actual_command: str, *, merge_stderr: bool = False):
+            del merge_stderr
+            spawned.append(actual_command)
+            return SuccessfulProcess()
+
+        monkeypatch.setattr("box_agent.tools.bash_tool.backup_file", lambda _path: None)
+        tool = BashTool(
+            workspace_dir=str(tmp_path),
+            allow_full_access=True,
+            permission_engine=None,
+            non_interactive=True,
+            bypass_dangerous_command_approval=False,
+        )
+        monkeypatch.setattr(tool, "_create_subprocess", fake_spawn)
+        negotiator = SafetyNegotiator(grant=True)
+
+        events = await collect(run_agent_loop(
+            llm=_llm_with_tool_call("bash", {"command": command}),
+            messages=_msgs(),
+            tools={"bash": tool},
+            max_steps=5,
+            permission_negotiator=negotiator,
+            workspace_dir=str(tmp_path),
+        ))
+
+        assert len(negotiator.requests) == 1
+        assert negotiator.requests[0]["scope"] == "safety"
+        assert spawned == [command]
+        results = [e for e in events if isinstance(e, ToolCallResult)]
+        assert len(results) == 1
+        assert results[0].success is True
+        assert results[0].policy_decision is not None
+        assert results[0].policy_decision["decision"] == "approved"
+        assert results[0].policy_decision["retry_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_full_access_executes_dangerous_windows_command_without_prompt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Mode 3 bypasses both dangerous-command and filesystem gates."""
+        from box_agent.tools.bash_tool import BashTool
+
+        command = (
+            'rmdir "D:\\fly\\2026-08-17-7e45db75" && '
+            'if exist "D:\\fly\\2026-08-17-7e45db75" '
+            '(echo DELETE_FAILED & exit /b 1) else (echo DELETED)'
+        )
+        spawned: list[str] = []
+
+        class SuccessfulProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return b"DELETED\n", b""
+
+        async def fake_spawn(actual_command: str, *, merge_stderr: bool = False):
+            del merge_stderr
+            spawned.append(actual_command)
+            return SuccessfulProcess()
+
+        monkeypatch.setattr("box_agent.tools.bash_tool.backup_file", lambda _path: None)
+        tool = BashTool(
+            workspace_dir=str(tmp_path),
+            allow_full_access=True,
+            permission_engine=None,
+            non_interactive=True,
+            bypass_dangerous_command_approval=True,
+        )
+        monkeypatch.setattr(tool, "_create_subprocess", fake_spawn)
+        negotiator = SafetyNegotiator(grant=False)
+
+        events = await collect(run_agent_loop(
+            llm=_llm_with_tool_call("bash", {"command": command}),
+            messages=_msgs(),
+            tools={"bash": tool},
+            max_steps=5,
+            permission_negotiator=negotiator,
+            workspace_dir=str(tmp_path),
+        ))
+
+        assert negotiator.requests == []
+        assert spawned == [command]
+        assert not [e for e in events if isinstance(e, PermissionRequestEvent)]
+        results = [e for e in events if isinstance(e, ToolCallResult)]
+        assert len(results) == 1
+        assert results[0].success is True
