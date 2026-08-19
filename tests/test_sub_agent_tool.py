@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from time import perf_counter
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,6 +16,7 @@ from box_agent.schema import LLMResponse, Message, StreamEvent, TokenUsage
 from box_agent.agent import Agent
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.file_tools import ReadTool, WriteTool
+from box_agent.tools.permissions import CapabilityPolicy, GrantStore, PermissionEngine
 from box_agent.tools.skill_loader import SkillLoader
 from box_agent.tools.sub_agent_tool import SubAgentTool
 
@@ -61,6 +63,24 @@ class WebSearchTool(Tool):
             success=True,
             content='{"refs":[{"reference_tag":"ref_1","title":"Example","url":"https://example.com"}]}',
         )
+
+
+class FilesystemNegotiator:
+    """Grant or reject a filesystem directory through the shared store."""
+
+    def __init__(self, store: GrantStore, *, grant: bool = True):
+        self._store = store
+        self._grant = grant
+        self.requests: list[dict] = []
+
+    async def negotiate(self, permission_request: dict) -> bool:
+        self.requests.append(permission_request)
+        if not self._grant:
+            return False
+        target = Path(permission_request["path"]).expanduser().resolve()
+        grant_dir = target if target.is_dir() else target.parent
+        self._store.add_filesystem_dir_grant(grant_dir, "prompt")
+        return True
 
 
 def _make_llm(text: str = "summary", tool_calls=None):
@@ -147,51 +167,88 @@ def test_manual_child_routing_inherits_parent_model():
     assert diagnostic == {"mode": "inherit", "reason": "no_auto_model_pool"}
 
 
+async def test_only_explicit_required_tools_influence_model_routing(monkeypatch):
+    routed_tools = []
+
+    def fake_resolve_model_client(llm, **kwargs):
+        routed_tools.append(tuple(kwargs.get("required_tools", ())))
+        return llm, {"mode": "test"}
+
+    monkeypatch.setattr(
+        "box_agent.tools.sub_agent_tool.resolve_model_client",
+        fake_resolve_model_client,
+    )
+    llm = _make_llm()
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": ReadTool()},
+    )
+
+    inherited = await tool.execute(task="Use safe defaults")
+    explicit = await tool.execute(
+        task="Use one tool",
+        required_tools=["read_file"],
+    )
+
+    assert inherited.success is True
+    assert explicit.success is True
+    assert routed_tools == [(), ("read_file",)]
+
+
 def test_default_parallel_safe_is_false():
     """Other tools should have parallel_safe == False by default."""
     dummy = DummyTool()
     assert dummy.parallel_safe is False
 
 
-def test_schema():
+def test_schema_exposes_flat_contract_with_safe_defaults():
     llm = AsyncMock()
-    tool = SubAgentTool(llm=llm, parent_tools={})
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={
+            "read_file": ReadTool(),
+            "write_file": WriteTool(),
+            "web_search": WebSearchTool(),
+        },
+    )
     schema = tool.to_schema()
     assert schema["name"] == "sub_agent"
-    assert "task" in schema["input_schema"]["properties"]
-    # `title` is an optional short distinct label, not required.
-    assert "title" in schema["input_schema"]["properties"]
-    assert "capabilities" in schema["input_schema"]["properties"]
-    assert "execution" in schema["input_schema"]["properties"]
-    assert "batch_files" in schema["input_schema"]["properties"]["execution"]["properties"]["strategy"]["enum"]
-    assert schema["input_schema"]["required"] == ["task"]
+    input_schema = schema["input_schema"]
+    properties = input_schema["properties"]
+    assert set(properties) == {
+        "title",
+        "task",
+        "skills",
+        "required_tools",
+        "files",
+        "write_scope",
+        "budget",
+    }
+    assert input_schema["required"] == ["task"]
+    assert properties["required_tools"]["default"] == ["read_file"]
+    assert properties["skills"]["default"] == []
 
     openai_schema = tool.to_openai_schema()
     assert openai_schema["function"]["name"] == "sub_agent"
 
 
-def test_description_prefers_cost_aware_batching_and_parent_merge():
+def test_description_explains_flat_contract_and_derived_policy():
     llm = AsyncMock()
     tool = SubAgentTool(llm=llm, parent_tools={})
     description = tool.description
 
     assert "independent context, parallel latency, or evidence isolation" in description
-    assert "minimum tools and Skills" in description
-    assert "batch_files" in description
-    assert "required_tools=[\"read_file\"]" in description
-    assert "fewest mutually exclusive batches" in description
-    assert "Do not create multiple children merely because there are five or more units" in description
+    assert "trusted local read tools" in description
+    assert "fail-closed runtime policy" in description
+    assert "bounded completeness-checked batch fast path" in description
     assert "parent remains responsible" in description
     assert "final deliverables" in description
-    assert "read_only:false" in description
-    assert 'write_scope:["research/dim01.md"]' in description
+    assert "exact `write_scope`" in description
     assert "Pass `budget` as an object" in description
-    assert "never pass serialized JSON text" in description
 
     parameters = tool.parameters["properties"]
     assert "Never pass a serialized JSON string" in parameters["budget"]["description"]
-    assert "Defaults are read_only=true" in parameters["constraints"]["description"]
-    assert "mutually exclusive paths" in parameters["constraints"]["properties"]["write_scope"]["description"]
+    assert "disjoint scopes" in parameters["write_scope"]["description"]
 
 
 # ── Tool filtering ───────────────────────────────────────────
@@ -236,6 +293,13 @@ def test_resolve_child_tools_falls_back_to_snapshot():
 
     tool.set_tool_provider(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     assert "dummy" in tool._resolve_child_tools()  # provider raised → snapshot
+
+
+def test_resolve_child_tools_honors_empty_live_boundary():
+    tool = SubAgentTool(llm=AsyncMock(), parent_tools={"dummy": DummyTool()})
+    tool.set_tool_provider(lambda: {})
+
+    assert tool._resolve_child_tools() == {}
 
 
 # ── Execution ────────────────────────────────────────────────
@@ -335,6 +399,25 @@ def test_agent_wires_system_prompt_into_sub_agent(tmp_path):
     assert "Current Workspace" in tool._parent_system_prompt
 
 
+async def test_agent_run_wires_parent_permission_negotiator_into_sub_agent(tmp_path):
+    llm = _make_llm()
+    tool = SubAgentTool(llm=llm, parent_tools={})
+    agent = Agent(
+        llm_client=llm,
+        system_prompt="parent",
+        tools=[tool],
+        workspace_dir=str(tmp_path),
+        deferred_mcp_loading_enabled=False,
+    )
+    negotiator = AsyncMock()
+    agent.set_permission_negotiator(negotiator)
+    agent.messages.append(Message(role="user", content="finish"))
+
+    _ = [event async for event in agent.run_events()]
+
+    assert tool._permission_negotiator is negotiator
+
+
 def test_sub_agent_prompt_replaces_parent_only_mcp_search_guidance(tmp_path):
     llm = AsyncMock()
     tool = SubAgentTool(llm=llm, parent_tools={})
@@ -409,7 +492,7 @@ async def test_sub_agent_read_ledger_is_local_to_child_context(tmp_path):
 
     result = await sub_agent.execute(
         task="Read the reference",
-        capabilities={"required_tools": ["read_file"]},
+        required_tools=["read_file"],
     )
 
     assert result.success is True
@@ -421,7 +504,88 @@ async def test_sub_agent_read_ledger_is_local_to_child_context(tmp_path):
     assert parent.context_resource_ledger.source_ids == ("parent-read",)
 
 
-async def test_new_style_general_loop_uses_only_resolved_tools_and_slim_prompt(tmp_path):
+async def test_general_loop_uses_parent_permission_negotiator_and_retries(tmp_path):
+    from box_agent.schema import FunctionCall, ToolCall
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    target = downloads / "inventory.txt"
+    target.write_text("pdf\nimage\n", encoding="utf-8")
+
+    store = GrantStore()
+    engine = PermissionEngine(
+        CapabilityPolicy(
+            filesystem_scope="session_workspace",
+            session_workspace_root=str(workspace),
+        ),
+        workspace,
+        grant_store=store,
+    )
+    engine._home_dir = tmp_path.resolve()
+
+    class CountingReadTool(ReadTool):
+        def __init__(self):
+            super().__init__(
+                workspace_dir=str(workspace),
+                permission_engine=engine,
+            )
+            self.calls = 0
+
+        async def execute(self, path, offset=None, limit=None):
+            self.calls += 1
+            return await super().execute(path=path, offset=offset, limit=limit)
+
+    call_count = 0
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="child-read-downloads",
+                        type="function",
+                        function=FunctionCall(
+                            name="read_file",
+                            arguments={"path": str(target)},
+                        ),
+                    )
+                ],
+            )
+            return
+        tool_message = next(message for message in messages if message.role == "tool")
+        assert "pdf" in tool_message.content
+        yield StreamEvent(type="text", delta="inventory complete")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    read_tool = CountingReadTool()
+    negotiator = FilesystemNegotiator(store)
+    sub_agent = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": read_tool},
+        workspace_dir=str(workspace),
+    )
+    sub_agent.set_permission_negotiator(negotiator)
+
+    result = await sub_agent.execute(
+        task="Inventory the Downloads file",
+        required_tools=["read_file"],
+    )
+
+    assert result.success is True
+    assert result.content == "inventory complete"
+    assert read_tool.calls == 2
+    assert len(negotiator.requests) == 1
+
+
+async def test_general_loop_uses_only_resolved_tools_and_inherits_parent_prompt(tmp_path):
     captured = {}
 
     async def fake_stream(*, messages, tools, **kwargs):
@@ -447,16 +611,15 @@ async def test_new_style_general_loop_uses_only_resolved_tools_and_slim_prompt(t
 
     result = await tool.execute(
         task="Inspect the local inputs",
-        capabilities={"required_tools": ["read_file"]},
+        required_tools=["read_file"],
     )
 
     assert result.success is True
     assert [candidate.name for candidate in captured["tools"]] == ["read_file"]
     system_prompt = captured["messages"][0].content
     assert "Immutable rules" in system_prompt
-    assert "SECRET_PARENT_PROMPT" not in system_prompt
-    assert "Inherited parent system prompt" not in system_prompt
-    assert result.raw_output["legacy_general"] is False
+    assert "SECRET_PARENT_PROMPT" in system_prompt
+    assert "Inherited parent system prompt" in system_prompt
     assert result.raw_output["resolved_tools"] == ["read_file"]
     assert result.raw_output["model_calls"] == 1
     assert result.raw_output["usage"] == {
@@ -466,17 +629,53 @@ async def test_new_style_general_loop_uses_only_resolved_tools_and_slim_prompt(t
     }
 
 
-async def test_invalid_new_style_spec_never_falls_back_or_calls_llm():
+async def test_omitted_required_tools_exposes_only_trusted_local_readers(tmp_path):
+    captured_tools = None
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        nonlocal captured_tools
+        captured_tools = tools
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={
+            "read_file": ReadTool(workspace_dir=str(tmp_path)),
+            "write_file": WriteTool(workspace_dir=str(tmp_path)),
+            "web_search": WebSearchTool(),
+        },
+        workspace_dir=str(tmp_path),
+    )
+
+    result = await tool.execute(task="Inspect safely")
+
+    assert result.success is True
+    assert [candidate.name for candidate in captured_tools] == ["read_file"]
+    assert result.raw_output["requested_tools"] == ["read_file"]
+    assert "required_tools" in result.raw_output["defaults_applied"]
+
+
+async def test_removed_nested_fields_fail_without_calling_llm():
     llm = AsyncMock()
     tool = SubAgentTool(llm=llm, parent_tools={})
 
-    result = await tool.execute(task="Inspect", capabilities={})
+    for field, value in (
+        ("execution", {"strategy": "general_loop"}),
+        ("capabilities", {"required_tools": ["read_file"]}),
+        ("inputs", {"files": []}),
+        ("constraints", {"read_only": True}),
+    ):
+        result = await tool.execute(task="Inspect", **{field: value})
 
-    assert result.success is False
-    assert result.raw_output["code"] == "INVALID_DELEGATION_SPEC"
-    assert result.raw_output["retryable"] is True
-    assert "minimal_valid_example" in result.raw_output
-    assert result.raw_output["retry_limit"] == 1
+        assert result.success is False
+        assert result.raw_output["code"] == "INVALID_DELEGATION_SPEC"
+        assert result.raw_output["retryable"] is True
+        assert result.raw_output["invalid_fields"] == [field]
+        assert "minimal_valid_example" in result.raw_output
+        assert result.raw_output["retry_limit"] == 1
     llm.generate.assert_not_called()
     llm.generate_stream.assert_not_called()
 
@@ -487,7 +686,6 @@ async def test_invalid_budget_string_returns_object_correction_example():
 
     result = await tool.execute(
         task="Research one dimension",
-        capabilities={"required_tools": ["read_file"]},
         budget='{"max_steps": 12, "max_tool_calls": 25}',
     )
 
@@ -501,7 +699,7 @@ async def test_invalid_budget_string_returns_object_correction_example():
     llm.generate_stream.assert_not_called()
 
 
-async def test_write_conflict_returns_scoped_write_correction_hint(tmp_path):
+async def test_write_without_scope_returns_flat_correction(tmp_path):
     llm = AsyncMock()
     tool = SubAgentTool(
         llm=llm,
@@ -511,14 +709,15 @@ async def test_write_conflict_returns_scoped_write_correction_hint(tmp_path):
 
     result = await tool.execute(
         task="Write one research dimension",
-        capabilities={"required_tools": ["write_file"]},
+        required_tools=["write_file"],
     )
 
     assert result.success is False
-    assert result.raw_output["code"] == "CAPABILITY_CONSTRAINT_CONFLICT"
-    assert "constraints.read_only=false" in result.raw_output["correction_hint"]
-    assert "constraints.write_scope" in result.raw_output["correction_hint"]
-    assert "external_side_effect=false" in result.raw_output["correction_hint"]
+    assert result.raw_output["code"] == "INVALID_DELEGATION_SPEC"
+    assert result.raw_output["invalid_fields"] == ["write_scope"]
+    assert result.raw_output["field_corrections"]["write_scope"]["example"] == [
+        "research/dim01.md"
+    ]
     llm.generate_stream.assert_not_called()
 
 
@@ -565,7 +764,6 @@ async def test_event_context_missing_task_returns_structured_failure():
     result = await tool.execute_with_event_context(
         event_queue=asyncio.Queue(),
         parent_tool_call_id="parent-call",
-        capabilities={"required_tools": ["read_file"]},
     )
 
     assert result.success is False
@@ -611,10 +809,8 @@ Follow the REVIEW-SKILL-CONTENT rubric.
 
     result = await tool.execute(
         task="Review the material",
-        capabilities={
-            "required_tools": ["read_file"],
-            "skills": ["review-skill"],
-        },
+        required_tools=["read_file"],
+        skills=["review-skill"],
     )
 
     assert result.success is True
@@ -629,19 +825,13 @@ async def test_capability_state_provider_drives_not_ready_error():
 
     result = await tool.execute(
         task="Use the future MCP tool",
-        capabilities={"required_tools": ["mcp_future_tool"]},
-        constraints={
-            "read_only": False,
-            "network": True,
-            "write_scope": None,
-            "external_side_effect": True,
-        },
+        required_tools=["mcp_future_tool"],
     )
 
     assert result.success is False
     assert result.raw_output["code"] == "REQUIRED_TOOL_NOT_READY"
     assert result.raw_output["pending_source"] == "mcp"
-    assert result.raw_output["requested_tools"]["required"] == ["mcp_future_tool"]
+    assert result.raw_output["requested_tools"] == ["mcp_future_tool"]
     assert result.raw_output["resolved_tools"] == []
     assert result.raw_output["denied_tools"][0]["name"] == "mcp_future_tool"
     assert result.raw_output["model_calls"] == 0
@@ -726,7 +916,10 @@ async def test_sub_agent_forwards_web_search_reference_event():
     tool._event_queue = queue
     tool._parent_tool_call_id = "parent-sub-agent"
 
-    result = await tool.execute(task="search in child")
+    result = await tool.execute(
+        task="search in child",
+        required_tools=["web_search"],
+    )
 
     forwarded = []
     while not queue.empty():
@@ -792,13 +985,21 @@ async def test_max_steps_respected():
     llm = AsyncMock()
     llm.generate_stream = looping_stream
 
-    dummy = DummyTool()
+    class ReadDummy(DummyTool):
+        @property
+        def name(self) -> str:
+            return "read_file"
+
+    dummy = ReadDummy()
     tool = SubAgentTool(
         llm=llm,
-        parent_tools={"dummy": dummy},
-        max_steps=3,
+        parent_tools={"read_file": dummy},
     )
-    result = await tool.execute(task="Loop forever")
+    result = await tool.execute(
+        task="Loop forever",
+        required_tools=["read_file"],
+        budget={"max_steps": 3, "max_tool_calls": 3},
+    )
     # Should have stopped — call_count should be capped at max_steps
     assert call_count <= 4  # max_steps=3 means 3 LLM calls
 
@@ -862,9 +1063,7 @@ async def test_batch_files_reads_twenty_files_once_and_calls_generate_once(tmp_p
     started = perf_counter()
     result = await tool.execute(
         task="Compare every project and rank them",
-        execution={"strategy": "batch_files"},
-        capabilities={"required_tools": ["read_file"]},
-        inputs={"files": list(reversed(paths))},
+        files=list(reversed(paths)),
     )
     elapsed = perf_counter() - started
 
@@ -884,6 +1083,108 @@ async def test_batch_files_reads_twenty_files_once_and_calls_generate_once(tmp_p
     assert result.raw_output["resolved_tools"] == ["read_file"]
     assert result.raw_output["usage"]["input_tokens"] <= int(3_353_714 * 0.10)
     assert elapsed < 60
+
+
+async def test_batch_files_uses_parent_permission_negotiator_and_retries(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    target = downloads / "inventory.txt"
+    target.write_text("pdf\nimage\n", encoding="utf-8")
+
+    store = GrantStore()
+    engine = PermissionEngine(
+        CapabilityPolicy(
+            filesystem_scope="session_workspace",
+            session_workspace_root=str(workspace),
+        ),
+        workspace,
+        grant_store=store,
+    )
+    engine._home_dir = tmp_path.resolve()
+
+    class CountingReadTool(ReadTool):
+        def __init__(self):
+            super().__init__(
+                workspace_dir=str(workspace),
+                permission_engine=engine,
+            )
+            self.calls = 0
+
+        async def execute(self, path, offset=None, limit=None):
+            self.calls += 1
+            return await super().execute(path=path, offset=offset, limit=limit)
+
+    class BatchLLM:
+        async def generate(self, messages, tools=None, **kwargs):
+            assert "pdf" in messages[-1].content
+            return LLMResponse(content="inventory complete", finish_reason="stop")
+
+        async def generate_stream(self, messages, tools=None, **kwargs):
+            raise AssertionError("batch_files must not enter run_agent_loop")
+            yield
+
+    read_tool = CountingReadTool()
+    negotiator = FilesystemNegotiator(store)
+    sub_agent = SubAgentTool(
+        llm=BatchLLM(),
+        parent_tools={"read_file": read_tool},
+        workspace_dir=str(workspace),
+    )
+    sub_agent.set_permission_negotiator(negotiator)
+
+    result = await sub_agent.execute(
+        task="Inventory Downloads",
+        files=[str(target)],
+    )
+
+    assert result.success is True
+    assert result.content == "inventory complete"
+    assert read_tool.calls == 2
+    assert len(negotiator.requests) == 1
+
+
+async def test_batch_files_keeps_permission_denial_fail_closed(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    target = downloads / "inventory.txt"
+    target.write_text("private\n", encoding="utf-8")
+
+    store = GrantStore()
+    engine = PermissionEngine(
+        CapabilityPolicy(
+            filesystem_scope="session_workspace",
+            session_workspace_root=str(workspace),
+        ),
+        workspace,
+        grant_store=store,
+    )
+    engine._home_dir = tmp_path.resolve()
+    read_tool = ReadTool(
+        workspace_dir=str(workspace),
+        permission_engine=engine,
+    )
+    llm = AsyncMock()
+    sub_agent = SubAgentTool(
+        llm=llm,
+        parent_tools={"read_file": read_tool},
+        workspace_dir=str(workspace),
+    )
+    negotiator = FilesystemNegotiator(store, grant=False)
+    sub_agent.set_permission_negotiator(negotiator)
+
+    result = await sub_agent.execute(
+        task="Inventory Downloads",
+        files=[str(target)],
+    )
+
+    assert result.success is False
+    assert result.raw_output["code"] == "BATCH_FILES_PREFETCH_FAILED"
+    assert len(negotiator.requests) == 1
+    llm.generate.assert_not_called()
 
 
 async def test_batch_files_prefetch_propagates_cancellation():
@@ -915,9 +1216,7 @@ async def test_batch_files_prefetch_propagates_cancellation():
     execution = asyncio.create_task(
         tool.execute(
             task="Summarize",
-            execution={"strategy": "batch_files"},
-            capabilities={"required_tools": ["read_file"]},
-            inputs={"files": ["one.md"]},
+            files=["one.md"],
         )
     )
     await started.wait()
@@ -966,9 +1265,7 @@ async def test_batch_files_uses_configurable_synthesis_timeout():
 
     result = await tool.execute(
         task="Summarize",
-        execution={"strategy": "batch_files"},
-        capabilities={"required_tools": ["read_file"]},
-        inputs={"files": ["one.md"]},
+        files=["one.md"],
     )
 
     assert result.success is False
@@ -1038,9 +1335,7 @@ async def test_batch_files_rejects_unproven_or_incomplete_reads_before_model(
 
     result = await tool.execute(
         task="Summarize",
-        execution={"strategy": "batch_files"},
-        capabilities={"required_tools": ["read_file"]},
-        inputs={"files": ["one.md"]},
+        files=["one.md"],
     )
 
     assert result.success is False
@@ -1087,9 +1382,7 @@ async def test_batch_files_rejects_aggregate_over_200k_before_model():
 
     result = await tool.execute(
         task="Summarize all files",
-        execution={"strategy": "batch_files"},
-        capabilities={"required_tools": ["read_file"]},
-        inputs={"files": ["a.md", "b.md", "c.md", "d.md"]},
+        files=["a.md", "b.md", "c.md", "d.md"],
     )
 
     assert result.success is False
@@ -1144,13 +1437,8 @@ async def test_write_scope_is_enforced_before_live_write_tool(tmp_path):
 
     result = await tool.execute(
         task="Write only inside allowed",
-        capabilities={"required_tools": ["write_file"]},
-        constraints={
-            "read_only": False,
-            "network": False,
-            "write_scope": ["allowed"],
-            "external_side_effect": False,
-        },
+        required_tools=["write_file"],
+        write_scope=["allowed"],
     )
 
     assert result.success is True
@@ -1250,7 +1538,7 @@ async def test_parallel_sub_agent_progress_keeps_parent_tool_call_id():
             yield StreamEvent(type="text", delta=f"done {task}")
             yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
 
-    tool = SubAgentTool(llm=TaskEchoLLM(), parent_tools={}, max_steps=1)
+    tool = SubAgentTool(llm=TaskEchoLLM(), parent_tools={})
     queue: asyncio.Queue[SubAgentEvent] = asyncio.Queue()
 
     result_a, result_b = await asyncio.gather(
@@ -1311,17 +1599,11 @@ async def test_parallel_new_style_calls_do_not_leak_resolved_tools():
     result_read, result_web = await asyncio.gather(
         tool.execute(
             task="read task",
-            capabilities={"required_tools": ["read_file"]},
+            required_tools=["read_file"],
         ),
         tool.execute(
             task="web task",
-            capabilities={"required_tools": ["web_search"]},
-            constraints={
-                "read_only": True,
-                "network": True,
-                "write_scope": None,
-                "external_side_effect": False,
-            },
+            required_tools=["web_search"],
         ),
     )
 
@@ -1339,7 +1621,7 @@ def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
 
     class Config:
         tool_limits = ToolLimitsConfig(
-            sub_agent={"legacy_max_steps": 55, "no_progress_steps": 9}
+            sub_agent={"general_max_steps": 55, "no_progress_steps": 9}
         )
         agent = AgentConfig(
             sub_agent_token_limit=12345,
@@ -1367,7 +1649,7 @@ def test_add_workspace_tools_wires_sub_agent_token_limit(tmp_path) -> None:
 
     sub_agent = next(t for t in tools if t.name == "sub_agent")
     assert sub_agent._token_limit == 12345
-    assert sub_agent._max_steps == 55
+    assert sub_agent._tool_limits.sub_agent.general_max_steps == 55
     assert sub_agent._no_progress_limit == 9
     assert sub_agent._batch_synthesis_timeout_seconds == 234.5
     assert sub_agent._resolve_skill_loader() is skill_loader

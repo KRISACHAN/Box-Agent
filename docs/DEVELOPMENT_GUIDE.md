@@ -364,12 +364,12 @@ A: Answer 1
 The new Skill will be automatically loaded and recognized by the Agent.
 
 `allowed-tools` (or `allowed_tools`) is normalized, deduplicated, and sorted at
-load time. It is routing metadata in the skill catalog and becomes part of an
-explicit sub-agent's requested capability set when that Skill is selected; the
-runtime still intersects it with the parent's live tools and the delegation
-constraints. Use the smallest list the Skill actually needs. Skill dependencies
-belong in `required_skills`; `related_skills` are suggestions and are not loaded
-automatically. See [Sub-agent Delegation](SUB_AGENT_DELEGATION.md).
+load time. It remains routing metadata in the Skill catalog; selecting a Skill
+for a sub-agent does not add tools or widen the derived child policy. Callers
+must name needed tools explicitly. Use the smallest list the Skill actually
+needs. Skill dependencies belong in `required_skills`; `related_skills` are
+suggestions and are not loaded automatically. See
+[Sub-agent Delegation](SUB_AGENT_DELEGATION.md).
 
 ### 3.5 Customizing System Prompt
 

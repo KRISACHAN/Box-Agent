@@ -51,10 +51,10 @@ box-agent --task "分析 sales.csv — 按收入展示前 10 名产品的柱状�
 
 ### 子 Agent 并行
 
-把隔离工作委派给子 Agent，并显式声明工具、Skills、输入、约束以及步骤/工具调用
-硬预算。多个已知本地文本文件可交给一个 `batch_files` 子 Agent 并发读取，再执行
-一次无工具综合；异构任务则使用有边界的 `general_loop` 子 Agent。父 Agent 始终负责
-冲突处理、最终交付物和验证。
+通过扁平任务契约把隔离工作委派给子 Agent，可选声明工具、Skills、文件、写入范围
+以及步骤/工具调用硬预算。省略工具时只解析可信本地只读工具；显式能力仍经过
+fail-closed 运行时策略。把多个已知本地文本路径放入 `files` 会自动使用有完整性校验
+的批量快速路径。父 Agent 始终负责冲突处理、最终交付物和验证。
 
 ```
 用户: "分别分析 data1.csv、data2.csv 和 data3.csv，然后给出综合总结"
@@ -72,8 +72,8 @@ box-agent --task "分析 sales.csv — 按收入展示前 10 名产品的柱状�
                     └─────────────────────────┘
 ```
 
-新式委派默认拒绝扩权（`read_only: true`、`network: false`、
-`external_side_effect: false`）。完整 schema、限制、兼容行为与宿主诊断见
+子级策略由运行时派生：进程工具、外部副作用和未知 MCP fail closed，路径写入必须
+提供精确范围。完整 schema、限制和宿主诊断见
 [子 Agent 委派契约](docs/SUB_AGENT_DELEGATION_CN.md)。
 
 ### 沙箱代码执行

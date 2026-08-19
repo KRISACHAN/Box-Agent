@@ -25,7 +25,7 @@ contracts.
 | Topic | English | 中文 |
 | --- | --- | --- |
 | Context compaction and summarization | [Context Compression](CONTEXT_COMPRESSION.md) | [上下文压缩](CONTEXT_COMPRESSION_CN.md) |
-| Explicit sub-agent capabilities and strategies | [Sub-agent Delegation](SUB_AGENT_DELEGATION.md) | [子 Agent 委派](SUB_AGENT_DELEGATION_CN.md) |
+| Flat sub-agent request and derived policy | [Sub-agent Delegation](SUB_AGENT_DELEGATION.md) | [子 Agent 委派](SUB_AGENT_DELEGATION_CN.md) |
 | Persistent memory integration | [Memory Integration](MEMORY_INTEGRATION.md) | Same document |
 | Controlled HTML PPTX compiler | [PPTX Architecture](PPTX_CONTROLLED_HTML_ARCHITECTURE.md) | [PPTX 架构](PPTX_CONTROLLED_HTML_ARCHITECTURE_CN.md) |
 | Controlled HTML PPTX development and extension | [PPTX Development Guide](PPTX_CONTROLLED_HTML_DEVELOPMENT.md) | [PPTX 开发与扩展手册](PPTX_CONTROLLED_HTML_DEVELOPMENT_CN.md) |

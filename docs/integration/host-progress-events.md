@@ -108,12 +108,12 @@ Known `event` values:
 
 Final sub-agent summaries still arrive on the parent tool-call result (`tool_name = sub_agent`). Hosts may show the summary in the tool card, while the main conversation should wait for the parent agent's assistant message.
 
-Strict capability-based delegation also adds a final diagnostic payload to the
-parent result:
+Flat capability delegation also adds a final diagnostic payload to the parent
+result:
 
-- Success: `rawOutput.type === "sub_agent_delegation"` with strategy,
-  requested/resolved tools and Skills, denied optional tools, constraints,
-  budgets, usage, and call counts.
+- Success: `rawOutput.type === "sub_agent_delegation"` with inferred strategy,
+  requested/resolved tools and Skills, derived constraints, files, budgets,
+  usage, and call counts.
 - Validation/prefetch/timeout failure:
   `rawOutput.type === "sub_agent_delegation_error"` with a stable `code`,
   `message`, and `retryable` flag.

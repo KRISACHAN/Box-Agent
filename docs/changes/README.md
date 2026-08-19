@@ -55,6 +55,7 @@ decision, read those entries together.
 | Tool invocation | `box_agent/tools/base.py`, `schema_validation.py`, `Tool.invoke` | Tool schemas and arguments fail closed before `execute()` is called. | Current at this baseline. | [PR #33](#2026-08-17--validate-tool-arguments-before-execution-pr-33) |
 | Context compression | `box_agent/core.py`, tool-call arguments, history summarization | Normal unsummarized history retains exact tool-call arguments; whole-history summarization remains a separate boundary. | Current at this baseline. | [PR #35](#2026-08-17--preserve-tool-call-arguments-in-normal-history-pr-35) |
 | MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
+| Sub-agent delegation | `sub_agent_tool.py`, `sub_agent_capabilities.py`, `required_tools`, `write_scope`, `files` | The public request is flat; runtime-derived policy limits implicit tools to trusted local readers, keeps process/external/unknown MCP capabilities fail-closed, and scopes path writes. | Supersedes the caller-authored nested constraint contract while retaining its runtime enforcement goals. | [2026-08-19 flattened contract](#2026-08-19--flattened-sub-agent-contract-with-derived-policy) |
 | Model routing and controlled presentations | `box_agent/llm/model_routing.py`, `box_agent/workflows/presentation_*`, controlled PPTX | Automatic child-model routing uses a host allowlist, while presentation-specific state and recovery remain outside the generic kernel. | PR #30 is the main record; later research hardening must be checked where relevant. | [PR #30](#2026-08-14--runtime-routing-and-presentation-reliability-pr-30), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 
 For research execution, Todo/progress behavior, browser routing, or contributor
@@ -62,6 +63,34 @@ branch history, also check
 [other target-branch changes](#other-target-branch-changes-after-or-adjacent-to-those-prs).
 Release, provider API, and ACP compatibility have their own sources under
 [long-lived release and compatibility history](#long-lived-release-and-compatibility-history).
+
+## Pending material changes
+
+### 2026-08-19 — flattened sub-agent contract with derived policy
+
+- Change: implementation on `codex/simplify-subagent-contract`; no merge or
+  release reference exists yet.
+- Public contract: callers pass flat `task`, `title`, `required_tools`, `skills`,
+  `files`, `write_scope`, and `budget` fields. The former nested `execution`,
+  `capabilities`, `inputs`, and `constraints` objects are rejected rather than
+  selecting a legacy or weaker execution mode.
+- Security boundary: omitted tools resolve only to available trusted local
+  readers. Explicit tools still pass runtime capability classification; process
+  tools, external side effects, and unknown MCP tools fail closed. Path-based
+  write tools require a non-empty scope enforced by a wrapper before the live
+  parent tool runs. Parent `PermissionEngine` checks remain final authority.
+- Batch behavior: `files` infers the existing completeness-checked local batch
+  path; its file-count, per-file, aggregate, cancellation, and synthesis-timeout
+  boundaries remain intact.
+- Compatibility: this is a breaking model-facing schema migration. Existing
+  hosts normally render generic tool arguments/results and require no protocol
+  change, but packaged prompts/runtimes must be rebuilt and validated before
+  desktop adoption.
+- Proof anchors: `tests/test_sub_agent_capabilities.py`,
+  `tests/test_sub_agent_tool.py`, config/system-prompt contract tests, ACP/Core
+  tests, and the repository preflight.
+- Rollback: revert the eventual implementation commit and rebuild the previous
+  packaged runtime; no data migration is required.
 
 ## Recent material changes on `main`
 

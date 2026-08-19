@@ -1,155 +1,139 @@
 # 子 Agent 委派
 
-本文是当前 `0.8.79` 开发树中 `sub_agent` 工具的契约文档，覆盖显式能力解析、
-执行策略、限制、兼容行为和宿主诊断。UI 进度渲染还需结合
+本文是 `sub_agent` 工具的契约文档，覆盖扁平公开请求、运行时派生策略、批量文件
+快速路径、预算和宿主诊断。UI 进度渲染还需结合
 [宿主进度事件对接](integration/host-progress-events.md)。
 
 ## 执行模型
 
-子 Agent 拥有独立消息历史，但复用父会话的实时 LLM client 和已解析工具实例。
-因此 Jupyter kernel 等运行态可以共享，同时子 Agent 看不到无关的父会话历史。
-父 Agent 只接收子 Agent 最终结果；结构化进度也可转发给 ACP 宿主。
+子 Agent 拥有独立消息历史，但复用父会话已解析的 LLM client 和实时工具实例。
+`PermissionEngine` 等资源级检查仍是最终权限闸门。父 Agent 负责判断是否值得委派、
+处理冲突、写最终交付物并执行最终验证。运行时始终禁止递归调用 `sub_agent`。
 
-父 Agent 仍负责判断委派收益、处理冲突、写最终交付物并执行最终验证。
-运行时始终禁止子 Agent 递归调用 `sub_agent`。
+子 Agent 不拥有独立授权能力。它复用父会话的权限协商器：受限工具访问会话范围外
+的目录时，由父会话向宿主发起审批；允许后原工具调用自动重试，拒绝或超时则保持
+失败。并发的相同文件权限请求合并为一个宿主审批，不同请求串行展示；危险命令的
+一次性安全审批不会合并。
 
-## 新式请求
+## 公开请求
 
-只要出现 `capabilities` 字段，就进入严格的新式委派。最小有效请求为：
-
-```json
-{
-  "task": "读取给定文件并总结。",
-  "capabilities": {
-    "required_tools": ["read_file"]
-  }
-}
-```
-
-完整结构为：
+普通请求保持扁平：
 
 ```json
 {
-  "title": "API 文档",
-  "task": "比较给定 API 文档并报告不兼容变更。",
-  "execution": {"strategy": "batch_files"},
-  "capabilities": {
-    "required_tools": ["read_file"],
-    "optional_tools": [],
-    "skills": []
-  },
-  "inputs": {"files": ["docs/api-v1.md", "docs/api-v2.md"]},
-  "constraints": {
-    "read_only": true,
-    "network": false,
-    "write_scope": null,
-    "external_side_effect": false
-  },
-  "budget": {"max_steps": 1, "max_tool_calls": 2}
+  "title": "API 审查",
+  "task": "比较 API 文档并报告不兼容变更。",
+  "required_tools": ["read_file"],
+  "skills": ["code-review"],
+  "budget": {"max_steps": 12, "max_tool_calls": 25}
 }
 ```
 
-`required_tools` 必须非空。未知字段或无效值会在调用子 LLM 前返回
-`INVALID_DELEGATION_SPEC`。调用方最多修正一次；严格请求绝不会静默回退到 legacy。
+除 `task` 外均为可选字段。未知顶层字段返回 `INVALID_DELEGATION_SPEC`，调用方可按
+命名字段修正一次。旧的 `execution`、`capabilities`、`inputs`、`constraints` 嵌套
+对象不再接受。
 
-## 能力解析
+### 安全默认
 
-运行时会归一化请求名称，展开所选 Skills 及其 `required_skills`，加入
-`allowed-tools` 路由元数据，再与父会话实时工具和声明约束取交集。
-`related_skills` 只是推荐，不会自动加载。
+省略 `required_tools` 时，子 Agent 只取得当前实际可用的以下可信本地只读工具：
 
-默认采用拒绝扩权策略：
+- `read_file`
+- `query_jsonl`
+- `search_files`
 
-| 约束 | 默认值 | 效果 |
-| --- | --- | --- |
-| `read_only` | `true` | 禁止写工具和进程工具。 |
-| `network` | `false` | 禁止标记为可访问网络的工具。 |
-| `write_scope` | `null` | 默认只读策略下不允许委派写入。 |
-| `external_side_effect` | `false` | 禁止修改外部系统的工具。 |
+显式空数组表示无工具子 Agent。所选 Skill 只增加指导文本，Skill 元数据不能增加
+工具或扩大运行时策略。
 
-委派文件写入时，需要设置 `read_only: false` 并提供非空 `write_scope`。
-运行时会包装 `write_file`、`append_file`、`edit_file`，在调用实时工具前拒绝范围外
-路径。其它写工具因为无法通过这条路径强制限定范围而会被拒绝。现有
-`PermissionEngine` 仍是资源级最终权限闸门。
+## 运行时派生策略
 
-必需能力解析失败会在执行前终止；可选工具可以缺失，并记录在 `denied_tools`。
-未知必需 MCP 工具在 MCP 仍加载时返回 `REQUIRED_TOOL_NOT_READY`，加载完成后仍不存在
-则返回 `REQUIRED_TOOL_NOT_FOUND`。
+运行时根据显式选择的工具派生策略，不再要求模型填写权限布尔值：
 
-## 策略与硬限制
+- `bash`、`execute_code` 等进程工具不委派；
+- 具有外部副作用的工具不委派；
+- 未知 MCP 工具 fail closed；
+- 已知只读网络工具只有被显式点名时才开放；
+- 路径写工具必须提供精确 `write_scope`；
+- Skill 不能扩展解析后的工具集。
 
-### `general_loop`
+已知只读网络工具包括 `web_search`、`vision_review`，以及根据可信服务器元数据识别
+的受管 Playwright 导航/检查工具。`generate_image` 是必须显式选择的可信网络能力。
+浏览器交互和任意浏览器代码仍属于外部副作用能力，默认拒绝。
 
-用于异构工作、独立网络研究或需要迭代工具循环的任务。
+### 写入范围
 
-- 默认和最大预算：12 次模型 step、16 次工具调用总量。
-- 子 Agent 只接收解析成功的工具和所选 Skill 指令。
-- 单工具循环保护与总 `max_tool_calls` 预算都会执行。
-- 解析后的工具若标记为 `parallel_safe` 仍可并发；子循环当前使用 core 默认值：
-  最多并发 8 个调用，单批超时 900 秒。
+`write_file`、`append_file`、`edit_file` 必须同时提供非空、相对产物根目录的
+`write_scope`：
 
-### `batch_files`
+```json
+{
+  "task": "把已核验的发现写入指定文件。",
+  "required_tools": ["web_search", "write_file"],
+  "write_scope": ["research/dim01.md"]
+}
+```
 
-用于多个已知本地文本文件执行相同的只读总结、比较、评估或抽取。应优先使用一个
-批次，而不是每个文件创建一个子 Agent。
+运行时会包装这些工具，在调用父会话实时工具之前拒绝超出范围的路径。并行子 Agent
+必须使用互斥范围。没有路径写工具时传入 `write_scope` 属于无效请求。
 
-- `required_tools` 必须严格等于 `["read_file"]`。
-- `inputs.files` 必须包含 1–32 个唯一文件路径。
-- 文件并发读取；每个文件必须通过 `read_file` 结构化元数据证明读取完整。
-- 单文件上限：选中内容 64,000 字符。
-- 聚合上限：200,000 字符。
-- 固定为一次综合 step；`max_tool_calls` 必须覆盖全部文件。
-- 预读成功后只发起一次无工具、关闭 thinking 的综合调用。
-- `sub_agent_batch_synthesis_timeout_seconds` 为综合调用增加 wall-clock 上限
-  （默认 `300`；设为 `0` 关闭额外上限，仅由 provider request timeout 控制）。
+## 本地文件批量快速路径
 
-任一文件读取失败、被截断、无法证明完整或超过限制时，返回
-`BATCH_FILES_PREFETCH_FAILED`，且不调用综合模型。综合超时返回
-`BATCH_SYNTHESIS_TIMEOUT`。
+传入 `files` 会自动选择内部批处理：
 
-## Legacy 兼容
+```json
+{
+  "task": "比较文档并总结差异。",
+  "files": ["docs/a.md", "docs/b.md"]
+}
+```
 
-只传 `task` 且完全没有 `capabilities` 字段时，使用 legacy 子循环。它继承父会话
-可用工具与父 system prompt，保留 legacy 40 step 循环和配置中的
-`sub_agent_token_limit`，不执行新声明 schema。
-`capabilities: null` 属于无效严格请求，不是 legacy 请求。
+该路径满足：
 
-新调用方应始终使用显式能力声明。Legacy 路径只服务旧 prompt 和旧宿主。
+- `required_tools` 默认且只能解析为 `read_file`；
+- `files` 包含 1-32 个唯一的本地路径；
+- 文件并发读取，并通过结构化元数据证明完整；
+- 单文件选中内容上限为 64,000 字符；
+- 聚合内容上限为 200,000 字符；
+- 综合阶段只调用一次无工具模型；
+- `sub_agent_batch_synthesis_timeout_seconds` 限制综合调用时间。
 
-## 诊断与宿主对接
+输入缺失、失败、截断、无法证明完整或超限时，在综合前返回
+`BATCH_FILES_PREFETCH_FAILED`；综合超时返回 `BATCH_SYNTHESIS_TIMEOUT`。
 
-严格执行成功时，`ToolResult.raw_output` 包含：
+## 预算
 
-- `type: "sub_agent_delegation"`
-- 策略、请求/解析后的工具与 Skills、被拒绝的可选工具
-- 归一化约束、预算和已应用默认项
-- 模型/工具调用次数与 token usage
-- 成功 `batch_files` 的 `aggregate_chars`
-
-执行前失败和批处理失败使用 `type: "sub_agent_delegation_error"`，并提供稳定的
-`code`、`message` 和 `retryable`。ACP 进度仍按父工具调用分组，使用
-`rawOutput.type: "sub_agent_progress"`；最终委派诊断属于父 `sub_agent` 结果，宿主
-不应依赖标题或文本启发式判断。
-
-## 配置
+通用循环的默认值和上限来自 `tool_limits.sub_agent`：
 
 ```yaml
-max_parallel_tools: 8
-parallel_tool_timeout_seconds: 900
-sub_agent_token_limit: 50000
-sub_agent_batch_synthesis_timeout_seconds: 600
+tool_limits:
+  sub_agent:
+    general_max_steps: 60
+    general_max_tool_calls: 32
+    no_progress_steps: 6
 ```
 
-这两个子 Agent 配置都以注释形式列在 `box_agent/config/config-example.yaml` 中，
-作为高级覆盖项。保持注释状态可避免新生成的用户配置固定旧值，使 runtime 升级能够
-更新默认值。
+调用方可以通过 `budget.max_steps` 和 `budget.max_tool_calls` 请求更小预算，超过配置
+上限的值会被截断。`budget` 必须是 JSON 对象，不能是序列化 JSON 文本。
+`sub_agent_token_limit` 独立限制子上下文。
 
-## 实现与验证
+## 诊断
 
-- Schema 与能力解析：`box_agent/tools/sub_agent_capabilities.py`
-- 执行与诊断：`box_agent/tools/sub_agent_tool.py`
-- 实时工具/Skill/MCP 状态接线：`box_agent/tools/setup.py`、
-  `box_agent/agent.py`、`box_agent/cli.py`、`box_agent/acp/__init__.py`
-- 工具调用总量保护：`box_agent/core.py`、`box_agent/loop_guards.py`
+成功的 `ToolResult.raw_output` 包含：
+
+- `type: sub_agent_delegation`
+- 推导出的 `strategy`
+- 请求与解析后的工具和 Skill
+- 内部派生约束和应用的默认值
+- 归一化 `files` 与有效预算
+- 模型/工具调用次数、usage 和模型路由诊断
+
+执行前失败使用 `type: sub_agent_delegation_error`，并返回稳定 `code`、
+`retryable`、`invalid_fields` 及适用的修正信息。子级进度使用
+`rawOutput.type: sub_agent_progress`。
+
+## 归属与验证
+
+- 请求归一化与策略：`box_agent/tools/sub_agent_capabilities.py`
+- 执行、批处理和写入包装：`box_agent/tools/sub_agent_tool.py`
+- 会话工具组装：`box_agent/tools/setup.py`
 - 回归覆盖：`tests/test_sub_agent_capabilities.py`、
-  `tests/test_sub_agent_tool.py`、`tests/test_core.py`、`tests/test_acp.py`
+  `tests/test_sub_agent_tool.py`、Core、ACP 和配置测试

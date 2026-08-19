@@ -745,7 +745,6 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             parent_tools=parent_tools,
             workspace_dir=str(workspace_dir),
             tool_limits=tool_limits,
-            max_steps=tool_limits.sub_agent.legacy_max_steps,
             token_limit=config.agent.sub_agent_token_limit,
             batch_synthesis_timeout_seconds=(
                 config.agent.sub_agent_batch_synthesis_timeout_seconds

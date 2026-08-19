@@ -70,25 +70,20 @@ def test_system_prompt_uses_mode_specific_file_delivery_guidance():
     assert "所有交付物落 `{workspace}/output/`" not in prompt
 
 
-def test_system_prompt_sub_agent_routing_is_cost_aware_and_capability_explicit():
+def test_system_prompt_sub_agent_routing_uses_flat_fail_closed_contract():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 
     assert "独立上下文、并行耗时或证据隔离收益明显高于启动和合并成本" in prompt
     assert "不要仅因单元数量达到 5 个就强制并行" in prompt
-    assert "execution.strategy=\"batch_files\"" in prompt
-    assert 'capabilities.required_tools=["read_file"]' in prompt
-    assert "满足限制的最少互斥批次" in prompt
-    assert "显式最小能力声明的 `general_loop`" in prompt
-    assert "INVALID_DELEGATION_SPEC" in prompt
-    assert "最多修正重试一次" in prompt
-    assert "只有完全没有 `capabilities` 的旧调用" in prompt
-    assert "最终合并、交叉校验" in prompt
+    assert "`required_tools`、`skills`、`files`、`write_scope` 和 `budget`" in prompt
+    assert "不要构造 `execution/capabilities/inputs/constraints` 嵌套对象" in prompt
+    assert "运行时自动使用有完整性校验的批处理" in prompt
+    assert "可信本地只读工具" in prompt
+    assert "进程工具、外部副作用和未知 MCP 默认拒绝" in prompt
+    assert "最终交付物与最终验证始终由主 Agent 完成" in prompt
     assert '`budget` 必须直接传对象' in prompt
-    assert '"read_only":false' in prompt
-    assert '"network":true' in prompt
-    assert '"write_scope":["research/dim01.md"]' in prompt
-    assert '"external_side_effect":false' in prompt
-    assert "互斥的精确输出路径" in prompt
+    assert '`write_scope=["research/dim01.md"]`' in prompt
+    assert "并行子 Agent 的范围必须互斥" in prompt
 
 
 def test_system_prompt_makes_missing_input_a_resumable_pause():

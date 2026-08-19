@@ -190,10 +190,11 @@ class PresentationToolLimitsConfig(WorkflowToolLimitsConfig):
 
 
 class SubAgentToolLimitsConfig(ToolLimitsModel):
-    """Declared sub-agent loop and stall-detection limits."""
+    """Sub-agent loop and stall-detection limits."""
 
     general_max_steps: int = Field(default=60, ge=1, le=256)
     general_max_tool_calls: int = Field(default=32, ge=1, le=256)
+    # Parsed for existing configs but no longer selects a separate legacy loop.
     legacy_max_steps: int = Field(default=60, ge=1, le=256)
     no_progress_steps: int = Field(default=6, ge=1, le=50)
 
@@ -233,9 +234,9 @@ class AgentConfig(BaseModel):
     # override in config-example.yaml so new user configs do not pin it.
     sub_agent_token_limit: int = 50_000
     # Total wall-clock cap for the tool-free synthesis call used by
-    # sub_agent execution.strategy=batch_files. Set to 0 to rely only on the
-    # provider request timeout. This is intentionally separate from the
-    # sub-agent parallel batch timeout above.
+    # Tool-free synthesis used when a sub_agent request includes ``files``.
+    # Set to 0 to rely only on the provider request timeout. This remains
+    # separate from the sub-agent parallel batch timeout above.
     sub_agent_batch_synthesis_timeout_seconds: float = 600.0
     # Continue an active durable goal after a natural end_turn, bounded so a
     # third-party outage or bad plan cannot loop forever.

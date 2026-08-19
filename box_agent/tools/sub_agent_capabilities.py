@@ -1,8 +1,8 @@
-"""Capability resolution for explicitly delegated sub-agent tasks.
+"""Capability resolution for delegated sub-agent tasks.
 
-The parent model describes the capabilities a child task needs.  This module
-normalizes that declaration and intersects it with the parent's live tool map,
-selected Skills, execution-strategy limits, and hard task constraints.
+The public request stays intentionally small.  This module normalizes it,
+derives a fail-closed child policy, and intersects the requested capabilities
+with the parent's live tool map and selected Skills.
 
 It deliberately does not execute tools or call an LLM.  The resolved bundle
 contains the original live tool instances so their existing PermissionEngine
@@ -25,12 +25,17 @@ BATCH_FILES_MAX_STEPS = 1
 BATCH_FILE_MAX_CHARS = 64_000
 BATCH_AGGREGATE_MAX_CHARS = 200_000
 
-SUPPORTED_STRATEGIES = frozenset({"general_loop", "batch_files"})
 _BATCH_FILES_ALLOWED_TOOLS = frozenset({"read_file"})
+DEFAULT_SAFE_TOOL_NAMES = frozenset({"query_jsonl", "read_file", "search_files"})
+PATH_SCOPED_WRITE_TOOLS = frozenset({"append_file", "edit_file", "write_file"})
+TRUSTED_NETWORK_TOOL_NAMES = frozenset(
+    {"generate_image", "vision_review", "web_search"}
+)
+TRUSTED_UNSCOPED_WRITE_TOOLS = frozenset({"generate_image"})
 
 MINIMAL_DELEGATION_EXAMPLE: dict[str, Any] = {
     "task": "Read the provided files and summarize them.",
-    "capabilities": {"required_tools": ["read_file"]},
+    "required_tools": ["read_file"],
 }
 
 
@@ -147,9 +152,8 @@ class DelegationSpec:
     task: str
     strategy: str
     required_tools: tuple[str, ...]
-    optional_tools: tuple[str, ...]
     skill_names: tuple[str, ...]
-    inputs: dict[str, Any]
+    files: tuple[str, ...]
     constraints: DelegationConstraints
     budget: DelegationBudget
     defaults_applied: tuple[str, ...]
@@ -190,37 +194,25 @@ class CapabilityFailure:
                     "example": {"max_steps": 12, "max_tool_calls": 25},
                 }
             if any(
-                field == "constraints" or field.startswith("constraints.")
+                field == "write_scope" or field.startswith("write_scope[")
                 for field in self.invalid_fields
             ):
-                field_corrections["constraints"] = {
+                field_corrections["write_scope"] = {
                     "message": (
-                        "Declare write and network permissions explicitly; keep the "
-                        "write scope limited to this child's exact output path."
+                        "Path-based write tools require an exact, non-empty output "
+                        "scope for this child. Parallel children need disjoint scopes."
                     ),
-                    "example": {
-                        "read_only": False,
-                        "network": True,
-                        "write_scope": ["research/dim01.md"],
-                        "external_side_effect": False,
-                    },
+                    "example": ["research/dim01.md"],
                 }
             if field_corrections:
                 payload["field_corrections"] = field_corrections
         elif self.code == "CAPABILITY_CONSTRAINT_CONFLICT" and self.details:
             denied_reason = self.details.get("denied_reason")
             denied_tool = self.details.get("tool")
-            if denied_reason == "read_only" and denied_tool in {
-                "write_file",
-                "append_file",
-                "edit_file",
-            }:
+            if denied_reason == "write_scope_required" and denied_tool in PATH_SCOPED_WRITE_TOOLS:
                 payload["correction_hint"] = (
-                    "If this child must write, retry once with "
-                    "constraints.read_only=false and an exact artifact-root-relative "
-                    "constraints.write_scope for only this child's output. Keep "
-                    "external_side_effect=false unless the task explicitly needs an "
-                    "external write."
+                    "Retry once with an exact artifact-root-relative write_scope for "
+                    "only this child's output. Parallel children must use disjoint scopes."
                 )
         return payload
 
@@ -230,7 +222,6 @@ class ResolvedCapabilityBundle:
     spec: DelegationSpec
     tools: dict[str, Tool]
     skills: tuple[Any, ...]
-    skill_added_tools: tuple[str, ...]
     denied_tools: tuple[dict[str, str], ...]
 
     @property
@@ -244,15 +235,12 @@ class ResolvedCapabilityBundle:
     def diagnostic_payload(self) -> dict[str, Any]:
         return {
             "strategy": self.spec.strategy,
-            "requested_tools": {
-                "required": list(self.spec.required_tools),
-                "optional": list(self.spec.optional_tools),
-                "skill_added": list(self.skill_added_tools),
-            },
+            "requested_tools": list(self.spec.required_tools),
             "resolved_tools": list(self.resolved_tool_names),
             "denied_tools": [dict(item) for item in self.denied_tools],
             "requested_skills": list(self.spec.skill_names),
             "resolved_skills": list(self.resolved_skill_names),
+            "files": list(self.spec.files),
             "constraints": self.spec.constraints.to_dict(),
             "budget": self.spec.budget.to_dict(),
             "defaults_applied": list(self.spec.defaults_applied),
@@ -287,16 +275,17 @@ def _unknown_fields(value: Mapping[str, Any], allowed: set[str], prefix: str) ->
 def parse_delegation_spec(
     *,
     task: Any,
-    title: Any = None,
-    execution: Any = None,
-    capabilities: Any,
-    inputs: Any = None,
-    constraints: Any = None,
+    title: Any = "",
+    skills: Any = None,
+    required_tools: Any = None,
+    files: Any = None,
+    write_scope: Any = None,
     budget: Any = None,
+    default_required_tools: tuple[str, ...] = (),
     general_max_steps: int = GENERAL_LOOP_MAX_STEPS,
     general_max_tool_calls: int = GENERAL_LOOP_MAX_TOOL_CALLS,
 ) -> DelegationSpec | CapabilityFailure:
-    """Validate and normalize a new-style delegation declaration."""
+    """Validate a flat request and derive its internal child policy."""
 
     invalid_fields: list[str] = []
     defaults_applied: list[str] = []
@@ -307,129 +296,97 @@ def parse_delegation_spec(
     else:
         normalized_task = task.strip()
 
-    if title is not None and not isinstance(title, str):
+    if title is None:
+        title = ""
+    if not isinstance(title, str):
         invalid_fields.append("title")
         normalized_title = None
     else:
         normalized_title = title.strip() if isinstance(title, str) and title.strip() else None
+        if normalized_title is None:
+            defaults_applied.append("title")
 
-    if execution is None:
-        execution = {}
-        defaults_applied.append("execution.strategy")
-    if not isinstance(execution, dict):
-        invalid_fields.append("execution")
-        execution = {}
-    else:
-        invalid_fields.extend(_unknown_fields(execution, {"strategy"}, "execution"))
-    strategy = execution.get("strategy", "general_loop")
-    if "strategy" not in execution and "execution.strategy" not in defaults_applied:
-        defaults_applied.append("execution.strategy")
-    if not isinstance(strategy, str) or strategy not in SUPPORTED_STRATEGIES:
-        invalid_fields.append("execution.strategy")
-        strategy = "general_loop"
-
-    if not isinstance(capabilities, dict):
-        invalid_fields.append("capabilities")
-        capabilities = {}
-    else:
-        invalid_fields.extend(
-            _unknown_fields(
-                capabilities,
-                {"required_tools", "optional_tools", "skills"},
-                "capabilities",
-            )
-        )
-
-    if "required_tools" not in capabilities:
-        invalid_fields.append("capabilities.required_tools")
-        required_tools = ()
-    else:
-        required_tools = _normalized_string_list(
-            capabilities.get("required_tools"),
-            field_name="capabilities.required_tools",
-            invalid_fields=invalid_fields,
-            required_non_empty=True,
-        )
-
-    if "optional_tools" not in capabilities:
-        defaults_applied.append("capabilities.optional_tools")
-    optional_tools = _normalized_string_list(
-        capabilities.get("optional_tools", []),
-        field_name="capabilities.optional_tools",
-        invalid_fields=invalid_fields,
-    )
-    if "skills" not in capabilities:
-        defaults_applied.append("capabilities.skills")
+    if skills is None:
+        skills = []
+        defaults_applied.append("skills")
     skill_names = _normalized_string_list(
-        capabilities.get("skills", []),
-        field_name="capabilities.skills",
+        skills,
+        field_name="skills",
         invalid_fields=invalid_fields,
     )
 
-    if inputs is None:
-        inputs = {}
-        defaults_applied.append("inputs")
-    if not isinstance(inputs, dict):
-        invalid_fields.append("inputs")
-        normalized_inputs: dict[str, Any] = {}
+    if files is None:
+        normalized_files = ()
     else:
-        normalized_inputs = dict(inputs)
+        normalized_files = _normalized_string_list(
+            files,
+            field_name="files",
+            invalid_fields=invalid_fields,
+        )
+        if not normalized_files:
+            invalid_fields.append("files")
+        if len(normalized_files) > BATCH_FILES_MAX_FILES:
+            invalid_fields.append("files")
+    strategy = "batch_files" if normalized_files else "general_loop"
 
-    if constraints is None:
-        constraints = {}
-    if not isinstance(constraints, dict):
-        invalid_fields.append("constraints")
-        constraints = {}
-    else:
-        invalid_fields.extend(
-            _unknown_fields(
-                constraints,
-                {"read_only", "network", "write_scope", "external_side_effect"},
-                "constraints",
+    if required_tools is None:
+        normalized_required_tools = (
+            ("read_file",)
+            if strategy == "batch_files"
+            else tuple(
+                sorted(set(default_required_tools) & DEFAULT_SAFE_TOOL_NAMES)
             )
         )
+        defaults_applied.append("required_tools")
+    else:
+        normalized_required_tools = _normalized_string_list(
+            required_tools,
+            field_name="required_tools",
+            invalid_fields=invalid_fields,
+        )
+    if "sub_agent" in normalized_required_tools:
+        invalid_fields.append("required_tools")
+    if strategy == "batch_files" and set(normalized_required_tools) != {"read_file"}:
+        invalid_fields.append("required_tools")
 
-    constraint_values: dict[str, bool] = {}
-    for name, default in (
-        ("read_only", True),
-        ("network", False),
-        ("external_side_effect", False),
-    ):
-        if name not in constraints:
-            defaults_applied.append(f"constraints.{name}")
-        value = constraints.get(name, default)
-        if not isinstance(value, bool):
-            invalid_fields.append(f"constraints.{name}")
-            value = default
-        constraint_values[name] = value
-
-    if "write_scope" not in constraints:
-        defaults_applied.append("constraints.write_scope")
-    raw_write_scope = constraints.get("write_scope")
-    if raw_write_scope is None:
-        write_scope = None
-    elif isinstance(raw_write_scope, str):
-        if raw_write_scope.strip():
-            write_scope = (raw_write_scope.strip(),)
+    if write_scope is None:
+        normalized_write_scope = None
+    elif isinstance(write_scope, str):
+        if write_scope.strip():
+            normalized_write_scope = (write_scope.strip(),)
         else:
-            invalid_fields.append("constraints.write_scope")
-            write_scope = None
-    elif isinstance(raw_write_scope, list):
-        write_scope = _normalized_string_list(
-            raw_write_scope,
-            field_name="constraints.write_scope",
+            invalid_fields.append("write_scope")
+            normalized_write_scope = None
+    elif isinstance(write_scope, list):
+        normalized_write_scope = _normalized_string_list(
+            write_scope,
+            field_name="write_scope",
             invalid_fields=invalid_fields,
             required_non_empty=True,
         )
     else:
-        invalid_fields.append("constraints.write_scope")
-        write_scope = None
+        invalid_fields.append("write_scope")
+        normalized_write_scope = None
+
+    requested_path_writes = set(normalized_required_tools) & PATH_SCOPED_WRITE_TOOLS
+    if requested_path_writes and not normalized_write_scope:
+        invalid_fields.append("write_scope")
+    if normalized_write_scope and not requested_path_writes:
+        invalid_fields.append("write_scope")
+    if strategy == "batch_files" and normalized_write_scope:
+        invalid_fields.append("write_scope")
 
     parsed_constraints = DelegationConstraints(
-        read_only=constraint_values["read_only"],
-        network=constraint_values["network"],
-        write_scope=write_scope,
-        external_side_effect=constraint_values["external_side_effect"],
+        read_only=not bool(
+            requested_path_writes
+            or set(normalized_required_tools) & TRUSTED_UNSCOPED_WRITE_TOOLS
+        ),
+        network=bool(
+            set(normalized_required_tools)
+            & (TRUSTED_NETWORK_TOOL_NAMES | _PLAYWRIGHT_READ_ONLY_TOOLS)
+        ),
+        write_scope=normalized_write_scope,
+        external_side_effect=False,
     )
 
     if budget is None:
@@ -443,20 +400,6 @@ def parse_delegation_spec(
         )
 
     if strategy == "batch_files":
-        if set(required_tools) != {"read_file"}:
-            invalid_fields.append("capabilities.required_tools")
-
-        raw_files = normalized_inputs.get("files")
-        files = _normalized_string_list(
-            raw_files,
-            field_name="inputs.files",
-            invalid_fields=invalid_fields,
-            required_non_empty=True,
-        )
-        normalized_inputs["files"] = list(files)
-        if len(files) > BATCH_FILES_MAX_FILES:
-            invalid_fields.append("inputs.files")
-
         if "max_steps" not in budget:
             defaults_applied.append("budget.max_steps")
         raw_steps = budget.get("max_steps", BATCH_FILES_MAX_STEPS)
@@ -467,15 +410,19 @@ def parse_delegation_spec(
 
         if "max_tool_calls" not in budget:
             defaults_applied.append("budget.max_tool_calls")
-        raw_tool_calls = budget.get("max_tool_calls", len(files))
+        raw_tool_calls = budget.get("max_tool_calls", len(normalized_files))
         if (
             not isinstance(raw_tool_calls, int)
             or isinstance(raw_tool_calls, bool)
-            or raw_tool_calls < len(files)
+            or raw_tool_calls < len(normalized_files)
         ):
             invalid_fields.append("budget.max_tool_calls")
-            raw_tool_calls = len(files)
-        max_tool_calls = min(raw_tool_calls, len(files), BATCH_FILES_MAX_FILES)
+            raw_tool_calls = len(normalized_files)
+        max_tool_calls = min(
+            raw_tool_calls,
+            len(normalized_files),
+            BATCH_FILES_MAX_FILES,
+        )
     else:
         if "max_steps" not in budget:
             defaults_applied.append("budget.max_steps")
@@ -510,10 +457,9 @@ def parse_delegation_spec(
         title=normalized_title,
         task=normalized_task,
         strategy=strategy,
-        required_tools=required_tools,
-        optional_tools=optional_tools,
+        required_tools=normalized_required_tools,
         skill_names=skill_names,
-        inputs=normalized_inputs,
+        files=normalized_files,
         constraints=parsed_constraints,
         budget=DelegationBudget(
             max_steps=max_steps,
@@ -545,14 +491,7 @@ def _tool_denial_reason(
 
     metadata = _tool_capability_metadata(name, tool)
     if metadata is None:
-        if (
-            constraints.read_only
-            or not constraints.network
-            or not constraints.external_side_effect
-            or constraints.write_scope is not None
-        ):
-            return "unknown_capability_metadata"
-        return None
+        return "unknown_capability_metadata"
 
     if constraints.read_only and (metadata.write or metadata.process):
         return "read_only"
@@ -585,14 +524,7 @@ class CapabilityResolver:
             return skills_or_failure
         skills = skills_or_failure
 
-        skill_added: set[str] = set()
-        for skill in skills:
-            for tool_name in skill.allowed_tools or []:
-                if isinstance(tool_name, str) and tool_name.strip():
-                    skill_added.add(tool_name.strip())
-
         requested_required = set(spec.required_tools)
-        requested_optional = set(spec.optional_tools)
         if "sub_agent" in requested_required:
             return CapabilityFailure(
                 code="CAPABILITY_CONSTRAINT_CONFLICT",
@@ -604,31 +536,15 @@ class CapabilityResolver:
                     "constraints": spec.constraints.to_dict(),
                 },
             )
-        candidates = requested_required | requested_optional | skill_added
+        candidates = set(requested_required)
 
         resolved: dict[str, Tool] = {}
         denied: list[dict[str, str]] = []
-        if "sub_agent" in candidates:
-            origin = "optional" if "sub_agent" in requested_optional else "skill"
-            denied.append(
-                {
-                    "name": "sub_agent",
-                    "origin": origin,
-                    "reason": "recursive_delegation_disabled",
-                }
-            )
-            candidates.discard("sub_agent")
         mcp_state = _mcp_state(capability_state)
 
         for name in sorted(candidates):
             tool = parent_tools.get(name)
-            origin = (
-                "required"
-                if name in requested_required
-                else "optional"
-                if name in requested_optional
-                else "skill"
-            )
+            origin = "required"
             if tool is None:
                 reason = (
                     "not_ready"
@@ -636,22 +552,20 @@ class CapabilityResolver:
                     else "not_found"
                 )
                 denied.append({"name": name, "origin": origin, "reason": reason})
-                if name in requested_required:
-                    if reason == "not_ready":
-                        return CapabilityFailure(
-                            code="REQUIRED_TOOL_NOT_READY",
-                            message=f"Required tool '{name}' is not ready while MCP capabilities are loading.",
-                            retryable=True,
-                            pending_source="mcp",
-                            details={"tool": name},
-                        )
+                if reason == "not_ready":
                     return CapabilityFailure(
-                        code="REQUIRED_TOOL_NOT_FOUND",
-                        message=f"Required tool '{name}' is not available in the parent session.",
-                        retryable=False,
+                        code="REQUIRED_TOOL_NOT_READY",
+                        message=f"Required tool '{name}' is not ready while MCP capabilities are loading.",
+                        retryable=True,
+                        pending_source="mcp",
                         details={"tool": name},
                     )
-                continue
+                return CapabilityFailure(
+                    code="REQUIRED_TOOL_NOT_FOUND",
+                    message=f"Required tool '{name}' is not available in the parent session.",
+                    retryable=False,
+                    details={"tool": name},
+                )
 
             reason = _tool_denial_reason(
                 name,
@@ -661,25 +575,22 @@ class CapabilityResolver:
             )
             if reason:
                 denied.append({"name": name, "origin": origin, "reason": reason})
-                if name in requested_required:
-                    return CapabilityFailure(
-                        code="CAPABILITY_CONSTRAINT_CONFLICT",
-                        message=f"Required tool '{name}' conflicts with the delegation constraints.",
-                        retryable=True,
-                        details={
-                            "tool": name,
-                            "denied_reason": reason,
-                            "constraints": spec.constraints.to_dict(),
-                        },
-                    )
-                continue
+                return CapabilityFailure(
+                    code="CAPABILITY_CONSTRAINT_CONFLICT",
+                    message=f"Required tool '{name}' conflicts with the derived child policy.",
+                    retryable=True,
+                    details={
+                        "tool": name,
+                        "denied_reason": reason,
+                        "constraints": spec.constraints.to_dict(),
+                    },
+                )
             resolved[name] = tool
 
         return ResolvedCapabilityBundle(
             spec=spec,
             tools={name: resolved[name] for name in sorted(resolved)},
             skills=tuple(sorted(skills, key=lambda skill: skill.name)),
-            skill_added_tools=tuple(sorted(skill_added - requested_required - requested_optional)),
             denied_tools=tuple(denied),
         )
 

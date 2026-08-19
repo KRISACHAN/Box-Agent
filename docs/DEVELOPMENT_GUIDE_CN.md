@@ -336,10 +336,10 @@ EOF
 完成以上步骤后，Agent 将在下次启动时自动加载并识别这项新技能。
 
 `allowed-tools`（也兼容 `allowed_tools`）会在加载时归一化、去重并排序。它是
-skill catalog 中的路由元数据；当显式子 Agent 选择该 Skill 时，也会进入请求能力
-集合，但运行时仍会与父会话实时工具和委派约束取交集。只声明 Skill 真正需要的
-最小工具集。依赖 Skill 写入 `required_skills`；`related_skills` 只是推荐项，不会
-自动加载。详见[子 Agent 委派](SUB_AGENT_DELEGATION_CN.md)。
+skill catalog 中的路由元数据；子 Agent 选择该 Skill 时不会自动增加工具或扩大
+派生策略，调用方仍需显式点名需要的工具。只声明 Skill 真正需要的最小工具集。
+依赖 Skill 写入 `required_skills`；`related_skills` 只是推荐项，不会自动加载。
+详见[子 Agent 委派](SUB_AGENT_DELEGATION_CN.md)。
 
 ### 3.5 自定义系统提示词
 

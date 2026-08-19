@@ -229,9 +229,9 @@ These limits control different operations: `max_steps` bounds top-level model
 iterations, `max_parallel_tools` caps `parallel_safe` calls in one step,
 `parallel_tool_timeout_seconds` caps one such parallel batch,
 `sub_agent_token_limit` bounds each child context before summarization, and the
-batch synthesis setting caps only the tool-free request used by `batch_files`.
+batch synthesis setting caps only the tool-free request inferred from `files`.
 Setting the last value to `0` disables that extra cap, not the provider timeout.
-The batch strategy also enforces its own file/count/content limits; see
+The inferred batch path also enforces file/count/content limits; see
 [Sub-agent Delegation](SUB_AGENT_DELEGATION.md).
 Tool-limit defaults live only in `box_agent/config.py` and are intentionally
 absent from newly generated user configs, so runtime upgrades can update them.

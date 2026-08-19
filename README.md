@@ -51,12 +51,12 @@ Most agent frameworks are either too simple (no sandbox, no tools) or too comple
 
 ### Sub-Agent Parallelism
 
-Delegate isolated work to sub-agents with explicit tools, Skills, inputs,
-constraints, and hard step/tool-call budgets. For many known local text files,
-one `batch_files` child reads the files concurrently and performs one tool-free
-synthesis call; heterogeneous work can use bounded `general_loop` children.
-The parent remains responsible for conflict handling, the final deliverable,
-and verification.
+Delegate isolated work through a flat task contract with optional tools, Skills,
+files, write scope, and hard step/tool-call budgets. Omitted tools resolve only
+to trusted local readers; explicit capabilities still pass a fail-closed runtime
+policy. Passing known local text paths in `files` selects the bounded,
+completeness-checked batch fast path automatically. The parent remains
+responsible for conflict handling, the final deliverable, and verification.
 
 ```
 You: "Analyze data1.csv, data2.csv, and data3.csv separately, then give me a combined summary"
@@ -74,8 +74,8 @@ You: "Analyze data1.csv, data2.csv, and data3.csv separately, then give me a com
                     └─────────────────────────┘
 ```
 
-New-style delegation is deny-by-default (`read_only: true`, `network: false`,
-`external_side_effect: false`). See the
+Child policy is derived by the runtime: process tools, external side effects,
+and unknown MCP tools fail closed; path writes require an exact scope. See the
 [sub-agent delegation contract](docs/SUB_AGENT_DELEGATION.md) for schemas,
 limits, compatibility behavior, and host diagnostics.
 
