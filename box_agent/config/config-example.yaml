@@ -93,6 +93,7 @@ max_truncation_continuations: 1 # Max continuations per turn (loop guard)
 #     wrapup_remaining_steps: 15 # 0..50; start wrapping up this many steps before max_steps
 #   web_search:
 #     batch_size: 8 # 1..32; web searches allowed in one agent step
+#     concurrency: 2 # 1..batch_size; parallel searches in a search-only agent step
 #     total_calls: 80 # 0..512; ordinary per-turn web-search budget
 #     deep_research_total_calls: 150 # 0..512; deep-research per-turn web-search budget
 #   search_files:

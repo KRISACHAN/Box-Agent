@@ -467,7 +467,9 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
         "  general/search    : "
         f"summary>{tool_limits['general']['final_summary_after_calls']}, "
         f"web {tool_limits['web_search']['total_calls']}/"
-        f"{tool_limits['web_search']['deep_research_total_calls']}"
+        f"{tool_limits['web_search']['deep_research_total_calls']} "
+        f"(batch {tool_limits['web_search']['batch_size']}, "
+        f"concurrency {tool_limits['web_search']['concurrency']})"
     )
     print(
         "  workflows         : "

@@ -168,6 +168,7 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
     default_path = tmp_path / "default.yaml"
     _write_config(default_path)
     defaults = cli.Config.from_yaml(default_path).tool_limits
+    assert defaults.web_search.concurrency == 2
     assert defaults.web_search.total_calls == 50
     assert defaults.external_skill.max_tool_calls == 128
     assert defaults.presentation.deep_research_max_tool_calls == 200
@@ -180,6 +181,7 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
             "tool_limits:\n"
             "  web_search:\n"
             "    batch_size: 4\n"
+            "    concurrency: 3\n"
             "    total_calls: 40\n"
             "  external_skill:\n"
             "    max_tool_calls: 96\n"
@@ -192,6 +194,7 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
 
     limits = cli.Config.from_yaml(override_path).tool_limits
     assert limits.web_search.batch_size == 4
+    assert limits.web_search.concurrency == 3
     assert limits.web_search.total_calls == 40
     assert limits.web_search.deep_research_total_calls == 100
     assert limits.external_skill.max_tool_calls == 96
@@ -232,12 +235,18 @@ def test_config_rejects_invalid_tool_limits(tmp_path: Path) -> None:
         cli.Config.from_yaml(config_path)
 
 
+def test_config_rejects_web_search_concurrency_above_batch_size() -> None:
+    with pytest.raises(ValueError, match="concurrency cannot exceed batch_size"):
+        ToolLimitsConfig(web_search={"batch_size": 2, "concurrency": 3})
+
+
 @pytest.mark.parametrize(
     ("path", "maximum"),
     [
         (("general", "final_summary_after_calls"), 512),
         (("general", "wrapup_remaining_steps"), 50),
         (("web_search", "batch_size"), 32),
+        (("web_search", "concurrency"), 32),
         (("web_search", "total_calls"), 512),
         (("web_search", "deep_research_total_calls"), 512),
         (("search_files", "consecutive_empty_limit"), 50),
@@ -256,6 +265,8 @@ def test_config_rejects_invalid_tool_limits(tmp_path: Path) -> None:
 def test_tool_limit_upper_bounds(path: tuple[str, str], maximum: int) -> None:
     section, field = path
     section_values = {field: maximum}
+    if field == "concurrency":
+        section_values["batch_size"] = maximum
     if field == "completion_reserve_calls":
         section_values["max_tool_calls"] = 512
         if section == "presentation":

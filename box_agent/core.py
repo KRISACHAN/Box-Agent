@@ -2639,6 +2639,7 @@ async def run_agent_loop(
     cancelled = is_cancelled or (lambda: False)
     effective_tool_limits = tool_limits or ToolLimitsConfig()
     web_search_batch_size = effective_tool_limits.web_search.batch_size
+    web_search_concurrency = effective_tool_limits.web_search.concurrency
     search_files_empty_result_limit = (
         effective_tool_limits.search_files.consecutive_empty_limit
     )
@@ -4539,6 +4540,18 @@ async def run_agent_loop(
                 len(unique_tool_calls),
             )
 
+        # Preserve model order when a step mixes search with stateful tools.
+        # Search-only batches may opt into bounded parallel execution without
+        # declaring every MCP tool parallel-safe.
+        parallel_web_search_batch = (
+            web_search_concurrency > 1
+            and bool(unique_tool_calls)
+            and all(
+                tc.function.name == WEB_SEARCH_TOOL_NAME
+                for tc in unique_tool_calls
+            )
+        )
+
         # Split unique calls into regular (sequential) and parallel_safe groups.
         regular_calls = []
         parallel_calls = []
@@ -4549,8 +4562,12 @@ async def run_agent_loop(
                 # sequential branch even if a future mutation tool is marked
                 # parallel-safe.
                 regular_calls.append(tc)
-            elif fn_name in offered_tools_by_name and getattr(
-                offered_tools_by_name[fn_name], "parallel_safe", False
+            elif fn_name in offered_tools_by_name and (
+                (
+                    fn_name == WEB_SEARCH_TOOL_NAME
+                    and parallel_web_search_batch
+                )
+                or getattr(offered_tools_by_name[fn_name], "parallel_safe", False)
             ):
                 parallel_calls.append(tc)
             else:
@@ -5450,10 +5467,23 @@ async def run_agent_loop(
             # once; the rest queue on the semaphore. Bounds resource use (LLM
             # rate limits, subprocesses, memory) against runaway fan-out.
             par_semaphore = asyncio.Semaphore(max(1, max_parallel_tools))
+            web_search_semaphore = asyncio.Semaphore(web_search_concurrency)
+
+            async def _invoke_parallel_tool(tc):
+                tool = offered_tools_by_name[tc.function.name]
+                fn_args = par_args_map[tc.id]
+                if isinstance(tool, EventEmittingTool):
+                    return await tool.invoke(
+                        fn_args,
+                        context=ToolInvocationContext(
+                            event_queue=par_event_queue,
+                            parent_tool_call_id=tc.id,
+                        ),
+                    )
+                return await tool.invoke(fn_args)
 
             async def _run_parallel(tc):
                 fn_name = tc.function.name
-                fn_args = par_args_map[tc.id]
                 if tc.id in par_budget_errors:
                     return tc, ToolResult(success=False, content="", error=par_budget_errors[tc.id])
                 if fn_name not in offered_tools_by_name:
@@ -5467,17 +5497,11 @@ async def run_agent_loop(
                     )
                 try:
                     async with par_semaphore:
-                        tool = offered_tools_by_name[fn_name]
-                        if isinstance(tool, EventEmittingTool):
-                            r = await tool.invoke(
-                                fn_args,
-                                context=ToolInvocationContext(
-                                    event_queue=par_event_queue,
-                                    parent_tool_call_id=tc.id,
-                                ),
-                            )
+                        if fn_name == WEB_SEARCH_TOOL_NAME:
+                            async with web_search_semaphore:
+                                r = await _invoke_parallel_tool(tc)
                         else:
-                            r = await tool.invoke(fn_args)
+                            r = await _invoke_parallel_tool(tc)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:

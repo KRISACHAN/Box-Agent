@@ -545,6 +545,23 @@ class CountingWebSearchTool(Tool):
         return ToolResult(success=True, content=f"result:{query}")
 
 
+class ConcurrentWebSearchTool(CountingWebSearchTool):
+    def __init__(self):
+        super().__init__()
+        self.current = 0
+        self.peak = 0
+
+    async def execute(self, query: str = ""):
+        self.calls += 1
+        self.current += 1
+        self.peak = max(self.peak, self.current)
+        try:
+            await asyncio.sleep(0.02)
+            return ToolResult(success=True, content=f"result:{query}")
+        finally:
+            self.current -= 1
+
+
 class CountingBrowserReadTool(Tool):
     def __init__(self):
         self.urls: list[str] = []
@@ -4195,6 +4212,129 @@ async def test_web_search_fanout_is_batched_with_hidden_deferrals():
     assert all("deferred by runtime batching" in (e.error or "") for e in hidden_errors)
     injected = [e for e in events if isinstance(e, InjectedMessageEvent) and not e.user_visible]
     assert any("Deferred this batch: 2" in e.content for e in injected)
+
+
+@pytest.mark.asyncio
+async def test_web_search_concurrency_defaults_to_two():
+    tool_calls = [
+        ToolCall(
+            id=f"web-sequential-{index}",
+            type="function",
+            function=FunctionCall(name="web_search", arguments={"query": f"q{index}"}),
+        )
+        for index in range(3)
+    ]
+    web_search = ConcurrentWebSearchTool()
+
+    await collect(
+        run_agent_loop(
+            llm=MockLLM(
+                [
+                    LLMResponse(content="", tool_calls=tool_calls, finish_reason="tool"),
+                    LLMResponse(content="final", finish_reason="stop"),
+                ]
+            ),
+            messages=_msgs(),
+            tools={"web_search": web_search},
+            max_steps=3,
+        )
+    )
+
+    assert web_search.calls == 3
+    assert web_search.peak == 2
+
+
+@pytest.mark.asyncio
+async def test_web_search_concurrency_caps_parallel_search_only_batch():
+    tool_calls = [
+        ToolCall(
+            id=f"web-parallel-{index}",
+            type="function",
+            function=FunctionCall(name="web_search", arguments={"query": f"q{index}"}),
+        )
+        for index in range(6)
+    ]
+    web_search = ConcurrentWebSearchTool()
+
+    await collect(
+        run_agent_loop(
+            llm=MockLLM(
+                [
+                    LLMResponse(content="", tool_calls=tool_calls, finish_reason="tool"),
+                    LLMResponse(content="final", finish_reason="stop"),
+                ]
+            ),
+            messages=_msgs(),
+            tools={"web_search": web_search},
+            max_steps=3,
+            tool_limits=ToolLimitsConfig(
+                web_search={"batch_size": 6, "concurrency": 3}
+            ),
+        )
+    )
+
+    assert web_search.calls == 6
+    assert web_search.peak == 3
+
+
+@pytest.mark.asyncio
+async def test_web_search_concurrency_preserves_mixed_tool_order():
+    order: list[str] = []
+
+    class OrderedWebSearchTool(CountingWebSearchTool):
+        async def execute(self, query: str = ""):
+            order.append(f"web:{query}")
+            return await super().execute(query=query)
+
+    class OrderedEchoTool(EchoTool):
+        async def execute(self, text: str = ""):
+            order.append(f"echo:{text}")
+            return await super().execute(text=text)
+
+    await collect(
+        run_agent_loop(
+            llm=MockLLM(
+                [
+                    LLMResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                id="mixed-web-first",
+                                type="function",
+                                function=FunctionCall(
+                                    name="web_search", arguments={"query": "first"}
+                                ),
+                            ),
+                            ToolCall(
+                                id="mixed-echo",
+                                type="function",
+                                function=FunctionCall(
+                                    name="echo", arguments={"text": "middle"}
+                                ),
+                            ),
+                            ToolCall(
+                                id="mixed-web-last",
+                                type="function",
+                                function=FunctionCall(
+                                    name="web_search", arguments={"query": "last"}
+                                ),
+                            ),
+                        ],
+                        finish_reason="tool",
+                    ),
+                    LLMResponse(content="final", finish_reason="stop"),
+                ]
+            ),
+            messages=_msgs(),
+            tools={"web_search": OrderedWebSearchTool(), "echo": OrderedEchoTool()},
+            max_steps=3,
+            tool_limits=ToolLimitsConfig(
+                web_search={"batch_size": 6, "concurrency": 3}
+            ),
+        )
+    )
+
+    assert order == ["web:first", "echo:middle", "web:last"]
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ from box_agent.tools.mcp_loader import (
     MCPServerConnection,
     MCPTool,
     MCPTimeoutConfig,
+    WEB_SEARCH_MCP_MAX_CONCURRENCY,
     _determine_connection_type,
     cleanup_mcp_connections,
     get_mcp_timeout_config,
@@ -420,6 +421,78 @@ class TestMCPToolExecution:
         assert json.loads(result.content)["data"] == {"status": "ok"}
 
     @pytest.mark.asyncio
+    async def test_web_search_tools_share_connection_concurrency_limit(self):
+        class FakeSession:
+            def __init__(self):
+                self.current = 0
+                self.peak = 0
+
+            async def call_tool(self, name, arguments):
+                self.current += 1
+                self.peak = max(self.peak, self.current)
+                try:
+                    await asyncio.sleep(0.02)
+                    return SimpleNamespace(content=[], isError=False)
+                finally:
+                    self.current -= 1
+
+        connection = MCPServerConnection(name="search")
+        limiter = connection._concurrency_limiter_for_tool("web_search")
+        session = FakeSession()
+        tools = [
+            MCPTool(
+                name="web_search",
+                description="search",
+                parameters={"type": "object"},
+                session=session,
+                concurrency_limiter=limiter,
+            )
+            for _ in range(2)
+        ]
+
+        results = await asyncio.gather(
+            *[
+                tools[index % len(tools)].execute(Query=f"query-{index}")
+                for index in range(12)
+            ]
+        )
+
+        assert all(result.success for result in results)
+        assert session.peak == WEB_SEARCH_MCP_MAX_CONCURRENCY
+
+    @pytest.mark.asyncio
+    async def test_web_search_concurrency_queue_timeout_does_not_call_server(self):
+        class FakeSession:
+            calls = 0
+
+            async def call_tool(self, name, arguments):
+                self.calls += 1
+                return SimpleNamespace(content=[], isError=False)
+
+        limiter = asyncio.Semaphore(1)
+        await limiter.acquire()
+        session = FakeSession()
+        tool = MCPTool(
+            name="web_search",
+            description="search",
+            parameters={"type": "object"},
+            session=session,
+            execute_timeout=0.01,
+            concurrency_limiter=limiter,
+        )
+        try:
+            result = await tool.execute(Query="queued")
+        finally:
+            limiter.release()
+
+        assert result.success is False
+        assert result.error == (
+            "MCP tool concurrency queue timed out after 0.01s. "
+            "Too many tasks are using the shared WebSearch connection."
+        )
+        assert session.calls == 0
+
+    @pytest.mark.asyncio
     async def test_playwright_lock_wait_uses_execution_timeout(self):
         owner_a = "session-a:turn-1"
         owner_b = "session-b:turn-1"
@@ -601,6 +674,17 @@ class TestMCPServerConnectionInit:
         assert conn.connect_timeout == 15.0
         assert conn.execute_timeout == 90.0
         assert conn.sse_read_timeout == 180.0
+
+    def test_only_web_search_receives_internal_shared_limiter(self):
+        conn = MCPServerConnection(name="test-search")
+
+        first = conn._concurrency_limiter_for_tool("web_search")
+        second = conn._concurrency_limiter_for_tool("web_search")
+
+        assert first is second
+        assert first is not None
+        assert first._value == WEB_SEARCH_MCP_MAX_CONCURRENCY
+        assert conn._concurrency_limiter_for_tool("browser_navigate") is None
 
 
 # =============================================================================

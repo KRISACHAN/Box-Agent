@@ -126,8 +126,15 @@ class WebSearchLimitsConfig(ToolLimitsModel):
     """Per-turn web-search batching and total-call budgets."""
 
     batch_size: int = Field(default=6, ge=1, le=32)
+    concurrency: int = Field(default=2, ge=1, le=32)
     total_calls: int = Field(default=50, ge=0, le=512)
     deep_research_total_calls: int = Field(default=100, ge=0, le=512)
+
+    @model_validator(mode="after")
+    def validate_concurrency(self) -> "WebSearchLimitsConfig":
+        if self.concurrency > self.batch_size:
+            raise ValueError("concurrency cannot exceed batch_size")
+        return self
 
 
 class SearchFilesLimitsConfig(ToolLimitsModel):

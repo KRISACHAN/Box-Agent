@@ -188,6 +188,11 @@ def _mcp_connection_error_message(
 # Connection type aliases
 ConnectionType = Literal["stdio", "sse", "http", "streamable_http"]
 
+# The hosted WebSearch service documents five as its stable concurrency. Keep
+# this internal: per-turn fan-out may be tuned, but concurrent Agent sessions
+# must not multiply load beyond the shared MCP connection's capacity.
+WEB_SEARCH_MCP_MAX_CONCURRENCY = 5
+
 
 @dataclass
 class MCPTimeoutConfig:
@@ -288,6 +293,7 @@ class MCPTool(Tool):
         server_name: str = "",
         execute_timeout: float | None = None,
         always_load: bool = False,
+        concurrency_limiter: asyncio.Semaphore | None = None,
     ):
         self._name = name
         self._server_name = server_name
@@ -296,6 +302,7 @@ class MCPTool(Tool):
         self._session = session
         self._execute_timeout = execute_timeout
         self._always_load = always_load
+        self._concurrency_limiter = concurrency_limiter
         self._mcp_generation = 0
 
     @property
@@ -331,6 +338,8 @@ class MCPTool(Tool):
         timeout = self._execute_timeout or _default_timeout_config.execute_timeout
         browser_runtime_acquired = False
         release_browser_runtime_after_call = False
+        concurrency_slot_acquired = False
+        waiting_for_concurrency_slot = self._concurrency_limiter is not None
 
         try:
             if self._server_name == "playwright":
@@ -350,6 +359,10 @@ class MCPTool(Tool):
                     )
 
             async with _timeout(timeout):
+                if self._concurrency_limiter is not None:
+                    await self._concurrency_limiter.acquire()
+                    concurrency_slot_acquired = True
+                    waiting_for_concurrency_slot = False
                 result = await self._session.call_tool(self._name, arguments=kwargs)
 
             # MCP tool results are a list of content items
@@ -377,15 +390,27 @@ class MCPTool(Tool):
 
         except TimeoutError:
             release_browser_runtime_after_call = browser_runtime_acquired
+            if waiting_for_concurrency_slot:
+                error = (
+                    f"MCP tool concurrency queue timed out after {timeout}s. "
+                    "Too many tasks are using the shared WebSearch connection."
+                )
+            else:
+                error = (
+                    f"MCP tool execution timed out after {timeout}s. "
+                    "The remote server may be slow or unresponsive."
+                )
             return ToolResult(
                 success=False,
                 content="",
-                error=f"MCP tool execution timed out after {timeout}s. The remote server may be slow or unresponsive.",
+                error=error,
             )
         except Exception as e:
             release_browser_runtime_after_call = browser_runtime_acquired
             return ToolResult(success=False, content="", error=f"MCP tool execution failed: {str(e)}")
         finally:
+            if concurrency_slot_acquired and self._concurrency_limiter is not None:
+                self._concurrency_limiter.release()
             if browser_runtime_acquired and release_browser_runtime_after_call:
                 await release_browser_runtime_for_current_turn()
 
@@ -426,6 +451,7 @@ class MCPServerConnection:
         self.execute_timeout = execute_timeout
         self.sse_read_timeout = sse_read_timeout
         self.always_load = always_load
+        self._web_search_concurrency_limiter: asyncio.Semaphore | None = None
         # Connection state
         self.last_error: str | None = None
         self.last_auth_status: int | None = None
@@ -444,6 +470,18 @@ class MCPServerConnection:
     def _get_execute_timeout(self) -> float:
         """Get effective execute timeout."""
         return self.execute_timeout or _default_timeout_config.execute_timeout
+
+    def _concurrency_limiter_for_tool(
+        self,
+        tool_name: str,
+    ) -> asyncio.Semaphore | None:
+        if tool_name != "web_search":
+            return None
+        if self._web_search_concurrency_limiter is None:
+            self._web_search_concurrency_limiter = asyncio.Semaphore(
+                WEB_SEARCH_MCP_MAX_CONCURRENCY
+            )
+        return self._web_search_concurrency_limiter
 
     async def connect(self) -> bool:
         """Connect to the MCP server with timeout protection."""
@@ -531,6 +569,7 @@ class MCPServerConnection:
                     server_name=self.name,
                     execute_timeout=execute_timeout,
                     always_load=self.always_load,
+                    concurrency_limiter=self._concurrency_limiter_for_tool(tool.name),
                 )
                 self.tools.append(mcp_tool)
 
