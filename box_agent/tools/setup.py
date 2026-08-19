@@ -528,7 +528,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         use_output_dir: bool = True,
                         artifact_root_dir: str | Path | None = None,
                         env_context=None,
-                        process_owner_id: str | None = None):
+                        process_owner_id: str | None = None,
+                        bypass_dangerous_command_approval: bool = False):
     """Add workspace-dependent tools
 
     These tools need to know the workspace directory.
@@ -551,6 +552,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         artifact_root_dir: Optional host-supplied output root for this session.
         process_owner_id: Optional ACP session identifier used to scope and
             reclaim background shell processes.
+        bypass_dangerous_command_approval: Skip dangerous-command approval for
+            an explicitly trusted full-access session.
     """
     _out = output or print
     # Ensure workspace directory exists
@@ -588,6 +591,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             permission_engine=permission_engine,
             runtime_env=runtime_env,
             process_owner_id=process_owner_id,
+            bypass_dangerous_command_approval=bypass_dangerous_command_approval,
         )
         tools.append(bash_tool)
         if process_owner_id is not None:

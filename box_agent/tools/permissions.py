@@ -559,12 +559,28 @@ _WIN_DRIVE_RE = re.compile(r'^[A-Za-z]:[\\/]')
 
 # Unquoted Windows drive paths: `C:\foo\bar` or `D:/foo/bar`. Must be a single
 # letter (so `https:` / `file:` URL schemes are not mistaken for drives) at a
-# token boundary (SOL or shell separator). Stops at whitespace, shell metachars,
-# or quotes; backslash IS kept (it's a path separator on Windows, not a shell
-# escape inside an unquoted path on cmd/PowerShell). Quoted Windows drive paths
-# are already handled by the `_QUOTED_SEGMENT_RE` pre-pass.
+# non-word boundary. The wider boundary also supports cmd's escaped quotes
+# (`\"D:\path\"`). Stops at whitespace, shell metachars, or quotes; backslash
+# IS kept (it's a path separator on Windows, not a shell escape inside an
+# unquoted path on cmd/PowerShell). Regular quoted Windows drive paths are
+# already handled by the `_QUOTED_SEGMENT_RE` pre-pass.
 _WIN_DRIVE_PATH_RE = re.compile(
-    r'(?:^|[\s;|&])([A-Za-z]:[\\/][^\s"\'<>;|&]*)'
+    r'(?<![A-Za-z0-9])([A-Za-z]:[\\/][^\s"\'<>;|&]*)'
+)
+
+# ``cmd.exe`` and its built-ins use slash-prefixed switches (``/d``, ``/c``,
+# ``exit /b``). They look like short POSIX absolute paths to
+# ``_ABS_PATH_RE`` even though they are command syntax, not filesystem
+# resources. Only suppress these ambiguous one-letter tokens when the command
+# explicitly invokes the Windows command processor; ``/d`` remains a valid
+# path for ordinary POSIX shell commands.
+_WINDOWS_CMD_INVOKE_RE = re.compile(
+    r'(?:^|[\s;&|])cmd(?:\.exe)?(?=\s|$)',
+    re.IGNORECASE,
+)
+_WINDOWS_CMD_SWITCH_RE = re.compile(
+    r'(?<!\S)/(?:[a-z?](?::(?:on|off))?)(?=\s|["\');&|]|$)',
+    re.IGNORECASE,
 )
 
 # sed/perl-style substitution: `s<delim>pattern<delim>replacement<delim>[flags]`.
@@ -644,6 +660,9 @@ def extract_absolute_paths(command: str) -> list[str]:
     # get mis-parsed as absolute paths (e.g. the `/g` flag at the end of
     # `sed 's|a|b|g'` or the literal `/` delimiters in `s/foo/bar/`).
     sanitized = _SED_SUBST_RE.sub(" ", command)
+
+    if _WINDOWS_CMD_INVOKE_RE.search(command):
+        sanitized = _WINDOWS_CMD_SWITCH_RE.sub(" ", sanitized)
 
     # Quote-aware pre-pass: extract absolute paths from `"..."` / `'...'`
     # bodies, then replace the entire quoted span (including the quote

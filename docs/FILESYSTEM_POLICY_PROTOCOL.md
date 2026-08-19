@@ -59,10 +59,11 @@ Box-Agent 的权限引擎是**能力（capability）模型**：每个文件读/�
 `session/new._meta.permission_mode` 可取：
 
 - `default`：显式受限会话。以当前 workspace 为基线，使用本次 session 的 `filesystem_policy`；不会继承全局 `allowed_directories`，也不会暴露可绕过文件权限的 `execute_code`。
-- `full_access`：请求完全文件/命令范围，但它只是请求，不是 authority。只有服务端同时配置 `tools.allow_full_access: true` 才生效；否则 fail closed 到 `default`。
+- `unrestricted_filesystem`：请求不限制目录访问，但危险命令仍需确认。
+- `full_access`：请求不限制目录访问，并跳过危险命令的应用层确认。
 - 不传：兼容旧客户端，继续遵循服务端配置和原有 officev3 policy。
 
-非字符串或未知值按 `default` 处理。`full_access` 不会关闭危险命令的一次性审批，也不会跳过删除前恢复保护。
+宿主显式传入的三个档位就是当前 session 的权限 authority，不再由全局 `tools.allow_full_access` 二次覆盖。只有旧客户端不传 `permission_mode` 时，才继续使用该全局配置保持兼容。非字符串或未知值按 `default` 处理。`full_access` 仍保留硬编码产品阻断和删除前恢复保护。
 
 ### 2.3 字段定义
 
@@ -107,8 +108,9 @@ session/new
     ↓
 解析 _meta.filesystem_policy（dict 校验）
     ↓
-server_cap = config.tools.allow_full_access
-permission_mode = validate_and_cap(_meta.permission_mode, server_cap)
+permission_mode = validate(_meta.permission_mode)
+session_full_access = permission_mode in {unrestricted_filesystem, full_access}
+    or (permission_mode is absent and config.tools.allow_full_access)
 base_policy = CapabilityPolicy.from_config(config) or restrictive_workspace_policy
     ↓
 base_policy.with_filesystem_overrides(
@@ -221,7 +223,7 @@ PermissionEngine.check FILESYSTEM_WRITE → allowed=False, escalation=user_home
 `tests/test_permissions.py`：
 
 - `TestFilesystemOverrides`：覆盖 `session_workspace_root` 覆盖、`allowed_directories` 合并/替换去重、空参数返回 self。
-- ACP 权限用例覆盖无全局 officev3 配置时的 session 目录、非法 `permission_mode`、服务端 full-access 上限和受限会话不暴露 `execute_code`。
+- ACP 权限用例覆盖无全局 officev3 配置时的 session 目录、非法 `permission_mode`、显式会话档位优先级、三档危险命令行为和受限会话不暴露 `execute_code`。
 - `TestExtractAbsolutePaths::test_bare_root_dropped` / `test_bare_system_root_dropped` / `test_subpath_under_system_root_kept`：3 个用例，回归裸系统根丢弃。
 
 ---
@@ -234,8 +236,9 @@ PermissionEngine.check FILESYSTEM_WRITE → allowed=False, escalation=user_home
 | 宿主传空对象 `{}` | 等价于不传 |
 | 宿主只传 `session_workspace_root` | 仅覆盖该字段，`allowed_directories` 与 `filesystem_scope` 沿用配置 |
 | `permission_mode=default` | workspace + 本 session policy；全局 allowed directories 不继承；无 policy 时仅 workspace |
-| `permission_mode=full_access` 且服务端禁止 | fail closed 到 `default` |
-| `permission_mode=full_access` 且服务端允许 | 完全文件范围；危险命令仍逐次审批；Jupyter kernel 按 ACP session 隔离 |
+| `permission_mode=unrestricted_filesystem` | 完全文件范围；危险命令仍逐次审批；Jupyter kernel 按 ACP session 隔离 |
+| `permission_mode=full_access` | 完全文件范围；危险命令无需应用层确认；仍保留硬阻断、删除备份和 Jupyter session 隔离 |
+| 未传 `permission_mode` | 兼容旧客户端，沿用 `tools.allow_full_access` 和原有 officev3 policy |
 | 宿主同时还传 deprecated `officev3_permissions_override` | 旧字段会被 WARNING 但忽略；新字段照常生效 |
 
 受限 session 不再暴露 `execute_code`，这是为关闭真实 Python 进程绕过文件权限所必需的安全收紧。

@@ -4116,7 +4116,7 @@ async def test_acp_non_string_permission_mode_fails_closed(tmp_path, invalid_mod
 
 
 @pytest.mark.asyncio
-async def test_acp_full_access_request_respects_server_cap(tmp_path):
+async def test_acp_full_access_request_is_authoritative_for_session(tmp_path):
     workspace = tmp_path / "workspace"
     config = Config(
         llm=LLMConfig(api_key="test-key"),
@@ -4134,15 +4134,85 @@ async def test_acp_full_access_request_respects_server_cap(tmp_path):
     bash_tool = agent._sessions[session.sessionId].agent.tools["bash"]
     session_tools = agent._sessions[session.sessionId].agent.tools
 
-    assert bash_tool.allow_full_access is False
-    assert bash_tool._perm is not None
-    assert "execute_code" not in session_tools
-    assert "sandbox_status" not in session_tools
+    assert bash_tool.allow_full_access is True
+    assert bash_tool.bypass_dangerous_command_approval is True
+    assert bash_tool._perm is None
+    assert "execute_code" in session_tools
+    assert "sandbox_status" in session_tools
 
 
 @pytest.mark.asyncio
-async def test_acp_full_access_mode_requires_server_opt_in(tmp_path):
+async def test_acp_unrestricted_filesystem_request_is_authoritative_for_session(tmp_path):
     workspace = tmp_path / "workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
+        tools=ToolsConfig(allow_full_access=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(workspace),
+            field_meta={"permission_mode": "unrestricted_filesystem"},
+        )
+    )
+    session_tools = agent._sessions[session.sessionId].agent.tools
+    bash_tool = session_tools["bash"]
+
+    assert bash_tool.allow_full_access is True
+    assert bash_tool.bypass_dangerous_command_approval is False
+    assert bash_tool._perm is None
+    assert "execute_code" in session_tools
+
+
+@pytest.mark.asyncio
+async def test_acp_unrestricted_filesystem_keeps_dangerous_command_approval(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("outside", encoding="utf-8")
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
+        tools=ToolsConfig(allow_full_access=True),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [EchoTool()], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(workspace),
+            field_meta={"permission_mode": "unrestricted_filesystem"},
+        )
+    )
+    session_tools = agent._sessions[session.sessionId].agent.tools
+    bash_tool = session_tools["bash"]
+    read_tool = session_tools["read_file"]
+
+    assert bash_tool.allow_full_access is True
+    assert bash_tool.bypass_dangerous_command_approval is False
+    assert bash_tool._perm is None
+    assert "execute_code" in session_tools
+
+    read_result = await read_tool.execute(path=str(outside_file))
+    assert read_result.success is True
+
+    result = await bash_tool.execute(command=f'rm "{tmp_path / "must-not-run.txt"}"')
+    assert result.success is False
+    assert result.permission_request is not None
+    assert result.permission_request["scope"] == "safety"
+
+
+@pytest.mark.asyncio
+async def test_acp_full_access_skips_dangerous_command_approval(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    delete_target = tmp_path / "delete-me.txt"
+    delete_target.write_text("delete me", encoding="utf-8")
+    backed_up: list[Path] = []
+    monkeypatch.setattr(
+        "box_agent.tools.bash_tool.backup_file",
+        lambda path: backed_up.append(Path(path)),
+    )
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=3, workspace_dir=str(workspace)),
@@ -4160,9 +4230,14 @@ async def test_acp_full_access_mode_requires_server_opt_in(tmp_path):
     session_tools = agent._sessions[session.sessionId].agent.tools
 
     assert bash_tool.allow_full_access is True
+    assert bash_tool.bypass_dangerous_command_approval is True
     assert bash_tool._perm is None
     assert "execute_code" in session_tools
     assert "sandbox_status" in session_tools
+
+    result = await bash_tool.execute(command=f'rm "{delete_target}"')
+    assert result.permission_request is None
+    assert backed_up == [delete_target]
 
 
 @pytest.mark.asyncio
