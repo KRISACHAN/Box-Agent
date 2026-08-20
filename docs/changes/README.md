@@ -51,7 +51,7 @@ decision, read those entries together.
 
 | Area | Affected paths or keywords | Current effective decision | Relationship | Details |
 | --- | --- | --- | --- | --- |
-| Tool name aliases | `Tool.aliases`, `build_tool_name_index`, OpenClaw, Hermes | Compatibility names are execution-only, use canonical Box-Agent argument schemas, and fail closed on conflicts. | Built-in mappings complete the generic alias mechanism in `ba374f6`. | [2026-08-20 built-in aliases](#2026-08-20--built-in-tool-name-compatibility-aliases) |
+| Tool name aliases | `Tool.aliases`, `build_tool_name_index`, OpenClaw, Hermes | Compatibility names are execution-only, use canonical Box-Agent argument schemas, and fail closed on conflicts. | Built-in mappings complete the generic alias mechanism in `fad2436`. | [2026-08-20 built-in aliases](#2026-08-20--built-in-tool-name-compatibility-aliases) |
 | Filesystem path resolution | `SearchFilesTool`, `path_candidates.py`, `PATH_NOT_FOUND`, ACP file-access prompt | Missing paths may return bounded structural candidates, but the model must retry a specific path and the permission engine remains final authority. | Hardens the broad-Home-search block without adding aliases or automatic authorization. | [2026-08-20 path candidates](#2026-08-20--bounded-structural-candidates-for-missing-filesystem-paths) |
 | File writes | `box_agent/tools/file_tools.py`, `write_file` | Ordered chunks commit atomically, with bounded transactions, replay protection, and whole-body safety checks. | PR #37 hardens PR #34; both remain relevant. | [PR #37](#2026-08-17--transactional-write-safety-follow-up-pr-37), [PR #34](#2026-08-17--unified-transactional-write_file-protocol-pr-34) |
 | Tool invocation | `box_agent/tools/base.py`, `schema_validation.py`, `Tool.invoke` | Tool schemas and arguments fail closed before `execute()` is called. | Current at this baseline. | [PR #33](#2026-08-17--validate-tool-arguments-before-execution-pr-33) |
@@ -71,9 +71,9 @@ Release, provider API, and ACP compatibility have their own sources under
 
 ### 2026-08-20 — built-in tool-name compatibility aliases
 
-- Change: generic execution-only alias support is implemented by `ba374f6`;
-  the built-in compatibility mappings are a follow-up on
-  `syy/pr-review-standard`, with no merge or release reference yet.
+- Change: generic execution-only alias support is implemented by `fad2436`;
+  the built-in compatibility mappings are implemented by `ab37daf`. No merge
+  or release reference exists yet.
 - Durable tool contract: `read_file`, `write_file`, `edit_file`, `bash`,
   `generate_image`, `sub_agent`, `request_user_input`, and `get_skill` accept
   the documented equivalent OpenClaw or Hermes names. Underscore names also
@@ -96,8 +96,8 @@ Release, provider API, and ACP compatibility have their own sources under
 
 ### 2026-08-20 — bounded structural candidates for missing filesystem paths
 
-- Change: implementation on `syy/pr-review-standard`; no merge or release
-  reference exists yet.
+- Change: implementation `46f8f73`, building on broad-Home-search guard
+  `0df1dec`; no merge or release reference exists yet.
 - Durable tool contract: when `search_files` cannot find a requested path, it
   may return `raw_output.code=PATH_NOT_FOUND` with up to three existing
   candidates derived from a case-insensitive match against an immediate Home
