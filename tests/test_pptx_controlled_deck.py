@@ -5334,7 +5334,13 @@ def test_deck_contract_normalizes_pitch_layout_and_required_field_aliases(
     )
 
     assert scaffold.returncode == 0, scaffold.stderr
-    assert len(scaffold.stdout) < 23_750
+    scaffold_payload = json.loads(scaffold.stdout)
+    for path_field in ("deck_file", "image_manifest", "contract_report"):
+        scaffold_payload[path_field] = "<artifact-path>"
+    normalized_stdout = (
+        json.dumps(scaffold_payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+    )
+    assert len(normalized_stdout) < 23_500
     deck = json.loads(deck_path.read_text())
     assert [slide["layout_id"] for slide in deck["slides"]] == [
         "comparison-two-column-v1",
