@@ -781,6 +781,7 @@ class BashTool(Tool):
         permission_engine: PermissionEngine | None = None,
         runtime_env: dict[str, str] | None = None,
         process_owner_id: str | None = None,
+        bypass_dangerous_command_approval: bool = False,
     ):
         """Initialize BashTool with OS-specific shell detection.
 
@@ -797,6 +798,8 @@ class BashTool(Tool):
                                so subprocess commands use the sandbox Python.
             permission_engine: If provided, use capability-based permission checks.
             runtime_env: Extra runtime environment variables exposed to commands.
+            bypass_dangerous_command_approval: If True, skip approval for dangerous
+                                                commands in a trusted session.
         """
         self.is_windows = platform.system() == "Windows"
         self.shell_name = "PowerShell" if self.is_windows else "bash"
@@ -853,6 +856,7 @@ class BashTool(Tool):
         self.non_interactive = non_interactive
         self._perm = permission_engine
         self.process_owner_id = process_owner_id
+        self.bypass_dangerous_command_approval = bypass_dangerous_command_approval
         self._approved_safety_commands: set[str] = set()
         self._subprocess_env = None
         self._use_login_shell = True
@@ -910,6 +914,9 @@ class BashTool(Tool):
             return False
         self._approved_safety_commands.remove(key)
         return True
+
+    def _has_safety_approval(self, command: str, risk: str) -> bool:
+        return _safety_approval_key(command, risk) in self._approved_safety_commands
 
     async def _create_subprocess(
         self, command: str, *, merge_stderr: bool = False,
@@ -1305,11 +1312,14 @@ Examples:
                     exit_code=1,
                 )
 
-            # 1. Dangerous command approval remains independent from filesystem
-            # scope. Full access must not silently authorize destructive actions.
+            # 1. Only an explicitly trusted full-access session may bypass the
+            # approval prompt. Hard product blocks above and deletion backups remain.
             danger_reason = detect_dangerous_command(command)
             if danger_reason:
-                if not self._consume_safety_approval(command, danger_reason):
+                if (
+                    not self.bypass_dangerous_command_approval
+                    and not self._has_safety_approval(command, danger_reason)
+                ):
                     return BashOutputResult(
                         success=False,
                         error=(
@@ -1324,12 +1334,6 @@ Examples:
                             danger_reason,
                         ),
                     )
-                # User confirmed through the core approval path — try to backup
-                # rm targets before execution.
-                if "rm" in command or "rmdir" in command:
-                    for target in extract_rm_targets(command, self.workspace_dir):
-                        backup_file(target)
-
             # 2. Scope control (capability-based or legacy)
             if self._perm:
                 escape_reason = detect_scope_escape(command, workspace_dir=self.scope_root_dir)
@@ -1405,6 +1409,20 @@ Examples:
                     )
 
             # --- End safety checks ---
+
+            # Consume the one-shot approval only after every other permission
+            # gate has passed. Otherwise a filesystem denial between approval
+            # and execution would discard the user's decision and prompt for
+            # the same dangerous command again on the next retry.
+            if danger_reason:
+                if not self.bypass_dangerous_command_approval:
+                    self._consume_safety_approval(command, danger_reason)
+                # Backups also belong after scope authorization; probing or
+                # copying an out-of-scope target before filesystem approval
+                # would cross the very boundary being enforced.
+                if "rm" in command or "rmdir" in command:
+                    for target in extract_rm_targets(command, self.workspace_dir):
+                        backup_file(target)
 
             # Validate timeout
             if timeout > 600:

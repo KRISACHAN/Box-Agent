@@ -391,6 +391,31 @@ class TestExtractAbsolutePaths:
         assert "C:\\tmp" in result
         assert "C:\\tmp;" not in result
 
+    def test_cmd_switches_are_not_treated_as_absolute_paths(self):
+        command = (
+            'cmd.exe /d /c "rmdir \\"D:\\fly\\delete-me\\" '
+            '&& if exist \\"D:\\fly\\delete-me\\" (exit /b 2)"'
+        )
+
+        result = extract_absolute_paths(command)
+
+        assert "/d" not in result
+        assert "/c" not in result
+        assert "/b" not in result
+        assert "D:\\fly\\delete-me\\" in result
+
+    def test_direct_cmd_exit_switch_is_not_treated_as_absolute_path(self):
+        command = (
+            'rmdir "D:\\fly\\delete-me" && '
+            'if exist "D:\\fly\\delete-me" '
+            '(echo DELETE_FAILED & exit /b 1) else (echo DELETED)'
+        )
+
+        result = extract_absolute_paths(command)
+
+        assert "/b" not in result
+        assert result == ["D:\\fly\\delete-me"]
+
     def test_url_scheme_not_treated_as_windows_drive(self):
         """`https:`, `file:`, `git:` etc. (multi-char schemes) are NOT drives."""
         assert extract_absolute_paths("curl https://example.com/x.txt") == []

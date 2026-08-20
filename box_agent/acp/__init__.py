@@ -1460,10 +1460,17 @@ class BoxACPAgent:
         grant_store = GrantStore()
         effective_policy: CapabilityPolicy | None = None
         raw_permission_mode = meta.get("permission_mode") if isinstance(meta, dict) else None
+        elevated_permission_modes = {
+            "unrestricted_filesystem",
+            "full_access",
+        }
         permission_mode = (
             raw_permission_mode
             if isinstance(raw_permission_mode, str)
-            and raw_permission_mode in {"default", "full_access"}
+            and (
+                raw_permission_mode == "default"
+                or raw_permission_mode in elevated_permission_modes
+            )
             else None
         )
         if raw_permission_mode is not None and permission_mode is None:
@@ -1473,29 +1480,20 @@ class BoxACPAgent:
                 message=f"Invalid permission_mode={raw_permission_mode!r}; using default permissions",
             )
             permission_mode = "default"
-        if (
-            permission_mode == "full_access"
-            and not self._config.tools.allow_full_access
-        ):
-            log.warn(
-                "session/permissions",
-                session_id=session_id,
-                message=(
-                    "Session requested full_access but the server disables "
-                    "tools.allow_full_access; using default permissions"
-                ),
-            )
-            permission_mode = "default"
         session_allow_full_access = (
-            self._config.tools.allow_full_access
-            and permission_mode != "default"
+            permission_mode in elevated_permission_modes
+            or (
+                permission_mode is None
+                and self._config.tools.allow_full_access
+            )
         )
         # execute_code is a real Python process, not an OS filesystem sandbox.
-        # Expose it only when the server has explicitly enabled full access.
+        # Expose it only for an explicit unrestricted session or the legacy
+        # server-wide full-access mode used when permission_mode is absent.
         session_sandbox_mode = session_allow_full_access
 
         if (
-            permission_mode != "full_access"
+            permission_mode not in elevated_permission_modes
             and (self._has_officev3_policy() or permission_mode == "default")
         ):
             try:
@@ -1576,11 +1574,16 @@ class BoxACPAgent:
                 )
                 effective_policy = fallback_policy
                 perm_engine = PermissionEngine(fallback_policy, workspace, grant_store=grant_store)
-        elif permission_mode == "full_access":
+        elif permission_mode in elevated_permission_modes:
             log.warn(
                 "session/permissions",
                 session_id=session_id,
-                message="Full access enabled for this session; permission checks are bypassed",
+                message=(
+                    "Unrestricted filesystem access enabled for this session; "
+                    "dangerous commands still require approval"
+                    if permission_mode == "unrestricted_filesystem"
+                    else "Full access enabled for this session; permission checks are bypassed"
+                ),
             )
 
         skill_runtime_context = build_skill_runtime_context(
@@ -1640,8 +1643,16 @@ class BoxACPAgent:
                     for tool in tools
                 ]
             if perm_engine is None:
-                log.info("session/permissions", session_id=session_id,
-                         message="No officev3 policy — using legacy allow_full_access mode")
+                message = (
+                    f"Using explicit session permission mode: {permission_mode}"
+                    if permission_mode in elevated_permission_modes
+                    else "No officev3 policy — using legacy allow_full_access mode"
+                )
+                log.info(
+                    "session/permissions",
+                    session_id=session_id,
+                    message=message,
+                )
             # Enable sandbox mode and restrict to workspace for ACP sessions
             add_workspace_tools(
                 tools,
@@ -1660,6 +1671,7 @@ class BoxACPAgent:
                 artifact_root_dir=output_dir,
                 env_context=env_context,
                 process_owner_id=session_id,
+                bypass_dangerous_command_approval=permission_mode == "full_access",
             )
             system_prompt = (
                 f"{system_prompt.rstrip()}\n\n"
