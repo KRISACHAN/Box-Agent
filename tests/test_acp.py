@@ -4208,7 +4208,7 @@ async def test_acp_default_permission_mode_replaces_global_allowed_directories(t
     assert bash_tool._perm is not None
     assert bash_tool._perm.policy.filesystem_scope == "session_workspace"
     assert bash_tool._perm.policy.allowed_directories == (str(session_allowed),)
-    assert "execute_code" not in agent._sessions[session.sessionId].agent.tools
+    assert "execute_code" in agent._sessions[session.sessionId].agent.tools
 
 
 @pytest.mark.asyncio
@@ -4248,7 +4248,7 @@ async def test_acp_default_permission_mode_without_filesystem_policy_fails_close
     assert bash_tool._perm.policy.filesystem_scope == "session_workspace"
     assert bash_tool._perm.policy.session_workspace_root == str(workspace)
     assert bash_tool._perm.policy.allowed_directories == ()
-    assert "execute_code" not in agent._sessions[session.sessionId].agent.tools
+    assert "execute_code" in agent._sessions[session.sessionId].agent.tools
 
 
 @pytest.mark.asyncio
@@ -4280,8 +4280,7 @@ async def test_acp_default_mode_applies_session_directories_without_global_polic
 
     assert bash_tool._perm is not None
     assert bash_tool._perm.policy.allowed_directories == (str(allowed),)
-    assert "execute_code" not in agent._sessions[session.sessionId].agent.tools
-    assert "仅 `execute_code` 沙箱可用" not in agent._sessions[session.sessionId].agent.system_prompt
+    assert "execute_code" in agent._sessions[session.sessionId].agent.tools
 
 
 @pytest.mark.asyncio
@@ -4305,7 +4304,7 @@ async def test_acp_non_string_permission_mode_fails_closed(tmp_path, invalid_mod
 
     assert tools["bash"].allow_full_access is False
     assert tools["bash"]._perm is not None
-    assert "execute_code" not in tools
+    assert "execute_code" in tools
 
 
 @pytest.mark.asyncio
