@@ -1493,10 +1493,10 @@ class BoxACPAgent:
                 and self._config.tools.allow_full_access
             )
         )
-        # execute_code is a real Python process, not an OS filesystem sandbox.
-        # Expose it only for an explicit unrestricted session or the legacy
-        # server-wide full-access mode used when permission_mode is absent.
-        session_sandbox_mode = session_allow_full_access
+        # Python execution is independent of the session permission mode.
+        # Permission modes only control filesystem checks and dangerous-command
+        # approval for the corresponding tools.
+        session_sandbox_mode = True
 
         if (
             permission_mode not in elevated_permission_modes
