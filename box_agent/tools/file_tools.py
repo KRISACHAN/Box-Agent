@@ -76,7 +76,7 @@ def _resolve_from_active_root(
     relative_root_dir: Path,
 ) -> Path:
     """Resolve canonical artifact paths and legacy workspace-relative paths."""
-    file_path = Path(path)
+    file_path = Path(path).expanduser()
     if file_path.is_absolute():
         return file_path
 
@@ -488,6 +488,19 @@ class SearchFilesTool(EventEmittingTool):
             offset, limit = _normalize_search_pagination(offset, limit)
             context = max(0, min(context if isinstance(context, int) else 0, 10))
             search_path = self._resolve_path(path)
+            user_home = Path.home().resolve()
+            if (
+                search_path.resolve() == user_home
+                and self.workspace_dir.resolve() != user_home
+            ):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "BROAD_HOME_SEARCH_BLOCKED: Recursive search from the entire user "
+                        "home is not allowed. Choose a specific likely directory such as "
+                        "~/Downloads or ~/Documents, or ask the user for the location."
+                    ),
+                )
             denied = self._permission_error(search_path)
             if denied:
                 return denied

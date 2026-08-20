@@ -405,6 +405,48 @@ async def test_search_files_lists_and_searches_without_bash(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_search_files_expands_tilde_path(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    target = home / "Downloads" / "design2000"
+    target.mkdir(parents=True)
+    (target / "brief.txt").write_text("content", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    result = await SearchFilesTool(workspace_dir=str(workspace)).execute(
+        pattern="*.txt",
+        target="files",
+        path="~/Downloads/design2000",
+    )
+
+    assert result.success is True
+    assert result.content == "brief.txt"
+
+
+@pytest.mark.asyncio
+async def test_search_files_blocks_recursive_search_from_user_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "Music").mkdir(parents=True)
+    (home / "Music" / "song.txt").write_text("content", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    result = await SearchFilesTool(workspace_dir=str(workspace)).execute(
+        pattern="*.txt",
+        target="files",
+        path="~",
+    )
+
+    assert result.success is False
+    assert result.error.startswith("BROAD_HOME_SEARCH_BLOCKED:")
+    assert result.permission_request is None
+
+
+@pytest.mark.asyncio
 async def test_search_files_paginates_results(tmp_path):
     for index in range(5):
         (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")

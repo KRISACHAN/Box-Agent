@@ -51,6 +51,7 @@
 
 - **Dangerous commands** (rm, rmdir, kill, sudo, chmod 等) 会触发用户确认。**用户拒绝即停**——不要换 `rmdir` / `find -delete` / `mv /dev/null` 等等价命令重试；通知用户已取消并询问下一步。
 - **Filesystem scope**：safety 启用时工具访问受 runtime policy 限制（含 workspace、session root、host 允许目录）。不要预设只能访问 workspace；遇权限错误尊重该错误。
+- 定位 workspace 外的模糊路径时，先尝试具体候选路径（例如 `~/Downloads/...`）；不要以用户主目录为根递归搜索。具体候选均失败后再询问用户。
 
 <safety_guardrails>
 **安全与隐私**：
