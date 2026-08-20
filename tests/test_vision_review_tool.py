@@ -73,6 +73,37 @@ async def test_vision_review_reads_image_sends_image_content_and_writes_report(t
 
 
 @pytest.mark.asyncio
+async def test_vision_review_describe_mode_sends_inline_image_without_writing_report(
+    tmp_path: Path,
+):
+    class DescribeLLM(FakeVisionLLM):
+        async def generate(self, messages, tools=None, *, thinking_enabled=False, call_kind=""):
+            self.messages = messages
+            self.tools = tools
+            self.call_kind = call_kind
+            return LLMResponse(content="一只卡通浣熊正在双手比心。", finish_reason="stop")
+
+    image = tmp_path / "raccoon.png"
+    image.write_bytes(_ONE_PIXEL_PNG)
+    llm = DescribeLLM()
+    tool = VisionReviewTool(llm=llm, workspace_dir=str(tmp_path), allow_full_access=False)
+
+    result = await tool.execute(
+        image_paths=["raccoon.png"],
+        instructions="描述图片主体和手势。",
+        mode="describe",
+    )
+
+    assert result.success, result.error
+    assert result.content == "一只卡通浣熊正在双手比心。"
+    assert not (tmp_path / "visual_review.md").exists()
+    blocks = llm.messages[1].content
+    assert blocks[0] == {"type": "text", "text": "描述图片主体和手势。"}
+    image_block = next(block for block in blocks if block.get("type") == "image_url")
+    assert image_block["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
 async def test_vision_review_default_report_follows_first_image_directory(tmp_path: Path):
     image_dir = tmp_path / "future_weather_deck" / "qa"
     image_dir.mkdir(parents=True)

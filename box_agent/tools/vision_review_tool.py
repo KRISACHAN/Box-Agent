@@ -106,6 +106,15 @@ class VisionReviewTool(Tool):
                     "type": "string",
                     "description": "Optional extra review criteria from the active skill or user request.",
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["review", "describe"],
+                    "default": "review",
+                    "description": (
+                        "Use review for presentation QA reports; use describe for direct "
+                        "image understanding without writing visual_review.md."
+                    ),
+                },
             },
             "required": ["image_paths"],
         }
@@ -115,26 +124,39 @@ class VisionReviewTool(Tool):
         image_paths: list[str],
         output_path: str | None = None,
         instructions: str | None = None,
+        mode: str = "review",
     ) -> ToolResult:
         """Run visual review and write the markdown report."""
         if not image_paths:
             return ToolResult(success=False, error="image_paths must contain at least one image path")
+        if mode not in {"review", "describe"}:
+            return ToolResult(success=False, error="mode must be 'review' or 'describe'")
         if self._terminal_error is not None:
             return ToolResult(success=False, error=self._terminal_error)
 
         try:
             images = [self._load_image(path) for path in image_paths]
-            output_file = self._resolve_output_path(output_path, images[0]["file_path"])
+            output_file = (
+                self._resolve_output_path(output_path, images[0]["file_path"])
+                if mode == "review"
+                else None
+            )
         except ValueError as exc:
             return ToolResult(success=False, error=str(exc))
 
-        content_blocks = self._build_content_blocks(images, instructions=instructions)
+        content_blocks = (
+            self._build_content_blocks(images, instructions=instructions)
+            if mode == "review"
+            else self._build_description_blocks(images, instructions=instructions)
+        )
         messages = [
             Message(
                 role="system",
                 content=(
                     "You are a meticulous visual QA reviewer. Review the supplied local screenshots directly. "
                     "Do not claim a page passed unless you inspected the image. Return concise markdown."
+                    if mode == "review"
+                    else "Inspect the supplied images directly and answer the user's image question accurately and concisely."
                 ),
             ),
             Message(role="user", content=content_blocks),
@@ -157,6 +179,15 @@ class VisionReviewTool(Tool):
             return ToolResult(success=False, error=error)
 
         response_content = (response.content or "").strip()
+        if mode == "describe":
+            if not response_content or self._reports_uninspected_images(response_content):
+                return ToolResult(
+                    success=False,
+                    error=self._terminal_failure(
+                        "Image understanding model did not inspect the supplied image."
+                    ),
+                )
+            return ToolResult(success=True, content=response_content)
         if (
             not self._has_per_image_findings(response_content, len(images))
             or self._reports_uninspected_images(response_content)
@@ -170,6 +201,7 @@ class VisionReviewTool(Tool):
         report = self._normalize_report(response_content, [img["path"] for img in images])
 
         try:
+            assert output_file is not None
             output_file.parent.mkdir(parents=True, exist_ok=True)
             output_file.write_text(report, encoding="utf-8")
         except OSError as exc:
@@ -334,6 +366,35 @@ class VisionReviewTool(Tool):
                         "source": {
                             "type": "base64",
                             "media_type": media_type,
+                            "data": image["base64"],
+                        },
+                    }
+                )
+            else:
+                blocks.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image["data_url"]},
+                    }
+                )
+        return blocks
+
+    def _build_description_blocks(
+        self,
+        images: list[dict[str, str]],
+        *,
+        instructions: str | None,
+    ) -> list[dict[str, Any]]:
+        prompt = (instructions or "Describe the supplied images.").strip()
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for image in images:
+            if "anthropic" in self._provider_hint():
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image["mime_type"],
                             "data": image["base64"],
                         },
                     }

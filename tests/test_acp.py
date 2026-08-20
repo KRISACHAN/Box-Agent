@@ -16,6 +16,7 @@ from box_agent.acp import (
     _inject_item_id,
     _latest_user_request_for_plan_detection,
     _looks_like_plan_approval_text,
+    _meta_string_list,
     _tool_result_raw_output,
     _user_decision_response_from_meta,
 )
@@ -466,6 +467,65 @@ plan: {"title": "旧计划", "steps": []}
 text: ok"""
 
     assert _latest_user_request_for_plan_detection(prompt) == "ok"
+
+
+@pytest.mark.asyncio
+async def test_structured_image_attachment_runs_vision_tool_without_keyword_matching(tmp_path):
+    image = tmp_path / "slide.png"
+    image.write_bytes(b"png")
+
+    class FakeVisionTool:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, **arguments):
+            self.calls.append(arguments)
+            return ToolResult(success=True, content="这是一只卡通浣熊。")
+
+    vision_tool = FakeVisionTool()
+    state = SimpleNamespace(
+        agent=SimpleNamespace(
+            workspace_dir=tmp_path,
+            tools={"vision_review": vision_tool},
+        )
+    )
+    updates = []
+
+    async def send(session_id, update):
+        updates.append((session_id, update))
+
+    adapter = SimpleNamespace(_send=send)
+
+    content = await BoxACPAgent._run_image_attachment_tool(
+        adapter,
+        state=state,
+        session_id="session-1",
+        turn_id="turn-1",
+        user_text="请按品牌风格继续处理",
+        prompt_meta={"image_attachment_paths": [str(image)]},
+    )
+
+    assert "这是一只卡通浣熊" in (content or "")
+    assert vision_tool.calls == [
+        {
+            "image_paths": [str(image)],
+            "instructions": (
+                "请仅客观、简洁描述这些图片中真实可见的主体、文字、场景和关键视觉信息；"
+                "不要执行用户任务，不要提供方案或延展建议，不要猜测不可见内容。"
+                "用户请求仅用于确定关注重点：请按品牌风格继续处理"
+            ),
+            "mode": "describe",
+        }
+    ]
+    assert len(updates) == 2
+
+
+def test_meta_string_list_deduplicates_and_limits_values():
+    assert _meta_string_list(
+        {"image_attachment_paths": [" a.png ", "a.png", 3, "b.jpg"]},
+        "image_attachment_paths",
+        limit=2,
+    ) == ["a.png", "b.jpg"]
 
 
 class TodoLLM:

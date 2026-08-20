@@ -403,6 +403,23 @@ def _meta_string(meta: Any, *keys: str) -> str:
     return ""
 
 
+def _meta_string_list(meta: Any, *keys: str, limit: int = 8) -> list[str]:
+    if not isinstance(meta, dict):
+        return []
+    for key in keys:
+        value = meta.get(key)
+        if not isinstance(value, list):
+            continue
+        result: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip() and item.strip() not in result:
+                result.append(item.strip())
+            if len(result) >= limit:
+                break
+        return result
+    return []
+
+
 def _normalize_llm_binding(meta: Any) -> dict[str, Any] | None:
     """Parse the host-owned, session-scoped LLM binding extension."""
     if not isinstance(meta, dict):
@@ -1970,6 +1987,134 @@ class BoxACPAgent:
         """Check if officev3 capability policy is configured (not just defaults)."""
         return getattr(self._config.officev3, "_present", False)
 
+    async def _run_image_attachment_tool(
+        self,
+        *,
+        state: SessionState,
+        session_id: str,
+        turn_id: str,
+        user_text: str,
+        prompt_meta: dict[str, Any],
+    ) -> str | None:
+        """Describe structured current-turn image attachments through Tool UX."""
+        raw_paths = _meta_string_list(
+            prompt_meta,
+            "image_attachment_paths",
+            "imageAttachmentPaths",
+            limit=6,
+        )
+        if not raw_paths:
+            return None
+        workspace = state.agent.workspace_dir.resolve()
+        image_paths: list[str] = []
+        for raw in raw_paths:
+            candidate = Path(raw).expanduser().resolve()
+            try:
+                candidate.relative_to(workspace)
+            except ValueError:
+                continue
+            if candidate.is_file():
+                image_paths.append(str(candidate))
+        if not image_paths:
+            return None
+
+        vision_tool = state.agent.tools.get("vision_review")
+        if vision_tool is None:
+            return None
+        tool_call_id = f"attachment-vision-{uuid4().hex}"
+        user_request = _latest_user_request_for_plan_detection(user_text)
+        arguments = {
+            "image_paths": image_paths,
+            "instructions": (
+                "请仅客观、简洁描述这些图片中真实可见的主体、文字、场景和关键视觉信息；"
+                "不要执行用户任务，不要提供方案或延展建议，不要猜测不可见内容。"
+                f"用户请求仅用于确定关注重点：{user_request}"
+            ),
+            "mode": "describe",
+        }
+        log.info(
+            "tool/start",
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            tool_name="vision_review",
+            arguments=arguments,
+            user_visible=True,
+            source="structured_attachment",
+        )
+        trace_writer = getattr(state, "trace_writer", None)
+        if trace_writer is not None:
+            trace_writer.write(
+                "tool.request",
+                turn_id=turn_id,
+                step=0,
+                tool_call_id=tool_call_id,
+                data={
+                    "tool_name": "vision_review",
+                    "arguments": arguments,
+                    "allowed_to_execute": True,
+                    "user_visible": True,
+                    "source": "structured_attachment",
+                },
+            )
+        await self._send(
+            session_id,
+            start_tool_call(
+                tool_call_id,
+                "🔧 vision_review(本轮图片附件)",
+                kind="execute",
+                raw_input=arguments,
+            ),
+        )
+        result = await vision_tool.execute(**arguments)
+        ok = bool(result.success)
+        text = result.content if ok else result.error or "Image understanding failed"
+        log_method = log.info if ok else log.warn
+        log_method(
+            "tool/end" if ok else "tool/fail",
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            tool_name="vision_review",
+            result=text if ok else None,
+            error=None if ok else text,
+            user_visible=True,
+            source="structured_attachment",
+        )
+        if trace_writer is not None:
+            trace_writer.write(
+                "tool.response",
+                turn_id=turn_id,
+                step=0,
+                tool_call_id=tool_call_id,
+                data={
+                    "tool_name": "vision_review",
+                    "success": ok,
+                    "content": result.content if ok else "",
+                    "error": None if ok else text,
+                    "source": "structured_attachment",
+                },
+            )
+        await self._send(
+            session_id,
+            update_tool_call(
+                tool_call_id,
+                status="completed" if ok else "failed",
+                content=[tool_content(text_block(("[OK] " if ok else "[ERROR] ") + text))],
+                raw_output={
+                    "type": "structured_image_attachment_result",
+                    "success": ok,
+                    "imageCount": len(image_paths),
+                    "content": text,
+                },
+            ),
+        )
+        return (
+            "[HOST_IMAGE_ATTACHMENT_TOOL_RESULT]\n"
+            f"{text}\n"
+            "[/HOST_IMAGE_ATTACHMENT_TOOL_RESULT]\n"
+            "The current-turn image attachment has already been processed by vision_review. "
+            "Do not call vision_review or execute_code for the same image again."
+        )
+
     async def prompt(self, params: PromptRequest) -> PromptResponse:
         session_id = params.sessionId
         state = self._sessions.get(session_id)
@@ -2161,6 +2306,14 @@ class BoxACPAgent:
             require_plan_approval=require_plan_approval,
             plan_approval_approved=plan_approval_approved,
             auto_approve_plan=auto_approve_plan,
+        )
+
+        image_attachment_context = await self._run_image_attachment_tool(
+            state=state,
+            session_id=session_id,
+            turn_id=turn_id,
+            user_text=user_text,
+            prompt_meta=prompt_meta,
         )
 
         # Ensure background-loaded MCP tools are available before running the turn
@@ -2501,6 +2654,8 @@ class BoxACPAgent:
             else:
                 self._sync_cache_fingerprint_context(state)
 
+        if image_attachment_context:
+            user_text = f"{user_text}\n\n{image_attachment_context}"
         state.agent.add_user_message(user_text)
 
         # Drain any stale injections from a previous turn
