@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 from types import SimpleNamespace
 
 import pytest
 
+import box_agent.session_trace as session_trace_module
 from box_agent.acp import BoxACPAgent
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
 from box_agent.core import run_agent_loop
@@ -22,6 +25,7 @@ from box_agent.schema import (
 )
 from box_agent.session_trace import (
     SessionTraceWriter,
+    cleanup_session_traces,
     emit_session_trace,
     reset_session_trace_writer,
     safe_session_trace_name,
@@ -104,6 +108,153 @@ def test_writer_failure_never_escapes_into_agent_flow(tmp_path):
     writer.write("turn.input", turn_id="turn-failure", data={"content": "still safe"})
 
     assert blocked_trace_dir.read_text(encoding="utf-8") == "occupied"
+
+
+def _trace_file(path, *, size: int, mtime: float):
+    path.write_text("x" * size, encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_cleanup_deletes_only_expired_inactive_session_files(tmp_path):
+    now = time.time()
+    current = _trace_file(tmp_path / "current.jsonl", size=10, mtime=now - 10 * 86400)
+    newest = _trace_file(tmp_path / "newest.jsonl", size=10, mtime=now - 100)
+    second_newest = _trace_file(tmp_path / "second-newest.jsonl", size=10, mtime=now - 200)
+    expired = _trace_file(tmp_path / "expired.jsonl", size=10, mtime=now - 10 * 86400)
+    unrelated = _trace_file(tmp_path / "unrelated.log", size=10, mtime=now - 10 * 86400)
+
+    deleted = cleanup_session_traces(
+        tmp_path,
+        current_file=current,
+        now=now,
+        retention_days=7,
+        max_total_bytes=0,
+        active_file_grace_seconds=0,
+        protected_recent_files=2,
+    )
+
+    assert deleted == [expired]
+    assert current.exists()
+    assert newest.exists()
+    assert second_newest.exists()
+    assert unrelated.exists()
+
+
+def test_cleanup_enforces_directory_cap_oldest_first_without_deleting_recent_files(tmp_path):
+    now = time.time()
+    oldest = _trace_file(tmp_path / "oldest.jsonl", size=60, mtime=now - 400)
+    older = _trace_file(tmp_path / "older.jsonl", size=60, mtime=now - 300)
+    recent = _trace_file(tmp_path / "recent.jsonl", size=60, mtime=now - 200)
+    newest = _trace_file(tmp_path / "newest.jsonl", size=60, mtime=now - 100)
+
+    deleted = cleanup_session_traces(
+        tmp_path,
+        now=now,
+        retention_days=0,
+        max_total_bytes=130,
+        active_file_grace_seconds=0,
+        protected_recent_files=2,
+    )
+
+    assert deleted == [oldest, older]
+    assert recent.exists()
+    assert newest.exists()
+
+
+def test_cleanup_skips_a_trace_that_changed_after_the_directory_scan(tmp_path, monkeypatch):
+    now = time.time()
+    trace = _trace_file(tmp_path / "concurrent.jsonl", size=10, mtime=now - 10 * 86400)
+    stale_snapshot = session_trace_module._trace_file_snapshots(tmp_path)
+    trace.write_text("x" * 10 + "\nconcurrent append", encoding="utf-8")
+    monkeypatch.setattr(
+        session_trace_module,
+        "_trace_file_snapshots",
+        lambda trace_dir: stale_snapshot,
+    )
+
+    deleted = cleanup_session_traces(
+        tmp_path,
+        now=now,
+        retention_days=7,
+        max_total_bytes=0,
+        active_file_grace_seconds=0,
+        protected_recent_files=0,
+    )
+
+    assert deleted == []
+    assert trace.read_text(encoding="utf-8").endswith("concurrent append")
+
+
+def test_writer_runs_retention_without_changing_current_jsonl_contract(tmp_path, monkeypatch):
+    now = time.time()
+    expired = _trace_file(tmp_path / "expired.jsonl", size=10, mtime=now - 10 * 86400)
+    recent = _trace_file(tmp_path / "recent.jsonl", size=10, mtime=now - 100)
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_RETENTION_ENABLED", "1")
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_RETENTION_DAYS", "7")
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_MAX_TOTAL_BYTES", "0")
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_CLEANUP_INTERVAL_SECONDS", "0")
+    writer = SessionTraceWriter(
+        session_id="office-session-compatible",
+        acp_session_id="sess-compatible",
+        trace_dir=tmp_path,
+        enabled=True,
+    )
+
+    writer.write("turn.input", turn_id="turn-1", data={"content": "unchanged"})
+
+    assert not expired.exists()
+    assert recent.exists()
+    records = _records(writer)
+    assert records == [
+        {
+            "schema_version": "box-agent-session-trace/v1",
+            "timestamp": records[0]["timestamp"],
+            "event": "turn.input",
+            "session_id": "office-session-compatible",
+            "acp_session_id": "sess-compatible",
+            "turn_id": "turn-1",
+            "data": {"content": "unchanged"},
+        }
+    ]
+
+
+def test_writer_retention_can_be_disabled_for_external_log_owners(tmp_path, monkeypatch):
+    now = time.time()
+    expired = _trace_file(tmp_path / "expired.jsonl", size=10, mtime=now - 10 * 86400)
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_RETENTION_ENABLED", "0")
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_CLEANUP_INTERVAL_SECONDS", "0")
+    writer = SessionTraceWriter(
+        session_id="office-session-retention-disabled",
+        acp_session_id="sess-retention-disabled",
+        trace_dir=tmp_path,
+        enabled=True,
+    )
+
+    writer.write("turn.input", data={"content": "keep external ownership"})
+
+    assert expired.exists()
+    assert _records(writer)[0]["data"]["content"] == "keep external ownership"
+
+
+def test_retention_failure_does_not_interrupt_trace_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_RETENTION_ENABLED", "1")
+    monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_CLEANUP_INTERVAL_SECONDS", "0")
+
+    def fail_cleanup(*args, **kwargs):
+        raise OSError("cleanup unavailable")
+
+    monkeypatch.setattr(session_trace_module, "cleanup_session_traces", fail_cleanup)
+    writer = SessionTraceWriter(
+        session_id="office-session-cleanup-failure",
+        acp_session_id="sess-cleanup-failure",
+        trace_dir=tmp_path,
+        enabled=True,
+    )
+
+    writer.write("turn.input", data={"content": "still recorded"})
+
+    assert _records(writer)[0]["data"]["content"] == "still recorded"
 
 
 @pytest.mark.asyncio

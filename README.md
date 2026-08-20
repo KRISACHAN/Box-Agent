@@ -335,6 +335,17 @@ Requires Node.js ≥ 18 on `PATH`. Chromium lands in `~/.box-agent/browsers/` (s
 
 In-session commands: `/help`, `/clear`, `/clear_all`, `/history`, `/stats`, `/sandbox_status`, `/log`, `/goal`, `/memory review`, `/exit`
 
+ACP session traces keep their existing `~/.box-agent/log/sessions/<session-id>.jsonl`
+name and `box-agent-session-trace/v1` record format. Retention removes only whole,
+inactive session files: files older than 7 days are eligible, and the directory
+has a soft 512 MiB cap. The current append target, files modified within 24
+hours, and the newest two sessions are protected. Cleanup runs best-effort at
+most once every 6 hours; cleanup failures never interrupt agent execution.
+Operators can override the defaults with `BOX_AGENT_SESSION_TRACE_RETENTION_DAYS`,
+`BOX_AGENT_SESSION_TRACE_MAX_TOTAL_BYTES`, and
+`BOX_AGENT_SESSION_TRACE_CLEANUP_INTERVAL_SECONDS`, or disable cleanup with
+`BOX_AGENT_SESSION_TRACE_RETENTION_ENABLED=0`.
+
 Use `/goal <objective>` or `--goal "<objective>"` to keep a durable workspace objective attached to later turns. The CLI persists it under `~/.box-agent/goals/`; later turns include that goal until you run `/goal pause`, `/goal resume`, `/goal block <reason>`, `/goal complete <evidence>`, or `/goal clear`. Scripted runs can manage it with `box-agent goal ...`.
 
 In non-interactive `--task` mode and ACP sessions, active goals also use bounded autopilot: when a turn ends naturally but the goal is still `active`, Box-Agent automatically continues in the same session until the model marks the goal `complete`, marks it `blocked`, the user cancels, `goal_autopilot_max_turns` / `goal_autopilot_max_seconds` is reached, or `goal_autopilot_no_progress_turns` consecutive automatic continuations make no recorded goal progress. Use `--no-goal-autopilot` for one CLI run, or set `goal_autopilot_enabled: false` in config.

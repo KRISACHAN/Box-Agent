@@ -11,8 +11,10 @@ import logging
 import os
 import re
 import threading
+import time
 from collections.abc import AsyncIterator, Mapping
 from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -27,9 +29,18 @@ _TRACE_CONTEXT: ContextVar[tuple["SessionTraceWriter", str] | None] = ContextVar
     "box_agent_session_trace", default=None
 )
 _WRITE_LOCK = threading.Lock()
+_RETENTION_LOCK = threading.Lock()
+_LAST_RETENTION_CHECK: dict[str, float] = {}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _SAFE_FILE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 _T = TypeVar("_T")
+
+_DEFAULT_RETENTION_DAYS = 7
+_DEFAULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024
+_DEFAULT_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
+_PROTECTED_RECENT_FILES = 2
+_ACTIVE_FILE_GRACE_SECONDS = 24 * 60 * 60
+_SECONDS_PER_DAY = 24 * 60 * 60
 
 
 def session_trace_enabled() -> bool:
@@ -48,6 +59,182 @@ def default_session_trace_dir() -> Path:
     if configured:
         return Path(configured).expanduser()
     return Path.home() / ".box-agent" / "log" / "sessions"
+
+
+def session_trace_retention_enabled() -> bool:
+    """Return whether best-effort trace retention is enabled."""
+
+    value = os.environ.get("BOX_AGENT_SESSION_TRACE_RETENTION_ENABLED")
+    return value is None or value.strip().lower() not in _FALSE_VALUES
+
+
+def _non_negative_env_int(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return max(0, int(value))
+    except ValueError:
+        logger.debug("invalid session trace retention setting: %s=%r", name, value)
+        return default
+
+
+@dataclass(frozen=True)
+class _TraceFileSnapshot:
+    path: Path
+    size: int
+    mtime: float
+    mtime_ns: int
+    inode: int
+
+
+def _trace_file_snapshots(trace_dir: Path) -> list[_TraceFileSnapshot]:
+    snapshots: list[_TraceFileSnapshot] = []
+    try:
+        candidates = list(trace_dir.iterdir())
+    except OSError:
+        return snapshots
+
+    for candidate in candidates:
+        try:
+            if candidate.is_symlink() or not candidate.is_file() or candidate.suffix != ".jsonl":
+                continue
+            stat = candidate.stat()
+        except OSError:
+            continue
+        snapshots.append(
+            _TraceFileSnapshot(
+                path=candidate,
+                size=stat.st_size,
+                mtime=stat.st_mtime,
+                mtime_ns=stat.st_mtime_ns,
+                inode=stat.st_ino,
+            )
+        )
+    return snapshots
+
+
+def _unlink_unchanged_trace(snapshot: _TraceFileSnapshot) -> bool:
+    """Delete a trace only if it has not changed since the cleanup scan."""
+
+    try:
+        current = snapshot.path.stat()
+        if (
+            current.st_ino != snapshot.inode
+            or current.st_size != snapshot.size
+            or current.st_mtime_ns != snapshot.mtime_ns
+        ):
+            return False
+        snapshot.path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        logger.debug("session trace cleanup failed for %s", snapshot.path, exc_info=True)
+        return False
+
+
+def cleanup_session_traces(
+    trace_dir: str | Path,
+    *,
+    current_file: str | Path | None = None,
+    now: float | None = None,
+    retention_days: int | None = None,
+    max_total_bytes: int | None = None,
+    active_file_grace_seconds: int = _ACTIVE_FILE_GRACE_SECONDS,
+    protected_recent_files: int = _PROTECTED_RECENT_FILES,
+) -> list[Path]:
+    """Remove whole inactive trace files without changing the JSONL contract.
+
+    The current append target, recently modified files, and the newest product
+    sessions are protected. A file is re-checked immediately before deletion so
+    a concurrent append causes cleanup to skip it.
+    """
+
+    directory = Path(trace_dir)
+    snapshots = _trace_file_snapshots(directory)
+    if not snapshots:
+        return []
+
+    current_time = time.time() if now is None else now
+    configured_days = (
+        _non_negative_env_int(
+            "BOX_AGENT_SESSION_TRACE_RETENTION_DAYS", _DEFAULT_RETENTION_DAYS
+        )
+        if retention_days is None
+        else max(0, retention_days)
+    )
+    configured_max_bytes = (
+        _non_negative_env_int(
+            "BOX_AGENT_SESSION_TRACE_MAX_TOTAL_BYTES", _DEFAULT_MAX_TOTAL_BYTES
+        )
+        if max_total_bytes is None
+        else max(0, max_total_bytes)
+    )
+    newest_first = sorted(snapshots, key=lambda item: (-item.mtime_ns, item.path.name))
+    protected_paths = {
+        item.path for item in newest_first[: max(0, protected_recent_files)]
+    }
+    if current_file is not None:
+        protected_paths.add(Path(current_file))
+    if active_file_grace_seconds > 0:
+        active_cutoff = current_time - active_file_grace_seconds
+        protected_paths.update(item.path for item in snapshots if item.mtime >= active_cutoff)
+
+    deleted: list[Path] = []
+    deleted_paths: set[Path] = set()
+
+    def delete(snapshot: _TraceFileSnapshot) -> None:
+        if snapshot.path in protected_paths or snapshot.path in deleted_paths:
+            return
+        if _unlink_unchanged_trace(snapshot):
+            deleted.append(snapshot.path)
+            deleted_paths.add(snapshot.path)
+
+    oldest_first = list(reversed(newest_first))
+    if configured_days > 0:
+        expiry_cutoff = current_time - configured_days * _SECONDS_PER_DAY
+        for snapshot in oldest_first:
+            if snapshot.mtime < expiry_cutoff:
+                delete(snapshot)
+
+    if configured_max_bytes > 0:
+        remaining_bytes = sum(
+            snapshot.size for snapshot in snapshots if snapshot.path not in deleted_paths
+        )
+        for snapshot in oldest_first:
+            if remaining_bytes <= configured_max_bytes:
+                break
+            if snapshot.path in protected_paths or snapshot.path in deleted_paths:
+                continue
+            if _unlink_unchanged_trace(snapshot):
+                deleted.append(snapshot.path)
+                deleted_paths.add(snapshot.path)
+                remaining_bytes -= snapshot.size
+
+    return deleted
+
+
+def _maybe_cleanup_session_traces(*, trace_dir: Path, current_file: Path) -> None:
+    if not session_trace_retention_enabled():
+        return
+    try:
+        interval = _non_negative_env_int(
+            "BOX_AGENT_SESSION_TRACE_CLEANUP_INTERVAL_SECONDS",
+            _DEFAULT_CLEANUP_INTERVAL_SECONDS,
+        )
+        key = str(trace_dir.absolute())
+        checked_at = time.monotonic()
+        with _RETENTION_LOCK:
+            previous = _LAST_RETENTION_CHECK.get(key)
+            if previous is not None and interval > 0 and checked_at - previous < interval:
+                return
+            _LAST_RETENTION_CHECK[key] = checked_at
+            deleted = cleanup_session_traces(trace_dir, current_file=current_file)
+        if deleted:
+            logger.debug("removed %d expired session trace files", len(deleted))
+    except Exception:
+        logger.debug("session trace retention failed", exc_info=True)
 
 
 def safe_session_trace_name(session_id: str) -> str:
@@ -147,6 +334,10 @@ class SessionTraceWriter:
                 with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
                     handle.write(line + "\n")
                     handle.flush()
+            _maybe_cleanup_session_traces(
+                trace_dir=self.trace_dir,
+                current_file=self.file_path,
+            )
         except Exception:
             logger.debug("session trace write failed", exc_info=True)
 
