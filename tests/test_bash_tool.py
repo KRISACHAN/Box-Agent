@@ -86,6 +86,17 @@ async def test_command_failure():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="PowerShell has different pipeline semantics")
+async def test_pipeline_propagates_upstream_failure():
+    bash_tool = BashTool()
+
+    result = await bash_tool.execute(command="false | tail -1")
+
+    assert result.success is False
+    assert result.exit_code != 0
+
+
+@pytest.mark.asyncio
 async def test_blocks_pptx_self_check_bypass_command():
     bash_tool = BashTool()
     command = (

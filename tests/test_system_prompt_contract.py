@@ -102,6 +102,10 @@ def test_system_prompt_separates_user_decisions_from_missing_input():
     assert "不要只在普通文本里列方案并等待回复" in prompt
     assert "内部实现和恢复策略应自行选择" in prompt
     assert "最终是否允许由运行时决定" in prompt
+    assert "安全主路径优先推进" in prompt
+    assert "不改变用户可见结果时直接推进，不弹卡" in prompt
+    assert "将该路径设为默认项并申请 15-30 秒超时自动提交" in prompt
+    assert "必须等待人工选择" in prompt
 
 
 def test_system_prompt_checks_explicit_requirements_before_claiming_completion():

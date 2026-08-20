@@ -473,9 +473,11 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
     )
     print(
         "  workflows         : "
-        f"skill {tool_limits['external_skill']['max_tool_calls']}, "
+        f"skill {tool_limits['external_skill']['max_tool_calls']}+"
+        f"{tool_limits['external_skill']['max_delegated_tool_calls']} delegated, "
         f"presentation {tool_limits['presentation']['max_tool_calls']}/"
-        f"{tool_limits['presentation']['deep_research_max_tool_calls']}, "
+        f"{tool_limits['presentation']['deep_research_max_tool_calls']}+"
+        f"{tool_limits['presentation']['max_delegated_tool_calls']} delegated, "
         f"sub-agent {tool_limits['sub_agent']['general_max_tool_calls']}"
     )
 

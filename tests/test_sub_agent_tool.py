@@ -249,6 +249,7 @@ def test_description_explains_flat_contract_and_derived_policy():
     parameters = tool.parameters["properties"]
     assert "Never pass a serialized JSON string" in parameters["budget"]["description"]
     assert "disjoint scopes" in parameters["write_scope"]["description"]
+    assert "general agent loop" in parameters["files"]["description"]
 
 
 # ── Tool filtering ───────────────────────────────────────────
@@ -397,6 +398,19 @@ def test_agent_wires_system_prompt_into_sub_agent(tmp_path):
     assert tool._parent_system_prompt is not None
     assert "Parent constraint: keep output generic." in tool._parent_system_prompt
     assert "Current Workspace" in tool._parent_system_prompt
+
+
+def test_sub_agent_does_not_inherit_parent_managed_skill_bodies():
+    tool = SubAgentTool(llm=AsyncMock(), parent_tools={})
+    parent_prompt = (
+        "Stable parent safety constraint.\n\n"
+        "## Auto-Loaded Skill Instructions\nAUTO_SKILL_BODY\n\n"
+        "## Active Skill Instructions\nACTIVE_SKILL_BODY"
+    )
+
+    tool.set_parent_system_prompt(parent_prompt)
+
+    assert tool._parent_system_prompt == "Stable parent safety constraint."
 
 
 async def test_agent_run_wires_parent_permission_negotiator_into_sub_agent(tmp_path):
@@ -588,7 +602,12 @@ async def test_general_loop_uses_parent_permission_negotiator_and_retries(tmp_pa
 async def test_explicit_bash_with_write_scope_uses_parent_permission_boundary(
     tmp_path,
 ):
+    from box_agent.schema import FunctionCall, ToolCall
+
     class BashTool(Tool):
+        def __init__(self):
+            self.calls = 0
+
         @property
         def name(self) -> str:
             return "bash"
@@ -605,22 +624,56 @@ async def test_explicit_bash_with_write_scope_uses_parent_permission_boundary(
             }
 
         async def execute(self, command: str) -> ToolResult:
+            self.calls += 1
             return ToolResult(success=True, content=command)
 
     class ApprovingNegotiator:
+        def __init__(self):
+            self.requests = []
+
         async def negotiate(self, permission_request: dict) -> bool:
+            self.requests.append(permission_request)
             return True
 
-    llm = _make_llm("delegation ready")
+    call_count = 0
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="child-bash",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": "printf asset"},
+                        ),
+                    )
+                ],
+            )
+            return
+        tool_message = next(message for message in messages if message.role == "tool")
+        assert "printf asset" in tool_message.content
+        yield StreamEvent(type="text", delta="delegation ready")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    bash_tool = BashTool()
+    negotiator = ApprovingNegotiator()
     tool = SubAgentTool(
         llm=llm,
         parent_tools={
-            "bash": BashTool(),
+            "bash": bash_tool,
             "write_file": WriteTool(workspace_dir=str(tmp_path)),
         },
         workspace_dir=str(tmp_path),
     )
-    tool.set_permission_negotiator(ApprovingNegotiator())
+    tool.set_permission_negotiator(negotiator)
 
     result = await tool.execute(
         task="Download one asset and write it to the assigned path",
@@ -631,6 +684,50 @@ async def test_explicit_bash_with_write_scope_uses_parent_permission_boundary(
     assert result.success is True
     assert result.raw_output["resolved_tools"] == ["bash", "write_file"]
     assert result.raw_output["constraints"]["write_scope"] == ["assets/hero.jpg"]
+    assert bash_tool.calls == 1
+    assert len(negotiator.requests) == 1
+    assert negotiator.requests[0]["scope"] == "safety"
+    assert negotiator.requests[0]["requested_scope"] == "delegated_bash_command"
+    assert negotiator.requests[0]["persistent_supported"] is False
+
+
+async def test_files_with_write_tools_stay_in_general_loop(tmp_path):
+    captured = {}
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        captured.setdefault(
+            "initial_user_content",
+            next(message.content for message in messages if message.role == "user"),
+        )
+        captured["tools"] = tools
+        yield StreamEvent(type="text", delta="done")
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={
+            "read_file": ReadTool(workspace_dir=str(tmp_path)),
+            "write_file": WriteTool(workspace_dir=str(tmp_path)),
+        },
+        workspace_dir=str(tmp_path),
+    )
+
+    result = await tool.execute(
+        task="Read the plan and write one assigned output",
+        files=["plan.md"],
+        required_tools=["read_file", "write_file"],
+        write_scope=["slides/slide_01.html"],
+    )
+
+    assert result.success is True
+    assert result.raw_output["strategy"] == "general_loop"
+    assert [candidate.name for candidate in captured["tools"]] == [
+        "read_file",
+        "write_file",
+    ]
+    assert "plan.md" in captured["initial_user_content"]
 
 
 async def test_general_loop_uses_only_resolved_tools_and_inherits_parent_prompt(tmp_path):
@@ -1492,6 +1589,59 @@ async def test_write_scope_is_enforced_before_live_write_tool(tmp_path):
     assert result.success is True
     assert not (tmp_path.parent / "outside.txt").exists()
     assert result.raw_output["tool_calls"] == 1
+
+
+async def test_write_scope_accepts_absolute_path_under_file_tool_workspace(tmp_path):
+    from box_agent.schema import FunctionCall, ToolCall
+
+    session_root = tmp_path / "session"
+    output_root = session_root / "output"
+    target = output_root / "ppt_decks" / "demo" / "slides" / "slide_01.html"
+    call_num = 0
+
+    async def fake_stream(*, messages, tools, **kwargs):
+        nonlocal call_num
+        call_num += 1
+        if call_num == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool_use",
+                tool_calls=[
+                    ToolCall(
+                        id="write-absolute",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={"path": str(target), "content": "<html></html>"},
+                        ),
+                    )
+                ],
+            )
+            return
+        yield StreamEvent(type="text", delta="absolute write completed")
+        yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
+
+    llm = AsyncMock()
+    llm.generate_stream = fake_stream
+    tool = SubAgentTool(
+        llm=llm,
+        parent_tools={
+            "write_file": WriteTool(
+                workspace_dir=str(session_root),
+                relative_root_dir=str(output_root),
+            )
+        },
+        workspace_dir=str(session_root),
+    )
+
+    result = await tool.execute(
+        task="Write the assigned slide",
+        required_tools=["write_file"],
+        write_scope=["ppt_decks/demo/slides/slide_01.html"],
+    )
+
+    assert result.success is True
+    assert target.read_text() == "<html></html>"
 
 
 # ── Parallel execution in core ───────────────────────────────

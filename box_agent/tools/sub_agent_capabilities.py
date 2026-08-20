@@ -328,12 +328,10 @@ def parse_delegation_spec(
             invalid_fields.append("files")
         if len(normalized_files) > BATCH_FILES_MAX_FILES:
             invalid_fields.append("files")
-    strategy = "batch_files" if normalized_files else "general_loop"
-
     if required_tools is None:
         normalized_required_tools = (
             ("read_file",)
-            if strategy == "batch_files"
+            if normalized_files
             else tuple(
                 sorted(set(default_required_tools) & DEFAULT_SAFE_TOOL_NAMES)
             )
@@ -345,6 +343,14 @@ def parse_delegation_spec(
             field_name="required_tools",
             invalid_fields=invalid_fields,
         )
+    # ``files`` is neutral task input for both execution paths. Keep the
+    # bounded one-shot optimization only for file-only reads; any additional
+    # capability requires the ordinary child agent loop.
+    strategy = (
+        "batch_files"
+        if normalized_files and set(normalized_required_tools) == {"read_file"}
+        else "general_loop"
+    )
     if "sub_agent" in normalized_required_tools:
         invalid_fields.append("required_tools")
     if strategy == "batch_files" and set(normalized_required_tools) != {"read_file"}:

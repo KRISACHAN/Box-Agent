@@ -78,13 +78,14 @@ Release, provider API, and ACP compatibility have their own sources under
 - Security boundary: omitted tools resolve only to available trusted local
   readers. Explicit tools still pass runtime capability classification;
   `bash` additionally requires a parent-session permission negotiator and each
-  protected command remains approval-gated. Other process tools, external side
+  delegated command requires one-shot approval. Other process tools, external side
   effects, and unknown MCP tools fail closed. Path-based write tools require a
   non-empty scope enforced by a wrapper before the live parent tool runs.
   Parent `PermissionEngine` checks remain final authority.
-- Batch behavior: `files` infers the existing completeness-checked local batch
-  path; its file-count, per-file, aggregate, cancellation, and synthesis-timeout
-  boundaries remain intact.
+- Batch behavior: `files` remains neutral task input. It infers the existing
+  completeness-checked local batch path only when `read_file` is the sole
+  resolved tool; additional tools keep the general loop. File-count, per-file,
+  aggregate, cancellation, and synthesis-timeout boundaries remain intact.
 - Compatibility: this is a breaking model-facing schema migration. Existing
   hosts normally render generic tool arguments/results and require no protocol
   change, but packaged prompts/runtimes must be rebuilt and validated before

@@ -130,16 +130,32 @@ def test_path_write_requires_exact_scope_and_scope_requires_path_write() -> None
     assert scoped.constraints.write_scope == ("research/result.md",)
 
 
-def test_batch_rejects_non_read_tools_and_write_scope() -> None:
-    wrong_tool = _parse(files=["a.md"], required_tools=["search_files"])
+def test_files_keep_general_loop_when_additional_tools_are_requested() -> None:
+    search = _parse(files=["a.md"], required_tools=["search_files"])
+    writable = _parse(
+        files=["a.md"],
+        required_tools=[
+            "bash",
+            "read_file",
+            "vision_review",
+            "web_search",
+            "write_file",
+        ],
+        write_scope=["out.md"],
+    )
     scoped = _parse(
         files=["a.md"],
         required_tools=["read_file"],
         write_scope=["out.md"],
     )
 
-    assert isinstance(wrong_tool, CapabilityFailure)
-    assert "required_tools" in wrong_tool.invalid_fields
+    assert isinstance(search, DelegationSpec)
+    assert search.strategy == "general_loop"
+    assert search.files == ("a.md",)
+    assert isinstance(writable, DelegationSpec)
+    assert writable.strategy == "general_loop"
+    assert writable.constraints.write_scope == ("out.md",)
+    assert writable.constraints.network is True
     assert isinstance(scoped, CapabilityFailure)
     assert "write_scope" in scoped.invalid_fields
 

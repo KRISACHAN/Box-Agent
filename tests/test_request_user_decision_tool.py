@@ -17,6 +17,17 @@ OPTIONS = [
 ]
 
 
+def test_request_user_decision_contract_prefers_safe_progress():
+    tool = RequestUserDecisionTool()
+
+    assert "Prefer progress over waiting" in tool.description
+    assert "safely continues the user's explicit request" in tool.description
+    assert "do not call this tool" in tool.description
+    assert "Request 15-30 seconds" in tool.parameters["properties"][
+        "requested_auto_submit_seconds"
+    ]["description"]
+
+
 @pytest.mark.asyncio
 async def test_request_user_decision_returns_public_structured_payload():
     result = await RequestUserDecisionTool().execute(

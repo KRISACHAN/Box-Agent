@@ -165,6 +165,7 @@ class WorkflowToolLimitsConfig(ToolLimitsModel):
     """Total-call and completion-reserve limits for artifact workflows."""
 
     max_tool_calls: int = Field(default=128, ge=1, le=512)
+    max_delegated_tool_calls: int = Field(default=512, ge=1, le=4096)
     completion_reserve_calls: int = Field(default=10, ge=0, le=128)
 
     @model_validator(mode="after")

@@ -163,6 +163,24 @@ def total_tool_call_budget_message(limit: int) -> str:
     )
 
 
+def delegated_tool_call_budget_message(limit: int) -> str:
+    """Synthetic error after delegated child work reaches its separate cap."""
+    return (
+        f"Delegated tool call budget reached ({limit} child calls this task). "
+        "Do not start another sub_agent. Continue with the parent tools to merge, "
+        "verify, finalize, and deliver the artifacts already produced."
+    )
+
+
+def delegated_tool_call_budget_wrapup_text(limit: int) -> str:
+    """One-shot guidance when the delegated-work budget is exhausted."""
+    return (
+        f"⚠️ 本任务的子 Agent 内部工具预算已达到上限（{limit} 次）。"
+        "不要再启动新的 sub_agent；请使用主 Agent 剩余工具额度完成结果合并、"
+        "最终验证与交付。"
+    )
+
+
 def total_tool_call_budget_wrapup_text(limit: int) -> str:
     """One-shot synthesis nudge for the total tool-call hard limit."""
     return (
@@ -441,6 +459,9 @@ class CompletionGate:
     # Optional total tool-call budget for this gated run. ``run_agent_loop``
     # adopts it only when the caller did not provide a stricter explicit cap.
     max_tool_calls: int | None = None
+    # Child-internal calls use a separate aggregate ledger. They do not consume
+    # ``max_tool_calls`` or its deterministic completion reserve.
+    max_delegated_tool_calls: int | None = None
     # Optional workflow-specific cap for external search.
     web_search_total_limit: int | None = None
     # Tool names excluded from ``max_tool_calls`` for this workflow. Explicit

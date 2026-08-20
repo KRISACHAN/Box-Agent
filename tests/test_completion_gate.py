@@ -617,6 +617,7 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
     )
     assert gate.max_continuations == 3
     assert gate.max_tool_calls == 128
+    assert gate.max_delegated_tool_calls == 512
     assert gate.web_search_total_limit is None
     assert gate.workflow_options["research_mode"] == "auto"
     assert gate.completion_reserve_tool_calls == 10
@@ -6244,6 +6245,12 @@ async def test_controlled_scaffold_stops_repeated_identical_failure(tmp_path):
         in event.content
         for event in events
     )
+    assert any(
+        isinstance(event, InjectedMessageEvent)
+        and f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled"
+        in event.content
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
@@ -6333,11 +6340,129 @@ async def test_controlled_apply_patch_stops_repeated_identical_failure(tmp_path)
     )
     assert blocked.success is False
     assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in (blocked.error or "")
-    assert any(
-        isinstance(event, InjectedMessageEvent)
-        and f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled"
-        in event.content
+
+
+@pytest.mark.asyncio
+async def test_controlled_apply_patch_accepts_checkpoint_absolute_artifact_paths(
+    tmp_path,
+):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        '{"slides":[{"page":1,"title":"Exact title","message":"Exact message",'
+        '"bullets":["Exact bullet"],"layout":"cover","visual":"hero",'
+        '"evidence":["Exact evidence"]}]}',
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    deck_path = output / "deck.json"
+    deck_path.write_text(
+        '{"slides":[{"id":"slide-01","source_outline_page":1,'
+        '"props":{"title":"输入演示标题"}}]}',
+        encoding="utf-8",
+    )
+    patch_path = output / "deck.patch.json"
+    patch_path.write_text(
+        '{"slides":{"slide-01":{"props":{"title":"Exact title"}}}}',
+        encoding="utf-8",
+    )
+    newer = max(deck_path.stat().st_mtime_ns, patch_path.stat().st_mtime_ns) + 10_000_000
+    os.utime(patch_path, ns=(newer, newer))
+    apply_command = (
+        f"${{BOX_AGENT_NODE:-node}} {APPLY_PATCH_SCRIPT} "
+        f"{deck_path} {patch_path}"
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="apply checkpoint patch",
+                tool_calls=[
+                    ToolCall(
+                        id="apply-absolute",
+                        type="function",
+                        function=FunctionCall(
+                            name="bash",
+                            arguments={"command": apply_command},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            _final("done"),
+        ]
+    )
+    bash_tool = CountingBashTool()
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"bash": bash_tool},
+            max_steps=4,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+            artifact_root_dir=output,
+        )
+    )
+
+    result = next(
+        event
         for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "apply-absolute"
+    )
+    assert result.success is True
+    assert bash_tool.calls == 1
+
+
+def test_controlled_apply_patch_stops_repeated_policy_rejection(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=output,
+        stage="apply_patch",
+    )
+    arguments = {
+        "command": (
+            f"node {APPLY_PATCH_SCRIPT} "
+            f"{output / 'deck.json'} {tmp_path / 'wrong' / 'deck.patch.json'}"
+        )
+    }
+
+    for decision_id in range(3):
+        policy.begin_tool_decision(decision_id)
+        error = policy.tool_call_error(
+            "bash",
+            arguments,
+            verified_evidence_urls=set(),
+        )
+        assert error is not None
+        assert "CONTROLLED_PRESENTATION_APPLY_PATCH_REQUIRED" in error
+        policy.record_tool_result(
+            "bash",
+            arguments,
+            ToolResult(success=False, error=error),
+            executed=False,
+        )
+
+    assert policy.repair_stalled is True
+    checkpoint = policy.build_checkpoint()
+    assert checkpoint is not None
+    update = policy.update_checkpoint(checkpoint)
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled" in update.text
+    assert "CONTROLLED_PRESENTATION_REPAIR_STALLED" in (
+        policy.tool_call_error(
+            "bash",
+            arguments,
+            verified_evidence_urls=set(),
+        )
+        or ""
     )
 
 

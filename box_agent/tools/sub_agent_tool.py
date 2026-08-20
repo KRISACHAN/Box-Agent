@@ -33,6 +33,8 @@ from ..llm.model_routing import resolve_model_client
 from ..schema import Message
 from .base import EventEmittingTool, Tool, ToolResult
 from .schema_validation import ToolArgumentIssue
+from .safety import detect_dangerous_command
+from .skill_preload import strip_active_skills, strip_auto_loaded_skills
 from .sub_agent_capabilities import (
     BATCH_AGGREGATE_MAX_CHARS,
     BATCH_FILE_MAX_CHARS,
@@ -53,7 +55,12 @@ _CHILD_MCP_BOUNDARY = (
 
 
 def _child_safe_parent_prompt(system_prompt: str) -> str:
-    """Remove parent-only MCP discovery guidance before child inheritance."""
+    """Keep stable parent constraints without duplicating parent Skill bodies."""
+    # On-demand and auto-loaded Skill bodies can be tens of thousands of
+    # tokens. They belong to the parent workflow and are either selected
+    # explicitly for the child or supplied as task input; inheriting them again
+    # can exceed the child's smaller safe context before its first useful step.
+    system_prompt = strip_active_skills(strip_auto_loaded_skills(system_prompt))
     heading_index = system_prompt.find(_DEFERRED_MCP_HEADING)
     if heading_index < 0:
         return system_prompt
@@ -92,9 +99,16 @@ class _WriteScopedTool(Tool):
 
     def __init__(self, tool: Tool, workspace_dir: str | None, scopes: tuple[str, ...]):
         self._tool = tool
-        workspace = Path(workspace_dir or ".").expanduser().resolve()
+        tool_root = getattr(tool, "relative_root_dir", None) or getattr(
+            tool, "workspace_dir", None
+        )
+        self._workspace = Path(tool_root or workspace_dir or ".").expanduser().resolve()
         self._roots = tuple(
-            (Path(scope).expanduser() if Path(scope).expanduser().is_absolute() else workspace / scope).resolve()
+            (
+                Path(scope).expanduser()
+                if Path(scope).expanduser().is_absolute()
+                else self._workspace / scope
+            ).resolve()
             for scope in scopes
         )
 
@@ -117,10 +131,9 @@ class _WriteScopedTool(Tool):
                 success=False,
                 error="WRITE_SCOPE_VIOLATION: a non-empty path is required.",
             )
-        workspace = Path(getattr(self._tool, "workspace_dir", ".")).expanduser().resolve()
         target = Path(path).expanduser()
         if not target.is_absolute():
-            target = workspace / target
+            target = self._workspace / target
         target = target.resolve()
         if not any(target == root or root in target.parents for root in self._roots):
             return ToolResult(
@@ -132,6 +145,83 @@ class _WriteScopedTool(Tool):
                     "allowed_roots": [str(root) for root in self._roots],
                 },
             )
+        return await self._tool.execute(**kwargs)
+
+
+class _PermissionGatedBashTool(Tool):
+    """Require one-shot parent approval for every delegated shell command."""
+
+    _REQUESTED_SCOPE = "delegated_bash_command"
+
+    def __init__(self, tool: Tool, *, title: str | None, scopes: tuple[str, ...] | None):
+        self._tool = tool
+        self._title = title or "sub-agent"
+        self._scopes = scopes or ()
+        self._approved_commands: set[str] = set()
+
+    @property
+    def name(self) -> str:
+        return self._tool.name
+
+    @property
+    def description(self) -> str:
+        return self._tool.description
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._tool.parameters
+
+    def approve_permission_request(self, permission_request: dict[str, Any]) -> None:
+        if permission_request.get("requested_scope") != self._REQUESTED_SCOPE:
+            approver = getattr(self._tool, "approve_permission_request", None)
+            if callable(approver):
+                approver(permission_request)
+            return
+        command = permission_request.get("command")
+        if isinstance(command, str) and command:
+            self._approved_commands.add(command)
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        command = kwargs.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return ToolResult(success=False, error="A non-empty delegated bash command is required.")
+        if command not in self._approved_commands:
+            rendered_scopes = ", ".join(self._scopes) if self._scopes else "none"
+            danger_reason = detect_dangerous_command(command)
+            risk = "Delegated shell commands can read, write, start processes, and use the network."
+            if danger_reason:
+                risk += f" Additional command risk: {danger_reason}."
+            return ToolResult(
+                success=False,
+                error="Parent approval is required for this delegated shell command.",
+                permission_request={
+                    "type": "permission_request",
+                    "scope": "safety",
+                    "requested_scope": self._REQUESTED_SCOPE,
+                    "reason": (
+                        f"Sub-agent '{self._title}' requested an exact shell command. "
+                        f"Declared file-tool write scope: {rendered_scopes}."
+                    ),
+                    "command": command,
+                    "risk": risk,
+                    "temporary_supported": True,
+                    "persistent_supported": False,
+                },
+            )
+
+        self._approved_commands.remove(command)
+        danger_reason = detect_dangerous_command(command)
+        if danger_reason:
+            approver = getattr(self._tool, "approve_permission_request", None)
+            if callable(approver):
+                approver(
+                    {
+                        "scope": "safety",
+                        "requested_scope": "dangerous_command",
+                        "command": command,
+                        "risk": danger_reason,
+                    }
+                )
         return await self._tool.execute(**kwargs)
 
 
@@ -285,8 +375,8 @@ class SubAgentTool(EventEmittingTool):
             "minimal list for other work or an empty list for a tool-free task. Explicit tools "
             "still pass a fail-closed runtime policy: external side effects and unknown MCP tools "
             "are not delegated. Known read-only network tools are enabled only when named "
-            "explicitly. `bash` is available only when named explicitly and every protected "
-            "command remains subject to the parent session's permission approval. Path-based "
+            "explicitly. `bash` is available only when named explicitly and every delegated "
+            "command requires one-shot parent-session approval. Path-based "
             "write tools require an exact `write_scope`, with disjoint scopes for parallel "
             "children.\n\n"
             "For the same read-only operation over known local text files, pass their paths in "
@@ -343,8 +433,9 @@ class SubAgentTool(EventEmittingTool):
                 "files": {
                     "type": "array",
                     "description": (
-                        "Known local text files for one bounded, read-only batch operation. "
-                        "When present, required_tools must resolve to read_file only."
+                        "Known local text files supplied as child task inputs. When tools "
+                        "resolve to read_file only, runtime uses the bounded batch fast path; "
+                        "additional tools keep the general agent loop."
                     ),
                     "items": {"type": "string"},
                     "maxItems": 32,
@@ -529,12 +620,18 @@ class SubAgentTool(EventEmittingTool):
         spec: DelegationSpec,
     ) -> dict[str, Tool]:
         scopes = spec.constraints.write_scope
-        if not scopes:
+        if not scopes and "bash" not in tools:
             return tools
         scoped: dict[str, Tool] = {}
         for name, tool in tools.items():
             if name in {"write_file", "append_file", "edit_file"}:
-                scoped[name] = _WriteScopedTool(tool, self._workspace_dir, scopes)
+                scoped[name] = _WriteScopedTool(tool, self._workspace_dir, scopes or ())
+            elif name == "bash":
+                scoped[name] = _PermissionGatedBashTool(
+                    tool,
+                    title=spec.title,
+                    scopes=scopes,
+                )
             else:
                 scoped[name] = tool
         return scoped

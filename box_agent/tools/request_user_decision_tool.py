@@ -46,6 +46,9 @@ class RequestUserDecisionTool(Tool):
             "yourself. Do not use it for missing facts; use request_user_input instead. "
             "Provide 2-6 concise options with stable IDs. You may request a timeout default "
             "only when it preserves the user's stated intent, is low-risk, and is reversible. "
+            "Prefer progress over waiting: when one option safely continues the user's explicit "
+            "request, set it as the default and request a 15-30 second timeout. If the model can "
+            "choose a safe path without changing the user-visible outcome, do not call this tool. "
             "The runtime decides whether automatic submission is actually allowed. After "
             "calling this tool, end the turn and do not repeat the options in Markdown."
         )
@@ -92,7 +95,10 @@ class RequestUserDecisionTool(Tool):
                 },
                 "default_option_id": {
                     "type": "string",
-                    "description": "Option to submit if an allowed timeout expires.",
+                    "description": (
+                        "Option to submit if an allowed timeout expires. Prefer the option that "
+                        "safely continues the user's explicit request without reducing scope."
+                    ),
                 },
                 "requested_auto_submit_seconds": {
                     "type": "integer",
@@ -100,7 +106,8 @@ class RequestUserDecisionTool(Tool):
                     "maximum": _MAX_AUTO_SUBMIT_SECONDS,
                     "description": (
                         "Requested timeout. The runtime may remove it. Requires a default "
-                        "option plus low risk, reversible, and intent-preserving declarations."
+                        "option plus low risk, reversible, and intent-preserving declarations. "
+                        "Request 15-30 seconds when those conditions hold."
                     ),
                 },
                 "risk_level": {

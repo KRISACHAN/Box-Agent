@@ -51,14 +51,20 @@ available members of this trusted local-read set:
 An explicit empty list creates a tool-free child. Selected Skills add guidance
 only; Skill metadata cannot add tools or widen policy.
 
+The child inherits stable parent safety and workspace constraints, but not the
+parent's managed auto-loaded or on-demand Skill bodies. Child-specific Skill
+guidance must be selected explicitly or supplied as task input, preventing
+large parent workflows from exhausting the smaller child context before work
+begins.
+
 ## Derived child policy
 
 The runtime derives policy from explicitly selected tools instead of asking the
 model to author permission booleans:
 
 - `bash` is delegated only when explicitly selected and a parent-session
-  permission negotiator is available; protected commands still require parent
-  approval;
+  permission negotiator is available; every delegated command requires
+  one-shot parent approval;
 - `execute_code` and other process tools are not delegated;
 - tools with external side effects are not delegated;
 - unknown MCP tools fail closed;
@@ -87,13 +93,18 @@ artifact-root-relative `write_scope`:
 
 The runtime wraps those tools and rejects paths outside the delegated scope
 before invoking the live parent tool. Parallel children must receive disjoint
-scopes. A scope without a path-based write tool is invalid.
+scopes. A child may pass either the artifact-root-relative path or its resolved
+absolute equivalent; both are checked against the same live file-tool root. A
+scope without a path-based write tool is invalid.
 `write_scope` does not constrain shell semantics; explicitly delegated `bash`
-commands remain governed one by one by the parent permission engine.
+commands are wrapped so every exact command requires one-shot parent approval.
 
 ## Bounded local-file batch fast path
 
-Passing `files` selects the internal batch path automatically:
+Passing `files` supplies local task inputs to either execution path. The
+runtime selects the internal batch optimization only when the resolved tool set
+is exactly `read_file`; requesting any additional tool keeps the normal agent
+loop while still listing the files in the delegated task:
 
 ```json
 {
@@ -102,7 +113,7 @@ Passing `files` selects the internal batch path automatically:
 }
 ```
 
-For this path:
+For the batch path:
 
 - `required_tools` defaults to and must resolve to `read_file` only;
 - `files` contains 1-32 unique local paths;
@@ -132,6 +143,13 @@ Callers may request smaller `budget.max_steps` and `budget.max_tool_calls`.
 Values above the configured limits are clamped. `budget` must be a JSON object,
 not serialized JSON text. `sub_agent_token_limit` independently bounds the
 child context.
+
+Recoverable artifact workflows keep two ledgers. A parent `sub_agent` call
+counts once against the parent workflow's `max_tool_calls`; the child's
+internal tool calls count only against the workflow's separate
+`max_delegated_tool_calls` aggregate. Exhausting delegated work blocks new
+sub-agents but preserves the parent's completion reserve for merge, QA, and
+delivery.
 
 ## Diagnostics
 

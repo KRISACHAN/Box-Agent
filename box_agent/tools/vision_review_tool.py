@@ -6,6 +6,7 @@ import asyncio
 import base64
 import io
 import mimetypes
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +34,20 @@ _JPEG_QUALITY = 85
 # on the SDK default (~600s).
 _VISION_REVIEW_TIMEOUT = 120.0
 _DEFAULT_OUTPUT_FILENAME = "visual_review.md"
+_TERMINAL_VISION_ERROR_MARKERS = (
+    "unexpected item type in content",
+    "invalid user message",
+    "invalid image base64 content",
+    "doesn't support the image content block",
+    "does not support the image content block",
+)
+_UNINSPECTED_RESPONSE_PATTERNS = (
+    r"\b(?:cannot|could not|unable to)\s+(?:visually\s+)?inspect\b",
+    r"\bno visual content\b.{0,40}\bverified\b",
+    r"\b(?:image|ocr)\b.{0,50}\baccess\b.{0,30}\b(?:denied|failed)\b",
+    r"\bcannot be verified\b",
+    r"无法(?:检查|查看|验证).{0,20}(?:图像|图片|幻灯片|页面|视觉|内容)",
+)
 
 
 class VisionReviewTool(Tool):
@@ -53,6 +68,7 @@ class VisionReviewTool(Tool):
         )
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
+        self._terminal_error: str | None = None
 
     @property
     def name(self) -> str:
@@ -103,6 +119,8 @@ class VisionReviewTool(Tool):
         """Run visual review and write the markdown report."""
         if not image_paths:
             return ToolResult(success=False, error="image_paths must contain at least one image path")
+        if self._terminal_error is not None:
+            return ToolResult(success=False, error=self._terminal_error)
 
         try:
             images = [self._load_image(path) for path in image_paths]
@@ -133,9 +151,23 @@ class VisionReviewTool(Tool):
                 error=f"Vision review timed out after {_VISION_REVIEW_TIMEOUT:.0f}s",
             )
         except Exception as exc:  # pragma: no cover - exact provider exceptions vary
-            return ToolResult(success=False, error=f"Vision review LLM request failed: {exc}")
+            error = f"Vision review LLM request failed: {exc}"
+            if self._is_terminal_provider_error(str(exc)):
+                error = self._terminal_failure(error)
+            return ToolResult(success=False, error=error)
 
-        report = self._normalize_report(response.content, [img["path"] for img in images])
+        response_content = (response.content or "").strip()
+        if (
+            not self._has_per_image_findings(response_content, len(images))
+            or self._reports_uninspected_images(response_content)
+        ):
+            return ToolResult(
+                success=False,
+                error=self._terminal_failure(
+                    "Vision review model did not return one PASS/ISSUE finding per image."
+                ),
+            )
+        report = self._normalize_report(response_content, [img["path"] for img in images])
 
         try:
             output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -360,6 +392,32 @@ Rules:
         if not report.startswith("# Visual Review"):
             report = "# Visual Review\n\n" + report
         return report + "\n"
+
+    @staticmethod
+    def _has_per_image_findings(content: str, image_count: int) -> bool:
+        statuses = re.findall(r"\|\s*(?:PASS|ISSUE)\s*\|", content, flags=re.IGNORECASE)
+        return len(statuses) >= image_count
+
+    @staticmethod
+    def _is_terminal_provider_error(error: str) -> bool:
+        normalized = error.lower()
+        return any(marker in normalized for marker in _TERMINAL_VISION_ERROR_MARKERS)
+
+    @staticmethod
+    def _reports_uninspected_images(content: str) -> bool:
+        normalized = content.lower()
+        return any(
+            re.search(pattern, normalized, flags=re.DOTALL)
+            for pattern in _UNINSPECTED_RESPONSE_PATTERNS
+        )
+
+    def _terminal_failure(self, detail: str) -> str:
+        self._terminal_error = (
+            "VISION_REVIEW_UNAVAILABLE: "
+            f"{detail} Do not retry vision_review with the same model in this session; "
+            "continue with non-visual checks or use a model deployment verified for image input."
+        )
+        return self._terminal_error
 
     def _display_path(self, path: Path) -> str:
         try:

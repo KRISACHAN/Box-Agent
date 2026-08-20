@@ -87,6 +87,8 @@ from .loop_guards import (
     completion_gate_gaps,
     completion_gate_tool_satisfies_requirements,
     completion_gate_text,
+    delegated_tool_call_budget_message,
+    delegated_tool_call_budget_wrapup_text,
     format_injected_message,
     format_runtime_context_update,
     looks_like_truncated_output,
@@ -3035,6 +3037,8 @@ async def run_agent_loop(
     # valid while nudging the model to synthesize.
     tool_call_counts: dict[str, int] = {}
     tool_call_total = 0
+    delegated_tool_call_total = 0
+    delegated_budget_guidance_injected = False
     completion_reserve_injected = False
     tool_budget_wrapup_injected: set[str] = set()
     visible_tool_call_total = 0
@@ -3222,6 +3226,25 @@ async def run_agent_loop(
                     Message(role="user", content=format_injected_message(budget_text))
                 )
                 yield InjectedMessageEvent(content=budget_text, injection_id=None, user_visible=False)
+        if (
+            completion_gate is not None
+            and completion_gate.max_delegated_tool_calls is not None
+            and delegated_tool_call_total
+            >= completion_gate.max_delegated_tool_calls
+            and not delegated_budget_guidance_injected
+        ):
+            delegated_budget_guidance_injected = True
+            delegated_text = delegated_tool_call_budget_wrapup_text(
+                completion_gate.max_delegated_tool_calls
+            )
+            messages.append(
+                Message(role="user", content=format_injected_message(delegated_text))
+            )
+            yield InjectedMessageEvent(
+                content=delegated_text,
+                injection_id=None,
+                user_visible=False,
+            )
         if (
             search_files_consecutive_empty_results >= search_files_empty_result_limit
             and not search_files_empty_guidance_injected
@@ -4737,6 +4760,16 @@ async def run_agent_loop(
                 and not is_workflow_budget_exempt
             )
             if (
+                tool_name == "sub_agent"
+                and completion_gate is not None
+                and completion_gate.max_delegated_tool_calls is not None
+                and delegated_tool_call_total
+                >= completion_gate.max_delegated_tool_calls
+            ):
+                return False, delegated_tool_call_budget_message(
+                    completion_gate.max_delegated_tool_calls
+                )
+            if (
                 is_budgeted
                 and max_tool_calls is not None
                 and tool_call_total >= max_tool_calls
@@ -4755,11 +4788,12 @@ async def run_agent_loop(
             tool_name: str,
             result: ToolResult,
         ) -> None:
-            """Charge completed child executions to recoverable workflow budgets."""
-            nonlocal tool_call_total
+            """Track child executions without consuming the parent delivery budget."""
+            nonlocal delegated_tool_call_total
             if (
                 workflow_policy is None
-                or max_tool_calls is None
+                or completion_gate is None
+                or completion_gate.max_delegated_tool_calls is None
                 or tool_name != "sub_agent"
                 or not isinstance(result.raw_output, dict)
                 or result.raw_output.get("type") != "sub_agent_delegation"
@@ -4772,12 +4806,14 @@ async def run_agent_loop(
                 or nested_tool_calls <= 0
             ):
                 return
-            tool_call_total += nested_tool_calls
+            delegated_tool_call_total += nested_tool_calls
             _log.info(
-                "workflow_budget/nested_tool_calls count=%d total=%d limit=%d",
+                "workflow_budget/delegated_tool_calls count=%d total=%d limit=%d "
+                "parent_total=%d",
                 nested_tool_calls,
+                delegated_tool_call_total,
+                completion_gate.max_delegated_tool_calls,
                 tool_call_total,
-                max_tool_calls,
             )
 
         def _record_search_files_result(tool_name: str, result: ToolResult) -> None:

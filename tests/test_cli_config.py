@@ -171,6 +171,8 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
     assert defaults.web_search.concurrency == 2
     assert defaults.web_search.total_calls == 50
     assert defaults.external_skill.max_tool_calls == 128
+    assert defaults.external_skill.max_delegated_tool_calls == 512
+    assert defaults.presentation.max_delegated_tool_calls == 512
     assert defaults.presentation.deep_research_max_tool_calls == 200
     assert defaults.sub_agent.general_max_tool_calls == 32
 
@@ -185,6 +187,7 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
             "    total_calls: 40\n"
             "  external_skill:\n"
             "    max_tool_calls: 96\n"
+            "    max_delegated_tool_calls: 333\n"
             "  presentation:\n"
             "    research_rounds: 5\n"
             "  sub_agent:\n"
@@ -198,6 +201,7 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
     assert limits.web_search.total_calls == 40
     assert limits.web_search.deep_research_total_calls == 100
     assert limits.external_skill.max_tool_calls == 96
+    assert limits.external_skill.max_delegated_tool_calls == 333
     assert limits.external_skill.completion_reserve_calls == 10
     assert limits.presentation.research_rounds == 5
     assert limits.sub_agent.general_max_steps == 20

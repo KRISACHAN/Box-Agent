@@ -446,6 +446,14 @@ class TestExtractAbsolutePaths:
         result = extract_absolute_paths("command 2>/dev/null")
         assert "/dev/null" not in result
 
+    def test_inline_absolute_path_variables_are_expanded(self):
+        result = extract_absolute_paths(
+            'ROOT=/tmp/deck\nASSETS="$ROOT/assets"\nmkdir -p "$ASSETS" 2>/dev/null'
+        )
+
+        assert "/tmp/deck/assets" in result
+        assert "/dev/null" not in result
+
     def test_no_paths(self):
         assert extract_absolute_paths("ls -la") == []
 
@@ -929,6 +937,20 @@ class TestBashPermissionPhase1:
         eng = self._make_engine(workspace)
         result = await self._run_bash("echo test 2>/dev/null", eng)
         assert result.success is True
+
+    async def test_inline_workspace_path_variable_is_checked_and_allowed(
+        self,
+        workspace: Path,
+    ):
+        eng = self._make_engine(workspace)
+        target = workspace / "assets"
+        result = await self._run_bash(
+            f'OUT={target}\nmkdir -p "$OUT"\nprintf ok > "$OUT/result.txt"',
+            eng,
+        )
+
+        assert result.success is True
+        assert (target / "result.txt").read_text(encoding="utf-8") == "ok"
 
     async def test_fd_redirect_does_not_upgrade_builtin_skill_read_to_write(
         self, workspace: Path, tmp_path: Path

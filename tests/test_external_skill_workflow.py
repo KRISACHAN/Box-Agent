@@ -82,6 +82,7 @@ def test_external_skill_gate_has_bounded_host_lifecycle(tmp_path: Path) -> None:
     assert gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
     assert gate.required_changed_artifact_globs == ("output/**/*.pptx",)
     assert gate.max_tool_calls == 128
+    assert gate.max_delegated_tool_calls == 512
     assert gate.completion_reserve_tool_calls == 10
     assert gate.pause_tools == frozenset({"request_user_input", "request_user_decision"})
     assert gate.workflow_options["skill_name"] == "ppt-master"
@@ -96,12 +97,14 @@ def test_external_skill_gate_uses_configured_tool_limits(tmp_path: Path) -> None
         tool_limits=ToolLimitsConfig(
             external_skill={
                 "max_tool_calls": 96,
+                "max_delegated_tool_calls": 320,
                 "completion_reserve_calls": 18,
             }
         ),
     )
 
     assert gate.max_tool_calls == 96
+    assert gate.max_delegated_tool_calls == 320
     assert gate.completion_reserve_tool_calls == 18
 
 

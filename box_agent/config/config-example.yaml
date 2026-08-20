@@ -101,9 +101,11 @@ max_truncation_continuations: 1 # Max continuations per turn (loop guard)
 #     consecutive_empty_limit: 8 # 1..50; stop repeated file searches after empty results
 #   external_skill:
 #     max_tool_calls: 160 # 1..512; total tool-call budget
+#     max_delegated_tool_calls: 512 # 1..4096; separate aggregate child-tool budget
 #     completion_reserve_calls: 20 # 0..128 and <= max_tool_calls
 #   presentation:
 #     max_tool_calls: 160 # 1..512; normal presentation budget
+#     max_delegated_tool_calls: 512 # 1..4096; separate aggregate child-tool budget
 #     completion_reserve_calls: 20 # 0..128 and <= both presentation call budgets
 #     deep_research_max_tool_calls: 240 # 1..512; deep-research presentation budget
 #     research_rounds: 5 # 1..20; research rounds before requiring artifact handoff

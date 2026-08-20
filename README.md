@@ -55,7 +55,8 @@ Delegate isolated work through a flat task contract with optional tools, Skills,
 files, write scope, and hard step/tool-call budgets. Omitted tools resolve only
 to trusted local readers; explicit capabilities still pass a fail-closed runtime
 policy. Passing known local text paths in `files` selects the bounded,
-completeness-checked batch fast path automatically. The parent remains
+completeness-checked batch fast path automatically when `read_file` is the only
+resolved tool; requesting additional tools keeps the general child loop. The parent remains
 responsible for conflict handling, the final deliverable, and verification.
 
 ```
@@ -284,6 +285,7 @@ box-agent config --get model        # print one config value
 box-agent config --set max_steps 300
 box-agent config --set goal_autopilot_max_turns 5
 box-agent config --set tool_limits.external_skill.max_tool_calls 160
+box-agent config --set tool_limits.external_skill.max_delegated_tool_calls 512
 box-agent config --json             # machine-readable config summary
 box-agent config --edit             # open in editor
 box-agent doctor                    # check environment & API connectivity

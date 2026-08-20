@@ -41,7 +41,7 @@ from box_agent.events import (
 )
 from box_agent.workflow_policy import WorkflowCheckpointUpdate
 from box_agent.workflow_checkpoint_store import load_workflow_checkpoint
-from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND
+from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND, ExternalSkillRunPolicy
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
@@ -311,6 +311,10 @@ async def test_tool_budget_pauses_external_skill_with_data_only_checkpoint(
 
 
 class NestedDelegationTool(Tool):
+    def __init__(self, *, nested_tool_calls: int = 2) -> None:
+        self.calls = 0
+        self.nested_tool_calls = nested_tool_calls
+
     @property
     def name(self) -> str:
         return "sub_agent"
@@ -321,21 +325,25 @@ class NestedDelegationTool(Tool):
 
     @property
     def parameters(self) -> dict:
-        return {"type": "object", "properties": {}}
+        return {
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+        }
 
-    async def execute(self) -> ToolResult:
+    async def execute(self, label: str = "") -> ToolResult:
+        self.calls += 1
         return ToolResult(
             success=True,
             content="Nested work saved canonical artifacts.",
             raw_output={
                 "type": "sub_agent_delegation",
-                "tool_calls": 2,
+                "tool_calls": self.nested_tool_calls,
             },
         )
 
 
 @pytest.mark.asyncio
-async def test_nested_tool_calls_count_toward_recoverable_workflow_budget(
+async def test_nested_tool_calls_do_not_consume_parent_workflow_budget(
     tmp_path,
 ) -> None:
     (tmp_path / "output").mkdir()
@@ -348,33 +356,122 @@ async def test_nested_tool_calls_count_toward_recoverable_workflow_budget(
                     ToolCall(
                         id="nested-budget-call",
                         type="function",
-                        function=FunctionCall(name="sub_agent", arguments={}),
+                        function=FunctionCall(
+                            name="sub_agent", arguments={"label": "first"}
+                        ),
                     )
                 ],
                 finish_reason="tool",
-            )
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
         ]
+    )
+    nested_tool = NestedDelegationTool(nested_tool_calls=200)
+    workflow_policy = ExternalSkillRunPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        skill_name="test-skill",
     )
 
     events = await collect(
         run_agent_loop(
             llm=llm,
             messages=messages,
-            tools={"sub_agent": NestedDelegationTool()},
+            tools={"sub_agent": nested_tool},
             max_steps=3,
             completion_gate=CompletionGate(
-                required_changed_artifact_globs=("output/**/*.pptx",),
+                required_tools=frozenset({"sub_agent"}),
                 max_tool_calls=2,
+                max_delegated_tool_calls=512,
                 workflow_checkpoint_kind="controlled_presentation",
             ),
             workspace_dir=str(tmp_path),
+            workflow_policy=workflow_policy,
         )
     )
 
-    assert next(
-        event for event in events if isinstance(event, DoneEvent)
-    ).stop_reason is StopReason.CHECKPOINT_PAUSED
-    assert any(isinstance(event, ContextCheckpointEvent) for event in events)
+    assert nested_tool.calls == 1
+    assert next(event for event in events if isinstance(event, DoneEvent)).stop_reason is (
+        StopReason.END_TURN
+    )
+    assert not any(isinstance(event, ContextCheckpointEvent) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_delegated_tool_budget_blocks_only_new_subagents(tmp_path) -> None:
+    (tmp_path / "output").mkdir()
+    messages = _msgs()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="delegated-first",
+                        type="function",
+                        function=FunctionCall(
+                            name="sub_agent", arguments={"label": "first"}
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="delegated-blocked",
+                        type="function",
+                        function=FunctionCall(
+                            name="sub_agent", arguments={"label": "second"}
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="parent finalized", finish_reason="stop"),
+        ]
+    )
+    nested_tool = NestedDelegationTool(nested_tool_calls=2)
+    workflow_policy = ExternalSkillRunPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        skill_name="test-skill",
+        artifact_globs=("output/**/*.pptx",),
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"sub_agent": nested_tool},
+            max_steps=3,
+            completion_gate=CompletionGate(
+                required_changed_artifact_globs=("output/**/*.pptx",),
+                max_continuations=3,
+                max_tool_calls=10,
+                max_delegated_tool_calls=2,
+                workflow_checkpoint_kind="controlled_presentation",
+            ),
+            workspace_dir=str(tmp_path),
+            workflow_policy=workflow_policy,
+        )
+    )
+
+    assert nested_tool.calls == 1
+    blocked = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == "delegated-blocked"
+    )
+    assert blocked.success is False
+    assert "Delegated tool call budget reached" in (blocked.error or "")
+    assert any(
+        isinstance(event, InjectedMessageEvent)
+        and "子 Agent 内部工具预算已达到上限" in event.content
+        for event in events
+    )
 
 
 @pytest.mark.asyncio

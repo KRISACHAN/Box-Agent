@@ -161,6 +161,7 @@ def build_external_skill_completion_gate(
         max_continuations=3,
         deadline_seconds=900.0,
         max_tool_calls=limits.max_tool_calls,
+        max_delegated_tool_calls=limits.max_delegated_tool_calls,
         completion_reserve_tool_calls=(
             limits.completion_reserve_calls if artifact_globs else 0
         ),
@@ -212,6 +213,7 @@ def build_external_skill_completion_gate_from_options(
         max_continuations=3,
         deadline_seconds=900.0,
         max_tool_calls=limits.max_tool_calls,
+        max_delegated_tool_calls=limits.max_delegated_tool_calls,
         completion_reserve_tool_calls=(
             limits.completion_reserve_calls if artifact_globs else 0
         ),

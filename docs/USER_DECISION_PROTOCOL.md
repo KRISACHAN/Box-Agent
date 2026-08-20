@@ -44,6 +44,14 @@ Authentication, authorization, deletion, payment, purchase, publishing, and
 external-message decisions never auto-submit. Invalid or unsupported timeout
 data degrades to manual selection.
 
+Decisions follow a safe-progress preference. If the model can choose without
+changing the user-visible outcome, it should proceed without showing a card. If
+a card is necessary but one option safely continues the user's explicit request,
+the model should make that option the default and request a 15-30 second timeout.
+Manual-only selection remains required when there is no clearly safe default or
+the decision is sensitive. Technical feasibility alone is insufficient: the
+default must also be low-risk, reversible, and intent-preserving.
+
 ## Host response
 
 Resume the same ACP session with a hidden prompt and matching
@@ -76,5 +84,7 @@ the wait state and continues the same task.
 A Skill may instruct the model to call `request_user_decision`, but it must not
 duplicate the choices in Markdown after the call. Use stable ASCII IDs, explain
 the user-visible tradeoff, and treat timeout fields as a request rather than a
-guarantee. No Skill manifest declaration is required in schema version 1; hosts
-that do not implement the card retain the manual fallback.
+guarantee. A Skill's omission of timeout fields does not prevent the model from
+adding a safe default and timeout request under the shared policy above. No Skill
+manifest declaration is required in schema version 1; hosts that do not implement
+the card retain the manual fallback.

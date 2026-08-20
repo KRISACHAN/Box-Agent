@@ -245,6 +245,7 @@ def build_presentation_completion_gate(
             if research_mode == "deep"
             else limits.max_tool_calls
         ),
+        max_delegated_tool_calls=limits.max_delegated_tool_calls,
         web_search_total_limit=(
             effective_tool_limits.web_search.deep_research_total_calls
             if research_mode == "deep"

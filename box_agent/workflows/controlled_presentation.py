@@ -128,7 +128,7 @@ _REPAIR_STAGES: Final[frozenset[str]] = frozenset(
     {"outline_repair", "deck_spec_repair", "content_patch_repair"}
 )
 _POLICY_REJECTION_STAGES: Final[frozenset[str]] = (
-    _REPAIR_STAGES | frozenset({"research", "outline", "scaffold"})
+    _REPAIR_STAGES | frozenset({"research", "outline", "scaffold", "apply_patch"})
 )
 _REPEATED_EXECUTION_FAILURE_LIMIT: Final[int] = 2
 _REPEATED_POLICY_REJECTION_LIMIT: Final[int] = 3
@@ -689,6 +689,7 @@ def _apply_patch_error(
     repair_allowed: bool = False,
     repair_paths: tuple[str, ...] = (),
     workspace_dir: str | None = None,
+    artifact_root_dir: str | Path | None = None,
     staged_write_id: str | None = None,
 ) -> str | None:
     if stage != "apply_patch":
@@ -791,7 +792,20 @@ def _apply_patch_error(
         and command_prefix[2] == "&&"
     ):
         return _APPLY_PATCH_REPAIR_TOOL_ERROR if repair_allowed else _APPLY_PATCH_TOOL_ERROR
-    if tokens[script_index + 1 :] != ["deck.json", "deck.patch.json"]:
+    supplied_paths = tokens[script_index + 1 :]
+    if len(supplied_paths) != 2:
+        return _APPLY_PATCH_REPAIR_TOOL_ERROR if repair_allowed else _APPLY_PATCH_TOOL_ERROR
+    if not _is_canonical_artifact_target(
+        supplied_paths[0],
+        "deck.json",
+        workspace_dir,
+        artifact_root_dir,
+    ) or not _is_canonical_artifact_target(
+        supplied_paths[1],
+        "deck.patch.json",
+        workspace_dir,
+        artifact_root_dir,
+    ):
         return _APPLY_PATCH_REPAIR_TOOL_ERROR if repair_allowed else _APPLY_PATCH_TOOL_ERROR
     return None
 
@@ -800,8 +814,16 @@ def _apply_patch_failure_signature(
     tool_name: str,
     arguments: dict[str, Any],
     result: ToolResult,
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
 ) -> str | None:
-    if result.success or _apply_patch_error("apply_patch", tool_name, arguments):
+    if result.success or _apply_patch_error(
+        "apply_patch",
+        tool_name,
+        arguments,
+        workspace_dir=workspace_dir,
+        artifact_root_dir=artifact_root_dir,
+    ):
         return None
     payload = "\n".join(
         part for part in (result.error, result.content) if isinstance(part, str) and part
@@ -2574,6 +2596,7 @@ class ControlledPresentationPolicy:
             repair_allowed=self.apply_patch_repair_allowed,
             repair_paths=self.apply_patch_repair_paths,
             workspace_dir=self.workspace_dir,
+            artifact_root_dir=self.artifact_root_dir,
             staged_write_id=self._apply_patch_staged_write_id,
         )
         if apply_patch_error is not None:
@@ -2896,7 +2919,14 @@ class ControlledPresentationPolicy:
             )
             applied_patch = (
                 tool_name == "bash"
-                and _apply_patch_error(self.stage, tool_name, arguments) is None
+                and _apply_patch_error(
+                    self.stage,
+                    tool_name,
+                    arguments,
+                    workspace_dir=self.workspace_dir,
+                    artifact_root_dir=self.artifact_root_dir,
+                )
+                is None
             )
             if wrote_patch or committed_staged_patch or applied_patch:
                 self._clear_step_failure("apply_patch")
@@ -2926,6 +2956,8 @@ class ControlledPresentationPolicy:
                 tool_name,
                 arguments,
                 result,
+                self.workspace_dir,
+                self.artifact_root_dir,
             )
             if signature is not None:
                 self.apply_patch_repair_allowed = True

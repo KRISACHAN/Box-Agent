@@ -538,6 +538,11 @@ class GrantStore:
 _ABS_PATH_RE = re.compile(r'(?:^|\s|(?<![\w}])["\'])(\/[^\s"\'\\<>$(){};|&]+)')
 _TILDE_PATH_RE = re.compile(r'(?:^|\s|["\';=])(~(?:/[^\s"\'\\;|&]*)?)')
 _HOME_VAR_RE = re.compile(r'(\$HOME(?:/[^\s"\'\\;|&]*)?)')
+_SHELL_PATH_ASSIGNMENT_RE = re.compile(
+    r"(?m)(?:^|[;\n]\s*)(?:export\s+)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)="
+    r"(?:\"([^\"]*)\"|'([^']*)'|([^\s;]+))"
+)
 
 # Real shell redirect operators (`>`, `>>`, `2>`, `2>>`, ...). When followed by
 # a path, that path is what we want to extract — but we must distinguish a real
@@ -553,6 +558,9 @@ _REDIRECT_RE = re.compile(r'(^|[\s\d])>{1,2}')
 # truncated at the first space by `_ABS_PATH_RE`'s whitespace-bounded char
 # class. Non-greedy and matches `"` / `'` symmetrically.
 _QUOTED_SEGMENT_RE = re.compile(r'(["\'])([^"\']*?)\1')
+_QUOTED_ABSOLUTE_SUFFIX_RE = re.compile(
+    r'(["\'])(/[^"\']*)\1(/[^\s"\'<>;|&]*)'
+)
 
 # Windows-style absolute path: drive letter + `:` + `\` or `/`.
 _WIN_DRIVE_RE = re.compile(r'^[A-Za-z]:[\\/]')
@@ -591,6 +599,39 @@ _WINDOWS_EXIT_SWITCH_RE = re.compile(
     r'(?P<prefix>(?:^|[\s;&|])exit\s+)/b(?=\s|["\');&|]|$)',
     re.IGNORECASE,
 )
+
+
+def expand_inline_shell_path_variables(command: str) -> str:
+    """Expand absolute path variables declared inside one shell command.
+
+    This is intentionally narrower than shell evaluation: only variables
+    assigned in the command itself and resolving to absolute filesystem paths
+    are substituted. It lets permission analysis understand common Skill
+    commands such as ``OUT=/abs/path; mkdir -p "$OUT/assets"`` without reading
+    ambient environment values or executing shell code.
+    """
+
+    path_vars: dict[str, str] = {}
+
+    def substitute_known(value: str) -> str:
+        for name, resolved in path_vars.items():
+            value = re.sub(rf"\$\{{{re.escape(name)}\}}|\${re.escape(name)}\b", resolved, value)
+        return value
+
+    for match in _SHELL_PATH_ASSIGNMENT_RE.finditer(command):
+        name = match.group(1)
+        raw_value = next(
+            (value for value in match.groups()[1:] if value is not None),
+            "",
+        )
+        expanded = substitute_known(raw_value)
+        expanded = os.path.expanduser(expanded)
+        if expanded.startswith("$HOME/"):
+            expanded = str(Path.home()) + expanded[5:]
+        if os.path.isabs(expanded):
+            path_vars[name] = expanded
+
+    return substitute_known(command)
 
 # sed/perl-style substitution: `s<delim>pattern<delim>replacement<delim>[flags]`.
 # Stripped before path extraction so the regex bodies of `sed 's/.../.../g'`,
@@ -668,6 +709,17 @@ def extract_absolute_paths(command: str) -> list[str]:
     # Strip sed/perl substitution expressions first so the regex bodies don't
     # get mis-parsed as absolute paths (e.g. the `/g` flag at the end of
     # `sed 's|a|b|g'` or the literal `/` delimiters in `s/foo/bar/`).
+    command = expand_inline_shell_path_variables(command)
+    # Normalize shell tokens such as `"/abs/root"/slide-*.png` into one
+    # quoted path before the quote-aware extractor runs. Otherwise consuming
+    # the quoted prefix leaves a phantom `/slide-*.png` absolute path behind.
+    command = _QUOTED_ABSOLUTE_SUFFIX_RE.sub(
+        lambda match: (
+            f'{match.group(1)}{match.group(2).rstrip("/")}'
+            f'{match.group(3)}{match.group(1)}'
+        ),
+        command,
+    )
     sanitized = _SED_SUBST_RE.sub(" ", command)
 
     sanitized = _WINDOWS_EXIT_SWITCH_RE.sub(r'\g<prefix> ', sanitized)

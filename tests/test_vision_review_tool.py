@@ -202,6 +202,94 @@ async def test_vision_review_times_out(tmp_path: Path, monkeypatch):
     assert not (tmp_path / "visual_review.md").exists()
 
 
+@pytest.mark.asyncio
+async def test_vision_review_rejects_non_visual_model_response(tmp_path: Path):
+    class InaccessibleVisionLLM:
+        provider = "openai"
+
+        async def generate(self, messages, tools=None, *, thinking_enabled=False, call_kind=""):
+            return LLMResponse(content="无法识别", finish_reason="stop")
+
+    image = tmp_path / "slide.png"
+    image.write_bytes(_ONE_PIXEL_PNG)
+    tool = VisionReviewTool(
+        llm=InaccessibleVisionLLM(),
+        workspace_dir=str(tmp_path),
+        allow_full_access=True,
+    )
+
+    first = await tool.execute(image_paths=["slide.png"])
+    second = await tool.execute(image_paths=["slide.png"])
+
+    assert not first.success
+    assert "VISION_REVIEW_UNAVAILABLE" in (first.error or "")
+    assert second.error == first.error
+    assert not (tmp_path / "visual_review.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_vision_review_rejects_structured_report_that_did_not_inspect_image(
+    tmp_path: Path,
+):
+    class OcrDeniedVisionLLM:
+        provider = "openai"
+
+        async def generate(self, messages, tools=None, *, thinking_enabled=False, call_kind=""):
+            return LLMResponse(
+                content=(
+                    "# Visual Review\n\n"
+                    "## Summary\n- Overall: ISSUE\n- Reviewed images: 1\n\n"
+                    "## Per-page findings\n"
+                    "| Page | Source image | Status | Findings | Suggested fix |\n"
+                    "| --- | --- | --- | --- | --- |\n"
+                    "| 1 | slide.png | ISSUE | Cannot inspect the slide because image/OCR "
+                    "access failed with Access Denied. Main title clarity cannot be verified. "
+                    "| Re-upload. |"
+                ),
+                finish_reason="stop",
+            )
+
+    image = tmp_path / "slide.png"
+    image.write_bytes(_ONE_PIXEL_PNG)
+    tool = VisionReviewTool(
+        llm=OcrDeniedVisionLLM(),
+        workspace_dir=str(tmp_path),
+        allow_full_access=True,
+    )
+
+    result = await tool.execute(image_paths=["slide.png"])
+
+    assert not result.success
+    assert "VISION_REVIEW_UNAVAILABLE" in (result.error or "")
+    assert not (tmp_path / "visual_review.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_vision_review_caches_terminal_provider_protocol_error(tmp_path: Path):
+    class ProtocolErrorVisionLLM:
+        provider = "openai"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, messages, tools=None, *, thinking_enabled=False, call_kind=""):
+            self.calls += 1
+            raise RuntimeError("Failed to build prompt: Unexpected item type in content")
+
+    image = tmp_path / "slide.png"
+    image.write_bytes(_ONE_PIXEL_PNG)
+    llm = ProtocolErrorVisionLLM()
+    tool = VisionReviewTool(llm=llm, workspace_dir=str(tmp_path), allow_full_access=True)
+
+    first = await tool.execute(image_paths=["slide.png"])
+    second = await tool.execute(image_paths=["slide.png"])
+
+    assert not first.success
+    assert "VISION_REVIEW_UNAVAILABLE" in (first.error or "")
+    assert second.error == first.error
+    assert llm.calls == 1
+
+
 class ToolConfig:
     class Tools:
         enable_bash = False

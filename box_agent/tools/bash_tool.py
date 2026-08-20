@@ -117,6 +117,7 @@ def _format_bash_result_content(
 
 # Shells whose syntax is POSIX-compatible (supports &&, ||, for/do/done, etc.)
 _POSIX_SHELLS = frozenset({"bash", "zsh", "sh", "dash", "ksh", "ash"})
+_PIPEFAIL_SHELLS = frozenset({"bash", "zsh", "ksh"})
 _LARK_CLI_RE = re.compile(
     r"(?:\blark-cli(?:\.(?:cmd|exe))?\b|\$BOX_AGENT_LARK_CLI\b|\$\{BOX_AGENT_LARK_CLI\}|%BOX_AGENT_LARK_CLI%)",
     re.IGNORECASE,
@@ -954,8 +955,9 @@ class BashTool(Tool):
                     command[:500], self.workspace_dir, merge_stderr,
                     spawn_env.get("PATH", "")[:200],
                 )
+                guarded_command = f"set -o pipefail\n{command}"
                 return await asyncio.create_subprocess_exec(
-                    self._bundled_win_bash, "-c", command,
+                    self._bundled_win_bash, "-c", guarded_command,
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=stderr,
@@ -979,6 +981,8 @@ class BashTool(Tool):
             if self._use_login_shell:
                 args.append("-l")
                 command = self._restore_skill_path_after_login(command)
+            if Path(self._login_shell).name.lower() in _PIPEFAIL_SHELLS:
+                command = f"set -o pipefail\n{command}"
             args.extend(["-c", command])
             # start_new_session=True puts the shell in its own session/process
             # group so a timeout can kill the *whole* tree (shell + any children
@@ -1336,10 +1340,20 @@ Examples:
                     )
             # 2. Scope control (capability-based or legacy)
             if self._perm:
-                escape_reason = detect_scope_escape(command, workspace_dir=self.scope_root_dir)
-                from .permissions import FILESYSTEM_READ, FILESYSTEM_WRITE, extract_absolute_paths
+                from .permissions import (
+                    FILESYSTEM_READ,
+                    FILESYSTEM_WRITE,
+                    expand_inline_shell_path_variables,
+                    extract_absolute_paths,
+                )
 
-                abs_paths = extract_absolute_paths(command)
+                permission_command = expand_inline_shell_path_variables(command)
+                escape_reason = detect_scope_escape(
+                    permission_command,
+                    workspace_dir=self.scope_root_dir,
+                )
+
+                abs_paths = extract_absolute_paths(permission_command)
                 log.debug(
                     "bash/perm/extracted paths=%s reason=%s cmd=%r",
                     abs_paths, escape_reason, command[:200],
@@ -1361,13 +1375,13 @@ Examples:
                     )
 
                 for p in abs_paths:
-                    if _is_temp_shell_redirect_path(command, p):
+                    if _is_temp_shell_redirect_path(permission_command, p):
                         continue
                     # Classify each concrete path separately. A redirect to
                     # another path (or 2>&1) must not make this path writable.
                     cap = (
                         FILESYSTEM_WRITE
-                        if _path_requires_write_permission(command, p)
+                        if _path_requires_write_permission(permission_command, p)
                         else FILESYSTEM_READ
                     )
                     decision = self._perm.check(
