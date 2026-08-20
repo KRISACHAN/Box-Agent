@@ -10,6 +10,8 @@ from .base import Tool, ToolResult
 class RequestUserInputTool(Tool):
     """Record one focused clarification request without discarding task state."""
 
+    aliases = ("clarify",)
+
     @property
     def name(self) -> str:
         return "request_user_input"

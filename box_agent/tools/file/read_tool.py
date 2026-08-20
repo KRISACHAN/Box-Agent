@@ -87,6 +87,7 @@ def _similar_file_suggestions(file_path: Path, limit: int = 5) -> list[str]:
 class ReadTool(Tool):
     """Read file content."""
 
+    aliases = ("read",)
     max_result_size_chars = math.inf
 
     def __init__(

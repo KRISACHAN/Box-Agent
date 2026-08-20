@@ -185,6 +185,26 @@ guards, deduplication, and execution. Aliases are not added to the provider
 schema. Empty, repeated, or conflicting canonical/alias/generated names fail
 closed with `ValueError` when the offered tool index is built.
 
+Built-in tools accept these compatibility names from equivalent OpenClaw and
+Hermes capabilities:
+
+| Canonical Box-Agent name | Compatibility names |
+| --- | --- |
+| `read_file` | `read` (OpenClaw) |
+| `write_file` | `write` (OpenClaw) |
+| `edit_file` | `edit` (OpenClaw) |
+| `bash` | `exec` (OpenClaw), `terminal` (Hermes) |
+| `generate_image` | `image_generate` (OpenClaw and Hermes) |
+| `sub_agent` | `sessions_spawn` (OpenClaw), `delegate_task` (Hermes) |
+| `request_user_input` | `clarify` (Hermes) |
+| `get_skill` | `skill_view` (Hermes) |
+
+These are name-only compatibility mappings. Calls still use the canonical
+Box-Agent parameter schema advertised to the model; aliases do not translate
+another agent's argument format. Equivalent tools already named `read_file`,
+`write_file`, `search_files`, `execute_code`, or `memory_search` need no
+additional alias.
+
 #### Example
 
 ```python

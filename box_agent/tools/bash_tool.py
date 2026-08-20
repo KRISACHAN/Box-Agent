@@ -770,6 +770,8 @@ class BashTool(Tool):
     - Unix/Linux/macOS: bash
     """
 
+    aliases = ("exec", "terminal")
+
     max_result_size_chars = math.inf
 
     def __init__(

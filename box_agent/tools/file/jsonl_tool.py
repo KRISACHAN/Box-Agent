@@ -190,6 +190,7 @@ def _read_bounded_jsonl_line(stream) -> tuple[bytes, bool]:
 class JsonlQueryTool(ReadTool):
     """Stream, filter, and project JSONL records without exposing raw large lines."""
 
+    aliases = ()
     parallel_safe = True
     max_result_size_chars = math.inf
 

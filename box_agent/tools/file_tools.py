@@ -686,6 +686,8 @@ class _CommittedTextWrite:
 class WriteTool(Tool):
     """Atomically write a UTF-8 file in one call or ordered chunks."""
 
+    aliases = ("write",)
+
     def __init__(
         self,
         workspace_dir: str = ".",
@@ -1145,6 +1147,8 @@ class AppendTool(Tool):
 
 class EditTool(Tool):
     """Edit file by replacing text."""
+
+    aliases = ("edit",)
 
     def __init__(
         self,

@@ -167,6 +167,23 @@ class MyTool(Tool):
 空别名、重复别名，以及 canonical/alias/自动生成名称之间的冲突，都会在构建
 当前工具索引时以 `ValueError` 失败关闭。
 
+内置工具接受下列来自 OpenClaw 和 Hermes 同等能力的兼容名称：
+
+| Box-Agent canonical name | 兼容名称 |
+| --- | --- |
+| `read_file` | `read`（OpenClaw） |
+| `write_file` | `write`（OpenClaw） |
+| `edit_file` | `edit`（OpenClaw） |
+| `bash` | `exec`（OpenClaw）、`terminal`（Hermes） |
+| `generate_image` | `image_generate`（OpenClaw、Hermes） |
+| `sub_agent` | `sessions_spawn`（OpenClaw）、`delegate_task`（Hermes） |
+| `request_user_input` | `clarify`（Hermes） |
+| `get_skill` | `skill_view`（Hermes） |
+
+这些映射只兼容工具名称。调用参数仍须符合模型实际收到的 Box-Agent canonical
+参数 Schema；别名不会转换其他 Agent 的参数格式。`read_file`、`write_file`、
+`search_files`、`execute_code`、`memory_search` 等已经同名的等价工具无需额外别名。
+
 #### 示例
 
 ```python

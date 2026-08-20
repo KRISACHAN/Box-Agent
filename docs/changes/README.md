@@ -51,6 +51,7 @@ decision, read those entries together.
 
 | Area | Affected paths or keywords | Current effective decision | Relationship | Details |
 | --- | --- | --- | --- | --- |
+| Tool name aliases | `Tool.aliases`, `build_tool_name_index`, OpenClaw, Hermes | Compatibility names are execution-only, use canonical Box-Agent argument schemas, and fail closed on conflicts. | Built-in mappings complete the generic alias mechanism in `ba374f6`. | [2026-08-20 built-in aliases](#2026-08-20--built-in-tool-name-compatibility-aliases) |
 | Filesystem path resolution | `SearchFilesTool`, `path_candidates.py`, `PATH_NOT_FOUND`, ACP file-access prompt | Missing paths may return bounded structural candidates, but the model must retry a specific path and the permission engine remains final authority. | Hardens the broad-Home-search block without adding aliases or automatic authorization. | [2026-08-20 path candidates](#2026-08-20--bounded-structural-candidates-for-missing-filesystem-paths) |
 | File writes | `box_agent/tools/file_tools.py`, `write_file` | Ordered chunks commit atomically, with bounded transactions, replay protection, and whole-body safety checks. | PR #37 hardens PR #34; both remain relevant. | [PR #37](#2026-08-17--transactional-write-safety-follow-up-pr-37), [PR #34](#2026-08-17--unified-transactional-write_file-protocol-pr-34) |
 | Tool invocation | `box_agent/tools/base.py`, `schema_validation.py`, `Tool.invoke` | Tool schemas and arguments fail closed before `execute()` is called. | Current at this baseline. | [PR #33](#2026-08-17--validate-tool-arguments-before-execution-pr-33) |
@@ -67,6 +68,31 @@ Release, provider API, and ACP compatibility have their own sources under
 [long-lived release and compatibility history](#long-lived-release-and-compatibility-history).
 
 ## Pending material changes
+
+### 2026-08-20 — built-in tool-name compatibility aliases
+
+- Change: generic execution-only alias support is implemented by `ba374f6`;
+  the built-in compatibility mappings are a follow-up on
+  `syy/pr-review-standard`, with no merge or release reference yet.
+- Durable tool contract: `read_file`, `write_file`, `edit_file`, `bash`,
+  `generate_image`, `sub_agent`, `request_user_input`, and `get_skill` accept
+  the documented equivalent OpenClaw or Hermes names. Underscore names also
+  accept their generated hyphenated call form. Wrapped tools preserve the
+  aliases of the capability they gate.
+- Compatibility boundary: provider-facing schemas continue to advertise only
+  canonical Box-Agent names. Aliases select the same tool implementation and
+  canonical parameter schema; they do not translate foreign argument formats.
+  Empty, repeated, inherited-inapplicable, or conflicting names fail closed
+  when the offered-tool index is built.
+- Proof anchors: `tests/test_tool_aliases.py`, the provider pseudo-tool-call
+  tests in `tests/test_thinking.py`, and an ACP prompt regression that builds
+  the complete offered-tool index. `JsonlQueryTool` explicitly does not inherit
+  the distinct `read_file` compatibility name from its implementation base.
+- Runtime boundary: source tests do not prove packaged OfficeV3 adoption until
+  the runtime is rebuilt, installed, restarted, and exercised in a fresh task.
+- Rollback: remove the built-in alias declarations and wrapper forwarding while
+  retaining canonical names. No configuration or persistent-data rollback is
+  required.
 
 ### 2026-08-20 — bounded structural candidates for missing filesystem paths
 

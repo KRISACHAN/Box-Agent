@@ -8,8 +8,19 @@ from box_agent.events import ErrorEvent, ToolCallResult, ToolCallStart
 from box_agent.loop_guards import CompletionGate
 from box_agent.runtime import run_agent_loop
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
+from box_agent.tools.bash_tool import BashTool
 from box_agent.tools.base import Tool, ToolResult, build_tool_name_index
-from box_agent.tools.sub_agent_tool import _WriteScopedTool
+from box_agent.tools.file import ReadTool
+from box_agent.tools.file.jsonl_tool import JsonlQueryTool
+from box_agent.tools.file_tools import EditTool, WriteTool
+from box_agent.tools.image_generation_tool import GenerateImageTool
+from box_agent.tools.request_user_input_tool import RequestUserInputTool
+from box_agent.tools.skill_tool import GetSkillTool
+from box_agent.tools.sub_agent_tool import (
+    SubAgentTool,
+    _PermissionGatedBashTool,
+    _WriteScopedTool,
+)
 
 
 class SequenceLLM:
@@ -130,6 +141,66 @@ def test_write_scoped_tool_preserves_wrapped_tool_aliases(tmp_path) -> None:
     wrapped = _WriteScopedTool(RecordingTool(), str(tmp_path), (".",))
 
     assert build_tool_name_index([wrapped])["legacy_echo"] is wrapped
+
+
+def test_permission_gated_tool_preserves_wrapped_tool_aliases() -> None:
+    wrapped = _PermissionGatedBashTool(
+        RecordingTool(),
+        title=None,
+        scopes=None,
+    )
+
+    assert build_tool_name_index([wrapped])["legacy_echo"] is wrapped
+
+
+def test_builtin_compatibility_names_resolve_to_equivalent_tools() -> None:
+    tools = [
+        tool_class.__new__(tool_class)
+        for tool_class in (
+            ReadTool,
+            WriteTool,
+            EditTool,
+            BashTool,
+            GenerateImageTool,
+            SubAgentTool,
+            RequestUserInputTool,
+            GetSkillTool,
+        )
+    ]
+
+    index = build_tool_name_index(tools)
+
+    expected_canonical_names = {
+        "read": "read_file",
+        "write": "write_file",
+        "edit": "edit_file",
+        "exec": "bash",
+        "terminal": "bash",
+        "image_generate": "generate_image",
+        "image-generate": "generate_image",
+        "sessions_spawn": "sub_agent",
+        "sessions-spawn": "sub_agent",
+        "delegate_task": "sub_agent",
+        "delegate-task": "sub_agent",
+        "clarify": "request_user_input",
+        "skill_view": "get_skill",
+        "skill-view": "get_skill",
+    }
+    assert {
+        call_name: index[call_name].name
+        for call_name in expected_canonical_names
+    } == expected_canonical_names
+
+
+def test_distinct_read_subclass_does_not_inherit_read_file_alias() -> None:
+    read_tool = ReadTool.__new__(ReadTool)
+    jsonl_tool = JsonlQueryTool.__new__(JsonlQueryTool)
+
+    index = build_tool_name_index([read_tool, jsonl_tool])
+
+    assert index["read"] is read_tool
+    assert index["query_jsonl"] is jsonl_tool
+    assert jsonl_tool.aliases == ()
 
 
 def test_underscore_names_automatically_accept_hyphenated_calls() -> None:

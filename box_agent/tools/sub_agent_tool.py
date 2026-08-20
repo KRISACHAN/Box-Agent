@@ -168,6 +168,10 @@ class _PermissionGatedBashTool(Tool):
         return self._tool.name
 
     @property
+    def aliases(self) -> tuple[str, ...]:
+        return self._tool.aliases
+
+    @property
     def description(self) -> str:
         return self._tool.description
 
@@ -238,6 +242,8 @@ class SubAgentTool(EventEmittingTool):
     model binding selected from the host allowlist; manual sessions keep the
     parent model. Only the final textual summary is returned to the parent.
     """
+
+    aliases = ("sessions_spawn", "delegate_task")
 
     parallel_safe = True
 
