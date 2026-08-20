@@ -117,6 +117,10 @@ class _WriteScopedTool(Tool):
         return self._tool.name
 
     @property
+    def aliases(self) -> tuple[str, ...]:
+        return self._tool.aliases
+
+    @property
     def description(self) -> str:
         return self._tool.description
 

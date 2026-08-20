@@ -67,3 +67,24 @@ API 返回的事件顺序不符合 Anthropic 协议规范: Unexpected event orde
 ### 诊断工具
 
 运行 `box-agent doctor` 可以测试 API 连接性和基本兼容性。
+
+## SenseNova OpenAI 兼容模式
+
+当 `provider: openai` 且模型名以 `sensenova-` 或 `sn-sensenova-` 开头时，
+Box-Agent 会启用 SenseNova 协议兼容处理。使用 `--deep-think` 或 ACP 的
+`deep_think` 开关时，请求会附带：
+
+```json
+{
+  "chat_template_kwargs": {
+    "thinking": true,
+    "reasoning_effort": "high"
+  }
+}
+```
+
+部分 Flash-Lite 版本会把工具调用以 `<tool_call>` 标记输出到 reasoning，或
+输出到不含其他可见文本的 content。Box-Agent 会把这类标记恢复为标准工具调用，
+但仅接受当前步骤实际开放的 canonical tool name、显式 alias，以及它们的
+下划线转连字符兼容形式。未声明的工具名和夹杂普通可见文本的内容不会执行，
+仍作为文本返回。Provider-facing 工具 Schema 始终只包含 canonical name。

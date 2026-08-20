@@ -163,6 +163,28 @@ callers should use `invoke()` so they do not bypass argument validation.
 Malformed parameter schemas fail closed with `INVALID_TOOL_SCHEMA`; schema and
 argument values are omitted from that diagnostic.
 
+#### Tool Names and Aliases
+
+`Tool.name` is the canonical name serialized in the provider-facing tool
+schema. A tool may additionally declare execution-only compatibility names:
+
+```python
+class MyTool(Tool):
+    aliases = ("legacy_my_tool",)
+```
+
+For the canonical name and every declared alias, Box-Agent accepts the exact
+name and a generated variant with every underscore replaced by a hyphen. For
+example, the declaration above accepts `my_tool`, `my-tool`,
+`legacy_my_tool`, and `legacy-my-tool`. This conversion is one-way: a declared
+hyphenated name does not generate an underscore variant.
+
+Aliases are resolved only against the tools offered in the current model step
+and are converted back to the canonical name before permission checks, loop
+guards, deduplication, and execution. Aliases are not added to the provider
+schema. Empty, repeated, or conflicting canonical/alias/generated names fail
+closed with `ValueError` when the offered tool index is built.
+
 #### Example
 
 ```python
