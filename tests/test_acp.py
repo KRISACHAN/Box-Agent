@@ -4220,7 +4220,18 @@ async def test_acp_prompt_lists_officev3_allowed_directories(tmp_path):
     assert "## File Access Context" in prompt
     assert "configured allowed directories are allowed" in prompt
     assert str(allowed) in prompt
-    assert "Do not claim you can only access the workspace" in prompt
+    assert "currently pre-authorized roots" in prompt
+    assert "not the complete set of paths that may be requested" in prompt
+    assert "try a specific, narrow path outside these roots" in prompt
+    assert "runtime will request permission when appropriate" in prompt
+    assert "A permission denial applies only to the requested path" in prompt
+    assert "Do not generalize it to other specific candidate paths" in prompt
+    assert "Prefer absolute paths when the user names a location such as ~/Documents" in prompt
+    assert (
+        "Do not claim you can only access the workspace based only on the listed "
+        "roots or a denial for another path"
+    ) in prompt
+    assert "unless a tool call actually returns a permission denial" not in prompt
 
 
 @pytest.mark.asyncio
