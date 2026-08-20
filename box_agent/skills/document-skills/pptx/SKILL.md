@@ -314,9 +314,10 @@ before scaffolding. Run this gate at the start of every new deck:
    entity/fact query. An empty authority-ranked or `site:` result does not by
    itself justify repeating the same intent without the filter. If an exact
    first-party URL is known, read it with an actually available direct browser
-   tool. In officev3, do not use the browser gateway's
-   `source_preference: playwright` as a substitute for standalone Playwright MCP;
-   use standalone Playwright tools, or gateway `auto` / `browser_connector`.
+   tool. In officev3, use `managed_browser_*` for independent public-web reads
+   and `user_browser_*` when research depends on the user's current page, login
+   state, cookies, extensions, or intranet access; this does not require a
+   separate authorization prompt. Do not switch modes through `source_preference`.
    Persist durable
    findings in `research/` (relative to the presentation artifact root; the host
    stores it as `output/research/`), and stop only when the slide-relevant dimensions and

@@ -506,7 +506,8 @@ class TestMCPToolExecution:
 
         session = FakeSession()
         tool = MCPTool(
-            name="browser_navigate",
+            name="managed_browser_navigate",
+            remote_name="browser_navigate",
             description="navigate",
             parameters={"type": "object"},
             session=session,
@@ -548,7 +549,8 @@ class TestMCPToolExecution:
         owner_token = set_browser_runtime_owner(owner_a)
         try:
             navigate = MCPTool(
-                name="browser_navigate",
+                name="managed_browser_navigate",
+                remote_name="browser_navigate",
                 description="navigate",
                 parameters={"type": "object"},
                 session=FakeSession(),
@@ -556,7 +558,8 @@ class TestMCPToolExecution:
                 execute_timeout=1,
             )
             snapshot = MCPTool(
-                name="browser_snapshot",
+                name="managed_browser_snapshot",
+                remote_name="browser_snapshot",
                 description="snapshot",
                 parameters={"type": "object"},
                 session=FakeSession(),
@@ -585,7 +588,8 @@ class TestMCPToolExecution:
         owner_token = set_browser_runtime_owner(owner)
         try:
             tool = MCPTool(
-                name="browser_navigate",
+                name="managed_browser_navigate",
+                remote_name="browser_navigate",
                 description="navigate",
                 parameters={"type": "object"},
                 session=SlowSession(),

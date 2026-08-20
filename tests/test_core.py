@@ -665,7 +665,7 @@ class CountingBrowserReadTool(Tool):
 
     @property
     def name(self):
-        return "browser_read_page"
+        return "user_browser_read_page"
 
     @property
     def description(self):
@@ -965,12 +965,13 @@ class NamedTool(Tool):
 
 
 class RecordingBrowserSnapshotTool(Tool):
-    def __init__(self):
+    def __init__(self, name: str = "managed_browser_snapshot"):
+        self._name = name
         self.filenames: list[str] = []
 
     @property
     def name(self):
-        return "browser_snapshot"
+        return self._name
 
     @property
     def description(self):
@@ -3297,7 +3298,7 @@ async def test_research_evidence_calls_preserve_controlled_deck_delivery_budget(
                         id="browser-1",
                         type="function",
                         function=FunctionCall(
-                            name="browser_read_page",
+                            name="user_browser_read_page",
                             arguments={"url": "https://example.com/source"},
                         ),
                     ),
@@ -3320,7 +3321,7 @@ async def test_research_evidence_calls_preserve_controlled_deck_delivery_budget(
         run_agent_loop(
             llm=llm,
             messages=_msgs(),
-            tools={"browser_read_page": browser, "echo": echo},
+            tools={"user_browser_read_page": browser, "echo": echo},
             max_steps=5,
             completion_gate=gate,
             workspace_dir=str(tmp_path),
@@ -3339,7 +3340,7 @@ async def test_controlled_research_serializes_public_page_reads(tmp_path):
             id=f"browser-{index}",
             type="function",
             function=FunctionCall(
-                name="browser_read_page",
+                name="user_browser_read_page",
                 arguments={"url": f"https://example.com/source-{index}"},
             ),
         )
@@ -3356,7 +3357,7 @@ async def test_controlled_research_serializes_public_page_reads(tmp_path):
         run_agent_loop(
             llm=llm,
             messages=_msgs(),
-            tools={"browser_read_page": browser},
+            tools={"user_browser_read_page": browser},
             max_steps=5,
             completion_gate=CompletionGate(
                 workflow_checkpoint_kind="controlled_presentation",
@@ -3419,7 +3420,7 @@ async def test_controlled_research_binds_snapshot_body_to_navigated_url(tmp_path
     class MetadataNavigateTool(Tool):
         @property
         def name(self):
-            return "browser_navigate"
+            return "managed_browser_navigate"
 
         @property
         def description(self):
@@ -3444,7 +3445,7 @@ async def test_controlled_research_binds_snapshot_body_to_navigated_url(tmp_path
     class SnapshotBodyTool(Tool):
         @property
         def name(self):
-            return "browser_snapshot"
+            return "managed_browser_snapshot"
 
         @property
         def description(self):
@@ -3487,7 +3488,7 @@ async def test_controlled_research_binds_snapshot_body_to_navigated_url(tmp_path
                         id="navigate",
                         type="function",
                         function=FunctionCall(
-                            name="browser_navigate",
+                            name="managed_browser_navigate",
                             arguments={"url": source_url},
                         ),
                     )
@@ -3501,7 +3502,7 @@ async def test_controlled_research_binds_snapshot_body_to_navigated_url(tmp_path
                         id="snapshot",
                         type="function",
                         function=FunctionCall(
-                            name="browser_snapshot",
+                            name="managed_browser_snapshot",
                             arguments={},
                         ),
                     )
@@ -3536,8 +3537,8 @@ async def test_controlled_research_binds_snapshot_body_to_navigated_url(tmp_path
             llm=llm,
             messages=_msgs(),
             tools={
-                "browser_navigate": MetadataNavigateTool(),
-                "browser_snapshot": SnapshotBodyTool(),
+                "managed_browser_navigate": MetadataNavigateTool(),
+                "managed_browser_snapshot": SnapshotBodyTool(),
                 "bash": bash,
             },
             max_steps=8,
@@ -5361,7 +5362,7 @@ async def test_browser_snapshot_relative_filename_uses_artifact_root(tmp_path):
                         id="snapshot-1",
                         type="function",
                         function=FunctionCall(
-                            name="browser_snapshot",
+                            name="managed_browser_snapshot",
                             arguments={"filename": "research/source.md"},
                         ),
                     )
@@ -5376,7 +5377,52 @@ async def test_browser_snapshot_relative_filename_uses_artifact_root(tmp_path):
         run_agent_loop(
             llm=llm,
             messages=_msgs(),
-            tools={"browser_snapshot": snapshot},
+            tools={"managed_browser_snapshot": snapshot},
+            max_steps=5,
+            workspace_dir=str(tmp_path),
+            artifact_root_dir=output_dir,
+        )
+    )
+
+    assert snapshot.filenames == [""]
+    persisted = output_dir / "research" / "source.md"
+    assert persisted.read_text(encoding="utf-8") == "snapshot:"
+    assert any(
+        isinstance(event, ArtifactEvent) and event.abs_path == str(persisted)
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_managed_browser_snapshot_relative_filename_uses_artifact_root(tmp_path):
+    output_dir = tmp_path / "session-a" / "output"
+    (output_dir / "research").mkdir(parents=True)
+    snapshot = RecordingBrowserSnapshotTool("managed_browser_snapshot")
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="capture source",
+                tool_calls=[
+                    ToolCall(
+                        id="snapshot-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="managed_browser_snapshot",
+                            arguments={"filename": "research/source.md"},
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"managed_browser_snapshot": snapshot},
             max_steps=5,
             workspace_dir=str(tmp_path),
             artifact_root_dir=output_dir,
@@ -5406,7 +5452,7 @@ async def test_browser_snapshot_relative_filename_cannot_escape_artifact_root(tm
                         id="snapshot-escape",
                         type="function",
                         function=FunctionCall(
-                            name="browser_snapshot",
+                            name="managed_browser_snapshot",
                             arguments={"filename": "../outside.md"},
                         ),
                     )
@@ -5421,7 +5467,7 @@ async def test_browser_snapshot_relative_filename_cannot_escape_artifact_root(tm
         run_agent_loop(
             llm=llm,
             messages=_msgs(),
-            tools={"browser_snapshot": snapshot},
+            tools={"managed_browser_snapshot": snapshot},
             max_steps=5,
             workspace_dir=str(tmp_path),
             artifact_root_dir=output_dir,

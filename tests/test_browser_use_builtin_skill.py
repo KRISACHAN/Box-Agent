@@ -85,6 +85,23 @@ def test_browser_intent_preloads_full_builtin_instructions() -> None:
     assert "fixed headless by default" not in rendered.system_prompt
     assert "Treat headed/headless only as the managed browser's window visibility" in rendered.system_prompt
     assert "Do not treat a visible managed window as proof" in rendered.system_prompt
+    assert "There are exactly two browser modes" in rendered.system_prompt
+    assert "Playwright MCP" in rendered.system_prompt
+    assert "start with managed browser automation when it can be completed independently" in rendered.system_prompt
+    assert "Use the user's real browser directly when the task depends on the current page" in rendered.system_prompt
+    assert "infer the mode from the most recent successful browser interaction" in rendered.system_prompt
+    assert "Explicit mode selection in the latest user message overrides earlier context" in rendered.system_prompt
+    assert "Treat the managed Playwright MCP as headless by default" in rendered.system_prompt
+    assert "Recover from headless-only failures" in rendered.system_prompt
+    assert "disconnect/terminate the old Playwright MCP connection" in rendered.system_prompt
+    assert "Never reuse snapshots, element refs, tabs, or session identifiers" in rendered.system_prompt
+    assert "Retry the blocked step once in headed mode" in rendered.system_prompt
+    assert "Do not solve, outsource, or circumvent the verification" in rendered.system_prompt
+    assert "Switch between browser modes" in rendered.system_prompt
+    assert "does not require a separate authorization prompt" in rendered.system_prompt
+    assert "Browser routing does not authorize external side effects" in rendered.system_prompt
+    assert "Obtain consent before using the real browser" not in rendered.system_prompt
+    assert "Ask for affirmative consent" not in rendered.system_prompt
 
 
 @pytest.mark.parametrize(
@@ -92,11 +109,11 @@ def test_browser_intent_preloads_full_builtin_instructions() -> None:
     [
         (
             "用爬虫批量抓取这些公开网页",
-            "Do not open or manipulate the user's real browser",
+            "use managed browser automation unless the task also depends on user-owned browser state",
         ),
         (
             "填写这个表单，填好让我检查，最后我点击提交",
-            "Do not fill the form in a managed browser and then claim the user can take over",
+            "user review, takeover, or personal submission",
         ),
     ],
 )

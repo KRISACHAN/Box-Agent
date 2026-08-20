@@ -56,6 +56,13 @@ from .browser_runtime_scope import (
     acquire_browser_runtime_for_current_turn,
     release_browser_runtime_for_current_turn,
 )
+from .browser_tool_names import (
+    browser_tool_fixed_arguments,
+    public_browser_tool_description,
+    public_browser_tool_name,
+    public_browser_tool_parameters,
+    public_browser_tool_text,
+)
 from .mcp_tool_catalog import get_mcp_tool_catalog
 
 
@@ -291,12 +298,16 @@ class MCPTool(Tool):
         parameters: dict[str, Any],
         session: ClientSession,
         server_name: str = "",
+        remote_name: str | None = None,
+        fixed_arguments: dict[str, Any] | None = None,
         execute_timeout: float | None = None,
         always_load: bool = False,
         concurrency_limiter: asyncio.Semaphore | None = None,
     ):
         self._name = name
+        self._remote_name = remote_name or name
         self._server_name = server_name
+        self._fixed_arguments = dict(fixed_arguments or {})
         self._description = description
         self._parameters = parameters
         self._session = session
@@ -312,6 +323,11 @@ class MCPTool(Tool):
     @property
     def server_name(self) -> str:
         return self._server_name
+
+    @property
+    def remote_name(self) -> str:
+        """Name used when calling the backing MCP server."""
+        return self._remote_name
 
     @property
     def mcp_tool_id(self) -> str:
@@ -363,7 +379,11 @@ class MCPTool(Tool):
                     await self._concurrency_limiter.acquire()
                     concurrency_slot_acquired = True
                     waiting_for_concurrency_slot = False
-                result = await self._session.call_tool(self._name, arguments=kwargs)
+                call_arguments = {**kwargs, **self._fixed_arguments}
+                result = await self._session.call_tool(
+                    self._remote_name,
+                    arguments=call_arguments,
+                )
 
             # MCP tool results are a list of content items
             content_parts = []
@@ -380,11 +400,22 @@ class MCPTool(Tool):
             structured_error = _structured_mcp_error_message(content_str)
             if is_error or structured_error:
                 release_browser_runtime_after_call = self._server_name == "playwright"
-                err_msg = structured_error or content_str.strip() or "Tool returned error"
-                return ToolResult(success=False, content=content_str, error=err_msg)
+                public_content = public_browser_tool_text(
+                    self._server_name,
+                    content_str,
+                )
+                err_msg = public_browser_tool_text(
+                    self._server_name,
+                    structured_error or content_str.strip() or "Tool returned error",
+                )
+                return ToolResult(
+                    success=False,
+                    content=public_content,
+                    error=err_msg,
+                )
             release_browser_runtime_after_call = (
                 self._server_name == "playwright"
-                and self._name == "browser_snapshot"
+                and self._remote_name == "browser_snapshot"
             )
             return ToolResult(success=True, content=content_str, error=None)
 
@@ -407,7 +438,12 @@ class MCPTool(Tool):
             )
         except Exception as e:
             release_browser_runtime_after_call = browser_runtime_acquired
-            return ToolResult(success=False, content="", error=f"MCP tool execution failed: {str(e)}")
+            error = public_browser_tool_text(self._server_name, str(e))
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"MCP tool execution failed: {error}",
+            )
         finally:
             if concurrency_slot_acquired and self._concurrency_limiter is not None:
                 self._concurrency_limiter.release()
@@ -561,12 +597,20 @@ class MCPServerConnection:
             execute_timeout = self._get_execute_timeout()
             for tool in tools_list.tools:
                 parameters = tool.inputSchema if hasattr(tool, "inputSchema") else {}
+                public_name = public_browser_tool_name(self.name, tool.name)
+                fixed_arguments = browser_tool_fixed_arguments(self.name, parameters)
+                parameters = public_browser_tool_parameters(parameters, fixed_arguments)
                 mcp_tool = MCPTool(
-                    name=tool.name,
-                    description=tool.description or "",
+                    name=public_name,
+                    remote_name=tool.name,
+                    description=public_browser_tool_description(
+                        self.name,
+                        tool.description or "",
+                    ),
                     parameters=parameters,
                     session=session,
                     server_name=self.name,
+                    fixed_arguments=fixed_arguments,
                     execute_timeout=execute_timeout,
                     always_load=self.always_load,
                     concurrency_limiter=self._concurrency_limiter_for_tool(tool.name),

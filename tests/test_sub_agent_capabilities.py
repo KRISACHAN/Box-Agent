@@ -268,20 +268,20 @@ def test_unknown_mcp_tools_fail_closed_even_when_explicitly_selected() -> None:
 
 
 def test_playwright_read_only_tools_are_trusted_but_actions_are_denied() -> None:
-    navigate = NamedMcpTool("browser_navigate", "playwright")
-    run_code = NamedMcpTool("browser_run_code", "playwright")
-    navigate_spec = _parse(required_tools=["browser_navigate"])
-    run_code_spec = _parse(required_tools=["browser_run_code"])
+    navigate = NamedMcpTool("managed_browser_navigate", "playwright")
+    run_code = NamedMcpTool("managed_browser_run_code", "playwright")
+    navigate_spec = _parse(required_tools=["managed_browser_navigate"])
+    run_code_spec = _parse(required_tools=["managed_browser_run_code"])
     assert isinstance(navigate_spec, DelegationSpec)
     assert isinstance(run_code_spec, DelegationSpec)
 
     navigate_result = CapabilityResolver().resolve(
         navigate_spec,
-        parent_tools={"browser_navigate": navigate},
+        parent_tools={"managed_browser_navigate": navigate},
     )
     run_code_result = CapabilityResolver().resolve(
         run_code_spec,
-        parent_tools={"browser_run_code": run_code},
+        parent_tools={"managed_browser_run_code": run_code},
     )
 
     assert isinstance(navigate_result, ResolvedCapabilityBundle)

@@ -21,6 +21,7 @@ from ..config import ToolLimitsConfig
 from ..artifacts import artifact_scan_root
 from ..evidence import extract_http_urls, normalize_search_url
 from ..tools.base import ToolResult
+from ..tools.browser_tool_names import is_browser_tool_name
 from ..workflow_policy import WorkflowCheckpointUpdate
 from ..workflow_checkpoint_store import (
     WorkflowPauseCheckpoint,
@@ -32,21 +33,31 @@ from .presentation_contract import (
     WORKFLOW_KIND,
 )
 
+MANAGED_RESEARCH_NAVIGATE_TOOLS: Final[frozenset[str]] = frozenset(
+    {"managed_browser_navigate"}
+)
+MANAGED_RESEARCH_SNAPSHOT_TOOLS: Final[frozenset[str]] = frozenset(
+    {"managed_browser_snapshot"}
+)
 DIRECT_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
     {
-        "browser_open_url",
-        "browser_read_page",
-        "browser_read_article",
-        "browser_read_section",
-        "browser_navigate",
-        "browser_snapshot",
+        "user_browser_open_tab_and_read",
+        "user_browser_read_page",
+        "user_browser_read_article",
+        "user_browser_read_section",
+        "managed_browser_navigate",
+        "managed_browser_snapshot",
     }
 )
 RESEARCH_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
     DIRECT_RESEARCH_READ_TOOLS | frozenset({"web_search"})
 )
 GATEWAY_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
-    {"browser_open_url", "browser_read_page", "browser_read_article"}
+    {
+        "user_browser_open_tab_and_read",
+        "user_browser_read_page",
+        "user_browser_read_article",
+    }
 )
 RESEARCH_READ_BATCH_SIZE: Final[int] = 1
 RESEARCH_DIRECT_READ_LIMIT: Final[int] = 5
@@ -300,14 +311,15 @@ _RESEARCH_DIRECT_URL_ALREADY_ATTEMPTED_TOOL_ERROR = (
     "the source unverified and continue."
 )
 _RESEARCH_SNAPSHOT_REQUIRED_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_RESEARCH_SNAPSHOT_REQUIRED: browser_navigate reached an "
-    "exact source URL but returned navigation metadata only. Call browser_snapshot "
-    "now before navigating elsewhere; the snapshot body will be bound to that URL."
+    "CONTROLLED_PRESENTATION_RESEARCH_SNAPSHOT_REQUIRED: managed_browser_navigate "
+    "reached an exact source URL but returned navigation metadata only. Call "
+    "managed_browser_snapshot now before navigating elsewhere; the snapshot body "
+    "will be bound to that URL."
 )
 _RESEARCH_SNAPSHOT_NAVIGATION_REQUIRED_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_RESEARCH_NAVIGATION_REQUIRED: browser_snapshot can verify "
-    "research evidence only immediately after one successful metadata-only "
-    "browser_navigate call. Navigate one exact candidate URL first."
+    "CONTROLLED_PRESENTATION_RESEARCH_NAVIGATION_REQUIRED: managed_browser_snapshot "
+    "can verify research evidence only immediately after one successful metadata-only "
+    "managed_browser_navigate call. Navigate one exact candidate URL first."
 )
 _RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL: the evidence ledger marks URLs as "
@@ -329,16 +341,18 @@ _RESEARCH_BROWSER_REINSPECTION_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_BROWSER_REINSPECTION_COMPLETE: bounded "
     "research is complete. Do not inspect browser tabs, execute page scripts, "
     "or use another browser-state side channel. Read only an "
-    "exact candidate URL with browser_read_page, browser_read_article, "
-    "browser_read_section, or browser_open_url; for standalone Playwright, use one "
-    "browser_navigate followed by browser_snapshot before opening another URL. Then "
+    "exact candidate URL with user_browser_read_page, user_browser_read_article, "
+    "user_browser_read_section, user_browser_open_tab_and_read, or "
+    "managed_browser_navigate followed by managed_browser_snapshot before opening "
+    "another URL. Then "
     "write the remaining research artifacts and run validate_research_artifacts.py."
 )
 _RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE: the browser "
     "connector already returned source_unavailable in this research run. Do not "
-    "retry browser_read_page, browser_read_article, or browser_open_url. Use the "
-    "available standalone Playwright browser_navigate plus browser_snapshot pair with "
+    "retry user_browser_read_page, user_browser_read_article, or "
+    "user_browser_open_tab_and_read. Use the available managed_browser_navigate plus "
+    "managed_browser_snapshot pair with "
     "one exact candidate URL at a time, or mark the source unverified and continue to "
     "the research artifacts."
 )
@@ -1256,7 +1270,8 @@ def _research_direct_read_key(
         return None
     backend = (
         "playwright"
-        if tool_name in {"browser_navigate", "browser_snapshot"}
+        if tool_name
+        in MANAGED_RESEARCH_NAVIGATE_TOOLS | MANAGED_RESEARCH_SNAPSHOT_TOOLS
         else "gateway"
     )
     return url, backend
@@ -1915,6 +1930,11 @@ class ControlledPresentationPolicy:
     evidence_read_batch_size: ClassVar[int] = RESEARCH_READ_BATCH_SIZE
     evidence_read_limit: ClassVar[int] = RESEARCH_DIRECT_READ_LIMIT
 
+    def __post_init__(self) -> None:
+        """Freeze configured tool availability."""
+        if self.available_tool_names is not None:
+            self.available_tool_names = frozenset(self.available_tool_names)
+
     def hidden_tool_names(self) -> frozenset[str]:
         """Return tools that cannot contribute to the current deck stage."""
 
@@ -1932,9 +1952,9 @@ class ControlledPresentationPolicy:
                 {
                     "tool_search",
                     "web_search",
-                    "browser_navigate",
-                    "browser_navigate_back",
-                    "browser_snapshot",
+                    "managed_browser_navigate",
+                    "managed_browser_navigate_back",
+                    "managed_browser_snapshot",
                 }
             )
         return frozenset(hidden)
@@ -2347,7 +2367,7 @@ class ControlledPresentationPolicy:
         if not self.research_search_exhausted:
             return None
         if (
-            tool_name.startswith("browser_")
+            is_browser_tool_name(tool_name)
             and tool_name not in DIRECT_RESEARCH_READ_TOOLS
         ):
             return _RESEARCH_BROWSER_REINSPECTION_COMPLETE_TOOL_ERROR
@@ -2459,13 +2479,13 @@ class ControlledPresentationPolicy:
             return _RESEARCH_EXECUTE_CODE_NETWORK_TOOL_ERROR
         if (
             self.stage == "research"
-            and tool_name == "browser_navigate"
+            and tool_name in MANAGED_RESEARCH_NAVIGATE_TOOLS
             and self._research_pending_playwright_url is not None
         ):
             return _RESEARCH_SNAPSHOT_REQUIRED_TOOL_ERROR
         if (
             self.stage == "research"
-            and tool_name == "browser_snapshot"
+            and tool_name in MANAGED_RESEARCH_SNAPSHOT_TOOLS
             and self._research_pending_playwright_url is None
         ):
             return _RESEARCH_SNAPSHOT_NAVIGATION_REQUIRED_TOOL_ERROR
@@ -2528,7 +2548,7 @@ class ControlledPresentationPolicy:
             and self.research_search_exhausted
             and tool_name in DIRECT_RESEARCH_READ_TOOLS
         ):
-            if tool_name == "browser_snapshot":
+            if tool_name in MANAGED_RESEARCH_SNAPSHOT_TOOLS:
                 return None
             direct_read_key = _research_direct_read_key(tool_name, arguments)
             if direct_read_key is None or not _is_substantive_research_url(
@@ -2788,7 +2808,7 @@ class ControlledPresentationPolicy:
             establishes_direct_source = False
             counts_direct_read = tool_name in DIRECT_RESEARCH_READ_TOOLS
             effective_arguments = arguments
-            if tool_name == "browser_navigate" and result.success:
+            if tool_name in MANAGED_RESEARCH_NAVIGATE_TOOLS and result.success:
                 page_text, resolved_url = _research_direct_source_content(
                     arguments,
                     result,
@@ -2799,7 +2819,7 @@ class ControlledPresentationPolicy:
                 ):
                     self._research_pending_playwright_url = resolved_url
                     counts_direct_read = False
-            elif tool_name == "browser_snapshot":
+            elif tool_name in MANAGED_RESEARCH_SNAPSHOT_TOOLS:
                 pending_url = self._research_pending_playwright_url
                 self._research_pending_playwright_url = None
                 effective_arguments = {**arguments, "url": pending_url or ""}
@@ -2980,11 +3000,17 @@ class ControlledPresentationPolicy:
 
     def exempts_tool_budget(self, tool_name: str) -> bool:
         """Return whether a research-stage call is exempt from delivery budget."""
-        return self.stage == "research" and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
+        return (
+            self.stage == "research"
+            and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
+        )
 
     def uses_evidence_read_budget(self, tool_name: str) -> bool:
         """Return whether this call uses the bounded direct-read batch."""
-        return self.stage == "research" and tool_name in DIRECT_RESEARCH_READ_TOOLS
+        return (
+            self.stage == "research"
+            and tool_name in DIRECT_RESEARCH_READ_TOOLS
+        )
 
     @staticmethod
     def is_direct_evidence_read_tool(tool_name: str) -> bool:

@@ -178,8 +178,8 @@ def test_prompt_includes_browser_tools_only() -> None:
     out = build_action_hints_prompt(memory_scarce=False, playwright_unavailable=True)
     assert "browser-tools" in out
     assert "onboarding" not in out
-    assert "browser_connector_*" in out
-    assert "不要仅因 Playwright 缺失" in out
+    assert "user_browser_*" in out
+    assert "不要仅因受管浏览器缺失" in out
 
 
 def test_prompt_includes_both_scenarios() -> None:

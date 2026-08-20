@@ -76,7 +76,7 @@ def test_browser_continuation_requires_recent_successful_browser_context() -> No
         Message(role="assistant", content=""),
         Message(
             role="tool",
-            name="browser_read_current_page",
+            name="user_browser_read_current_page",
             tool_call_id="browser-1",
             content='{"ok": true}',
         ),
@@ -104,7 +104,7 @@ def test_browser_continuation_does_not_hide_either_backend() -> None:
         Message(role="assistant", content=""),
         Message(
             role="tool",
-            name="browser_navigate",
+            name="managed_browser_navigate",
             tool_call_id="browser-1",
             content='{"ok": true}',
         ),
@@ -116,8 +116,8 @@ def test_browser_continuation_does_not_hide_either_backend() -> None:
         messages=messages,
     )
 
-    assert policy.is_tool_visible("browser_navigate") is True
-    assert policy.is_tool_visible("browser_open_url") is True
+    assert policy.is_tool_visible("managed_browser_navigate") is True
+    assert policy.is_tool_visible("user_browser_open_tab_and_read") is True
 
 
 def test_submit_continuation_allows_connector_only_after_human_confirmation() -> None:
@@ -127,7 +127,7 @@ def test_submit_continuation_allows_connector_only_after_human_confirmation() ->
         Message(role="assistant", content=""),
         Message(
             role="tool",
-            name="browser_connector_fill",
+            name="user_browser_fill",
             tool_call_id="browser-1",
             content='{"ok": true}',
         ),
@@ -140,26 +140,45 @@ def test_submit_continuation_allows_connector_only_after_human_confirmation() ->
     )
 
     assert policy.human_handoff is False
-    assert policy.is_tool_visible("browser_connector_submit") is True
+    assert policy.is_tool_visible("user_browser_submit") is True
 
 
-def test_browser_policy_blocks_current_page_aliases_without_explicit_intent() -> None:
+def test_browser_policy_blocks_current_page_tools_without_explicit_intent() -> None:
     policy = BrowserToolIntentPolicy.for_turn(
         current_turn_text="看一下gpt sol 极高和最高的区别",
         messages=[],
     )
 
-    assert policy.is_tool_visible("browser_read_current_page") is False
-    assert policy.is_tool_visible("browser_connector_snapshot") is False
-    assert policy.is_tool_visible("browser_open_url") is True
-    assert policy.tool_call_error("browser_read_page", {}) is not None
-    assert policy.tool_call_error("browser_read_page", {"url": "https://example.com"}) is None
+    assert policy.is_tool_visible("user_browser_read_current_page") is False
+    assert policy.is_tool_visible("user_browser_snapshot") is False
+    assert policy.is_tool_visible("user_browser_open_tab_and_read") is True
+    assert policy.tool_call_error("user_browser_read_page", {}) is not None
+    assert policy.tool_call_error("user_browser_read_page", {"url": "https://example.com"}) is None
     assert (
         policy.tool_call_error(
-            "browser_session_call",
+            "user_browser_session_call",
             {"action": "read_article", "args": {}},
         )
         is not None
+    )
+
+
+def test_browser_policy_applies_same_guards_to_public_namespaces() -> None:
+    policy = BrowserToolIntentPolicy.for_turn(
+        current_turn_text="检索一个公开网页",
+        messages=[],
+    )
+
+    assert policy.is_tool_visible("managed_browser_navigate") is True
+    assert policy.is_tool_visible("user_browser_read_current_page") is False
+    assert policy.is_tool_visible("user_browser_snapshot") is False
+    assert policy.tool_call_error("user_browser_read_page", {}) is not None
+    assert (
+        policy.tool_call_error(
+            "user_browser_read_page",
+            {"url": "https://example.com"},
+        )
+        is None
     )
 
 
@@ -169,11 +188,11 @@ def test_browser_policy_exposes_both_backends_for_public_retrieval() -> None:
         messages=[],
     )
 
-    assert policy.is_tool_visible("browser_navigate") is True
-    assert policy.is_tool_visible("browser_snapshot") is True
-    assert policy.is_tool_visible("browser_open_url") is True
-    assert policy.is_tool_visible("browser_read_page") is True
-    assert policy.tool_call_error("browser_open_url", {"url": "https://example.com"}) is None
+    assert policy.is_tool_visible("managed_browser_navigate") is True
+    assert policy.is_tool_visible("managed_browser_snapshot") is True
+    assert policy.is_tool_visible("user_browser_open_tab_and_read") is True
+    assert policy.is_tool_visible("user_browser_read_page") is True
+    assert policy.tool_call_error("user_browser_open_tab_and_read", {"url": "https://example.com"}) is None
 
 
 def test_browser_policy_keeps_human_review_in_real_browser_without_submitting() -> None:
@@ -184,12 +203,12 @@ def test_browser_policy_keeps_human_review_in_real_browser_without_submitting() 
 
     assert policy.allow_current_page is True
     assert policy.human_handoff is True
-    assert policy.is_tool_visible("browser_connector_snapshot") is True
-    assert policy.is_tool_visible("browser_connector_fill") is True
-    assert policy.is_tool_visible("browser_connector_submit") is False
-    assert policy.is_tool_visible("browser_navigate") is True
-    assert policy.tool_call_error("browser_connector_submit", {"confirmed": True}) is not None
-    assert policy.tool_call_error("browser_navigate", {"url": "https://example.com"}) is None
+    assert policy.is_tool_visible("user_browser_snapshot") is True
+    assert policy.is_tool_visible("user_browser_fill") is True
+    assert policy.is_tool_visible("user_browser_submit") is False
+    assert policy.is_tool_visible("managed_browser_navigate") is True
+    assert policy.tool_call_error("user_browser_submit", {"confirmed": True}) is not None
+    assert policy.tool_call_error("managed_browser_navigate", {"url": "https://example.com"}) is None
 
 
 class _CapturingLLM:
@@ -215,7 +234,7 @@ class _CountingCurrentPageTool(Tool):
 
     @property
     def name(self) -> str:
-        return "browser_read_current_page"
+        return "user_browser_read_current_page"
 
     @property
     def description(self) -> str:
@@ -256,7 +275,7 @@ def _current_page_call() -> ToolCall:
     return ToolCall(
         id="browser-call",
         type="function",
-        function=FunctionCall(name="browser_read_current_page", arguments={}),
+        function=FunctionCall(name="user_browser_read_current_page", arguments={}),
     )
 
 
@@ -299,7 +318,7 @@ async def test_core_hides_and_denies_current_page_tool_for_generic_request() -> 
         )
     )
 
-    assert "browser_read_current_page" not in llm.tool_name_calls[0]
+    assert "user_browser_read_current_page" not in llm.tool_name_calls[0]
     assert tool.calls == 0
     result = next(event for event in events if isinstance(event, ToolCallResult))
     assert result.success is False
@@ -334,7 +353,7 @@ async def test_core_exposes_and_executes_current_page_tool_for_explicit_request(
         )
     )
 
-    assert "browser_read_current_page" in llm.tool_name_calls[0]
+    assert "user_browser_read_current_page" in llm.tool_name_calls[0]
     assert tool.calls == 1
     result = next(event for event in events if isinstance(event, ToolCallResult))
     assert result.success is True
@@ -343,15 +362,15 @@ async def test_core_exposes_and_executes_current_page_tool_for_explicit_request(
 
 @pytest.mark.asyncio
 async def test_core_exposes_and_executes_either_backend_for_public_retrieval() -> None:
-    connector = _CountingNamedBrowserTool("browser_open_url")
-    playwright = _CountingNamedBrowserTool("browser_navigate")
+    connector = _CountingNamedBrowserTool("user_browser_open_tab_and_read")
+    playwright = _CountingNamedBrowserTool("managed_browser_navigate")
     llm = _CapturingLLM(
         [
             LLMResponse(
                 content="",
                 tool_calls=[
                     _browser_call(
-                        "browser_open_url",
+                        "user_browser_open_tab_and_read",
                         {"url": "https://example.com"},
                     )
                 ],
@@ -377,8 +396,8 @@ async def test_core_exposes_and_executes_either_backend_for_public_retrieval() -
         )
     )
 
-    assert "browser_open_url" in llm.tool_name_calls[0]
-    assert "browser_navigate" in llm.tool_name_calls[0]
+    assert "user_browser_open_tab_and_read" in llm.tool_name_calls[0]
+    assert "managed_browser_navigate" in llm.tool_name_calls[0]
     assert connector.calls == 1
     result = next(event for event in events if isinstance(event, ToolCallResult))
     assert result.success is True
@@ -387,16 +406,16 @@ async def test_core_exposes_and_executes_either_backend_for_public_retrieval() -
 
 @pytest.mark.asyncio
 async def test_core_stops_before_submit_when_user_wants_human_handoff() -> None:
-    fill = _CountingNamedBrowserTool("browser_connector_fill")
-    submit = _CountingNamedBrowserTool("browser_connector_submit")
-    playwright = _CountingNamedBrowserTool("browser_navigate")
+    fill = _CountingNamedBrowserTool("user_browser_fill")
+    submit = _CountingNamedBrowserTool("user_browser_submit")
+    playwright = _CountingNamedBrowserTool("managed_browser_navigate")
     llm = _CapturingLLM(
         [
             LLMResponse(
                 content="",
                 tool_calls=[
                     _browser_call(
-                        "browser_connector_submit",
+                        "user_browser_submit",
                         {"confirmed": True},
                     )
                 ],
@@ -426,9 +445,9 @@ async def test_core_stops_before_submit_when_user_wants_human_handoff() -> None:
         )
     )
 
-    assert "browser_connector_fill" in llm.tool_name_calls[0]
-    assert "browser_connector_submit" not in llm.tool_name_calls[0]
-    assert "browser_navigate" in llm.tool_name_calls[0]
+    assert "user_browser_fill" in llm.tool_name_calls[0]
+    assert "user_browser_submit" not in llm.tool_name_calls[0]
+    assert "managed_browser_navigate" in llm.tool_name_calls[0]
     assert submit.calls == 0
     result = next(event for event in events if isinstance(event, ToolCallResult))
     assert result.success is False
