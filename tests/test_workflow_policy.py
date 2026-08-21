@@ -27,12 +27,12 @@ def test_controlled_presentation_hides_irrelevant_tools_by_stage(tmp_path):
     research_hidden = policy.hidden_tool_names()
     assert "obsidian_create_note" in research_hidden
     assert "web_search" not in research_hidden
-    assert "browser_navigate" not in research_hidden
+    assert "managed_browser_navigate" not in research_hidden
 
     policy.stage = "content_patch"
     patch_hidden = policy.hidden_tool_names()
     assert "web_search" in patch_hidden
-    assert "browser_snapshot" in patch_hidden
+    assert "managed_browser_snapshot" in patch_hidden
     assert "sub_agent" not in patch_hidden
     assert "get_skill" not in patch_hidden
     assert "write_file" not in patch_hidden

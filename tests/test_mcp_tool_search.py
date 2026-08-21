@@ -429,12 +429,12 @@ async def test_search_activates_exactly_requested_hits_without_small_cap() -> No
 async def test_search_finds_multiple_exact_tool_names_inside_compound_query() -> None:
     catalog = MCPToolCatalog()
     navigate = FakeMCPTool(
-        "browser_navigate",
+        "managed_browser_navigate",
         "playwright",
         "Navigate to a URL",
     )
     snapshot = FakeMCPTool(
-        "browser_snapshot",
+        "managed_browser_snapshot",
         "playwright",
         "Capture the current page snapshot",
     )
@@ -460,7 +460,7 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
 
     result = await ToolSearchTool(catalog, activated).execute(
         query=(
-            "playwright browser_navigate navigate URL and browser_snapshot "
+            "managed_browser_navigate navigate URL and managed_browser_snapshot "
             "get exact page text"
         ),
         server_name="playwright",
@@ -474,8 +474,8 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
     assert payload["matched_count"] == 2
     assert payload["activated_count"] == 2
     assert {item["name"] for item in payload["activated"]} == {
-        "browser_navigate",
-        "browser_snapshot",
+        "managed_browser_navigate",
+        "managed_browser_snapshot",
     }
 
 

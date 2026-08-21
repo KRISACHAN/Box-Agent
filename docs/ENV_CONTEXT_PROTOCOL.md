@@ -160,8 +160,8 @@ env_context 与 [Action Hint](./ACTION_HINT_PROTOCOL.md) 是**互补但不强耦
 - 真实浏览器连接器状态：enabled=true, connected=false, paused=false, available=false
 - 浏览器能力策略：Playwright 是隔离网页自动化通道；真实浏览器连接器是用户当前浏览器上下文的读写通道。必须按页面上下文选择，而不是按点击/填写等动作类型选择。
   - 当前只有 Playwright 可用或连接器未连接：不依赖真实浏览器状态的网页任务使用 Playwright；若任务明确依赖当前页、既有登录或内网状态，应说明连接器不可用，不要假装 Playwright 继承了这些状态。
-  - 用户明确指定 Playwright 或真实浏览器时，优先遵从。选定后同一操作链必须保持同一后端：`browser_connector_snapshot` 的 ref 只能交给 `browser_connector_*` 动作，Playwright snapshot/ref 只能交给 Playwright 工具。
-  - 真实浏览器中的翻页、展开、切换等低风险操作可在用户明确要求后执行；填写不等于提交；发送、发布、购买、删除等有外部副作用的提交必须先获得本次操作的明确确认，再调用 `browser_connector_submit`。
+  - 用户明确指定受管浏览器或真实浏览器时，优先遵从；未明确指定时，根据任务是否依赖当前页、既有登录、Cookie、扩展或内网状态选择。选定后同一操作链必须保持同一后端：`user_browser_snapshot` 的 ref 只能交给 `user_browser_*` 动作，`managed_browser_snapshot` 的 ref 只能交给 `managed_browser_*` 动作。
+  - 真实浏览器中的读取、翻页、展开、切换和填写等操作不额外要求浏览器授权；填写不等于提交。发送、发布、购买、删除等有外部副作用的提交仍必须先获得本次操作的明确确认，再调用 `user_browser_submit`。
   - 如果连接器返回 `extension_not_connected`：仅当任务不依赖真实浏览器状态且有普通公开 URL 时才改用 Playwright；依赖当前页、登录态或内网状态时不得静默切换，应提示用户连接扩展。
 - 生图服务状态：可用（可调用 generate_image）
 - 个人记忆配置：已完成

@@ -8,6 +8,7 @@ always releases rather than trapping the agent forever.
 
 import json
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -38,6 +39,10 @@ from box_agent.workflows.presentation_checkpoint import (
     completion_gate_progress_text,
 )
 from box_agent.workflows.controlled_presentation import (
+    DIRECT_RESEARCH_READ_TOOLS,
+    GATEWAY_RESEARCH_READ_TOOLS,
+    MANAGED_RESEARCH_NAVIGATE_TOOLS,
+    MANAGED_RESEARCH_SNAPSHOT_TOOLS,
     RESEARCH_ROUND_LIMIT,
     ControlledPresentationPolicy,
 )
@@ -1011,6 +1016,60 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     assert "Research delivery mode is full" in checkpoint
 
 
+def test_research_checkpoint_uses_public_managed_browser_tool_names(tmp_path):
+    checkpoint = build_checkpoint_text(
+        str(tmp_path),
+        "deep",
+        research_search_exhausted=True,
+        direct_research_read_available=True,
+    )
+
+    assert checkpoint is not None
+    assert "managed_browser_navigate" in checkpoint
+    assert "managed_browser_snapshot" in checkpoint
+    assert re.search(r"(?<!managed_)\bbrowser_navigate\b", checkpoint) is None
+    assert re.search(r"(?<!managed_)\bbrowser_snapshot\b", checkpoint) is None
+
+
+def test_research_tool_sets_contain_only_public_browser_names():
+    configured_names = (
+        DIRECT_RESEARCH_READ_TOOLS
+        | GATEWAY_RESEARCH_READ_TOOLS
+        | MANAGED_RESEARCH_NAVIGATE_TOOLS
+        | MANAGED_RESEARCH_SNAPSHOT_TOOLS
+    )
+
+    assert configured_names
+    assert all(
+        name.startswith(("managed_browser_", "user_browser_"))
+        for name in configured_names
+    )
+
+
+@pytest.mark.parametrize(
+    "public_name",
+    [
+        "user_browser_open_tab_and_read",
+        "user_browser_read_page",
+        "managed_browser_navigate",
+        "managed_browser_snapshot",
+    ],
+)
+def test_research_policy_uses_public_browser_names_directly(tmp_path, public_name):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+        available_tool_names=frozenset({public_name}),
+    )
+
+    assert policy.available_tool_names == frozenset({public_name})
+    assert policy.is_direct_evidence_read_tool(public_name)
+    assert policy.uses_evidence_read_budget(public_name)
+    assert policy.exempts_tool_budget(public_name)
+
+
 def test_deep_research_checkpoint_accepts_partial_delivery_handoff(tmp_path):
     gate = build_auto_completion_gate(
         "制作一份需要公开数据来源的新能源汽车市场分析 PPT",
@@ -1291,7 +1350,7 @@ def test_deep_research_falls_back_when_candidate_searches_succeed_but_pages_fail
 
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
     policy.record_tool_result(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.com/report"},
         ToolResult(success=False, error="source_unavailable"),
     )
@@ -1300,7 +1359,7 @@ def test_deep_research_falls_back_when_candidate_searches_succeed_but_pages_fail
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
     policy.update_checkpoint(checkpoint)
     policy.record_tool_result(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.org/report"},
         ToolResult(success=False, error="navigation timeout"),
     )
@@ -1348,7 +1407,7 @@ def test_deep_research_keeps_validating_after_a_successful_direct_page_read(tmp_
         policy.update_checkpoint(checkpoint)
 
     policy.record_tool_result(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.com/report"},
         ToolResult(success=True, content="Verified source page body"),
     )
@@ -1366,7 +1425,17 @@ def test_deep_research_keeps_validating_after_a_successful_direct_page_read(tmp_
     ).exists()
 
 
-def test_playwright_metadata_navigation_waits_for_snapshot_body(tmp_path):
+@pytest.mark.parametrize(
+    ("navigate_tool", "snapshot_tool"),
+    [
+        ("managed_browser_navigate", "managed_browser_snapshot"),
+    ],
+)
+def test_playwright_metadata_navigation_waits_for_snapshot_body(
+    tmp_path,
+    navigate_tool,
+    snapshot_tool,
+):
     policy = ControlledPresentationPolicy(
         workspace_dir=str(tmp_path),
         artifact_root_dir=None,
@@ -1387,7 +1456,7 @@ def test_playwright_metadata_navigation_waits_for_snapshot_body(tmp_path):
     )
 
     policy.record_tool_result(
-        "browser_navigate",
+        navigate_tool,
         {"url": source_url},
         navigation,
     )
@@ -1396,12 +1465,12 @@ def test_playwright_metadata_navigation_waits_for_snapshot_body(tmp_path):
     assert policy._research_consecutive_unproductive_direct_reads == 0
     assert policy._research_pending_playwright_url == source_url
     assert policy.direct_evidence_url(
-        "browser_navigate",
+        navigate_tool,
         {"url": source_url},
         navigation,
     ) is None
     blocked_navigation = policy.tool_call_error(
-        "browser_navigate",
+        navigate_tool,
         {"url": "https://example.com/other"},
         verified_evidence_urls=set(),
     )
@@ -1409,7 +1478,7 @@ def test_playwright_metadata_navigation_waits_for_snapshot_body(tmp_path):
     assert "CONTROLLED_PRESENTATION_RESEARCH_SNAPSHOT_REQUIRED" in blocked_navigation
     assert (
         policy.tool_call_error(
-            "browser_snapshot",
+            snapshot_tool,
             {},
             verified_evidence_urls=set(),
         )
@@ -1420,14 +1489,14 @@ def test_playwright_metadata_navigation_waits_for_snapshot_body(tmp_path):
         success=True,
         content="Example report body with a supported factual claim.",
     )
-    policy.record_tool_result("browser_snapshot", {}, snapshot)
+    policy.record_tool_result(snapshot_tool, {}, snapshot)
 
     assert policy._research_pending_playwright_url is None
     assert policy._research_direct_read_attempts == 1
     assert policy._research_successful_direct_read_attempts == 1
     assert policy._research_consecutive_unproductive_direct_reads == 0
     assert source_url in policy._research_direct_source_text
-    assert policy.direct_evidence_url("browser_snapshot", {}, snapshot) == source_url
+    assert policy.direct_evidence_url(snapshot_tool, {}, snapshot) == source_url
 
 
 def test_research_snapshot_requires_a_pending_navigation(tmp_path):
@@ -1440,7 +1509,7 @@ def test_research_snapshot_requires_a_pending_navigation(tmp_path):
     )
 
     blocked = policy.tool_call_error(
-        "browser_snapshot",
+        "managed_browser_snapshot",
         {},
         verified_evidence_urls=set(),
     )
@@ -1471,7 +1540,7 @@ def test_deep_research_falls_back_after_two_empty_playwright_snapshots(tmp_path)
     for index in range(2):
         source_url = f"https://example.com/report-{index}"
         policy.record_tool_result(
-            "browser_navigate",
+            "managed_browser_navigate",
             {"url": source_url},
             ToolResult(
                 success=True,
@@ -1485,7 +1554,7 @@ def test_deep_research_falls_back_after_two_empty_playwright_snapshots(tmp_path)
             ),
         )
         policy.record_tool_result(
-            "browser_snapshot",
+            "managed_browser_snapshot",
             {},
             ToolResult(success=True, content=""),
         )
@@ -1525,7 +1594,7 @@ def test_deep_research_rejects_homepage_and_falls_back_after_two_empty_reads(
         policy.update_checkpoint(checkpoint)
 
     homepage_error = policy.tool_call_error(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.com/"},
         verified_evidence_urls=set(),
     )
@@ -1533,7 +1602,7 @@ def test_deep_research_rejects_homepage_and_falls_back_after_two_empty_reads(
     assert "CONTROLLED_PRESENTATION_EXACT_SOURCE_URL_REQUIRED" in homepage_error
 
     policy.record_tool_result(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.com/report-one"},
         ToolResult(
             success=True,
@@ -1553,7 +1622,7 @@ def test_deep_research_rejects_homepage_and_falls_back_after_two_empty_reads(
     assert '"fallback":true' not in checkpoint
 
     policy.record_tool_result(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.com/report-two"},
         ToolResult(success=False, error="navigation timeout"),
     )
@@ -1578,7 +1647,7 @@ def test_research_direct_read_deduplicates_per_browser_backend(tmp_path):
     )
     source_url = "https://example.com/report"
     policy.record_tool_result(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": source_url},
         ToolResult(
             success=True,
@@ -1595,7 +1664,7 @@ def test_research_direct_read_deduplicates_per_browser_backend(tmp_path):
     )
 
     duplicate = policy.tool_call_error(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": source_url},
         verified_evidence_urls=set(),
     )
@@ -1603,7 +1672,7 @@ def test_research_direct_read_deduplicates_per_browser_backend(tmp_path):
     assert "CONTROLLED_PRESENTATION_DIRECT_URL_ALREADY_ATTEMPTED" in duplicate
     assert (
         policy.tool_call_error(
-            "browser_navigate",
+            "managed_browser_navigate",
             {"url": source_url},
             verified_evidence_urls=set(),
         )
@@ -1620,17 +1689,17 @@ def test_research_successful_read_resets_consecutive_empty_read_streak(tmp_path)
         research_search_exhausted=True,
     )
     policy.record_tool_result(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.com/one"},
         ToolResult(success=False, error="timeout"),
     )
     policy.record_tool_result(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.com/two"},
         ToolResult(success=True, content="Verified page body"),
     )
     policy.record_tool_result(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.com/three"},
         ToolResult(success=False, error="timeout"),
     )
@@ -1639,7 +1708,7 @@ def test_research_successful_read_resets_consecutive_empty_read_streak(tmp_path)
     assert policy._research_direct_read_complete is False
     assert (
         policy.tool_call_error(
-            "browser_read_page",
+            "user_browser_read_page",
             {"url": "https://example.com/four"},
             verified_evidence_urls=set(),
         )
@@ -1658,13 +1727,13 @@ def test_research_stops_browsing_after_two_empty_reads_with_verified_subset(
         research_search_exhausted=True,
     )
     policy.record_tool_result(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.com/verified"},
         ToolResult(success=True, content="Verified page body"),
     )
     for index in range(2):
         policy.record_tool_result(
-            "browser_read_page",
+            "user_browser_read_page",
             {"url": f"https://example.com/empty-{index}"},
             ToolResult(success=False, error="timeout"),
         )
@@ -1677,7 +1746,7 @@ def test_research_stops_browsing_after_two_empty_reads_with_verified_subset(
     assert "direct-source verification pass is complete" in checkpoint
     assert "Do not search or browse again" in checkpoint
     error = policy.tool_call_error(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.com/another"},
         verified_evidence_urls=set(),
     )
@@ -1706,7 +1775,7 @@ def test_deep_research_falls_back_after_two_failed_validation_attempts(tmp_path)
         policy.update_checkpoint(checkpoint)
 
     policy.record_tool_result(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.com/report"},
         ToolResult(success=True, content="Verified source page body"),
     )
@@ -1774,7 +1843,7 @@ def test_deep_research_falls_back_after_repeated_blocked_progress(tmp_path):
         policy.update_checkpoint(checkpoint)
 
     policy.record_tool_result(
-        "browser_navigate",
+        "managed_browser_navigate",
         {"url": "https://example.com/report"},
         ToolResult(success=True, content="Verified source page body"),
     )
@@ -1926,13 +1995,13 @@ def test_successful_tool_search_does_not_consume_research_rounds(
     for index in range(RESEARCH_ROUND_LIMIT):
         policy.record_tool_result(
             "tool_search",
-            {"query": f"browser_read_page_{index}"},
+            {"query": f"user_browser_read_page_{index}"},
             ToolResult(
                 success=True,
                 content=json.dumps(
                     {
                         "success": True,
-                        "activated": [{"name": "browser_read_page"}],
+                        "activated": [{"name": "user_browser_read_page"}],
                         "conflicts": [],
                     }
                 ),
@@ -2112,7 +2181,7 @@ def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
     )
     assert (
         policy.tool_call_error(
-            "browser_read_page",
+            "user_browser_read_page",
             {"url": "https://example.com/0"},
             verified_evidence_urls=set(),
         )
@@ -2171,7 +2240,7 @@ def test_stale_research_report_forces_one_exact_revalidation(tmp_path):
     assert "validate_research_artifacts.py" in command
 
     blocked = policy.tool_call_error(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.com/official"},
         verified_evidence_urls=set(),
     )
@@ -2361,7 +2430,7 @@ def test_research_validator_requires_successful_exact_page_reads(tmp_path):
     assert source_url in blocked
 
     policy.record_tool_result(
-        "browser_open_url",
+        "user_browser_open_tab_and_read",
         {"url": "https://example.com/report"},
         ToolResult(
             success=True,
@@ -2421,7 +2490,7 @@ def test_research_validator_rejects_locally_rewritten_verified_excerpt(tmp_path)
         research_search_exhausted=True,
     )
     policy.record_tool_result(
-        "browser_open_url",
+        "user_browser_open_tab_and_read",
         {"url": source_url},
         ToolResult(
             success=True,
@@ -2464,7 +2533,7 @@ def test_research_error_page_does_not_establish_direct_source(tmp_path):
     )
 
     policy.record_tool_result(
-        "browser_open_url",
+        "user_browser_open_tab_and_read",
         {"url": "https://example.com/report"},
         ToolResult(
             success=True,
@@ -2543,14 +2612,14 @@ def test_research_direct_read_limit_rejections_do_not_globally_stall(tmp_path):
     )
     for index in range(policy.evidence_read_limit):
         policy.record_tool_result(
-            "browser_read_page",
+            "user_browser_read_page",
             {"url": f"https://example.com/{index}"},
             ToolResult(success=True, content="page"),
         )
 
     arguments = {"url": "https://example.com/overflow"}
     error = policy.tool_call_error(
-        "browser_read_page",
+        "user_browser_read_page",
         arguments,
         verified_evidence_urls=set(),
     )
@@ -2560,7 +2629,7 @@ def test_research_direct_read_limit_rejections_do_not_globally_stall(tmp_path):
     rejection = ToolResult(success=False, error=error)
     for _ in range(3):
         policy.record_tool_result(
-            "browser_read_page",
+            "user_browser_read_page",
             arguments,
             rejection,
             executed=False,
@@ -2577,13 +2646,13 @@ def test_research_stops_retrying_an_unavailable_browser_connector(tmp_path):
         stage="research",
     )
     policy.record_tool_result(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.com/report", "source_preference": "auto"},
         ToolResult(success=False, error="source_unavailable"),
     )
 
     connector_error = policy.tool_call_error(
-        "browser_read_page",
+        "user_browser_read_page",
         {"url": "https://example.org/report", "source_preference": "auto"},
         verified_evidence_urls=set(),
     )
@@ -2591,7 +2660,7 @@ def test_research_stops_retrying_an_unavailable_browser_connector(tmp_path):
     assert "RESEARCH_BROWSER_CONNECTOR_UNAVAILABLE" in connector_error
     assert (
         policy.tool_call_error(
-            "browser_open_url",
+            "user_browser_open_tab_and_read",
             {"url": "https://example.org/report"},
             verified_evidence_urls=set(),
         )
@@ -2599,7 +2668,7 @@ def test_research_stops_retrying_an_unavailable_browser_connector(tmp_path):
     )
     assert (
         policy.tool_call_error(
-            "browser_navigate",
+            "managed_browser_navigate",
             {"url": "https://example.org/report"},
             verified_evidence_urls=set(),
         )
@@ -2609,7 +2678,7 @@ def test_research_stops_retrying_an_unavailable_browser_connector(tmp_path):
     rejection = ToolResult(success=False, error=connector_error)
     for _ in range(3):
         policy.record_tool_result(
-            "browser_read_page",
+            "user_browser_read_page",
             {"url": "https://example.org/report"},
             rejection,
             executed=False,
@@ -2680,7 +2749,7 @@ def test_completed_research_search_blocks_reinspection_but_allows_one_json_repai
         == blocked
     )
     browser_reinspection = policy.tool_call_error(
-        "browser_tabs",
+        "managed_browser_tabs",
         {"action": "select", "index": 1},
         verified_evidence_urls=set(),
     )
@@ -2688,14 +2757,14 @@ def test_completed_research_search_blocks_reinspection_but_allows_one_json_repai
     assert "RESEARCH_BROWSER_REINSPECTION_COMPLETE" in browser_reinspection
     assert (
         policy.tool_call_error(
-            "browser_evaluate",
+            "managed_browser_evaluate",
             {"function": "() => document.body.innerText"},
             verified_evidence_urls=set(),
         )
         == browser_reinspection
     )
     section_error = policy.tool_call_error(
-        "browser_read_section",
+        "user_browser_read_section",
         {"section_id": "section-1"},
         verified_evidence_urls=set(),
     )

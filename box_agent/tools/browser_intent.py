@@ -8,37 +8,36 @@ from typing import Any, Sequence
 
 from box_agent.schema import Message
 
-
 _CURRENT_PAGE_ONLY_TOOLS = frozenset(
     {
-        "browser_read_current_page",
-        "browser_connector_snapshot",
-        "browser_connector_click",
-        "browser_connector_fill",
-        "browser_connector_submit",
+        "user_browser_read_current_page",
+        "user_browser_snapshot",
+        "user_browser_click",
+        "user_browser_fill",
+        "user_browser_submit",
     }
 )
 _BROWSER_CONTEXT_TOOLS = frozenset(
     {
-        "browser_open_url",
-        "browser_read_page",
-        "browser_read_article",
-        "browser_read_current_page",
-        "browser_read_section",
-        "browser_extract_structured_data",
-        "browser_connector_snapshot",
-        "browser_connector_click",
-        "browser_connector_fill",
-        "browser_connector_submit",
-        "browser_session_start",
-        "browser_session_call",
-        "browser_session_end",
+        "user_browser_open_tab_and_read",
+        "user_browser_read_page",
+        "user_browser_read_article",
+        "user_browser_read_current_page",
+        "user_browser_read_section",
+        "user_browser_extract_structured_data",
+        "user_browser_snapshot",
+        "user_browser_click",
+        "user_browser_fill",
+        "user_browser_submit",
+        "user_browser_session_start",
+        "user_browser_session_call",
+        "user_browser_session_end",
     }
 )
 _OPTIONAL_URL_CURRENT_PAGE_TOOLS = frozenset(
     {
-        "browser_read_page",
-        "browser_read_article",
+        "user_browser_read_page",
+        "user_browser_read_article",
     }
 )
 _CURRENT_PAGE_REFERENCE_RE = re.compile(
@@ -161,7 +160,10 @@ def has_recent_successful_browser_context(messages: Sequence[Message]) -> bool:
 
     previous_turn = messages[user_indices[-2] + 1 : user_indices[-1]]
     for message in reversed(previous_turn):
-        if message.role != "tool" or message.name not in _BROWSER_CONTEXT_TOOLS:
+        if (
+            message.role != "tool"
+            or (message.name or "") not in _BROWSER_CONTEXT_TOOLS
+        ):
             continue
         content = message.content if isinstance(message.content, str) else str(message.content)
         if content.lstrip().startswith("Error:"):
@@ -218,7 +220,7 @@ class BrowserToolIntentPolicy:
         """Hide active-tab tools unless the current turn explicitly needs them."""
         if not self.allow_current_page and tool_name in _CURRENT_PAGE_ONLY_TOOLS:
             return False
-        if self.human_handoff and tool_name == "browser_connector_submit":
+        if self.human_handoff and tool_name == "user_browser_submit":
             return False
         return True
 
@@ -228,7 +230,7 @@ class BrowserToolIntentPolicy:
         arguments: dict[str, Any],
     ) -> str | None:
         """Return an internal denial reason for a disallowed active-tab call."""
-        if self.human_handoff and tool_name == "browser_connector_submit":
+        if self.human_handoff and tool_name == "user_browser_submit":
             return _HUMAN_FINAL_ACTION_REQUIRED_ERROR
         if self.allow_current_page:
             return None
@@ -236,7 +238,7 @@ class BrowserToolIntentPolicy:
             return _CURRENT_PAGE_INTENT_ERROR
         if tool_name in _OPTIONAL_URL_CURRENT_PAGE_TOOLS and not arguments.get("url"):
             return _CURRENT_PAGE_INTENT_ERROR
-        if tool_name == "browser_session_call":
+        if tool_name == "user_browser_session_call":
             action = str(arguments.get("action") or "")
             nested_args = arguments.get("args")
             if (

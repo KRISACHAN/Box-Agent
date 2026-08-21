@@ -87,12 +87,12 @@ BUILTIN_TOOL_CAPABILITIES: dict[str, ToolCapabilityMetadata] = {
 
 _PLAYWRIGHT_READ_ONLY_TOOLS = frozenset(
     {
-        "browser_console_messages",
-        "browser_navigate",
-        "browser_navigate_back",
-        "browser_network_requests",
-        "browser_snapshot",
-        "browser_wait_for",
+        "managed_browser_console_messages",
+        "managed_browser_navigate",
+        "managed_browser_navigate_back",
+        "managed_browser_network_requests",
+        "managed_browser_snapshot",
+        "managed_browser_wait_for",
     }
 )
 

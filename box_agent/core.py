@@ -487,7 +487,7 @@ def _prepare_browser_snapshot_output(
     root, request an inline snapshot from Playwright and persist that returned
     Markdown in Box-Agent after the tool succeeds.
     """
-    if tool_name.rsplit(".", 1)[-1] != "browser_snapshot":
+    if tool_name != "managed_browser_snapshot":
         return None, None
     filename = arguments.get("filename")
     if not isinstance(filename, str) or not filename.strip():
@@ -523,7 +523,7 @@ def _persist_browser_snapshot_output(
             update={
                 "success": False,
                 "error": (
-                    "browser_snapshot returned no inline content to persist at "
+                    "managed_browser_snapshot returned no inline content to persist at "
                     f"{target_path}"
                 ),
             }
