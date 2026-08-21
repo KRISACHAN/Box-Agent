@@ -8484,6 +8484,59 @@ def test_outline_accepts_framework_research_handoff_with_explicit_gap(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_outline_rejects_relabeling_framework_research_as_user_provided(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "市场数据框架",
+            "message": "当前暂无可验证公开数据，保留后续补充位置。",
+            "bullets": ["市场规模待补充", "竞争格局待补充"],
+            "evidence": [],
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    research_status = tmp_path / "research_status.json"
+    research_status.write_text(
+        json.dumps(
+            {
+                "presentation_handoff": {
+                    "schema_version": 1,
+                    "delivery_mode": "framework",
+                    "verified_facts": [],
+                    "gaps": ["No verified public facts"],
+                    "quality_summary": {"quality_ok": False},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--min-slides",
+        "1",
+        "--max-slides",
+        "1",
+        "--research-handoff",
+        str(research_status),
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert any(
+        "source_mode must remain public_authoritative_research" in issue
+        for issue in payload["issues"]
+    )
+
+
 def test_outline_accepts_framework_structural_pages_without_evidence(
     tmp_path: Path,
 ) -> None:

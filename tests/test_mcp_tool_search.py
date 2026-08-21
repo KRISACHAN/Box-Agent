@@ -480,6 +480,70 @@ async def test_search_finds_multiple_exact_tool_names_inside_compound_query() ->
 
 
 @pytest.mark.asyncio
+async def test_search_activates_snapshot_companion_when_navigation_matches_alone() -> None:
+    catalog = MCPToolCatalog()
+    catalog.replace_server(
+        "playwright",
+        [
+            FakeMCPTool(
+                "managed_browser_navigate",
+                "playwright",
+                "Navigate to a URL",
+            ),
+            FakeMCPTool(
+                "managed_browser_snapshot",
+                "playwright",
+                "Capture the current page snapshot",
+            ),
+            FakeMCPTool("managed_browser_click", "playwright", "Click page element"),
+        ],
+    )
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(catalog, activated).execute(
+        query="managed_browser_navigate",
+        server_name="playwright",
+        top_k=1,
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["matched_count"] == 1
+    assert payload["companion_count"] == 1
+    assert payload["activated_count"] == 2
+    assert {item["name"] for item in payload["activated"]} == {
+        "managed_browser_navigate",
+        "managed_browser_snapshot",
+    }
+
+
+@pytest.mark.asyncio
+async def test_exact_tool_activation_does_not_add_navigation_companion() -> None:
+    catalog = MCPToolCatalog()
+    catalog.replace_server(
+        "playwright",
+        [
+            FakeMCPTool("managed_browser_navigate", "playwright", "Navigate"),
+            FakeMCPTool("managed_browser_snapshot", "playwright", "Snapshot"),
+        ],
+    )
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(catalog, activated).execute(
+        tool_names=["managed_browser_navigate"],
+        server_name="playwright",
+    )
+    payload = json.loads(result.content)
+
+    assert payload["matched_count"] == 1
+    assert payload["companion_count"] == 0
+    assert payload["activated_count"] == 1
+    assert [item["name"] for item in payload["activated"]] == [
+        "managed_browser_navigate"
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("server_name", "expected_server"),
     [(" weather ", "weather"), ("", None), ("   ", None)],

@@ -181,8 +181,9 @@ _FINALIZE_TOOL_ERROR = (
 _APPLY_PATCH_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_APPLY_PATCH_REQUIRED: run the single deterministic "
     "apply_deck_patch.js command from the latest checkpoint with deck.json and "
-    "deck.patch.json. Do not substitute another script, compound the command, or "
-    "rewrite deck.json directly."
+    "deck.patch.json. A trailing 2>&1 stderr merge is allowed, but do not add a pipe, "
+    "another redirection, another command, substitute another script, or rewrite "
+    "deck.json directly."
 )
 _APPLY_PATCH_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_APPLY_PATCH_REPAIR_REQUIRED: the latest deterministic "
@@ -776,6 +777,12 @@ def _apply_patch_error(
         tokens = shlex.split(command)
     except ValueError:
         return _APPLY_PATCH_REPAIR_TOOL_ERROR if repair_allowed else _APPLY_PATCH_TOOL_ERROR
+    if tokens and tokens[-1] == "2>&1":
+        # Merging stderr into stdout does not change the deterministic mutation.
+        # Models commonly add this harmless suffix when invoking Node scripts;
+        # accept only this exact trailing token and keep every pipe, extra
+        # redirection, and compound command rejected below.
+        tokens = tokens[:-1]
     script_indexes = [
         index
         for index, token in enumerate(tokens)
@@ -1445,7 +1452,26 @@ def _research_artifact_target_error(
     if stage != "research":
         return None
     candidate: Any = None
-    if tool_name in {"write_file", "append_file", "edit_file"}:
+    if tool_name == "bash":
+        command = arguments.get("command")
+        if not isinstance(command, str):
+            return None
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return None
+        if not any(Path(token).name in {"mkdir", "mkdir.exe"} for token in tokens):
+            return None
+        candidate = next(
+            (
+                token
+                for token in tokens
+                if Path(token).is_absolute()
+                and "research" in {part.casefold() for part in Path(token).parts}
+            ),
+            None,
+        )
+    elif tool_name in {"write_file", "append_file", "edit_file"}:
         candidate = arguments.get("path")
     elif tool_name == "staged_file_write" and arguments.get("action") == "begin":
         candidate = arguments.get("path")
@@ -2121,6 +2147,24 @@ class ControlledPresentationPolicy:
             "reason": research_input.get("fallback_reason"),
             "message": research_input.get("fallback_message"),
             "attempt_summary": research_input.get("attempt_summary", {}),
+            "presentation_handoff": {
+                "schema_version": 1,
+                "delivery_mode": "framework",
+                "verified_facts": [],
+                "gaps": [
+                    str(
+                        research_input.get("fallback_message")
+                        or research_input.get("fallback_reason")
+                        or "No validated public research facts are available."
+                    )
+                ],
+                "quality_summary": {
+                    "quality_ok": False,
+                    "actual_dimensions": None,
+                    "recommended_dimensions": None,
+                },
+                "context_files": [],
+            },
         }
         serialized = json.dumps(
             payload,

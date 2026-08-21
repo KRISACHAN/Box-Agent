@@ -1456,6 +1456,13 @@ def build_checkpoint_text(
         ),
         None,
     )
+    if research_report_path is None and research_fallback:
+        # ControlledPresentationPolicy persists this framework handoff while
+        # publishing the same checkpoint. Bind outline validation to it so a
+        # model cannot relabel failed public research as user-provided input.
+        research_report_path = (
+            artifact_root / "research" / "qa" / "research_status.json"
+        )
     research_report_argument = (
         f" --research-handoff {shlex.quote(str(research_report_path))}"
         if research_report_path is not None
