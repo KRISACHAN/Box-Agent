@@ -72,9 +72,10 @@ model to author permission booleans:
 - path-based writes require an exact `write_scope`;
 - Skills cannot expand the resolved tool set.
 
-Known read-only network tools include `web_search`, `vision_review`, and the
-managed Playwright navigation/inspection tools recognized by trusted server
-metadata. `generate_image` is an explicitly selected trusted network capability.
+Known read-only network tools include `web_search`, `web_extract`,
+`vision_review`, and the managed Playwright navigation/inspection tools
+recognized by trusted server metadata. `generate_image` is an explicitly
+selected trusted network capability.
 Interactive browser actions and arbitrary browser code remain external-side-
 effect capabilities and are denied.
 
