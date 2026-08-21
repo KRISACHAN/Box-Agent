@@ -47,6 +47,8 @@ EXCLUDED_SKILL_DIRS: frozenset[str] = frozenset(
         "skill-navigation-assistant-sl",
         "city-travel-skill-developer-1.2.0",
         "city-travel-planner",
+        "autohot-skill",
+        "film-tv-license-application-assistant",
     }
 )
 
