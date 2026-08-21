@@ -4,7 +4,38 @@ from pathlib import Path
 
 import pytest
 
-from test_workspace.run_acp_eval import build_command, choose_cases, main, run_name
+from test_workspace.run_acp_eval import (
+    DEFAULT_DATASET,
+    build_command,
+    build_parser,
+    choose_cases,
+    main,
+    run_name,
+)
+
+
+def test_default_dataset_is_committed_text_only_smoke_cases():
+    assert DEFAULT_DATASET == Path("test_workspace/inputs/smoke_test/dataset.jsonl")
+    dataset = Path(__file__).resolve().parent.parent / DEFAULT_DATASET
+    records = [
+        json.loads(line)
+        for line in dataset.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert len(records) == 3
+    assert all(
+        set(record) == {"id", "query", "input_files"} for record in records
+    )
+    assert all(
+        isinstance(record["query"], str) and record["query"].strip()
+        for record in records
+    )
+    assert all(record["input_files"] == [] for record in records)
+
+
+def test_default_case_count_runs_all_committed_smoke_cases():
+    assert build_parser().parse_args([]).count == 3
 
 
 def test_run_name_uses_required_format():

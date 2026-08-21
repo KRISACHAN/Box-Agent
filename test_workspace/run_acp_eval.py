@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_DATASET = Path("test_workspace/inputs/hermes_antilia_v2/dataset.jsonl")
+DEFAULT_DATASET = Path("test_workspace/inputs/smoke_test/dataset.jsonl")
 
 
 def load_case_ids(dataset: Path) -> list[str]:
@@ -91,7 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="仅通过 ACP 入口运行离线评测")
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--dataset", type=Path)
-    parser.add_argument("--count", type=int, default=5)
+    parser.add_argument("--count", type=int, default=3)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--title", default="smoke-test")
     parser.add_argument("--case-id", action="append", default=[])

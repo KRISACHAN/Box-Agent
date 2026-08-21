@@ -14,7 +14,7 @@ uv sync
 uv sync --project test_workspace/acp_eval
 ```
 
-Run the full JSONL dataset:
+Run a local full JSONL dataset (the dataset and its input files are not committed):
 
 ```bash
 uv run --project test_workspace/acp_eval acp-eval \

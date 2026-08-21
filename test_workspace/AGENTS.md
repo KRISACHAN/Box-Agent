@@ -13,16 +13,19 @@
 
 ## 标准测试方法
 
-随机抽取 5 条评测样本并运行：
+运行仓库自带的 3 条纯文本 smoke-test：
 
 ```bash
-uv run python test_workspace/run_acp_eval.py --count 5
+uv run python test_workspace/run_acp_eval.py --count 3
 ```
 
 运行完整评测集并指定输出目录标题：
 
 ```bash
-uv run python test_workspace/run_acp_eval.py --count 69 --title first
+uv run python test_workspace/run_acp_eval.py \
+  --dataset test_workspace/inputs/hermes_antilia_v2/dataset.jsonl \
+  --count 69 \
+  --title first
 ```
 
 指定随机种子以便复现：
@@ -39,7 +42,8 @@ uv run python test_workspace/run_acp_eval.py \
   --case-id Q58
 ```
 
-默认评测集为 `test_workspace/inputs/hermes_antilia_v2/dataset.jsonl`。
+默认评测集为 `test_workspace/inputs/smoke_test/dataset.jsonl`，包含 3 条纯文本、无附件的 Case。
+`test_workspace/inputs/hermes_antilia_v2/` 下的完整评测集及输入文件仅供本地使用，不得提交到 Git。
 
 ## 输出保存规范
 
