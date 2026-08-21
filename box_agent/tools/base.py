@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,7 @@ class ToolInvocationContext:
 class Tool:
     """Base class for all tools."""
 
+    aliases: tuple[str, ...] = ()
     parallel_safe: bool = False
     # Model-facing results above this size are persisted by the shared agent
     # loop. Tools that already self-bound output may opt out with ``math.inf``;
@@ -150,6 +152,44 @@ class Tool:
                 "parameters": self.parameters,
             },
         }
+
+
+def tool_call_name_variants(name: str) -> tuple[str, ...]:
+    """Return a declared tool name and its underscore-to-hyphen variant."""
+
+    hyphenated = name.replace("_", "-")
+    return (name,) if hyphenated == name else (name, hyphenated)
+
+
+def build_tool_name_index(tools: Iterable[Tool]) -> dict[str, Tool]:
+    """Index offered tools by canonical and compatible call names."""
+
+    offered_tools = list(tools)
+    index: dict[str, Tool] = {}
+
+    for tool in offered_tools:
+        index[tool.name] = tool
+
+    for tool in offered_tools:
+        seen_aliases: set[str] = set()
+        for alias in tool.aliases:
+            if not alias:
+                raise ValueError(f"Tool '{tool.name}' has an empty alias")
+            if alias == tool.name or alias in seen_aliases:
+                raise ValueError(f"Tool '{tool.name}' repeats alias '{alias}'")
+            seen_aliases.add(alias)
+
+        for declared_name in (tool.name, *tool.aliases):
+            for call_name in tool_call_name_variants(declared_name):
+                existing = index.get(call_name)
+                if existing is not None and existing is not tool:
+                    raise ValueError(
+                        f"Tool alias '{call_name}' for '{tool.name}' conflicts with "
+                        f"tool '{existing.name}'"
+                    )
+                index[call_name] = tool
+
+    return index
 
 
 class EventEmittingTool(Tool):

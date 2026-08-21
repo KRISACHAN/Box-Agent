@@ -184,6 +184,7 @@ from .tools.base import (
     Tool,
     ToolInvocationContext,
     ToolResult,
+    build_tool_name_index,
 )
 from .tools.argument_limits import RECOMMENDED_GENERATED_BODY_CHARS
 from .tools.browser_intent import BrowserToolIntentPolicy
@@ -3691,6 +3692,7 @@ async def run_agent_loop(
                     )
                 ]
         offered_tools_by_name = {tool.name: tool for tool in tool_list}
+        offered_tools_by_call_name = build_tool_name_index(tool_list)
         offered_tool_names = frozenset(offered_tools_by_name)
 
         def _tool_target_identity(tool_name: str) -> tuple[str | None, str | None]:
@@ -4685,15 +4687,28 @@ async def run_agent_loop(
             yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
             return
 
+        # Resolve backwards-compatible aliases only against tools offered in
+        # this model step. Keep the persisted assistant turn unchanged, while
+        # all execution policy sees the canonical tool name.
+        execution_tool_calls = []
+        for tool_call in response.tool_calls:
+            execution_call = tool_call.model_copy(deep=True)
+            resolved_tool = offered_tools_by_call_name.get(
+                execution_call.function.name
+            )
+            if resolved_tool is not None:
+                execution_call.function.name = resolved_tool.name
+            execution_tool_calls.append(execution_call)
+
         # ── Execute tool calls ──────────────────────────────
         # Loop-guard: bail out if the model emits the same all-empty-args
         # tool_call set as the previous turn. This is the signature of an
         # upstream protocol bug (e.g. relay truncation) where empty args
         # come back, error responses get fed back, and the model just
         # repeats — without this check the loop runs to max_steps.
-        all_empty = all(not tc.function.arguments for tc in response.tool_calls)
+        all_empty = all(not tc.function.arguments for tc in execution_tool_calls)
         if all_empty:
-            sig = tuple(sorted(tc.function.name for tc in response.tool_calls))
+            sig = tuple(sorted(tc.function.name for tc in execution_tool_calls))
             if sig == empty_args_signature:
                 empty_args_repeats += 1
             else:
@@ -4727,7 +4742,7 @@ async def run_agent_loop(
         duplicate_tool_calls = []
         first_tool_call_by_signature: dict[tuple[str, str], Any] = {}
         duplicate_source_by_id: dict[str, str] = {}
-        for tc in response.tool_calls:
+        for tc in execution_tool_calls:
             signature = (
                 tc.function.name,
                 json.dumps(

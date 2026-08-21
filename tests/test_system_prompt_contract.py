@@ -1,6 +1,28 @@
 from pathlib import Path
 
 
+def test_system_prompt_leaves_ambiguous_path_resolution_to_the_model():
+    prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
+
+    assert "相对路径由工具从当前 active project/artifact root 解析" in prompt
+    assert "不要假定始终相对 workspace" in prompt
+    assert "由模型自行推断并尝试范围明确的具体候选路径" in prompt
+    assert "不要通过递归搜索整个用户主目录来定位文件" in prompt
+    assert "合理候选均失败后再询问用户" in prompt
+    assert "使用绝对路径或相对 workspace 的路径" not in prompt
+    assert "例如 `~/Downloads/...`" not in prompt
+
+
+def test_system_prompt_distinguishes_missing_attachments_from_explicit_paths():
+    prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
+
+    assert "任务明确依赖用户尚未提供的附件" in prompt
+    assert "用户已经给出路径或位置时" in prompt
+    assert "先按当前路径与权限语义调用工具验证" in prompt
+    assert "不要仅因缺少附件元信息就把请求判定为缺失输入" in prompt
+    assert "所有文件相关请求一律视为缺失输入" not in prompt
+
+
 def test_system_prompt_keeps_todo_separate_from_factual_evidence():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 

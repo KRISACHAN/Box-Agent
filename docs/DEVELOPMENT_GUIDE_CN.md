@@ -147,6 +147,44 @@ box-agent goal complete --evidence "uv run pytest tests/ -q passed"
 3.  在类中实现所需的属性和方法。
 4.  在 Agent 初始化时注册你的新工具。
 
+#### 工具名称与别名
+
+`Tool.name` 是 Provider 工具 Schema 中唯一暴露的 canonical name。工具还可以
+声明仅用于执行兼容的别名：
+
+```python
+class MyTool(Tool):
+    aliases = ("legacy_my_tool",)
+```
+
+对于 canonical name 和每个显式别名，Box-Agent 都接受原始名称，以及把所有
+下划线替换为连字符的变体。例如上面的声明接受 `my_tool`、`my-tool`、
+`legacy_my_tool` 和 `legacy-my-tool`。转换是单向的：显式声明的连字符名称
+不会反向生成下划线形式。
+
+别名仅在当前模型步骤实际开放的工具集合中解析，并在权限检查、循环保护、
+重复调用去重和执行前转换回 canonical name。别名不会加入 Provider Schema。
+空别名、重复别名，以及 canonical/alias/自动生成名称之间的冲突，都会在构建
+当前工具索引时失败关闭。canonical name 与完整调用名称空间冲突的 deferred MCP
+工具会在激活前被拒绝；其他冲突会在构建工具索引时抛出 `ValueError`。
+
+内置工具接受下列来自 OpenClaw 和 Hermes 同等能力的兼容名称：
+
+| Box-Agent canonical name | 兼容名称 |
+| --- | --- |
+| `read_file` | `read`（OpenClaw） |
+| `write_file` | `write`（OpenClaw） |
+| `edit_file` | `edit`（OpenClaw） |
+| `bash` | `exec`（OpenClaw）、`terminal`（Hermes） |
+| `generate_image` | `image_generate`（OpenClaw、Hermes） |
+| `sub_agent` | `sessions_spawn`（OpenClaw）、`delegate_task`（Hermes） |
+| `request_user_input` | `clarify`（Hermes） |
+| `get_skill` | `skill_view`（Hermes） |
+
+这些映射只兼容工具名称。调用参数仍须符合模型实际收到的 Box-Agent canonical
+参数 Schema；别名不会转换其他 Agent 的参数格式。`read_file`、`write_file`、
+`search_files`、`execute_code`、`memory_search` 等已经同名的等价工具无需额外别名。
+
 #### 示例
 
 ```python

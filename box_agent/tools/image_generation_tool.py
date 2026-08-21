@@ -347,6 +347,7 @@ def _derive_edit_endpoint(endpoint: str) -> str:
 class GenerateImageTool(Tool):
     """Generate an image through a configured HTTP service and save it locally."""
 
+    aliases = ("image_generate",)
     parallel_safe = True  # independent HTTP calls, output_path per call — no shared state
 
     def __init__(

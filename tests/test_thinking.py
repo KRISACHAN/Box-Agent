@@ -13,11 +13,40 @@ from openai import AsyncOpenAI
 from box_agent.acp import BoxACPAgent
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
 from box_agent.llm.anthropic_client import AnthropicClient
-from box_agent.llm.openai_client import OpenAIClient
+from box_agent.llm.openai_client import OpenAIClient, _tool_parameter_types
 from box_agent.schema import Message, StreamEvent
+from box_agent.tools.base import Tool, ToolResult
 
 
 # ───────────────────────── Anthropic ─────────────────────────
+
+
+def test_sensenova_parameter_type_index_rejects_generated_alias_collision():
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read-file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"count": {"type": "integer"}},
+                },
+            },
+        },
+    ]
+
+    with pytest.raises(ValueError, match="read-file.*read_file"):
+        _tool_parameter_types(tools)
 
 @pytest.mark.asyncio
 async def test_anthropic_request_has_thinking_when_enabled(monkeypatch):
@@ -226,15 +255,23 @@ async def test_openai_stream_request_maps_thinking_to_provider_dialect(
 
 
 @pytest.mark.asyncio
-async def test_sensenova_stream_recovers_allowed_tool_call_from_thinking(monkeypatch):
+@pytest.mark.parametrize(
+    "returned_name",
+    ["staged_file_write", "staged-file-write"],
+    ids=["canonical", "generated-hyphenated-alias"],
+)
+async def test_sensenova_stream_recovers_allowed_tool_call_from_thinking(
+    returned_name,
+    monkeypatch,
+):
     client = OpenAIClient(
         api_key="k",
         api_base="https://token.sensenova.cn/v1",
         model="sn-sensenova-6-8-flash-lite",
     )
-    pseudo_call = """
+    pseudo_call = f"""
 <tool_call>
-<function=staged_file_write>
+<function={returned_name}>
 <parameter=action>
 append_text
 </parameter>
@@ -300,12 +337,200 @@ append_text
     assert finish.raw_finish_reason == "stop"
     assert finish.finish_reason == "tool_calls"
     assert finish.tool_calls is not None
-    assert finish.tool_calls[0].function.name == "staged_file_write"
+    assert finish.tool_calls[0].function.name == returned_name
     assert finish.tool_calls[0].function.arguments == {
         "action": "append_text",
         "chunk_index": 0,
         "content": "<html>recovered</html>",
     }
+
+
+@pytest.mark.asyncio
+async def test_sensenova_stream_recovers_declared_alias_from_tool_only_content(
+    monkeypatch,
+):
+    client = OpenAIClient(
+        api_key="k",
+        api_base="https://token.sensenova.cn/v1",
+        model="SenseNova-Flash-Lite-test",
+    )
+    captured: dict = {}
+    pseudo_call = """
+<tool_call>
+<function=legacy_alias_probe>
+<parameter=value>
+flash-lite-live
+</parameter>
+</function>
+</tool_call>
+"""
+    delta = SimpleNamespace(
+        content=pseudo_call,
+        tool_calls=None,
+        reasoning=None,
+        reasoning_content=None,
+        reasoning_details=None,
+    )
+    chunk = SimpleNamespace(
+        id="resp-alias-recovered",
+        usage=None,
+        choices=[SimpleNamespace(finish_reason="stop", delta=delta)],
+    )
+
+    async def response_stream():
+        yield chunk
+
+    async def fake_create(**params):
+        captured.update(params)
+        return SimpleNamespace(
+            request_id="req-alias-recovered",
+            headers={},
+            parse=response_stream,
+        )
+
+    monkeypatch.setattr(
+        client.client.chat.completions.with_raw_response,
+        "create",
+        fake_create,
+    )
+
+    class AliasProbeTool(Tool):
+        aliases = ("legacy_alias_probe",)
+
+        @property
+        def name(self) -> str:
+            return "alias_probe"
+
+        @property
+        def description(self) -> str:
+            return "Probe alias recovery."
+
+        @property
+        def parameters(self) -> dict:
+            return {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+            }
+
+        async def execute(self, value: str) -> ToolResult:
+            return ToolResult(success=True, content=value)
+
+    events = [
+        event
+        async for event in client.generate_stream(
+            [Message(role="user", content="go")],
+            tools=[AliasProbeTool()],
+            thinking_enabled=True,
+        )
+    ]
+    finish = next(event for event in events if event.type == "finish")
+
+    offered_names = [tool["function"]["name"] for tool in captured["tools"]]
+    assert offered_names == ["alias_probe"]
+    assert [event for event in events if event.type == "text"] == []
+    assert finish.raw_finish_reason == "stop"
+    assert finish.finish_reason == "tool_calls"
+    assert finish.tool_calls is not None
+    assert finish.tool_calls[0].function.name == "legacy_alias_probe"
+    assert finish.tool_calls[0].function.arguments == {
+        "value": "flash-lite-live"
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("aliases", "prefix"),
+    [
+        ((), ""),
+        (("legacy_alias_probe",), "This is explanatory text, not a tool call.\n"),
+    ],
+    ids=["undeclared-alias", "mixed-visible-text"],
+)
+async def test_sensenova_stream_keeps_unsafe_pseudo_calls_as_visible_text(
+    aliases,
+    prefix,
+    monkeypatch,
+):
+    client = OpenAIClient(
+        api_key="k",
+        api_base="https://token.sensenova.cn/v1",
+        model="SenseNova-Flash-Lite-test",
+    )
+    pseudo_call = (
+        f"{prefix}<tool_call>\n"
+        "<function=legacy_alias_probe>\n"
+        "<parameter=value>flash-lite-live</parameter>\n"
+        "</function>\n"
+        "</tool_call>"
+    )
+    delta = SimpleNamespace(
+        content=pseudo_call,
+        tool_calls=None,
+        reasoning=None,
+        reasoning_content=None,
+        reasoning_details=None,
+    )
+    chunk = SimpleNamespace(
+        id="resp-unsafe-pseudo-call",
+        usage=None,
+        choices=[SimpleNamespace(finish_reason="stop", delta=delta)],
+    )
+
+    async def response_stream():
+        yield chunk
+
+    async def fake_create(**_params):
+        return SimpleNamespace(
+            request_id="req-unsafe-pseudo-call",
+            headers={},
+            parse=response_stream,
+        )
+
+    monkeypatch.setattr(
+        client.client.chat.completions.with_raw_response,
+        "create",
+        fake_create,
+    )
+
+    class AliasProbeTool(Tool):
+        def __init__(self) -> None:
+            self.aliases = aliases
+
+        @property
+        def name(self) -> str:
+            return "alias_probe"
+
+        @property
+        def description(self) -> str:
+            return "Probe alias recovery."
+
+        @property
+        def parameters(self) -> dict:
+            return {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+            }
+
+        async def execute(self, value: str) -> ToolResult:
+            return ToolResult(success=True, content=value)
+
+    events = [
+        event
+        async for event in client.generate_stream(
+            [Message(role="user", content="go")],
+            tools=[AliasProbeTool()],
+            thinking_enabled=True,
+        )
+    ]
+    finish = next(event for event in events if event.type == "finish")
+
+    streamed_text = "".join(
+        event.delta or "" for event in events if event.type == "text"
+    )
+    assert streamed_text == pseudo_call
+    assert finish.finish_reason == "stop"
+    assert finish.tool_calls is None
 
 
 @pytest.mark.asyncio

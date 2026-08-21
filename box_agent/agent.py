@@ -47,7 +47,7 @@ from .logger import AgentLogger
 from .loop_guards import CompletionGate
 from .runtime import run_agent_loop
 from .schema import Message
-from .tools.base import Tool, ToolResult
+from .tools.base import Tool, ToolResult, build_tool_name_index
 from .tools.mcp_tool_catalog import get_mcp_tool_catalog
 from .tools.mcp_tool_search import (
     ActivatedMCPTool,
@@ -523,7 +523,9 @@ class Agent:
             self.tools["tool_search"] = ToolSearchTool(
                 catalog,
                 self.activated_mcp_tools,
-                protected_names_provider=lambda: frozenset(self.tools),
+                protected_names_provider=lambda: frozenset(
+                    build_tool_name_index(self.tools.values())
+                ),
             )
         self.tool_result_storage = ToolResultStorage(
             Path.home() / ".box-agent" / "sessions"
@@ -547,8 +549,9 @@ class Agent:
             workspace_info = (
                 f"\n\n## Current Workspace\n"
                 f"You are currently working in: `{self.workspace_dir.absolute()}`\n"
-                "This directory is the session workspace and filesystem safety "
-                "boundary. Relative tool paths resolve from each tool's active "
+                "This directory is the session workspace and default working root; "
+                "it does not by itself define every path the runtime may allow. "
+                "Relative tool paths resolve from each tool's active "
                 "project/artifact root; in output mode, prefer the artifact-relative "
                 "paths named by the active Skill or checkpoint instead of deriving "
                 "absolute paths from this workspace."

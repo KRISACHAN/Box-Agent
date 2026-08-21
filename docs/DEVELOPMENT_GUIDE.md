@@ -163,6 +163,50 @@ callers should use `invoke()` so they do not bypass argument validation.
 Malformed parameter schemas fail closed with `INVALID_TOOL_SCHEMA`; schema and
 argument values are omitted from that diagnostic.
 
+#### Tool Names and Aliases
+
+`Tool.name` is the canonical name serialized in the provider-facing tool
+schema. A tool may additionally declare execution-only compatibility names:
+
+```python
+class MyTool(Tool):
+    aliases = ("legacy_my_tool",)
+```
+
+For the canonical name and every declared alias, Box-Agent accepts the exact
+name and a generated variant with every underscore replaced by a hyphen. For
+example, the declaration above accepts `my_tool`, `my-tool`,
+`legacy_my_tool`, and `legacy-my-tool`. This conversion is one-way: a declared
+hyphenated name does not generate an underscore variant.
+
+Aliases are resolved only against the tools offered in the current model step
+and are converted back to the canonical name before permission checks, loop
+guards, deduplication, and execution. Aliases are not added to the provider
+schema. Empty, repeated, or conflicting canonical/alias/generated names fail
+closed. Deferred MCP tools whose canonical names conflict with this complete
+call-name namespace are rejected before activation; other conflicts raise
+`ValueError` when the offered tool index is built.
+
+Built-in tools accept these compatibility names from equivalent OpenClaw and
+Hermes capabilities:
+
+| Canonical Box-Agent name | Compatibility names |
+| --- | --- |
+| `read_file` | `read` (OpenClaw) |
+| `write_file` | `write` (OpenClaw) |
+| `edit_file` | `edit` (OpenClaw) |
+| `bash` | `exec` (OpenClaw), `terminal` (Hermes) |
+| `generate_image` | `image_generate` (OpenClaw and Hermes) |
+| `sub_agent` | `sessions_spawn` (OpenClaw), `delegate_task` (Hermes) |
+| `request_user_input` | `clarify` (Hermes) |
+| `get_skill` | `skill_view` (Hermes) |
+
+These are name-only compatibility mappings. Calls still use the canonical
+Box-Agent parameter schema advertised to the model; aliases do not translate
+another agent's argument format. Equivalent tools already named `read_file`,
+`write_file`, `search_files`, `execute_code`, or `memory_search` need no
+additional alias.
+
 #### Example
 
 ```python

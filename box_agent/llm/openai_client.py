@@ -18,6 +18,7 @@ from ..tools.argument_limits import (
     TOOL_ARGUMENT_ACTIVITY_BUCKET_CHARS,
     streamed_argument_limit,
 )
+from ..tools.base import tool_call_name_variants
 from .base import LLMClientBase
 from .error_messages import is_retryable_llm_error
 from .debug_logging import (
@@ -80,7 +81,9 @@ def _apply_thinking_params(
 
 def _tool_parameter_types(
     openai_tools: list[dict[str, Any]] | None,
+    source_tools: list[Any] | None = None,
 ) -> dict[str, dict[str, str]]:
+    canonical_names = _canonical_tool_names(openai_tools, source_tools)
     parameter_types: dict[str, dict[str, str]] = {}
     for tool in openai_tools or []:
         function = tool.get("function")
@@ -93,12 +96,88 @@ def _tool_parameter_types(
         properties = parameters.get("properties")
         if not isinstance(properties, dict):
             properties = {}
-        parameter_types[name] = {
+        types = {
             key: value.get("type", "string")
             for key, value in properties.items()
             if isinstance(key, str) and isinstance(value, dict)
         }
+        for call_name in tool_call_name_variants(name):
+            if canonical_names.get(call_name) == name:
+                parameter_types[call_name] = types
+
+    # Aliases are execution-only compatibility names: accept them when
+    # recovering SenseNova pseudo tool calls, but never add them to the
+    # provider-facing schema above.
+    for tool in source_tools or []:
+        if isinstance(tool, dict):
+            continue
+        canonical_name = getattr(tool, "name", None)
+        canonical_types = parameter_types.get(canonical_name)
+        if canonical_types is None:
+            continue
+        for alias in getattr(tool, "aliases", ()):
+            if isinstance(alias, str) and alias:
+                for call_name in tool_call_name_variants(alias):
+                    if canonical_names.get(call_name) == canonical_name:
+                        parameter_types[call_name] = canonical_types
     return parameter_types
+
+
+def _canonical_tool_names(
+    openai_tools: list[dict[str, Any]] | None,
+    source_tools: list[Any] | None,
+) -> dict[str, str]:
+    """Map declared aliases to canonical names for provider-side limits."""
+
+    names: dict[str, str] = {}
+    declared_schema_names: set[str] = set()
+
+    def register(call_name: str, canonical_name: str) -> None:
+        existing = names.get(call_name)
+        if existing is not None and existing != canonical_name:
+            raise ValueError(
+                f"Tool call name '{call_name}' for '{canonical_name}' conflicts "
+                f"with tool '{existing}'"
+            )
+        names[call_name] = canonical_name
+
+    for tool in openai_tools or []:
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        canonical_name = function.get("name")
+        if not isinstance(canonical_name, str) or not canonical_name:
+            continue
+        if canonical_name in declared_schema_names:
+            raise ValueError(f"Duplicate tool schema name '{canonical_name}'")
+        declared_schema_names.add(canonical_name)
+        for call_name in tool_call_name_variants(canonical_name):
+            register(call_name, canonical_name)
+
+    for tool in source_tools or []:
+        if isinstance(tool, dict):
+            continue
+        canonical_name = getattr(tool, "name", None)
+        if not isinstance(canonical_name, str) or not canonical_name:
+            continue
+        for declared_name in (canonical_name, *getattr(tool, "aliases", ())):
+            if isinstance(declared_name, str) and declared_name:
+                for call_name in tool_call_name_variants(declared_name):
+                    register(call_name, canonical_name)
+    return names
+
+
+def _is_sensenova_tool_only_content(content: str) -> bool:
+    """Return whether visible content consists only of pseudo tool calls."""
+
+    cursor = 0
+    found = False
+    for match in _SENSENOVA_PSEUDO_TOOL_CALL_RE.finditer(content):
+        if content[cursor : match.start()].strip():
+            return False
+        found = True
+        cursor = match.end()
+    return found and not content[cursor:].strip()
 
 
 def _coerce_pseudo_parameter(raw: str, expected_type: str) -> Any:
@@ -124,17 +203,19 @@ def _coerce_pseudo_parameter(raw: str, expected_type: str) -> Any:
     return value
 
 
-def _recover_sensenova_tool_calls_from_thinking(
-    thinking: str,
+def _recover_sensenova_pseudo_tool_calls(
+    source: str,
     openai_tools: list[dict[str, Any]] | None,
+    source_tools: list[Any] | None = None,
 ) -> list[ToolCall]:
-    """Recover SenseNova's XML-like tool dialect when native tool_calls is empty."""
-    parameter_types = _tool_parameter_types(openai_tools)
+    """Recover SenseNova's XML-like dialect when native tool_calls is empty."""
+    parameter_types = _tool_parameter_types(openai_tools, source_tools)
+    canonical_names = _canonical_tool_names(openai_tools, source_tools)
     if not parameter_types:
         return []
 
     recovered: list[ToolCall] = []
-    for match in _SENSENOVA_PSEUDO_TOOL_CALL_RE.finditer(thinking):
+    for match in _SENSENOVA_PSEUDO_TOOL_CALL_RE.finditer(source):
         if len(recovered) >= _MAX_RECOVERED_SENSENOVA_TOOL_CALLS:
             break
         name, body = match.groups()
@@ -150,10 +231,10 @@ def _recover_sensenova_tool_calls_from_thinking(
                 parameter_types[name][parameter_name],
             )
         arguments_len = len(json.dumps(arguments, ensure_ascii=False))
-        limit = streamed_argument_limit(name)
+        limit = streamed_argument_limit(canonical_names.get(name, name))
         if limit is not None and arguments_len > limit:
             logger.warning(
-                "Ignored oversized SenseNova tool call recovered from thinking: "
+                "Ignored oversized recovered SenseNova pseudo tool call: "
                 "name=%s arguments_len=%d limit=%d",
                 name,
                 arguments_len,
@@ -635,21 +716,27 @@ class OpenAIClient(LLMClientBase):
                 )
 
         finish_reason = getattr(response.choices[0], "finish_reason", None) or "stop"
-        if (
-            not tool_calls
-            and not text_content.strip()
-            and thinking_content
-            and _is_sensenova_model(self.model)
-        ):
+        pseudo_tool_source = ""
+        pseudo_tool_source_is_text = False
+        if not tool_calls and _is_sensenova_model(self.model):
+            if not text_content.strip() and thinking_content:
+                pseudo_tool_source = thinking_content
+            elif _is_sensenova_tool_only_content(text_content):
+                pseudo_tool_source = text_content
+                pseudo_tool_source_is_text = True
+        if pseudo_tool_source:
             openai_tools = self._convert_tools(tools) if tools else None
-            tool_calls = _recover_sensenova_tool_calls_from_thinking(
-                thinking_content,
+            tool_calls = _recover_sensenova_pseudo_tool_calls(
+                pseudo_tool_source,
                 openai_tools,
+                tools,
             )
             if tool_calls:
                 finish_reason = "tool_calls"
+                if pseudo_tool_source_is_text:
+                    text_content = ""
                 logger.warning(
-                    "Recovered %d SenseNova tool call(s) from thinking output",
+                    "Recovered %d SenseNova pseudo tool call(s)",
                     len(tool_calls),
                 )
 
@@ -768,6 +855,10 @@ class OpenAIClient(LLMClientBase):
             thinking_enabled=thinking_enabled,
         )
 
+        should_buffer_sensenova_tool_markup = bool(
+            request_params["tools"] and _is_sensenova_model(self.model)
+        )
+
         auth_headers = self._auth_headers(
             self._request_headers(session_id, turn_id, title, call_kind)
         )
@@ -826,6 +917,8 @@ class OpenAIClient(LLMClientBase):
             oversized_info = []
             provider_response_id = None
             last_provider_activity_at: float | None = None
+            buffer_sensenova_tool_markup = should_buffer_sensenova_tool_markup
+            pending_sensenova_text = ""
 
             try:
                 response_stream = await _open_stream()
@@ -899,8 +992,25 @@ class OpenAIClient(LLMClientBase):
                     # Text content
                     if delta.content:
                         text_content += delta.content
-                        any_user_yield = True
-                        yield StreamEvent(type="text", delta=delta.content)
+                        if buffer_sensenova_tool_markup:
+                            pending_sensenova_text += delta.content
+                            stripped_pending = pending_sensenova_text.lstrip()
+                            could_be_tool_markup = (
+                                not stripped_pending
+                                or "<tool_call>".startswith(stripped_pending)
+                                or stripped_pending.startswith("<tool_call>")
+                            )
+                            if not could_be_tool_markup:
+                                buffer_sensenova_tool_markup = False
+                                any_user_yield = True
+                                yield StreamEvent(
+                                    type="text",
+                                    delta=pending_sensenova_text,
+                                )
+                                pending_sensenova_text = ""
+                        else:
+                            any_user_yield = True
+                            yield StreamEvent(type="text", delta=delta.content)
 
                     # Tool call deltas
                     if delta.tool_calls:
@@ -1073,23 +1183,32 @@ class OpenAIClient(LLMClientBase):
         # diagnostics distinguish "gateway clipped tool args" (length, set here)
         # from "gateway ended a text turn" (stop / end_turn / None from upstream).
         raw_finish_reason = finish_reason
-        if (
-            not truncated_tool
-            and not tool_calls
-            and not text_content.strip()
-            and thinking_content
-            and _is_sensenova_model(self.model)
-        ):
-            tool_calls = _recover_sensenova_tool_calls_from_thinking(
-                thinking_content,
+        pseudo_tool_source = ""
+        pseudo_tool_source_is_text = False
+        if not truncated_tool and not tool_calls and _is_sensenova_model(self.model):
+            if not text_content.strip() and thinking_content:
+                pseudo_tool_source = thinking_content
+            elif _is_sensenova_tool_only_content(text_content):
+                pseudo_tool_source = text_content
+                pseudo_tool_source_is_text = True
+        if pseudo_tool_source:
+            tool_calls = _recover_sensenova_pseudo_tool_calls(
+                pseudo_tool_source,
                 params.get("tools"),
+                tools,
             )
             if tool_calls:
                 finish_reason = "tool_calls"
+                if pseudo_tool_source_is_text:
+                    text_content = ""
+                    pending_sensenova_text = ""
                 logger.warning(
-                    "Recovered %d SenseNova tool call(s) from streamed thinking output",
+                    "Recovered %d SenseNova pseudo tool call(s) from stream",
                     len(tool_calls),
                 )
+        if pending_sensenova_text:
+            any_user_yield = True
+            yield StreamEvent(type="text", delta=pending_sensenova_text)
         stream_dropped_mid_tool = truncated_tool and raw_finish_reason is None
         if truncated_tool:
             finish_reason = "length"

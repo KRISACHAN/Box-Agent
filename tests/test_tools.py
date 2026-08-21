@@ -405,6 +405,225 @@ async def test_search_files_lists_and_searches_without_bash(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_search_files_not_found_suggests_existing_home_child_path(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    target = home / "Pictures" / "project-assets"
+    target.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    result = await SearchFilesTool(workspace_dir=str(workspace)).execute(
+        pattern="*",
+        target="files",
+        path="pictures/project-assets",
+    )
+
+    assert result.success is False
+    assert result.permission_request is None
+    assert result.raw_output == {
+        "code": "PATH_NOT_FOUND",
+        "path": "pictures/project-assets",
+        "path_candidates": [
+            {
+                "path": str(target),
+                "basis": "home_child_case_insensitive_match",
+                "exists": True,
+            }
+        ],
+    }
+    assert str(target) in result.error
+    assert "retry search_files with this absolute path" in result.error
+
+
+@pytest.mark.asyncio
+async def test_search_files_not_found_uses_active_root_tail_for_home_candidate(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    target = home / "Pictures" / "project-assets"
+    target.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    unresolved = workspace / "pictures" / "project-assets"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    result = await SearchFilesTool(workspace_dir=str(workspace)).execute(
+        pattern="*",
+        target="files",
+        path=str(unresolved),
+    )
+
+    assert result.success is False
+    assert result.raw_output["path_candidates"] == [
+        {
+            "path": str(target),
+            "basis": "home_child_case_insensitive_match",
+            "exists": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_files_not_found_does_not_guess_unrelated_home_child(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    (home / "Pictures" / "project-assets").mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    result = await SearchFilesTool(workspace_dir=str(workspace)).execute(
+        pattern="*",
+        target="files",
+        path="photos/project-assets",
+    )
+
+    assert result.success is False
+    assert result.raw_output == {
+        "code": "PATH_NOT_FOUND",
+        "path": "photos/project-assets",
+        "path_candidates": [],
+    }
+    assert "Pictures" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_search_files_path_candidate_does_not_bypass_permission_engine(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    target = home / "Pictures" / "project-assets"
+    target.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    engine = PermissionEngine(
+        CapabilityPolicy(
+            filesystem_scope="session_workspace",
+            session_workspace_root=str(workspace),
+        ),
+        workspace,
+    )
+    tool = SearchFilesTool(
+        workspace_dir=str(workspace),
+        permission_engine=engine,
+    )
+
+    unresolved = await tool.execute(
+        pattern="*",
+        target="files",
+        path="pictures/project-assets",
+    )
+    retried = await tool.execute(
+        pattern="*",
+        target="files",
+        path=str(target),
+    )
+
+    assert unresolved.success is False
+    assert unresolved.permission_request is None
+    assert unresolved.raw_output == {
+        "code": "PATH_NOT_FOUND",
+        "path": "pictures/project-assets",
+        "path_candidates": [],
+    }
+    assert str(target) not in unresolved.error
+    assert retried.success is False
+    assert retried.permission_request is not None
+    assert retried.permission_request["path"] == str(target)
+
+
+@pytest.mark.asyncio
+async def test_search_files_path_candidate_is_returned_when_home_is_authorized(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    target = home / "Pictures" / "project-assets"
+    target.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    engine = PermissionEngine(
+        CapabilityPolicy(
+            filesystem_scope="user_home",
+            session_workspace_root=str(workspace),
+        ),
+        workspace,
+    )
+
+    result = await SearchFilesTool(
+        workspace_dir=str(workspace),
+        permission_engine=engine,
+    ).execute(
+        pattern="*",
+        target="files",
+        path="pictures/project-assets",
+    )
+
+    assert result.success is False
+    assert result.permission_request is None
+    assert result.raw_output["path_candidates"] == [
+        {
+            "path": str(target),
+            "basis": "home_child_case_insensitive_match",
+            "exists": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_files_expands_tilde_path(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    target = home / "Downloads" / "design2000"
+    target.mkdir(parents=True)
+    (target / "brief.txt").write_text("content", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    result = await SearchFilesTool(workspace_dir=str(workspace)).execute(
+        pattern="*.txt",
+        target="files",
+        path="~/Downloads/design2000",
+    )
+
+    assert result.success is True
+    assert result.content == "brief.txt"
+
+
+@pytest.mark.asyncio
+async def test_search_files_blocks_recursive_search_from_user_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "Music").mkdir(parents=True)
+    (home / "Music" / "song.txt").write_text("content", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    result = await SearchFilesTool(workspace_dir=str(workspace)).execute(
+        pattern="*.txt",
+        target="files",
+        path="~",
+    )
+
+    assert result.success is False
+    assert result.error.startswith("BROAD_HOME_SEARCH_BLOCKED:")
+    assert "Choose a specific likely directory such as ~/Downloads or ~/Documents" in result.error
+    assert result.permission_request is None
+
+
+@pytest.mark.asyncio
 async def test_search_files_paginates_results(tmp_path):
     for index in range(5):
         (tmp_path / f"file-{index}.txt").write_text("value", encoding="utf-8")

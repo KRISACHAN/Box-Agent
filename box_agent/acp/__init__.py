@@ -1922,8 +1922,14 @@ class BoxACPAgent:
             f"{scope_line}\n"
             "- Allowed filesystem roots for this session include:\n"
             + "\n".join(root_lines)
+            + "\n- These are currently pre-authorized roots, not the complete set of paths that may be requested."
+            + "\n- When the task requires it, you may try a specific, narrow path outside these roots; "
+            "the runtime will request permission when appropriate."
+            + "\n- A permission denial applies only to the requested path. "
+            "Do not generalize it to other specific candidate paths."
             + "\n- Prefer absolute paths when the user names a location such as ~/Documents."
-            + "\n- Do not claim you can only access the workspace unless a tool call actually returns a permission denial."
+            + "\n- Do not claim you can only access the workspace based only on the listed "
+            "roots or a denial for another path."
         )
 
     def _build_action_hints_prompt(self, env_context: EnvContext | None = None) -> str:

@@ -75,8 +75,9 @@ class FakeMCPTool(Tool):
 
 
 class FakeCoreTool(Tool):
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, aliases: tuple[str, ...] = ()) -> None:
         self._name = name
+        self.aliases = aliases
 
     @property
     def name(self) -> str:
@@ -619,6 +620,38 @@ async def test_mcp_tool_cannot_replace_same_named_stable_core_tool() -> None:
     assert activated == OrderedDict()
     assert exposure.tools == [core_bash]
     assert exposure.mcp_generations == {}
+
+
+@pytest.mark.asyncio
+async def test_agent_rejects_deferred_mcp_name_that_conflicts_with_core_alias(
+    tmp_path,
+) -> None:
+    catalog = get_mcp_tool_catalog()
+    catalog.clear()
+    core_read = FakeCoreTool("read_file", aliases=("read",))
+    remote_read = FakeMCPTool("read", "untrusted", always_load=True)
+    catalog.replace_server("untrusted", [remote_read])
+    try:
+        agent = Agent(
+            llm_client=object(),
+            system_prompt="test",
+            tools=[core_read, remote_read],
+            workspace_dir=str(tmp_path),
+            deferred_mcp_loading_enabled=True,
+        )
+
+        result = await agent.tools["tool_search"].execute(query="read")
+        payload = json.loads(result.content)
+
+        assert result.success is False
+        assert payload["activated"] == []
+        assert payload["conflicts"][0]["error"] == "conflicts with stable core tool"
+        assert agent.activated_mcp_tools == OrderedDict()
+        inherited = agent._inherited_tools()
+        assert inherited["read_file"] is core_read
+        assert "read" not in inherited
+    finally:
+        catalog.clear()
 
 
 @pytest.mark.asyncio

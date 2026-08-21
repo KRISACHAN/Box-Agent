@@ -19,6 +19,7 @@ from ..events import ProgressEvent
 from ..model_history import is_model_history_placeholder
 from .base import EventEmittingTool, Tool, ToolResult
 from .argument_limits import MAX_GENERATED_BODY_CHARS
+from .file.path_candidates import home_relative_path_candidates
 from .pptx_safety import detect_pptx_self_check_bypass
 from .safety import backup_file, validate_path_in_workspace
 
@@ -76,7 +77,7 @@ def _resolve_from_active_root(
     relative_root_dir: Path,
 ) -> Path:
     """Resolve canonical artifact paths and legacy workspace-relative paths."""
-    file_path = Path(path)
+    file_path = Path(path).expanduser()
     if file_path.is_absolute():
         return file_path
 
@@ -250,6 +251,11 @@ class SearchFilesTool(EventEmittingTool):
             if error:
                 return ToolResult(success=False, error=error)
         return None
+
+    def _can_inspect_home_path_candidates(self) -> bool:
+        """Return whether the current policy already permits reading Home."""
+
+        return self._permission_error(Path.home().resolve()) is None
 
     async def execute_with_event_context(
         self,
@@ -488,11 +494,52 @@ class SearchFilesTool(EventEmittingTool):
             offset, limit = _normalize_search_pagination(offset, limit)
             context = max(0, min(context if isinstance(context, int) else 0, 10))
             search_path = self._resolve_path(path)
+            user_home = Path.home().resolve()
+            if (
+                search_path.resolve() == user_home
+                and self.workspace_dir.resolve() != user_home
+            ):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "BROAD_HOME_SEARCH_BLOCKED: Recursive search from the entire user "
+                        "home is not allowed. Choose a specific likely directory such as "
+                        "~/Downloads or ~/Documents, or ask the user for the location."
+                    ),
+                )
             denied = self._permission_error(search_path)
             if denied:
                 return denied
             if not search_path.exists():
-                return ToolResult(success=False, error=f"Search path not found: {path}")
+                candidates = (
+                    home_relative_path_candidates(
+                        path,
+                        active_roots=(self.relative_root_dir, self.workspace_dir),
+                    )
+                    if self._can_inspect_home_path_candidates()
+                    else []
+                )
+                error = f"Search path not found: {path}"
+                if candidates:
+                    rendered = "\n".join(
+                        f"- `{candidate['path']}` ({candidate['basis']})"
+                        for candidate in candidates
+                    )
+                    error += (
+                        "\nStructurally matching existing path candidate(s):\n"
+                        f"{rendered}\n"
+                        "If a candidate matches the user's intent, retry search_files "
+                        "with this absolute path. Permissions will be checked on that call."
+                    )
+                return ToolResult(
+                    success=False,
+                    error=error,
+                    raw_output={
+                        "code": "PATH_NOT_FOUND",
+                        "path": path,
+                        "path_candidates": candidates,
+                    },
+                )
 
             if target == "content":
                 try:
@@ -647,6 +694,8 @@ class _CommittedTextWrite:
 
 class WriteTool(Tool):
     """Atomically write a UTF-8 file in one call or ordered chunks."""
+
+    aliases = ("write",)
 
     def __init__(
         self,
@@ -1107,6 +1156,8 @@ class AppendTool(Tool):
 
 class EditTool(Tool):
     """Edit file by replacing text."""
+
+    aliases = ("edit",)
 
     def __init__(
         self,

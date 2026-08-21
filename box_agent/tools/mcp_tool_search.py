@@ -7,7 +7,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .base import Tool, ToolResult
+from .base import Tool, ToolResult, build_tool_name_index
 from .mcp_tool_catalog import MCPToolCatalog
 
 TOOL_SEARCH_NAME = "tool_search"
@@ -347,7 +347,7 @@ class MCPToolExposureManager:
         for tool in candidates:
             if getattr(tool, "mcp_tool_id", None) is None:
                 visible[tool.name] = tool
-        protected_names = frozenset(visible)
+        protected_names = frozenset(build_tool_name_index(visible.values()))
 
         for entry in self._catalog.snapshot():
             if (
