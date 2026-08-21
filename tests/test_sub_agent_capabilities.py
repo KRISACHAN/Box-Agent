@@ -254,6 +254,20 @@ def test_derived_policy_allows_trusted_network_and_permission_gated_bash() -> No
     assert isinstance(bash_with_broker, ResolvedCapabilityBundle)
 
 
+def test_explicit_web_extract_derives_network_capability() -> None:
+    spec = _parse(required_tools=["web_extract"])
+    assert isinstance(spec, DelegationSpec)
+    assert spec.constraints.network is True
+
+    result = CapabilityResolver().resolve(
+        spec,
+        parent_tools={"web_extract": NamedTool("web_extract")},
+    )
+
+    assert isinstance(result, ResolvedCapabilityBundle)
+    assert result.resolved_tool_names == ("web_extract",)
+
+
 def test_unknown_mcp_tools_fail_closed_even_when_explicitly_selected() -> None:
     spec = _parse(required_tools=["mcp_custom_write"])
     assert isinstance(spec, DelegationSpec)

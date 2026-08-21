@@ -60,8 +60,9 @@
 - 路径写工具必须提供精确 `write_scope`；
 - Skill 不能扩展解析后的工具集。
 
-已知只读网络工具包括 `web_search`、`vision_review`，以及根据可信服务器元数据识别
-的受管 Playwright 导航/检查工具。`generate_image` 是必须显式选择的可信网络能力。
+已知只读网络工具包括 `web_search`、`web_extract`、`vision_review`，以及根据可信
+服务器元数据识别的受管 Playwright 导航/检查工具。`generate_image` 是必须显式
+选择的可信网络能力。
 浏览器交互和任意浏览器代码仍属于外部副作用能力，默认拒绝。
 
 ### 写入范围
