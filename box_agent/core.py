@@ -1174,6 +1174,21 @@ def _snapshot_workspace(workspace_dir: str, artifact_root_dir: str | Path | None
     return files
 
 
+def _snapshot_workspace_signatures(
+    workspace_dir: str,
+    artifact_root_dir: str | Path | None = None,
+) -> dict[Path, tuple[int, int]]:
+    """Snapshot artifact paths plus stat signatures for revision detection."""
+    signatures: dict[Path, tuple[int, int]] = {}
+    for file_path in _snapshot_workspace(workspace_dir, artifact_root_dir):
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        signatures[file_path] = (stat.st_size, stat.st_mtime_ns)
+    return signatures
+
+
 def _detect_new_files(
     tool_call_id: str,
     pre_files: set[Path],
@@ -1195,6 +1210,37 @@ def _detect_new_files(
             continue
         artifacts.append(_make_artifact(tool_call_id, fpath, ws))
 
+    return artifacts
+
+
+def _detect_changed_files(
+    tool_call_id: str,
+    pre_files: dict[Path, tuple[int, int]],
+    post_files: dict[Path, tuple[int, int]],
+    already_emitted: set[str],
+    workspace_dir: str,
+) -> list[ArtifactEvent]:
+    """Create ArtifactEvents for files that appeared or changed."""
+    changed_files = {
+        path
+        for path, signature in post_files.items()
+        if pre_files.get(path) != signature
+    }
+    if not changed_files:
+        return []
+
+    ws = Path(workspace_dir).resolve()
+    artifacts: list[ArtifactEvent] = []
+    for file_path in sorted(changed_files):
+        if (
+            file_path.name.startswith(".")
+            or file_path.name.startswith("~")
+            or file_path.suffix == ".tmp"
+        ):
+            continue
+        if str(file_path.resolve()) in already_emitted:
+            continue
+        artifacts.append(_make_artifact(tool_call_id, file_path, ws))
     return artifacts
 
 
@@ -1233,24 +1279,24 @@ def _detect_tool_artifacts(
     tool_name: str,
     content: str,
     raw_output: Any,
-    pre_files: set[Path],
-    post_files: set[Path],
+    pre_files: dict[Path, tuple[int, int]],
+    post_files: dict[Path, tuple[int, int]],
     workspace_dir: str,
     artifact_root_dir: str | Path | None,
 ) -> list[ArtifactEvent]:
     """Two-layer artifact detection for a single tool result (sequential path).
 
     Layer 1 (regex): scan ``content`` for ``[filename.ext]`` references that
-    resolve under the artifact root. Layer 2 (diff): catch files created by the
-    tool that weren't referenced in the output text, using a per-tool pre/post
-    workspace snapshot. The parallel branch can't take per-tool snapshots under
+    resolve under the artifact root. Layer 2 (diff): catch files created or
+    modified by the tool that weren't referenced in the output text, using a
+    per-tool pre/post signature snapshot. The parallel branch can't take per-tool snapshots under
     concurrency, so it composes :func:`_detect_regex_artifacts` per result with
     a single diff pass instead (see the parallel block in ``run_agent_loop``).
     """
     regex_artifacts, already = _detect_regex_artifacts(
         tool_call_id, tool_name, content, raw_output, workspace_dir, artifact_root_dir
     )
-    diff_artifacts = _detect_new_files(
+    diff_artifacts = _detect_changed_files(
         tool_call_id, pre_files, post_files, already, workspace_dir
     )
     return [*regex_artifacts, *diff_artifacts]
@@ -3117,11 +3163,29 @@ async def run_agent_loop(
         # tool output (especially search/discovery output) must not displace the
         # authoritative next action and let a long deck run drift sideways.
         # Only the injected event/log is deduplicated for an unchanged stage.
-        if workflow_checkpoint_message is not None:
+        checkpoint_marker = getattr(
+            workflow_policy,
+            "checkpoint_injection_id",
+            None,
+        )
+        if workflow_checkpoint_message is not None or checkpoint_marker:
             messages[:] = [
                 message
                 for message in messages
                 if message is not workflow_checkpoint_message
+                and not (
+                    isinstance(checkpoint_marker, str)
+                    and checkpoint_marker
+                    and isinstance(message.content, str)
+                    and checkpoint_marker in message.content
+                    and message.content.lstrip().startswith(
+                        (
+                            "The host runtime supplied the following internal state update",
+                            "The user sent the following message while the current task was already running",
+                            _WORKFLOW_CHECKPOINT_MARKER,
+                        )
+                    )
+                )
             ]
             workflow_checkpoint_message = None
 
@@ -3573,7 +3637,7 @@ async def run_agent_loop(
                 else:
                     workflow_checkpoint_message = Message(
                         role="user",
-                        content=format_injected_message(checkpoint_text),
+                        content=format_runtime_context_update(checkpoint_text),
                     )
                     messages.append(workflow_checkpoint_message)
                 if checkpoint_changed:
@@ -4740,6 +4804,7 @@ async def run_agent_loop(
         # no-progress circuit breaker. Set True in either execution branch.
         step_made_progress = False
         step_tool_success_by_id: dict[str, bool] = {}
+        completed_pause_tool: str | None = None
 
         def _reserve_tool_budget(tool_name: str) -> tuple[bool, str | None]:
             nonlocal tool_call_total
@@ -4926,7 +4991,13 @@ async def run_agent_loop(
 
             offered_error = _tool_offer_error(fn_name)
 
-            if offered_error is not None:
+            if completed_pause_tool is not None:
+                allowed_to_execute = False
+                internal_skip_error = (
+                    f"Skipped because pause tool '{completed_pause_tool}' already "
+                    "completed in this model step. Resume after the host returns the user response."
+                )
+            elif offered_error is not None:
                 allowed_to_execute = False
                 internal_skip_error = offered_error
             elif browser_intent_error is not None:
@@ -5040,9 +5111,12 @@ async def run_agent_loop(
             )
 
             # Snapshot workspace before tool execution for diff-based artifact detection
-            pre_files: set[Path] = set()
+            pre_files: dict[Path, tuple[int, int]] = {}
             if artifact_detection_enabled and allowed_to_execute and tool_user_visible and workspace_dir:
-                pre_files = _snapshot_workspace(workspace_dir, artifact_root_dir)
+                pre_files = _snapshot_workspace_signatures(
+                    workspace_dir,
+                    artifact_root_dir,
+                )
 
             if not allowed_to_execute:
                 result = ToolResult(success=False, content="", error=internal_skip_error or "")
@@ -5283,6 +5357,11 @@ async def run_agent_loop(
                     )
                 ):
                     succeeded_tools.add(fn_name)
+                    if (
+                        completion_gate is not None
+                        and fn_name in completion_gate.pause_tools
+                    ):
+                        completed_pause_tool = fn_name
 
             # Hook: tool result (interceptor — may modify content/error)
             tc_content = result.content
@@ -5438,7 +5517,10 @@ async def run_agent_loop(
 
             # Detect and yield structured artifacts (images, files) from tool output
             if artifact_detection_enabled and result.success and workspace_dir:
-                post_files = _snapshot_workspace(workspace_dir, artifact_root_dir)
+                post_files = _snapshot_workspace_signatures(
+                    workspace_dir,
+                    artifact_root_dir,
+                )
                 for artifact in _detect_tool_artifacts(
                     tc_id,
                     fn_name,
@@ -5464,9 +5546,12 @@ async def run_agent_loop(
             # Snapshot the workspace BEFORE any parallel tool runs. Per-tool
             # snapshots are impossible under concurrency, so the diff layer uses
             # one pre/post pair for the whole batch (see after the result loop).
-            par_pre_files: set[Path] = set()
+            par_pre_files: dict[Path, tuple[int, int]] = {}
             if artifact_detection_enabled and workspace_dir:
-                par_pre_files = _snapshot_workspace(workspace_dir, artifact_root_dir)
+                par_pre_files = _snapshot_workspace_signatures(
+                    workspace_dir,
+                    artifact_root_dir,
+                )
             # Emit all ToolCallStart events and apply hook interceptors
             par_args_map: dict[str, dict[str, Any]] = {}  # tc.id → (possibly modified) args
             par_budget_errors: dict[str, str] = {}
@@ -6042,7 +6127,7 @@ async def run_agent_loop(
                         **_permission_event_kwargs(result.permission_request),
                     )
 
-                # Artifact detection — layer 1 (regex) per result. The diff
+                # Artifact detection — layer 1 (regex) per result. The changed-file
                 # layer runs once after the loop (single batch snapshot).
                 if artifact_detection_enabled and result.success and tool_user_visible and workspace_dir:
                     regex_artifacts, regex_already = _detect_regex_artifacts(
@@ -6057,8 +6142,11 @@ async def run_agent_loop(
             # Concurrency rules out per-tool snapshots, so new files are
             # attributed to the first parallel call's id.
             if artifact_detection_enabled and workspace_dir and parallel_calls:
-                par_post_files = _snapshot_workspace(workspace_dir, artifact_root_dir)
-                for artifact in _detect_new_files(
+                par_post_files = _snapshot_workspace_signatures(
+                    workspace_dir,
+                    artifact_root_dir,
+                )
+                for artifact in _detect_changed_files(
                     parallel_calls[0].id,
                     par_pre_files,
                     par_post_files,
@@ -6189,6 +6277,67 @@ async def run_agent_loop(
                 injection_id=None,
                 user_visible=False,
             )
+
+        if completed_pause_tool is not None and workflow_policy is not None:
+            try:
+                pause_checkpoint = await asyncio.to_thread(
+                    save_workflow_checkpoint,
+                    workflow_policy,
+                    workspace_dir=workspace_dir,
+                    artifact_root_dir=artifact_root_dir,
+                )
+            except Exception as exc:
+                _log.warning(
+                    "workflow_checkpoint/save_failed workflow=%s pause_tool=%s error=%s",
+                    getattr(workflow_policy, "kind", "unknown"),
+                    completed_pause_tool,
+                    exc,
+                )
+                pause_checkpoint = None
+            if pause_checkpoint is None:
+                message = (
+                    "The task requested user input, but its durable workflow checkpoint "
+                    "could not be saved. The task was stopped without reporting completion."
+                )
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(message=message, is_fatal=True, exception=None)
+                    await hook_mgr.fire_done(
+                        stop_reason=StopReason.ERROR,
+                        final_content=message,
+                    )
+                yield ErrorEvent(message=message, is_fatal=True)
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=message)
+                return
+            pause_message = "Waiting for the user's decision to continue this task."
+            yield ContextCheckpointEvent(
+                checkpoint_id=pause_checkpoint.checkpoint_id,
+                workflow_kind=pause_checkpoint.workflow_kind,
+                adapter_id=pause_checkpoint.adapter_id,
+                schema_version=pause_checkpoint.schema_version,
+                workspace_identity=pause_checkpoint.workspace_identity,
+                path=pause_checkpoint.path,
+                stage=pause_checkpoint.stage,
+                artifact_count=pause_checkpoint.artifact_count,
+                artifact_set_sha256=pause_checkpoint.artifact_set_sha256,
+            )
+            elapsed = perf_counter() - step_start
+            total = perf_counter() - run_start
+            if hook_mgr.hooks:
+                await hook_mgr.fire_step_end(
+                    step=step + 1,
+                    elapsed_seconds=elapsed,
+                    total_elapsed_seconds=total,
+                )
+                await hook_mgr.fire_done(
+                    stop_reason=StopReason.CHECKPOINT_PAUSED,
+                    final_content=pause_message,
+                )
+            yield StepEnd(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
+            yield DoneEvent(
+                stop_reason=StopReason.CHECKPOINT_PAUSED,
+                final_content=pause_message,
+            )
+            return
 
         if plan_approval_gate_completed:
             elapsed = perf_counter() - step_start

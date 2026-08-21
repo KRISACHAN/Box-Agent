@@ -119,6 +119,13 @@ from box_agent.llm import LLMClient, SessionBoundLLM
 from box_agent.llm.model_routing import normalize_auto_routing, resolve_model_client
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
+from box_agent.task_context import TaskContext, normalize_task_id
+from box_agent.task_registry import (
+    ArtifactLineage,
+    begin_task,
+    finish_task,
+    register_artifact_revision,
+)
 from box_agent.workflow_owner_store import (
     clear_workflow_owner,
     load_workflow_owner,
@@ -219,6 +226,9 @@ def _artifact_envelope(
     art: ArtifactEvent,
     output_dir: str | None,
     session_id: str | None = None,
+    task_id: str | None = None,
+    turn_id: str | None = None,
+    lineage: ArtifactLineage | None = None,
 ) -> dict[str, Any]:
     """Serialize an ArtifactEvent to the wire envelope hosts dispatch on.
 
@@ -243,6 +253,19 @@ def _artifact_envelope(
     if session_id:
         payload["session_id"] = session_id
         payload["sessionId"] = session_id
+    if task_id:
+        payload["task_id"] = task_id
+        payload["taskId"] = task_id
+    if turn_id:
+        payload["turn_id"] = turn_id
+        payload["turnId"] = turn_id
+    if lineage is not None:
+        payload["artifact_id"] = lineage.artifact_id
+        payload["artifactId"] = lineage.artifact_id
+        payload["artifact_revision_id"] = lineage.artifact_revision_id
+        payload["artifactRevisionId"] = lineage.artifact_revision_id
+        payload["sha256"] = lineage.sha256
+        payload["manifest_path"] = lineage.manifest_path
     return payload
 
 
@@ -798,6 +821,8 @@ def _tool_result_raw_output(
     *,
     session_id: str | None = None,
     output_dir: str | None = None,
+    task_id: str | None = None,
+    turn_id: str | None = None,
 ) -> Any:
     if isinstance(raw_output, dict):
         payload = dict(raw_output)
@@ -807,6 +832,12 @@ def _tool_result_raw_output(
             if session_id:
                 payload.setdefault("session_id", session_id)
                 payload.setdefault("sessionId", session_id)
+        if task_id:
+            payload.setdefault("task_id", task_id)
+            payload.setdefault("taskId", task_id)
+        if turn_id:
+            payload.setdefault("turn_id", turn_id)
+            payload.setdefault("turnId", turn_id)
         if policy_decision is not None:
             payload["policy_decision"] = policy_decision
         return payload
@@ -844,6 +875,8 @@ class SessionState:
     skill_selector: Any | None = None  # SkillSelector — filters skill metadata per turn
     expert_context: ExpertSessionContext | None = None
     upstream_session_id: str = ""  # caller-owned session id from _meta.session_id
+    current_task_id: str = ""
+    task_registry_error: str = ""
     upstream_title: str = _DEFAULT_AGENT_TITLE
     force_plan_start: bool = False  # host-controlled deterministic plan skeleton toggle
     require_plan_approval: bool = False  # host requires approval after plan_write before execution
@@ -1366,6 +1399,7 @@ class BoxACPAgent:
         env_context: EnvContext | None = None
         expert_context: ExpertSessionContext | None = None
         upstream_session_id = ""
+        initial_task_id = ""
         upstream_title = _DEFAULT_AGENT_TITLE
         force_plan_start = False
         require_plan_approval = False
@@ -1405,6 +1439,9 @@ class BoxACPAgent:
             raw_upstream = meta.get("session_id")
             if isinstance(raw_upstream, str):
                 upstream_session_id = raw_upstream.strip()
+            initial_task_id = normalize_task_id(
+                meta.get("task_id") or meta.get("taskId")
+            ) or ""
             upstream_title = (
                 _meta_string(meta, "title", "session_title", "sessionTitle")
                 or _DEFAULT_AGENT_TITLE
@@ -1776,6 +1813,7 @@ class BoxACPAgent:
             skill_loader=session_skill_loader,
             expert_context=expert_context,
             upstream_session_id=upstream_session_id,
+            current_task_id=initial_task_id,
             upstream_title=upstream_title,
             force_plan_start=force_plan_start,
             require_plan_approval=require_plan_approval,
@@ -2121,7 +2159,12 @@ class BoxACPAgent:
         if not state:
             # Auto-create session if not found (compatibility with clients that skip newSession)
             log.warn("session/prompt", session_id=session_id, message="Session not found, auto-creating")
-            new_session = await self.newSession(NewSessionRequest(cwd=".", mcpServers=[]))
+            new_session = await self.newSession(
+                NewSessionRequest(
+                    cwd=self._config.agent.workspace_dir or ".",
+                    mcpServers=[],
+                )
+            )
             session_id = new_session.sessionId  # use the NEW session id from here on
             state = self._sessions.get(session_id)
             if not state:
@@ -2192,6 +2235,36 @@ class BoxACPAgent:
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")
         turn_id = provided_turn_id or f"{session_id}-turn-{state.turn_counter}"
+        provided_task_id = normalize_task_id(
+            prompt_meta.get("task_id") or prompt_meta.get("taskId")
+        )
+        task_id = (
+            provided_task_id
+            or state.current_task_id
+            or state.upstream_session_id
+            or turn_id
+        )
+        state.current_task_id = task_id
+        task_context = TaskContext(
+            session_id=state.upstream_session_id or session_id,
+            task_id=task_id,
+            turn_id=turn_id,
+        )
+        state.task_registry_error = ""
+        try:
+            begin_task(
+                state.agent.workspace_dir,
+                task_context,
+                artifact_root_dir=state.output_dir,
+            )
+        except Exception as exc:
+            state.task_registry_error = str(exc)
+            log.warn(
+                "task_registry/begin_failed",
+                session_id=session_id,
+                task_id=task_id,
+                error=str(exc),
+            )
         provided_title = _meta_string(
             prompt_meta,
             "title",
@@ -2210,6 +2283,7 @@ class BoxACPAgent:
                     "content": user_text,
                     "prompt": params.prompt,
                     "title": state.upstream_title,
+                    "task_id": task_id,
                 },
             )
         if state.session_llm is not None:
@@ -2297,6 +2371,7 @@ class BoxACPAgent:
             session_id=session_id,
             message=user_text,
             upstream_session_id=state.upstream_session_id,
+            task_id=task_id,
             turn_id=turn_id,
             turn_id_source="host" if provided_turn_id else "fallback",
             title=state.upstream_title,
@@ -2502,8 +2577,32 @@ class BoxACPAgent:
                 if state.artifact_mode == "project"
                 else detected_completion_gate
             )
+        if (
+            fresh_completion_gate is not None
+            and completion_gate_has_workflow_lifecycle(fresh_completion_gate)
+        ):
+            fresh_completion_gate = replace(
+                fresh_completion_gate,
+                workflow_options={
+                    **fresh_completion_gate.workflow_options,
+                    "task_id": task_id,
+                    **(
+                        {"artifact_root_dir": state.output_dir}
+                        if state.output_dir
+                        else {}
+                    ),
+                },
+            )
+        pending_task_id = (
+            normalize_task_id(
+                state.pending_completion_gate.workflow_options.get("task_id")
+            )
+            if state.pending_completion_gate is not None
+            else None
+        )
         resume_pending_gate = (
             state.pending_completion_gate is not None
+            and (pending_task_id is None or pending_task_id == task_id)
             and should_resume_pending_completion_gate(
                 plan_detection_text,
                 waiting_for_user_input=state.waiting_for_user_input,
@@ -2519,8 +2618,13 @@ class BoxACPAgent:
             explicit_skill is None
             and workflow_owner_session_id
             and recover_from_workspace
+            and fresh_completion_gate is None
         ):
             owner = load_workflow_owner(session_id=workflow_owner_session_id)
+            if owner is not None:
+                owner_task_id = normalize_task_id(owner.workflow_options.get("task_id"))
+                if owner_task_id is not None and owner_task_id != task_id:
+                    owner = None
             if owner is not None:
                 owned_completion_gate = completion_gate_from_owner(
                     owner,
@@ -2540,6 +2644,7 @@ class BoxACPAgent:
                 state.artifact_mode == "project"
                 or resume_pending_gate
                 or owned_completion_gate is not None
+                or fresh_completion_gate is not None
                 or not recover_from_workspace
             )
             else recover_completion_gate(
@@ -2682,6 +2787,7 @@ class BoxACPAgent:
             stop_reason = await self._run_turn(
                 state,
                 session_id,
+                task_context=task_context,
                 turn_id=turn_id,
                 billing_session_id=billing_session_id,
                 force_plan_start=force_plan_start,
@@ -2723,6 +2829,7 @@ class BoxACPAgent:
                 stop_reason = await self._run_turn(
                     state,
                     session_id,
+                    task_context=task_context,
                     turn_id=turn_id,
                     billing_session_id=billing_session_id,
                     auto_approve_plan=auto_approve_plan,
@@ -2842,6 +2949,38 @@ class BoxACPAgent:
                     "completion_gate/complete",
                     session_id=session_id,
                 )
+        if state.task_registry_error:
+            delivery_status = "incomplete"
+            delivery_gaps.append(
+                "Box-Agent task/artifact registry could not persist canonical lineage"
+            )
+        execution_status = (
+            "paused"
+            if paused
+            else "error"
+            if stop_reason == StopReason.ERROR.value
+            else "completed"
+        )
+        try:
+            finish_task(
+                state.agent.workspace_dir,
+                task_context,
+                execution_status=execution_status,
+                delivery_status=delivery_status,
+                artifact_root_dir=state.output_dir,
+            )
+        except Exception as exc:
+            state.task_registry_error = str(exc)
+            delivery_status = "incomplete"
+            delivery_gaps.append(
+                "Box-Agent task/artifact registry could not persist terminal state"
+            )
+            log.warn(
+                "task_registry/finish_failed",
+                session_id=session_id,
+                task_id=task_id,
+                error=str(exc),
+            )
         delivery_incomplete = delivery_status in {"incomplete", "waiting_for_user"}
         turn_total_tokens = turn_meter.total_tokens if turn_meter else 0
         duration_ms = int((perf_counter() - prompt_start) * 1000)
@@ -2860,6 +2999,7 @@ class BoxACPAgent:
                         "calls": turn_meter.calls if turn_meter else 0,
                     },
                     "goal_autopilot_continuations": auto_continuations,
+                    "task_id": task_id,
                     "delivery_status": delivery_status,
                     "delivery_gap_count": len(delivery_gaps),
                 },
@@ -2923,6 +3063,8 @@ class BoxACPAgent:
                 "totalTokens": turn_total_tokens,
                 "sessionId": billing_session_id,
                 "session_id": billing_session_id,
+                "taskId": task_id,
+                "task_id": task_id,
                 "turnId": turn_id,
                 "turn_id": turn_id,
             }
@@ -3827,6 +3969,7 @@ class BoxACPAgent:
         state: SessionState,
         session_id: str,
         *,
+        task_context: TaskContext | None = None,
         turn_id: str = "",
         billing_session_id: str = "",
         force_plan_start: bool = False,
@@ -3838,6 +3981,13 @@ class BoxACPAgent:
         ui_language: str = "zh",
     ) -> str:
         """Consume the shared execution core and translate events to ACP updates."""
+        if task_context is None:
+            fallback_turn_id = turn_id or state.current_turn_id or session_id
+            task_context = TaskContext(
+                session_id=state.upstream_session_id or session_id,
+                task_id=state.current_task_id or fallback_turn_id,
+                turn_id=fallback_turn_id,
+            )
         agent = state.agent
         state.last_error = None
         state.last_error_code = None
@@ -4074,6 +4224,8 @@ class BoxACPAgent:
                 "sessionId": billing_session_id or state.upstream_session_id or session_id,
                 "session_id": billing_session_id or state.upstream_session_id or session_id,
                 "acpSessionId": session_id,
+                "taskId": task_context.task_id,
+                "task_id": task_context.task_id,
                 "turnId": turn_id,
                 "turn_id": turn_id,
                 "skills": list(used_skill_names),
@@ -4506,6 +4658,8 @@ class BoxACPAgent:
                             policy_decision,
                             session_id=state.upstream_session_id,
                             output_dir=state.output_dir,
+                            task_id=task_context.task_id,
+                            turn_id=task_context.turn_id,
                         )
                         await self._send(
                             session_id,
@@ -4530,10 +4684,30 @@ class BoxACPAgent:
                         # ACP SessionUpdate has no native "artifact" variant —
                         # we ride on tool_call_update.rawOutput, with a stable
                         # ``type: "artifact"`` discriminator the host dispatches on.
+                        lineage = None
+                        try:
+                            lineage = register_artifact_revision(
+                                state.agent.workspace_dir,
+                                task_context,
+                                art,
+                                artifact_root_dir=state.output_dir,
+                            )
+                        except Exception as exc:
+                            state.task_registry_error = str(exc)
+                            log.warn(
+                                "task_registry/artifact_failed",
+                                session_id=session_id,
+                                task_id=task_context.task_id,
+                                rel_path=art.rel_path,
+                                error=str(exc),
+                            )
                         artifact_meta = _artifact_envelope(
                             art,
                             state.output_dir,
                             session_id=state.upstream_session_id,
+                            task_id=task_context.task_id,
+                            turn_id=task_context.turn_id,
+                            lineage=lineage,
                         )
                         log.debug("artifact/payload", session_id=session_id, tool_call_id=art.tool_call_id, payload=artifact_meta)
                         try:
@@ -4714,10 +4888,30 @@ class BoxACPAgent:
                                 progress["success"] = ok
                             case ArtifactEvent() as art:
                                 progress["event"] = "artifact"
+                                lineage = None
+                                try:
+                                    lineage = register_artifact_revision(
+                                        state.agent.workspace_dir,
+                                        task_context,
+                                        art,
+                                        artifact_root_dir=state.output_dir,
+                                    )
+                                except Exception as exc:
+                                    state.task_registry_error = str(exc)
+                                    log.warn(
+                                        "task_registry/sub_agent_artifact_failed",
+                                        session_id=session_id,
+                                        task_id=task_context.task_id,
+                                        rel_path=art.rel_path,
+                                        error=str(exc),
+                                    )
                                 progress["artifact"] = _artifact_envelope(
                                     art,
                                     state.output_dir,
                                     session_id=state.upstream_session_id,
+                                    task_id=task_context.task_id,
+                                    turn_id=task_context.turn_id,
+                                    lineage=lineage,
                                 )
                             case ErrorEvent(message=msg):
                                 progress["event"] = "error"

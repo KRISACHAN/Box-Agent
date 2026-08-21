@@ -2073,6 +2073,7 @@ class ControlledPresentationPolicy:
         checkpoint_text = build_checkpoint_text(
             self.workspace_dir,
             self.research_mode,
+            artifact_root_dir=self.artifact_root_dir,
             image_generation_policy=self.image_generation_policy,
             research_fallback_allowed=fallback_allowed,
             research_fallback_reason=fallback_reason,

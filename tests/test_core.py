@@ -42,9 +42,11 @@ from box_agent.events import (
 from box_agent.workflow_policy import WorkflowCheckpointUpdate
 from box_agent.workflow_checkpoint_store import load_workflow_checkpoint
 from box_agent.workflows import EXTERNAL_SKILL_WORKFLOW_KIND, ExternalSkillRunPolicy
+from box_agent.workflows.controlled_presentation import ControlledPresentationPolicy
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, TokenUsage, ToolCall
 from box_agent.tools.base import EventEmittingTool, Tool, ToolResult
 from box_agent.tools.file_tools import AppendTool, EditTool, ReadTool, WriteTool
+from box_agent.tools.request_user_input_tool import RequestUserInputTool
 from box_agent.tools.staged_file_write_tool import StagedFileWriteTool
 from box_agent.tools.sub_agent_tool import SubAgentTool
 
@@ -127,7 +129,6 @@ class _RecoverablePresentationPolicy:
     def update_checkpoint(self, text: str) -> WorkflowCheckpointUpdate:
         return WorkflowCheckpointUpdate(text=text, changed=True)
 
-
 class CapturingStreamLLM(MockLLM):
     """Mock LLM that keeps a snapshot of each message list it receives."""
 
@@ -197,6 +198,58 @@ async def test_context_limit_keeps_error_for_unregistered_workflow(tmp_path) -> 
     assert not any(isinstance(event, ContextCheckpointEvent) for event in events)
     assert any(isinstance(event, ErrorEvent) for event in events)
     assert next(event for event in events if isinstance(event, DoneEvent)).stop_reason is StopReason.ERROR
+
+
+@pytest.mark.asyncio
+async def test_successful_pause_tool_saves_checkpoint_without_another_model_step(
+    tmp_path,
+) -> None:
+    (tmp_path / "output").mkdir()
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="ask-1",
+                        type="function",
+                        function=FunctionCall(
+                            name="request_user_input",
+                            arguments={
+                                "question": "请补充正式标题。",
+                                "missing_fields": ["正式标题"],
+                                "reason": "标题不能安全推断。",
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            )
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"request_user_input": RequestUserInputTool()},
+            max_steps=3,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                pause_tools=frozenset({"request_user_input"}),
+            ),
+            workspace_dir=str(tmp_path),
+            workflow_policy=ControlledPresentationPolicy(
+                workspace_dir=str(tmp_path),
+                artifact_root_dir=tmp_path / "output",
+            ),
+        )
+    )
+
+    assert llm._idx == 1
+    assert any(isinstance(event, ContextCheckpointEvent) for event in events)
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert done.stop_reason is StopReason.CHECKPOINT_PAUSED
 
 
 @pytest.mark.asyncio
@@ -5636,6 +5689,60 @@ async def test_run_agent_loop_emits_artifact_without_attribute_error(tmp_path):
 
     done = [e for e in events if isinstance(e, DoneEvent)]
     assert done and done[0].stop_reason == StopReason.END_TURN
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_emits_new_revision_artifact_after_edit(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    artifact_path = output / "report.html"
+    artifact_path.write_text("<body>before</body>", encoding="utf-8")
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="edit-report",
+                        type="function",
+                        function=FunctionCall(
+                            name="edit_file",
+                            arguments={
+                                "path": "report.html",
+                                "old_str": "<body>before</body>",
+                                "new_str": "<body>after revision</body>",
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            ),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={
+                "edit_file": EditTool(
+                    workspace_dir=str(tmp_path),
+                    relative_root_dir=str(output),
+                )
+            },
+            max_steps=3,
+            workspace_dir=str(tmp_path),
+            artifact_root_dir=output,
+        )
+    )
+
+    artifacts = [event for event in events if isinstance(event, ArtifactEvent)]
+    assert len(artifacts) == 1
+    assert artifacts[0].tool_call_id == "edit-report"
+    assert artifacts[0].rel_path == "output/report.html"
+    assert artifact_path.read_text(encoding="utf-8") == "<body>after revision</body>"
+    assert not any(isinstance(event, ErrorEvent) for event in events)
 
 
 @pytest.mark.asyncio

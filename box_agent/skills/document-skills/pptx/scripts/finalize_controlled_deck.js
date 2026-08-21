@@ -221,12 +221,17 @@ function runDeckSpecStage(deckPath, reportPath) {
     && outlineIssues.length > 0
     && (!report.designContract || report.designContract.ok !== false)
   );
-  if (!semanticOnly) fail("deck_spec", result, reportPath);
+  const allowOutlineBindingDraft =
+    process.env.BOX_AGENT_ALLOW_DEGRADED_OUTLINE_BINDING === "1";
+  if (!semanticOnly || !allowOutlineBindingDraft) {
+    fail("deck_spec", result, reportPath);
+  }
 
   const normalized = {
     ...report,
     ok: true,
     advisory: true,
+    delivery_policy: "allow_outline_binding_draft",
     degraded_reason: "outline_binding",
     issues: [],
     warnings: [

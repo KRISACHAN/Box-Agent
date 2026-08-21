@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Final
 from urllib.parse import urlsplit
 
-from ..artifacts import OUTPUT_SUBDIR
+from ..artifacts import OUTPUT_SUBDIR, artifact_scan_root
 from ..loop_guards import CompletionGate
 from .presentation_contract import (
     CHECKPOINT_MARKER,
@@ -151,12 +151,14 @@ def _advisory_report_warning_count(report_path: Path) -> int:
 
 
 def _deck_spec_failure_is_degradable(report_path: Path) -> bool:
-    """Return whether a failed spec report contains only outline binding drift."""
+    """Allow outline-binding degradation only for an explicit draft policy."""
     try:
         payload = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     if not isinstance(payload, dict):
+        return False
+    if payload.get("delivery_policy") != "allow_outline_binding_draft":
         return False
     structural_issues = payload.get("structuralIssues")
     outline_binding = payload.get("outlineBinding")
@@ -314,16 +316,24 @@ def _normalized_presentation_handoff(
     }
 
 
-def _presentation_research_artifacts(workspace_dir: str | Path) -> tuple[bool, tuple[Path, ...]]:
+def _presentation_research_artifacts(
+    workspace_dir: str | Path,
+    artifact_root_dir: str | Path | None = None,
+) -> tuple[bool, tuple[Path, ...]]:
     """Return whether a fresh research handoff may proceed to deck delivery."""
     workspace_root = Path(workspace_dir)
     # Presentation tools execute from the artifact root (``output/``), so the
     # canonical research handoff is ``output/research``.  Older sessions and
     # direct callers may still have written ``research`` beside ``output``;
     # retain that location as a read-only compatibility fallback.
+    canonical_artifact_root = artifact_scan_root(workspace_root, artifact_root_dir)
     research_roots = (
-        workspace_root / OUTPUT_SUBDIR / "research",
-        workspace_root / "research",
+        *((canonical_artifact_root / "research",) if canonical_artifact_root else ()),
+        *(
+            (workspace_root / OUTPUT_SUBDIR / "research", workspace_root / "research")
+            if artifact_root_dir is None
+            else ()
+        ),
     )
     research_root = next(
         (candidate for candidate in research_roots if candidate.is_dir()),
@@ -1330,6 +1340,7 @@ def build_checkpoint_text(
     workspace_dir: str | None,
     research_mode: str | None,
     *,
+    artifact_root_dir: str | Path | None = None,
     image_generation_policy: str | None = None,
     research_fallback_allowed: bool = False,
     research_fallback_reason: str | None = None,
@@ -1348,9 +1359,14 @@ def build_checkpoint_text(
     if not workspace_dir:
         return None
 
-    output_root = Path(workspace_dir) / OUTPUT_SUBDIR
+    output_root = artifact_scan_root(workspace_dir, artifact_root_dir)
+    if output_root is None:
+        return None
     research_required = research_mode == "deep"
-    research_ready, research_files = _presentation_research_artifacts(workspace_dir)
+    research_ready, research_files = _presentation_research_artifacts(
+        workspace_dir,
+        artifact_root_dir,
+    )
     research_handoff = _presentation_handoff(research_files) if research_ready else {}
     stale_revalidation = (
         _stale_research_revalidation(workspace_dir, research_files)
@@ -2336,6 +2352,11 @@ def completion_gate_progress_text(
     return build_checkpoint_text(
         workspace_dir,
         research_mode if isinstance(research_mode, str) else None,
+        artifact_root_dir=(
+            gate.workflow_options.get("artifact_root_dir")
+            if isinstance(gate.workflow_options.get("artifact_root_dir"), str)
+            else None
+        ),
         image_generation_policy=(
             image_generation_policy
             if isinstance(image_generation_policy, str)

@@ -9394,12 +9394,15 @@ def test_controlled_finalizer_delivers_degraded_html_for_outline_binding_drift(
     contract_path = tmp_path / "qa" / "deck_contract.json"
     contract_mtime_before = contract_path.stat().st_mtime_ns
     html_path = tmp_path / "index.html"
+    env = os.environ.copy()
+    env["BOX_AGENT_ALLOW_DEGRADED_OUTLINE_BINDING"] = "1"
 
     result = _run(
         "finalize_controlled_deck.js",
         str(deck_path),
         "--out",
         str(html_path),
+        env=env,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -9422,6 +9425,38 @@ def test_controlled_finalizer_delivers_degraded_html_for_outline_binding_drift(
     assert contract_report["outline_binding"]["ok"] is False
     assert contract_report["outline_binding"]["issues"]
     assert len(contract_report["deck_hash"]) == 64
+
+
+def test_controlled_finalizer_blocks_outline_binding_drift_by_default(
+    tmp_path: Path,
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0]["message"] = "必须保留的原始核心信息"
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"]["items"][0]["body"] = "不匹配的新内容"
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    result = _run(
+        "finalize_controlled_deck.js",
+        str(deck_path),
+        "--out",
+        str(tmp_path / "index.html"),
+    )
+
+    assert result.returncode != 0
+    assert "FINALIZE_STOP stage=deck_spec" in result.stderr
 
 
 def test_truth_validator_keeps_unapproved_illustrative_mode_blocking(

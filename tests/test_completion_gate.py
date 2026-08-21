@@ -3988,6 +3988,7 @@ def test_legacy_semantic_and_image_reports_can_resume_through_finalizer(
         json.dumps(
             {
                 "ok": False,
+                "delivery_policy": "allow_outline_binding_draft",
                 "issues": [outline_issue],
                 "outlineBinding": {"ok": False, "issues": [outline_issue]},
                 "designContract": {"ok": True},
@@ -4005,6 +4006,11 @@ def test_legacy_semantic_and_image_reports_can_resume_through_finalizer(
     assert _image_manifest_failure_is_degradable(image_report) is True
 
     payload = json.loads(spec_report.read_text(encoding="utf-8"))
+    payload.pop("delivery_policy")
+    spec_report.write_text(json.dumps(payload), encoding="utf-8")
+    assert _deck_spec_failure_is_degradable(spec_report) is False
+
+    payload["delivery_policy"] = "allow_outline_binding_draft"
     payload["issues"].append("slides.slide-01.layout_id: unknown layout")
     spec_report.write_text(json.dumps(payload), encoding="utf-8")
     assert _deck_spec_failure_is_degradable(spec_report) is False
@@ -4232,6 +4238,28 @@ def test_controlled_presentation_checkpoint_tracks_filesystem_stages(tmp_path):
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}complete" in checkpoint
     assert "qa_warnings=2" in checkpoint
     assert "pass-with-warnings" in checkpoint
+
+
+def test_controlled_presentation_checkpoint_ignores_other_task_artifacts(tmp_path):
+    legacy_output = tmp_path / "output"
+    legacy_output.mkdir()
+    (legacy_output / "outline.json").write_text("{}", encoding="utf-8")
+    (legacy_output / "deck.json").write_text("{}", encoding="utf-8")
+    (legacy_output / "2048.html").write_text("<html></html>", encoding="utf-8")
+    task_root = legacy_output / "tasks" / "task-iphone"
+    task_root.mkdir(parents=True)
+
+    checkpoint = build_checkpoint_text(
+        tmp_path,
+        "content_ready",
+        artifact_root_dir=task_root,
+    )
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
+    assert str(task_root / "outline.json") in checkpoint
+    assert str(legacy_output / "outline.json") not in checkpoint
+    assert "2048.html" not in checkpoint
 
 
 def test_controlled_checkpoint_does_not_reapply_older_patch_for_honest_placeholder(

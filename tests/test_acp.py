@@ -3059,9 +3059,9 @@ async def test_acp_resumes_controlled_deck_after_required_user_input(tmp_path):
     assert state.pending_completion_gate is not None
     assert state.waiting_for_user_input is True
     assert not (output_dir / "index.html").exists()
-    assert first.field_meta["deliveryStatus"] == "waiting_for_user"
+    assert first.field_meta["deliveryStatus"] == "paused"
     assert first.field_meta["recoverable"] is True
-    assert first.field_meta["deliveryGaps"]
+    assert first.field_meta["deliveryGaps"] == []
 
     second = await agent.prompt(
         SimpleNamespace(
@@ -5236,9 +5236,38 @@ async def test_acp_prompt_response_reports_turn_token_total(tmp_path):
         "totalTokens": 30,
         "sessionId": session.sessionId,
         "session_id": session.sessionId,
+        "taskId": "turn-response-1",
+        "task_id": "turn-response-1",
         "turnId": "turn-response-1",
         "turn_id": "turn-response-1",
     }
+
+
+@pytest.mark.asyncio
+async def test_acp_registry_failure_cannot_report_task_complete(tmp_path, monkeypatch):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_todo=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    def fail_finish(*args, **kwargs):
+        raise OSError("registry unavailable")
+
+    monkeypatch.setattr("box_agent.acp.finish_task", fail_finish)
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "hello"}])
+    )
+
+    assert response.field_meta["completed"] is False
+    assert response.field_meta["deliveryStatus"] == "incomplete"
+    assert response.field_meta["deliveryGaps"] == [
+        "Box-Agent task/artifact registry could not persist terminal state"
+    ]
 
 
 @pytest.mark.asyncio
