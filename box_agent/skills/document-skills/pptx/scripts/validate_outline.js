@@ -297,6 +297,18 @@ function validate(outline, opts) {
   const publicResearch = isPublicResearchOutline(outline);
   const verifiedResearch = opts.verifiedResearch;
 
+  if (
+    verifiedResearch
+    && verifiedResearch.deliveryMode === "framework"
+    && !publicResearch
+  ) {
+    issues.push(
+      "source_mode must remain public_authoritative_research when a presentation " +
+      "research fallback handoff is supplied; do not relabel framework fallback as " +
+      "user_provided"
+    );
+  }
+
   for (const field of ["deck_goal", "source_mode"]) {
     if (!text(outline[field])) issues.push(`Missing top-level field: ${field}`);
   }

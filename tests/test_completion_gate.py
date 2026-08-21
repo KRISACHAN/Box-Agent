@@ -1288,6 +1288,25 @@ def test_deep_research_checkpoint_falls_back_after_bounded_failed_searches(
     assert status["generation_continues"] is True
     assert status["reason"] == "research_sources_unavailable"
     assert status["attempt_summary"]["rounds"] == RESEARCH_ROUND_LIMIT
+    assert status["presentation_handoff"] == {
+        "schema_version": 1,
+        "delivery_mode": "framework",
+        "verified_facts": [],
+        "gaps": [
+            "Search or direct-read rounds returned only failures or empty results, "
+            "so no research report could be validated."
+        ],
+        "quality_summary": {
+            "quality_ok": False,
+            "actual_dimensions": None,
+            "recommended_dimensions": None,
+        },
+        "context_files": [],
+    }
+    assert (
+        f"--research-handoff {tmp_path / 'output' / 'research' / 'qa' / 'research_status.json'}"
+        in checkpoint
+    )
 
 
 def test_parallel_research_queries_count_as_one_round(tmp_path):
@@ -3541,6 +3560,35 @@ def test_controlled_research_writes_stay_under_artifact_root(tmp_path):
     assert f"actual_path='{escaped}'" in blocked
     assert "expected_path='research/...'" in blocked
     assert f"artifact_root='{output}'" in blocked
+
+
+def test_controlled_research_mkdir_stays_under_task_artifact_root(tmp_path):
+    task_root = tmp_path / "output" / "tasks" / "task-1"
+    task_root.mkdir(parents=True)
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=task_root,
+        research_mode="deep",
+        stage="research",
+    )
+
+    allowed = policy.tool_call_error(
+        "bash",
+        {"command": "pwd && mkdir -p research/qa"},
+        verified_evidence_urls=set(),
+    )
+    escaped = tmp_path / "output" / "research" / "qa"
+    blocked = policy.tool_call_error(
+        "bash",
+        {"command": f"mkdir -p {escaped}"},
+        verified_evidence_urls=set(),
+    )
+
+    assert allowed is None
+    assert blocked is not None
+    assert "CONTROLLED_PRESENTATION_RESEARCH_ARTIFACT_TARGET_REQUIRED" in blocked
+    assert f"actual_path='{escaped}'" in blocked
+    assert f"artifact_root='{task_root}'" in blocked
 
 
 def test_controlled_research_handoff_allows_only_its_staged_outline_transaction(
@@ -6469,7 +6517,7 @@ async def test_controlled_apply_patch_accepts_checkpoint_absolute_artifact_paths
     os.utime(patch_path, ns=(newer, newer))
     apply_command = (
         f"${{BOX_AGENT_NODE:-node}} {APPLY_PATCH_SCRIPT} "
-        f"{deck_path} {patch_path}"
+        f"{deck_path} {patch_path} 2>&1"
     )
     llm = MockLLM(
         [
@@ -6515,6 +6563,31 @@ async def test_controlled_apply_patch_accepts_checkpoint_absolute_artifact_paths
     )
     assert result.success is True
     assert bash_tool.calls == 1
+
+
+def test_controlled_apply_patch_allows_only_safe_trailing_stderr_merge(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=output,
+        stage="apply_patch",
+    )
+    base = f"node {APPLY_PATCH_SCRIPT} {output / 'deck.json'} {output / 'deck.patch.json'}"
+
+    assert policy.tool_call_error(
+        "bash",
+        {"command": f"{base} 2>&1"},
+        verified_evidence_urls=set(),
+    ) is None
+    rejected = policy.tool_call_error(
+        "bash",
+        {"command": f"{base} 2>&1 | tail -20"},
+        verified_evidence_urls=set(),
+    )
+
+    assert rejected is not None
+    assert "CONTROLLED_PRESENTATION_APPLY_PATCH_REQUIRED" in rejected
 
 
 def test_controlled_apply_patch_stops_repeated_policy_rejection(tmp_path):

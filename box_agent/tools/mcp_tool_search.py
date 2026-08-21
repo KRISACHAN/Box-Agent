@@ -11,6 +11,12 @@ from .base import Tool, ToolResult
 from .mcp_tool_catalog import MCPToolCatalog
 
 TOOL_SEARCH_NAME = "tool_search"
+_ACTIVATION_COMPANIONS: dict[str, tuple[str, ...]] = {
+    # Playwright navigation returns metadata before the page-body snapshot.
+    # Exposing one without the other creates a runtime state the model cannot
+    # complete once a workflow requires exact-page evidence.
+    "managed_browser_navigate": ("managed_browser_snapshot",),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +68,8 @@ class ToolSearchTool(Tool):
             "keywords; task-specific operands are tolerated but should be omitted "
             "when possible. Set top_k to however many matching tool "
             "schemas the task actually needs, including ten or more when appropriate. "
+            "A query hit may activate a protocol-required companion, such as the "
+            "snapshot paired with managed browser navigation, in addition to top_k. "
             "The response reports catalog_tool_count for the applied server scope, "
             "matched_count after query limits, and activated_count after conflict "
             "filtering; never infer the catalog total from top_k or matched_count. "
@@ -112,8 +120,9 @@ class ToolSearchTool(Tool):
                     "description": (
                         "Exact maximum number of query matches to return and activate; "
                         "ignored for tool_names. Choose any positive count required by "
-                        "the task; there is no small fixed cap. Unreturned catalog "
-                        "tools remain hidden."
+                        "the task; there is no small fixed cap. Protocol-required "
+                        "companions may be activated in addition to these query matches. "
+                        "Other unreturned catalog tools remain hidden."
                     ),
                 },
             },
@@ -160,6 +169,7 @@ class ToolSearchTool(Tool):
                 **search_input,
                 "catalog_tool_count": None,
                 "matched_count": 0,
+                "companion_count": 0,
                 "activated_count": 0,
                 "activated": [],
                 "conflicts": [],
@@ -179,6 +189,7 @@ class ToolSearchTool(Tool):
                 "state": "catalog_loading",
                 "catalog_tool_count": None,
                 "matched_count": 0,
+                "companion_count": 0,
                 "activated_count": 0,
                 "activated": [],
                 "conflicts": [],
@@ -212,6 +223,22 @@ class ToolSearchTool(Tool):
                 server_name=normalized_server_name,
                 top_k=top_k,
             )
+        query_matched_count = len(hits)
+        hit_ids = {entry.tool_id for entry in hits}
+        companion_entries = []
+        if not normalized_tool_names:
+            for entry in tuple(hits):
+                for companion_name in _ACTIVATION_COMPANIONS.get(entry.model_name, ()):
+                    companions, _ = self._catalog.lookup_exact(
+                        [companion_name],
+                        server_name=entry.server_name,
+                    )
+                    for companion in companions:
+                        if companion.tool_id in hit_ids:
+                            continue
+                        hit_ids.add(companion.tool_id)
+                        hits.append(companion)
+                        companion_entries.append(companion)
         activated_results = []
         conflicts = []
         protected_names = (
@@ -263,15 +290,17 @@ class ToolSearchTool(Tool):
             "success": not conflicts or bool(activated_results),
             **search_input,
             "catalog_tool_count": catalog_tool_count,
-            "matched_count": len(hits),
+            "matched_count": query_matched_count,
+            "companion_count": len(companion_entries),
             "activated_count": len(activated_results),
             "activated": activated_results,
             "conflicts": conflicts,
             "missing": missing,
             "notice": (
-                f"Activated exactly {len(activated_results)} returned tool(s) for this "
-                "session. Only these hits (plus explicit eager tools) are callable by "
-                "their real name on the next step; all other catalog tools remain hidden."
+                f"Activated {len(activated_results)} returned or required companion "
+                "tool(s) for this session. Only these hits, their protocol-required "
+                "companions, and explicit eager tools are callable by their real name "
+                "on the next step; all other catalog tools remain hidden."
                 if activated_results
                 else (
                     "Matching tools have conflicting model-facing names."
