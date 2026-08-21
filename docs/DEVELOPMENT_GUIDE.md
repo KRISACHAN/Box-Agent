@@ -183,7 +183,9 @@ Aliases are resolved only against the tools offered in the current model step
 and are converted back to the canonical name before permission checks, loop
 guards, deduplication, and execution. Aliases are not added to the provider
 schema. Empty, repeated, or conflicting canonical/alias/generated names fail
-closed with `ValueError` when the offered tool index is built.
+closed. Deferred MCP tools whose canonical names conflict with this complete
+call-name namespace are rejected before activation; other conflicts raise
+`ValueError` when the offered tool index is built.
 
 Built-in tools accept these compatibility names from equivalent OpenClaw and
 Hermes capabilities:

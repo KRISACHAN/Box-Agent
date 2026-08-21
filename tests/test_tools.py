@@ -530,10 +530,54 @@ async def test_search_files_path_candidate_does_not_bypass_permission_engine(
 
     assert unresolved.success is False
     assert unresolved.permission_request is None
-    assert unresolved.raw_output["path_candidates"][0]["path"] == str(target)
+    assert unresolved.raw_output == {
+        "code": "PATH_NOT_FOUND",
+        "path": "pictures/project-assets",
+        "path_candidates": [],
+    }
+    assert str(target) not in unresolved.error
     assert retried.success is False
     assert retried.permission_request is not None
     assert retried.permission_request["path"] == str(target)
+
+
+@pytest.mark.asyncio
+async def test_search_files_path_candidate_is_returned_when_home_is_authorized(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    target = home / "Pictures" / "project-assets"
+    target.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    engine = PermissionEngine(
+        CapabilityPolicy(
+            filesystem_scope="user_home",
+            session_workspace_root=str(workspace),
+        ),
+        workspace,
+    )
+
+    result = await SearchFilesTool(
+        workspace_dir=str(workspace),
+        permission_engine=engine,
+    ).execute(
+        pattern="*",
+        target="files",
+        path="pictures/project-assets",
+    )
+
+    assert result.success is False
+    assert result.permission_request is None
+    assert result.raw_output["path_candidates"] == [
+        {
+            "path": str(target),
+            "basis": "home_child_case_insensitive_match",
+            "exists": True,
+        }
+    ]
 
 
 @pytest.mark.asyncio

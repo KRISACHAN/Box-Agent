@@ -252,6 +252,11 @@ class SearchFilesTool(EventEmittingTool):
                 return ToolResult(success=False, error=error)
         return None
 
+    def _can_inspect_home_path_candidates(self) -> bool:
+        """Return whether the current policy already permits reading Home."""
+
+        return self._permission_error(Path.home().resolve()) is None
+
     async def execute_with_event_context(
         self,
         *,
@@ -506,9 +511,13 @@ class SearchFilesTool(EventEmittingTool):
             if denied:
                 return denied
             if not search_path.exists():
-                candidates = home_relative_path_candidates(
-                    path,
-                    active_roots=(self.relative_root_dir, self.workspace_dir),
+                candidates = (
+                    home_relative_path_candidates(
+                        path,
+                        active_roots=(self.relative_root_dir, self.workspace_dir),
+                    )
+                    if self._can_inspect_home_path_candidates()
+                    else []
                 )
                 error = f"Search path not found: {path}"
                 if candidates:

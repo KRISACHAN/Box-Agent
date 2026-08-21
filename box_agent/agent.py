@@ -47,7 +47,7 @@ from .logger import AgentLogger
 from .loop_guards import CompletionGate
 from .runtime import run_agent_loop
 from .schema import Message
-from .tools.base import Tool, ToolResult
+from .tools.base import Tool, ToolResult, build_tool_name_index
 from .tools.mcp_tool_catalog import get_mcp_tool_catalog
 from .tools.mcp_tool_search import (
     ActivatedMCPTool,
@@ -523,7 +523,9 @@ class Agent:
             self.tools["tool_search"] = ToolSearchTool(
                 catalog,
                 self.activated_mcp_tools,
-                protected_names_provider=lambda: frozenset(self.tools),
+                protected_names_provider=lambda: frozenset(
+                    build_tool_name_index(self.tools.values())
+                ),
             )
         self.tool_result_storage = ToolResultStorage(
             Path.home() / ".box-agent" / "sessions"

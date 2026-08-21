@@ -165,7 +165,8 @@ class MyTool(Tool):
 别名仅在当前模型步骤实际开放的工具集合中解析，并在权限检查、循环保护、
 重复调用去重和执行前转换回 canonical name。别名不会加入 Provider Schema。
 空别名、重复别名，以及 canonical/alias/自动生成名称之间的冲突，都会在构建
-当前工具索引时以 `ValueError` 失败关闭。
+当前工具索引时失败关闭。canonical name 与完整调用名称空间冲突的 deferred MCP
+工具会在激活前被拒绝；其他冲突会在构建工具索引时抛出 `ValueError`。
 
 内置工具接受下列来自 OpenClaw 和 Hermes 同等能力的兼容名称：
 

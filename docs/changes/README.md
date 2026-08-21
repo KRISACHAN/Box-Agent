@@ -83,7 +83,9 @@ Release, provider API, and ACP compatibility have their own sources under
   canonical Box-Agent names. Aliases select the same tool implementation and
   canonical parameter schema; they do not translate foreign argument formats.
   Empty, repeated, inherited-inapplicable, or conflicting names fail closed
-  when the offered-tool index is built.
+  when the offered-tool index is built. Deferred MCP activation reserves the
+  same canonical, alias, and generated call-name namespace so conflicts are
+  rejected before a later model step.
 - Proof anchors: `tests/test_tool_aliases.py`, the provider pseudo-tool-call
   tests in `tests/test_thinking.py`, and an ACP prompt regression that builds
   the complete offered-tool index. `JsonlQueryTool` explicitly does not inherit
@@ -104,11 +106,14 @@ Release, provider API, and ACP compatibility have their own sources under
   child. Relative paths and unresolved absolute paths beneath an active root
   use the same bounded structural rule; fuzzy aliases and recursive Home
   searches remain out of scope.
-- Security boundary: candidates are diagnostic only. The tool does not retry,
-  execute, or authorize them. The model must select and explicitly retry a
-  specific absolute path, after which the existing `PermissionEngine` remains
-  final authority. ACP-listed roots are pre-authorized roots rather than an
-  exhaustive declaration of every path that may be requested.
+- Security boundary: Home candidates are discovered only when the current
+  permission policy already allows reading Home; restricted sessions receive
+  an empty candidate list without Home enumeration or existence probes. The
+  tool does not retry, execute, or authorize candidates. The model must select
+  and explicitly retry a specific absolute path, after which the existing
+  `PermissionEngine` remains final authority. ACP-listed roots are
+  pre-authorized roots rather than an exhaustive declaration of every path
+  that may be requested.
 - Compatibility: successful searches and file-only result enumeration are
   unchanged. Missing-path failures gain structured diagnostic data and a
   retry hint. There is no configuration or data migration.
