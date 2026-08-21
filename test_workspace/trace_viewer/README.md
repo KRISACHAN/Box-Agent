@@ -22,8 +22,12 @@ The data root is always `<repo-root>/test_workspace/outputs/`. There is no alter
 
 - Evaluation directory list
 - Case list with search and stderr category counts
-- Case overview and final answer
+- Case overview with task input and final answer
 - Unified timeline
-- Independent Agent, ACP, process/stderr, and file pages
+- Independent Agent, ACP, process/stderr, diagnosis, and file pages
 
 Record pages start at the earliest event and paginate only between complete records.
+
+An optional case-level diagnosis is read from `cases/<case-id>/diagnosis.md`.
+The viewer makes no assumptions about its Markdown structure. If the file does
+not exist, the diagnosis page shows an empty state.

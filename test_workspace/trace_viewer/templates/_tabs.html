@@ -4,5 +4,6 @@
   <a class="{{ 'active' if active == 'agent' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/agent">Agent 轨迹</a>
   <a class="{{ 'active' if active == 'acp' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/acp">ACP 通信</a>
   <a class="{{ 'active' if active == 'process' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/process">进程与 stderr</a>
+  <a class="{{ 'active' if active == 'diagnosis' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/diagnosis">诊断结果</a>
   <a class="{{ 'active' if active == 'files' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/files">文件</a>
 </nav>

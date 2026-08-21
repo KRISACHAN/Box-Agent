@@ -142,6 +142,15 @@ class EvaluationRepository:
         )
         return result
 
+    def diagnosis_path(self, run_name: str, case_id: str) -> Path | None:
+        case_path = self.get_case(run_name, case_id)["case_path"]
+        path = case_path / "diagnosis.md"
+        return path if path.is_file() else None
+
+    def diagnosis_text(self, run_name: str, case_id: str) -> str | None:
+        path = self.diagnosis_path(run_name, case_id)
+        return self._text(path) if path else None
+
     @staticmethod
     def _text(path: Path) -> str:
         try:

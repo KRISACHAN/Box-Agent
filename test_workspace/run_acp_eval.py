@@ -1,0 +1,153 @@
+"""通过 ACP 入口运行标准离线评测。"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import secrets
+import subprocess
+from collections.abc import Sequence
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_DATASET = Path("test_workspace/inputs/hermes_antilia_v2/dataset.jsonl")
+
+
+def load_case_ids(dataset: Path) -> list[str]:
+    records: list[dict[str, Any]] = []
+    for line_number, line in enumerate(dataset.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if not isinstance(value, dict) or not isinstance(value.get("id"), str):
+            raise ValueError(f"评测集第 {line_number} 行缺少有效 id")
+        records.append(value)
+    case_ids = [record["id"] for record in records]
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("评测集包含重复 case id")
+    if not case_ids:
+        raise ValueError("评测集为空")
+    return case_ids
+
+
+def choose_cases(
+    available: Sequence[str],
+    count: int,
+    seed: int,
+    requested: Sequence[str],
+) -> list[str]:
+    if requested:
+        if len(requested) != len(set(requested)):
+            raise ValueError("--case-id 不能重复")
+        missing = [case_id for case_id in requested if case_id not in available]
+        if missing:
+            raise ValueError(f"评测集不存在 case: {', '.join(missing)}")
+        return list(requested)
+    if count < 1 or count > len(available):
+        raise ValueError(f"--count 必须在 1 到 {len(available)} 之间")
+    return random.Random(seed).sample(list(available), count)
+
+
+def run_name(now: datetime | None = None, title: str = "smoke-test") -> str:
+    if not title or title != title.strip() or title in {".", ".."} or "/" in title or "\\" in title:
+        raise ValueError("--title 必须是一个非空目录名称，且不能包含路径分隔符")
+    return f"{(now or datetime.now()).strftime('%y%m%d-%H%M')}-{title}"
+
+
+def build_command(
+    repo_root: Path,
+    dataset: Path,
+    output_dir: Path,
+    case_ids: Sequence[str],
+    timeout_seconds: float,
+    parallelism: int,
+) -> list[str]:
+    command = [
+        "uv",
+        "run",
+        "--project",
+        str(repo_root / "test_workspace/acp_eval"),
+        "acp-eval",
+        "--repo-root",
+        str(repo_root),
+        "--dataset",
+        str(dataset),
+        "--run-dir",
+        str(output_dir),
+        "--timeout-seconds",
+        str(timeout_seconds),
+        "--parallelism",
+        str(parallelism),
+    ]
+    for case_id in case_ids:
+        command.extend(("--case-id", case_id))
+    return command
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="仅通过 ACP 入口运行离线评测")
+    parser.add_argument("--repo-root", type=Path)
+    parser.add_argument("--dataset", type=Path)
+    parser.add_argument("--count", type=int, default=5)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--title", default="smoke-test")
+    parser.add_argument("--case-id", action="append", default=[])
+    parser.add_argument("--timeout-seconds", type=float, default=2700.0)
+    parser.add_argument("--parallelism", type=int)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    default_root = Path(__file__).resolve().parent.parent
+    repo_root = (args.repo_root or default_root).resolve()
+    dataset = (args.dataset or repo_root / DEFAULT_DATASET).resolve()
+    if not dataset.is_file():
+        raise FileNotFoundError(f"评测集不存在: {dataset}")
+    if args.timeout_seconds <= 0:
+        raise ValueError("--timeout-seconds 必须大于 0")
+
+    seed = args.seed if args.seed is not None else secrets.randbits(64)
+    available = load_case_ids(dataset)
+    selected = choose_cases(available, args.count, seed, args.case_id)
+    parallelism = args.parallelism or min(5, len(selected))
+    if parallelism < 1:
+        raise ValueError("--parallelism 必须大于 0")
+
+    output_dir = repo_root / "test_workspace/outputs" / run_name(title=args.title)
+    if output_dir.exists():
+        raise FileExistsError(f"输出目录已存在，请下一分钟重试: {output_dir}")
+    output_dir.mkdir(parents=True)
+    selection = {
+        "schema_version": "box-agent-acp-smoke-selection/v1",
+        "mode": "explicit" if args.case_id else "random",
+        "title": args.title,
+        "seed": seed,
+        "case_ids": selected,
+        "dataset": str(dataset.relative_to(repo_root)),
+    }
+    (output_dir / "selection.json").write_text(
+        json.dumps(selection, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    command = build_command(
+        repo_root,
+        dataset,
+        output_dir,
+        selected,
+        args.timeout_seconds,
+        parallelism,
+    )
+    print(f"输出目录: {output_dir}")
+    print(f"随机种子: {seed}")
+    print(f"样本: {', '.join(selected)}")
+    completed = subprocess.run(command, cwd=repo_root, check=False)
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

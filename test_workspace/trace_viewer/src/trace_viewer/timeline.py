@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\S+")
+TIMESTAMP_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?| \d{2}:\d{2}:\d{2}(?:,\d+)?)"
+)
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _record(source: str, index: int, payload: Any, timestamp: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -43,13 +46,17 @@ def read_jsonl(path: Path, source: str = "record") -> list[dict[str, Any]]:
     return records
 
 
-def read_stderr(path: Path) -> list[dict[str, Any]]:
+def read_stderr(path: Path, fallback_timestamp: str | None = None) -> list[dict[str, Any]]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
     records = []
+    current_timestamp = fallback_timestamp
     for index, line in enumerate(lines, 1):
+        line = ANSI_ESCAPE_RE.sub("", line)
+        if not line.strip():
+            continue
         folded = line.casefold()
         if "timeout" in folded:
             category = "timeout"
@@ -60,7 +67,9 @@ def read_stderr(path: Path) -> list[dict[str, Any]]:
         else:
             category = "log"
         match = TIMESTAMP_RE.search(line)
-        records.append(_record("stderr", index, line, match.group(0) if match else None, category=category))
+        if match:
+            current_timestamp = match.group(0)
+        records.append(_record("stderr", index, line, current_timestamp, category=category))
     return records
 
 
@@ -69,6 +78,13 @@ def _read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         return {"data_missing_or_invalid": str(error)}
+
+
+def _file_timestamp(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat()
+    except OSError:
+        return None
 
 
 def source_records(attempt_dir: Path, source: str) -> list[dict[str, Any]]:
@@ -80,14 +96,23 @@ def source_records(attempt_dir: Path, source: str) -> list[dict[str, Any]]:
             records.extend(read_jsonl(path, "agent"))
         return records
     if source == "process":
-        return read_jsonl(attempt_dir / "process.jsonl", "process") + read_stderr(attempt_dir / "stderr.log")
+        process_records = read_jsonl(attempt_dir / "process.jsonl", "process")
+        fallback = next((record["timestamp"] for record in process_records if record.get("timestamp")), None)
+        stderr_records = read_stderr(attempt_dir / "stderr.log", fallback)
+        return sorted(process_records + stderr_records, key=_sort_key)
     if source == "files":
         return [
-            _record("files", index, {"file": name, "content": _read_json(attempt_dir / name)})
+            _record(
+                "files",
+                index,
+                {"file": name, "content": _read_json(attempt_dir / name)},
+                _file_timestamp(attempt_dir / name),
+            )
             for index, name in enumerate(("files-before.json", "files-after.json", "artifacts.json"), 1)
         ]
     if source == "completeness":
-        return [_record("completeness", 1, _read_json(attempt_dir / "completeness.json"))]
+        path = attempt_dir / "completeness.json"
+        return [_record("completeness", 1, _read_json(path), _file_timestamp(path))]
     raise ValueError(source)
 
 

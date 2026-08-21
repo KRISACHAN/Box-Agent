@@ -1,0 +1,90 @@
+import json
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+from test_workspace.run_acp_eval import build_command, choose_cases, main, run_name
+
+
+def test_run_name_uses_required_format():
+    assert run_name(datetime(2026, 8, 21, 20, 8)) == "260821-2008-smoke-test"
+
+
+def test_run_name_uses_custom_title_as_directory_suffix():
+    assert run_name(datetime(2026, 8, 21, 20, 8), "first") == "260821-2008-first"
+
+
+@pytest.mark.parametrize("title", ["", ".", "..", "nested/title", r"nested\title"])
+def test_run_name_rejects_title_that_is_not_one_directory_segment(title):
+    with pytest.raises(ValueError, match="--title"):
+        run_name(datetime(2026, 8, 21, 20, 8), title)
+
+
+def test_random_selection_is_reproducible():
+    available = [f"Q{index}" for index in range(10)]
+    assert choose_cases(available, 5, 7, []) == choose_cases(available, 5, 7, [])
+    assert len(choose_cases(available, 5, 7, [])) == 5
+
+
+def test_command_uses_only_acp_eval(tmp_path: Path):
+    command = build_command(tmp_path, tmp_path / "dataset.jsonl", tmp_path / "out", ["Q1"], 30, 1)
+    assert "acp-eval" in command
+    assert "box_agent.acp.server" not in command
+    assert "box-agent" not in command
+
+
+def test_main_records_selection_and_invokes_acp(monkeypatch, tmp_path: Path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(
+        "".join(json.dumps({"id": f"Q{index}"}) + "\n" for index in range(8)),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(
+        "test_workspace.run_acp_eval.run_name",
+        lambda now=None, title="smoke-test": f"260821-2008-{title}",
+    )
+    monkeypatch.setattr(
+        "test_workspace.run_acp_eval.subprocess.run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or type("Result", (), {"returncode": 0})(),
+    )
+    assert main(["--repo-root", str(tmp_path), "--dataset", str(dataset), "--count", "5", "--seed", "7"]) == 0
+    selection = json.loads((tmp_path / "test_workspace/outputs/260821-2008-smoke-test/selection.json").read_text())
+    assert len(selection["case_ids"]) == 5
+    assert selection["seed"] == 7
+    assert "acp-eval" in calls[0][0]
+
+
+def test_main_uses_title_for_directory_and_records_it(monkeypatch, tmp_path: Path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text('{"id":"Q1"}\n', encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(
+        "test_workspace.run_acp_eval.run_name",
+        lambda now=None, title="smoke-test": f"260821-2008-{title}",
+    )
+    monkeypatch.setattr(
+        "test_workspace.run_acp_eval.subprocess.run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or type("Result", (), {"returncode": 0})(),
+    )
+
+    assert main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--dataset",
+            str(dataset),
+            "--count",
+            "1",
+            "--seed",
+            "7",
+            "--title",
+            "first",
+        ]
+    ) == 0
+
+    output = tmp_path / "test_workspace/outputs/260821-2008-first"
+    selection = json.loads((output / "selection.json").read_text())
+    assert selection["title"] == "first"
+    assert calls[0][0][calls[0][0].index("--run-dir") + 1] == str(output)

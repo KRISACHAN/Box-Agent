@@ -1,8 +1,19 @@
 {% for record in records %}
 <article class="record-card severity-{{ record.category|default('normal') }}">
-  <header><strong>{{ record.source }}</strong><span>#{{ record.index }}</span><time>{{ record.timestamp or "无时间戳" }}</time>{% if record.category %}<span class="badge">{{ record.category }}</span>{% endif %}</header>
+  <header class="record-header"><strong>{{ record.view.title }}</strong><span class="source-label">{{ record.source }} #{{ record.index }}</span>{% if record.category %}<span class="badge">{{ record.category }}</span>{% endif %}</header>
+  <div class="record-timing">
+    <time>{{ record.timestamp or "无时间戳" }}</time>
+    <span>距开始 <strong>{{ record.elapsed_start or "—" }}</strong></span>
+    <span>距上一个 Block <strong>{{ record.elapsed_previous or "—" }}</strong></span>
+  </div>
   {% if record.parse_error %}<p class="parse-error">解析错误：{{ record.parse_error }}</p>{% endif %}
-  <pre>{{ record.payload | tojson(indent=2) if record.payload is mapping or record.payload is sequence and record.payload is not string else record.payload }}</pre>
+  {% if record.view.fields %}<dl class="record-summary">
+    {% for field in record.view.fields %}<div><dt>{{ field.label }}</dt><dd><pre>{{ field.value }}</pre></dd></div>{% endfor %}
+  </dl>{% endif %}
+  <details class="raw-data">
+    <summary><img src="/static/chevron.svg" alt="">Raw Data</summary>
+    <pre>{{ record.view.raw }}</pre>
+  </details>
 </article>
 {% else %}<p class="empty">该来源没有记录。</p>{% endfor %}
 {% if next_page %}<a class="load-more" href="?page={{ next_page }}" hx-get="?page={{ next_page }}" hx-target="this" hx-swap="outerHTML">加载更多</a>{% endif %}
