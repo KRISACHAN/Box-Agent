@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ case.case_id }} · {{ run_name }}{% endblock %}
+{% block content %}
+<nav class="crumb"><a href="/">评测目录</a><span>/</span><a href="/runs/{{ run_name }}">{{ run_name }}</a><span>/</span><span>{{ case.case_id }}</span></nav>
+<section class="page-heading"><h1>{{ case.case_id }}</h1><p>{{ case.input.query or "无任务描述" }}</p></section>
+{% include "_tabs.html" %}
+<section class="metrics"><div><small>ACP</small><strong>{{ case.acp_status }}</strong></div><div><small>完整性</small><strong>{{ case.completeness_status }}</strong></div><div><small>耗时</small><strong>{{ case.duration if case.duration is not none else "—" }}s</strong></div><div><small>stderr</small><strong>{{ case.stderr_counts.error|default(0) }} / {{ case.stderr_counts.timeout|default(0) }} / {{ case.stderr_counts.warning|default(0) }}</strong></div></section>
+{% if case.completeness_status != "complete" %}<aside class="notice"><strong>采集不完整</strong><span>{{ case.completeness.issues|join(", ") }}</span></aside>{% endif %}
+<section class="panel"><h2>最终回答</h2><pre>{{ case.assistant or "无最终回答" }}</pre></section>
+{% endblock %}

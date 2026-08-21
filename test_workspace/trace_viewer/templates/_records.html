@@ -1,0 +1,8 @@
+{% for record in records %}
+<article class="record-card severity-{{ record.category|default('normal') }}">
+  <header><strong>{{ record.source }}</strong><span>#{{ record.index }}</span><time>{{ record.timestamp or "无时间戳" }}</time>{% if record.category %}<span class="badge">{{ record.category }}</span>{% endif %}</header>
+  {% if record.parse_error %}<p class="parse-error">解析错误：{{ record.parse_error }}</p>{% endif %}
+  <pre>{{ record.payload | tojson(indent=2) if record.payload is mapping or record.payload is sequence and record.payload is not string else record.payload }}</pre>
+</article>
+{% else %}<p class="empty">该来源没有记录。</p>{% endfor %}
+{% if next_page %}<a class="load-more" href="?page={{ next_page }}" hx-get="?page={{ next_page }}" hx-target="this" hx-swap="outerHTML">加载更多</a>{% endif %}

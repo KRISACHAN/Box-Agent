@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ run_name }} · ACP 离线评测{% endblock %}
+{% block content %}
+<nav class="crumb"><a href="/">评测目录</a><span>/</span><span>{{ run_name }}</span></nav>
+<section class="page-heading"><h1>{{ run_name }}</h1><p>{{ cases|length }} 个任务</p></section>
+<form class="search" method="get"><input type="search" name="q" value="{{ query }}" placeholder="搜索任务 ID 或内容" aria-label="搜索任务"><button>搜索</button></form>
+<div class="table-wrap"><table><thead><tr><th>任务</th><th>ACP</th><th>完整性</th><th>耗时</th><th>Error</th><th>Timeout</th><th>Warning</th></tr></thead><tbody>
+{% for case in cases %}<tr><td><a href="/runs/{{ run_name }}/cases/{{ case.case_id }}">{{ case.case_id }}</a></td><td>{{ case.acp_status }}</td><td>{{ case.completeness_status }}</td><td>{{ case.duration if case.duration is not none else "—" }}{% if case.duration is not none %}s{% endif %}</td><td>{{ case.stderr_counts.error|default(0) }}</td><td>{{ case.stderr_counts.timeout|default(0) }}</td><td>{{ case.stderr_counts.warning|default(0) }}</td></tr>{% else %}<tr><td colspan="7">没有匹配任务</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

@@ -1,0 +1,8 @@
+<nav class="tabs">
+  <a class="{{ 'active' if active == 'overview' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}">概览</a>
+  <a class="{{ 'active' if active == 'timeline' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/timeline">统一时间线</a>
+  <a class="{{ 'active' if active == 'agent' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/agent">Agent 轨迹</a>
+  <a class="{{ 'active' if active == 'acp' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/acp">ACP 通信</a>
+  <a class="{{ 'active' if active == 'process' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/process">进程与 stderr</a>
+  <a class="{{ 'active' if active == 'files' else '' }}" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/files">文件</a>
+</nav>
