@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ case.case_id }} · 诊断结果{% endblock %}
+{% block content %}
+<nav class="crumb"><a href="/">评测目录</a><span>/</span><a href="/runs/{{ run_name }}">{{ run_name }}</a><span>/</span><a href="/runs/{{ run_name }}/cases/{{ case.case_id }}">{{ case.case_id }}</a></nav>
+<section class="page-heading"><h1>诊断结果</h1><p>由独立 Agent 在离线评测完成后生成。</p></section>
+{% include "_tabs.html" %}
+{% if diagnosis is not none %}
+<nav class="diagnosis-actions"><a href="/runs/{{ run_name }}/cases/{{ case.case_id }}/diagnosis/raw">查看原始 Markdown</a><a href="/runs/{{ run_name }}/cases/{{ case.case_id }}/diagnosis/download">下载 Markdown</a></nav>
+<article class="panel markdown-body">{{ diagnosis }}</article>
+{% else %}
+<section class="panel empty">尚未生成诊断。</section>
+{% endif %}
+{% endblock %}

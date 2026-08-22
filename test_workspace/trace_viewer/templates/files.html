@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ case.case_id }} · 文件{% endblock %}
+{% block content %}
+<nav class="crumb"><a href="/">评测目录</a><span>/</span><a href="/runs/{{ run_name }}">{{ run_name }}</a><span>/</span><a href="/runs/{{ run_name }}/cases/{{ case.case_id }}">{{ case.case_id }}</a></nav>
+<section class="page-heading"><h1>文件</h1><p>完整采集文件、workspace 与产物。</p></section>
+{% include "_tabs.html" %}
+<div class="rows">{% for file in files %}<a class="file-link" href="/runs/{{ run_name }}/cases/{{ case.case_id }}/download/{{ file }}"><code>{{ file }}</code><span>下载</span></a>{% else %}<p class="empty">没有文件。</p>{% endfor %}</div>
+{% endblock %}

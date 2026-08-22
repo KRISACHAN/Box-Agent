@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acp-eval"
+version = "0.1.0"
+description = "Offline ACP evaluation capture helpers"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+acp-eval = "acp_eval.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

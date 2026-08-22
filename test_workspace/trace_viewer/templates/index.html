@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}评测目录 · ACP 离线评测{% endblock %}
+{% block content %}
+<section class="page-heading"><p class="eyebrow">test_workspace/outputs</p><h1>选择评测目录</h1></section>
+<div class="rows">
+{% for run in runs %}
+  <a class="row-link" href="/runs/{{ run.name }}">
+    <strong>{{ run.name }}</strong>
+    <span>{{ run.task_count }} 个任务</span>
+    <span>{{ run.finished_at or "未完成" }}</span>
+  </a>
+{% else %}<p class="empty">没有可用的 v1 评测目录。</p>{% endfor %}
+</div>
+{% endblock %}

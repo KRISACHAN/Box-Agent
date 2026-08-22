@@ -47,6 +47,8 @@ graphify-out
 
 # Workspace
 workspace/
+/test_workspace/inputs/hermes_antilia_v2/
+/test_workspace/outputs/
 *.log
 
 # Local test, browser, and rendered-artifact output
