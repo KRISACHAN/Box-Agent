@@ -17,6 +17,16 @@ class WorkflowCheckpointUpdate:
     recovered_evidence_urls: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowAction:
+    """A deterministic tool action requested by a trusted workflow policy."""
+
+    action_id: str
+    capability: str
+    tool_name: str
+    arguments: dict[str, Any]
+
+
 class WorkflowPolicy(Protocol):
     """Host-neutral workflow hooks consumed by the agent kernel.
 
@@ -36,6 +46,10 @@ class WorkflowPolicy(Protocol):
         self,
         checkpoint_text: str,
     ) -> WorkflowCheckpointUpdate: ...
+
+    def next_deterministic_action(self) -> WorkflowAction | None:
+        """Return the next runtime-owned tool action, if one is ready."""
+        ...
 
     def plan_scope_error(
         self,

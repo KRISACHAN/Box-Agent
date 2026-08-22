@@ -796,12 +796,17 @@ async def test_acp_new_session_reads_deep_think(tmp_path):
     session = await agent.newSession(
         SimpleNamespace(
             cwd=str(tmp_path),
-            field_meta={"session_mode": "general", "deep_think": True},
+            field_meta={
+                "session_mode": "general",
+                "deep_think": True,
+                "execution_profile": "fast",
+            },
         )
     )
     state = agent._sessions[session.sessionId]
     assert state.thinking_enabled is True
     assert state.agent.thinking_enabled is True
+    assert state.execution_profile == "fast"
 
 
 @pytest.mark.asyncio
@@ -826,6 +831,7 @@ async def test_acp_new_session_default_no_deep_think(tmp_path):
     state = agent._sessions[session.sessionId]
     assert state.thinking_enabled is False
     assert state.agent.thinking_enabled is False
+    assert state.execution_profile == "standard"
 
 
 @pytest.mark.asyncio

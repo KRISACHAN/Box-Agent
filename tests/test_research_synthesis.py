@@ -177,7 +177,7 @@ def test_validator_preserves_search_summary_evidence_basis(tmp_path: Path) -> No
     )
 
 
-def test_validator_writes_failed_report_when_research_is_too_shallow(
+def test_validator_allows_partial_handoff_when_research_is_below_dimension_target(
     tmp_path: Path,
 ) -> None:
     research = tmp_path / "research"
@@ -204,7 +204,7 @@ def test_validator_writes_failed_report_when_research_is_too_shallow(
         check=False,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["ok"] is False
     assert payload["delivery_allowed"] is True
@@ -212,7 +212,7 @@ def test_validator_writes_failed_report_when_research_is_too_shallow(
     assert payload["presentation_handoff"]["delivery_mode"] == "partial"
     assert payload["presentation_handoff"]["quality_summary"]["quality_ok"] is False
     assert payload["dimension_count"] == 2
-    assert "expected at least 3 dimension files, found 2" in payload["issues"]
+    assert "expected at least 3 dimension files, found 2" in payload["warnings"]
 
 
 def test_validator_reports_hyphenated_reserved_suffixes_as_near_matches(
@@ -309,8 +309,10 @@ def test_validator_rejects_cross_entity_excerpt_mismatch(tmp_path: Path) -> None
         check=False,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0
     payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["delivery_allowed"] is True
+    assert payload["handoff_status"] == "framework"
     assert any(
         "evidence_excerpt does not name entity" in issue
         for issue in payload["issues"]
@@ -357,8 +359,10 @@ def test_validator_rejects_first_party_source_on_wrong_domain(tmp_path: Path) ->
         check=False,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0
     payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["delivery_allowed"] is True
+    assert payload["handoff_status"] == "framework"
     assert any(
         "does not match an official domain" in issue for issue in payload["issues"]
     )
@@ -421,7 +425,7 @@ def test_validator_allows_partial_delivery_with_verified_subset(
         check=False,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["quality_ok"] is False
     assert payload["delivery_allowed"] is True
@@ -477,7 +481,7 @@ def test_validator_allows_framework_delivery_without_verified_evidence(
         check=False,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["quality_ok"] is False
     assert payload["delivery_allowed"] is True

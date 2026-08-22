@@ -104,6 +104,15 @@ def test_research_synthesis_expands_web_search_budget() -> None:
         ),
     ) == 48
     assert web_search_total_limit_for_active_skills(("pptx",)) is None
+    assert web_search_total_limit_for_active_skills(
+        ("research-synthesis",),
+        execution_profile="fast",
+    ) is None
+    assert web_search_total_limit_for_active_skills(
+        (),
+        ("research-synthesis",),
+        execution_profile="fast",
+    ) == 100
 
 
 class SummaryLLM:

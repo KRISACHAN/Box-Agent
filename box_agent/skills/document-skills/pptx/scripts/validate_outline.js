@@ -256,7 +256,12 @@ function includesAny(value, needles) {
 }
 
 function numberTokens(value) {
-  return (String(value || "").match(/\d+(?:,\d{3})*(?:\.\d+)?%?/g) || [])
+  const claimText = String(value || "")
+    // Campaign and membership names contain digits but do not assert metrics.
+    // Keep actual dates/percentages elsewhere in the sentence visible.
+    .replace(/双\s*11/giu, "双十一")
+    .replace(/88\s*VIP/giu, "VIP");
+  return (claimText.match(/\d+(?:,\d{3})*(?:\.\d+)?%?/g) || [])
     .map(token => {
       const percent = token.endsWith("%");
       const bare = token.replace(/,/g, "").replace(/%$/, "");

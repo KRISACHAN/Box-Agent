@@ -6,7 +6,7 @@ Implements Progressive Disclosure (Level 2): Load full skill content when needed
 
 from pathlib import Path
 from hashlib import sha256
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, MutableSet, Optional, Tuple
 
 from .base import Tool, ToolResult
 from .skill_loader import SkillLoader
@@ -26,10 +26,14 @@ class GetSkillTool(Tool):
         *,
         include_disabled: bool = False,
         preloaded_skill_hashes: Mapping[str, str] | None = None,
+        blocked_skill_names: set[str] | frozenset[str] | None = None,
+        explicitly_allowed_skill_names: MutableSet[str] | None = None,
     ):
         self.skill_loader = skill_loader
         self.include_disabled = include_disabled
         self.preloaded_skill_hashes = preloaded_skill_hashes
+        self.blocked_skill_names = blocked_skill_names or frozenset()
+        self.explicitly_allowed_skill_names = explicitly_allowed_skill_names
 
     @property
     def name(self) -> str:
@@ -54,6 +58,28 @@ class GetSkillTool(Tool):
 
     async def execute(self, skill_name: str) -> ToolResult:
         """Get detailed information about specified skill"""
+        normalized_name = skill_name.strip()
+        if (
+            normalized_name in self.blocked_skill_names
+            and not (
+                self.preloaded_skill_hashes
+                and normalized_name in self.preloaded_skill_hashes
+            )
+            and (
+                self.explicitly_allowed_skill_names is None
+                or normalized_name not in self.explicitly_allowed_skill_names
+            )
+        ):
+            return ToolResult(
+                success=False,
+                content="",
+                error=(
+                    f"Skill '{normalized_name}' is disabled by the active execution "
+                    "profile unless the user explicitly requests it. Continue with "
+                    "bounded direct work and do not retry loading this Skill."
+                ),
+            )
+
         # Auto-reload if the user skills directory has been touched since last scan
         self.skill_loader.maybe_reload()
 

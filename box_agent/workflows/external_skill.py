@@ -24,7 +24,7 @@ from ..workflow_checkpoint_store import (
     WorkflowPauseCheckpoint,
     checkpoint_resume_instruction,
 )
-from ..workflow_policy import WorkflowCheckpointUpdate
+from ..workflow_policy import WorkflowAction, WorkflowCheckpointUpdate
 
 
 EXTERNAL_SKILL_WORKFLOW_KIND = "external_skill"
@@ -385,6 +385,9 @@ class ExternalSkillRunPolicy:
         changed = checkpoint_text != self._last_checkpoint_text
         self._last_checkpoint_text = checkpoint_text
         return WorkflowCheckpointUpdate(text=checkpoint_text, changed=changed)
+
+    def next_deterministic_action(self) -> WorkflowAction | None:
+        return None
 
     def _record_candidate_path(self, raw_path: str) -> None:
         if not raw_path or len(raw_path) > 2_048:

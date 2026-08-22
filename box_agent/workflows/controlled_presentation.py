@@ -7,6 +7,7 @@ presentation-specific stage machine and command/evidence restrictions.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import logging
 import re
@@ -26,7 +27,7 @@ from ..evidence import (
 )
 from ..tools.base import ToolResult
 from ..tools.browser_tool_names import is_browser_tool_name
-from ..workflow_policy import WorkflowCheckpointUpdate
+from ..workflow_policy import WorkflowAction, WorkflowCheckpointUpdate
 from ..workflow_checkpoint_store import (
     WorkflowPauseCheckpoint,
     checkpoint_resume_instruction,
@@ -344,15 +345,6 @@ _RESEARCH_SNAPSHOT_NAVIGATION_REQUIRED_TOOL_ERROR = (
     "can verify research evidence only immediately after one successful metadata-only "
     "managed_browser_navigate call. Navigate one exact candidate URL first."
 )
-_RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR = (
-    "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL: the evidence ledger marks URLs as "
-    "verified even though this run has not captured supporting content for those exact "
-    "source URLs, or its evidence_excerpt is absent from the captured result: {urls}. "
-    "A supporting excerpt must come from either that exact result's provider summary or "
-    "an exact-page read in this run; locally rewritten excerpts do not establish "
-    "provenance. Copy the captured excerpt, or change the row to unverified with "
-    "unverified_reason, then rerun the validator."
-)
 _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_LOCAL_READ_COMPLETE: bounded research is "
     "complete. Do not inspect/list files or reread skill references, validator "
@@ -402,6 +394,7 @@ _APPLY_PATCH_SCRIPT = _PPTX_SCRIPTS_DIR / "apply_deck_patch.js"
 _APPLY_REDESIGN_SCRIPT = _PPTX_SCRIPTS_DIR / "apply_deck_redesign.js"
 _REBASE_IMAGE_POLICY_SCRIPT = _PPTX_SCRIPTS_DIR / "rebase_image_policy.js"
 _VALIDATE_OUTLINE_SCRIPT = _PPTX_SCRIPTS_DIR / "validate_outline.js"
+_SYNC_IMAGE_STATUS_SCRIPT = _PPTX_SCRIPTS_DIR / "sync_image_manifest_status.js"
 _JSON_MISSING = object()
 
 
@@ -1478,6 +1471,66 @@ def _research_unread_verified_urls(
     return tuple(dict.fromkeys(unread))
 
 
+def _downgrade_unread_verified_evidence(
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+    unread_urls: set[str],
+) -> int:
+    """Atomically downgrade unsupported verified rows after one validator call."""
+    if not unread_urls:
+        return 0
+    ledger = _research_validation_ledger(
+        tool_name,
+        arguments,
+        workspace_dir,
+        artifact_root_dir,
+    )
+    if ledger is None:
+        return 0
+    try:
+        payload = json.loads(ledger.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    evidence = payload.get("evidence") if isinstance(payload, dict) else None
+    if not isinstance(evidence, list):
+        return 0
+    normalized_unread = {normalize_search_url(url) for url in unread_urls}
+    changed = 0
+    for row in evidence:
+        if (
+            not isinstance(row, dict)
+            or str(row.get("status", "")).casefold() != "verified"
+            or normalize_search_url(row.get("source_url")) not in normalized_unread
+        ):
+            continue
+        row["status"] = "unverified"
+        row["unverified_reason"] = (
+            "Runtime could not bind this excerpt to captured content for the exact URL."
+        )
+        if (
+            str(row.get("evidence_basis", "")).casefold() == "search_summary"
+            and str(row.get("confidence", "")).casefold() == "high"
+        ):
+            row["confidence"] = "medium"
+        changed += 1
+    if not changed:
+        return 0
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    temp_path = ledger.with_name(f".{ledger.name}.tmp")
+    try:
+        temp_path.write_text(serialized, encoding="utf-8")
+        temp_path.replace(ledger)
+    except OSError:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return 0
+    return changed
+
+
 def _research_handoff_error(
     stage: str | None,
     research_mode: str | None,
@@ -2057,6 +2110,7 @@ class ControlledPresentationPolicy:
     _last_checkpoint_text: str | None = None
     _resume_checkpoint: WorkflowPauseCheckpoint | None = None
     _last_step_failure_signature: str | None = None
+    _dispatched_deterministic_action_ids: set[str] = field(default_factory=set)
 
     _step_failure_streak: int = 0
     _repair_failure_stage: str | None = None
@@ -2091,6 +2145,7 @@ class ControlledPresentationPolicy:
     _research_direct_source_text: dict[str, str] = field(default_factory=dict)
     _research_search_source_text: dict[str, str] = field(default_factory=dict)
     _research_last_evidence_urls: set[str] = field(default_factory=set)
+    _pending_unread_evidence_urls: set[str] = field(default_factory=set)
     _research_pending_playwright_url: str | None = None
     _research_last_direct_source_url: str | None = None
     _successful_mutation_since_checkpoint: bool = False
@@ -2492,6 +2547,224 @@ class ControlledPresentationPolicy:
             recovered_evidence_urls=frozenset(recovered_urls),
         )
 
+    def _runtime_bash_action(
+        self,
+        action_name: str,
+        command: str,
+        artifact_paths: tuple[Path, ...],
+    ) -> WorkflowAction | None:
+        artifact_root = artifact_scan_root(
+            self.workspace_dir,
+            self.artifact_root_dir,
+        )
+        if artifact_root is None or "\n" in command or "\r" in command:
+            return None
+        signature = [command]
+        for path in artifact_paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            signature.append(f"{path}:{stat.st_size}:{stat.st_mtime_ns}")
+        action_digest = hashlib.sha256(
+            "\n".join(signature).encode("utf-8")
+        ).hexdigest()[:16]
+        action_id = f"controlled-presentation:{action_name}:{action_digest}"
+        if action_id in self._dispatched_deterministic_action_ids:
+            return None
+        self._dispatched_deterministic_action_ids.add(action_id)
+        return WorkflowAction(
+            action_id=action_id,
+            capability=f"controlled_presentation.{action_name}",
+            tool_name="bash",
+            arguments={
+                "command": f"cd {shlex.quote(str(artifact_root))} && {command}",
+                "timeout": 120,
+            },
+        )
+
+    def next_deterministic_action(self) -> WorkflowAction | None:
+        """Construct the next trusted workflow command from checkpoint state."""
+        artifact_root = artifact_scan_root(
+            self.workspace_dir,
+            self.artifact_root_dir,
+        )
+        if self.stage == "research" and self.research_revalidation is not None:
+            expected_command = self.research_revalidation.get("command")
+            if (
+                artifact_root is not None
+                and isinstance(expected_command, str)
+                and expected_command.strip()
+                and "\n" not in expected_command
+                and "\r" not in expected_command
+            ):
+                signature_paths: list[Path] = []
+                stale_dependencies = self.research_revalidation.get(
+                    "stale_dependencies"
+                )
+                if isinstance(stale_dependencies, list):
+                    research_root = artifact_root / "research"
+                    for relative_path in sorted(
+                        path
+                        for path in stale_dependencies
+                        if isinstance(path, str) and path
+                    ):
+                        signature_paths.append(research_root / relative_path)
+                return self._runtime_bash_action(
+                    "research_validate",
+                    expected_command,
+                    tuple(signature_paths),
+                )
+
+        if artifact_root is not None and self.stage == "outline_qa":
+            outline_path = artifact_root / "outline.json"
+            report_path = artifact_root / "qa" / "outline_check.json"
+            research_reports = sorted(
+                (artifact_root / "research" / "qa").glob("*_research_check.json"),
+                key=lambda path: path.stat().st_mtime_ns,
+                reverse=True,
+            )
+            research_argument = (
+                f" --research-handoff {shlex.quote(str(research_reports[0]))}"
+                if self.research_mode == "deep" and research_reports
+                else ""
+            )
+            command = (
+                f"${{BOX_AGENT_NODE:-node}} {shlex.quote(str(_VALIDATE_OUTLINE_SCRIPT))} "
+                f"{shlex.quote(str(outline_path))}{research_argument} "
+                f"--report {shlex.quote(str(report_path))}"
+            )
+            return self._runtime_bash_action(
+                "outline_validate",
+                command,
+                (outline_path, *research_reports[:1]),
+            )
+
+        if artifact_root is not None and self.stage == "image_status_sync":
+            manifest_path = artifact_root / "assets" / "generated" / "manifest.json"
+            command = (
+                f"${{BOX_AGENT_NODE:-node}} {shlex.quote(str(_SYNC_IMAGE_STATUS_SCRIPT))} "
+                f"{shlex.quote(str(manifest_path))}"
+            )
+            return self._runtime_bash_action(
+                "image_status_sync",
+                command,
+                (manifest_path,),
+            )
+
+        if artifact_root is not None and self.stage == "image_policy_rebase":
+            deck_path = artifact_root / "deck.json"
+            manifest_path = artifact_root / "assets" / "generated" / "manifest.json"
+            if self.image_policy_rebase_policy is not None:
+                command = (
+                    f"${{BOX_AGENT_NODE:-node}} "
+                    f"{shlex.quote(str(_REBASE_IMAGE_POLICY_SCRIPT))} "
+                    f"{shlex.quote(str(deck_path))} --manifest "
+                    f"{shlex.quote(str(manifest_path))} --policy "
+                    f"{self.image_policy_rebase_policy}"
+                )
+                return self._runtime_bash_action(
+                    "image_policy_rebase",
+                    command,
+                    (deck_path, manifest_path),
+                )
+
+        if (
+            artifact_root is not None
+            and self.stage == "apply_patch"
+            and not self.apply_patch_repair_allowed
+        ):
+            deck_path = artifact_root / "deck.json"
+            patch_path = artifact_root / "deck.patch.json"
+            command = (
+                f"${{BOX_AGENT_NODE:-node}} {shlex.quote(str(_APPLY_PATCH_SCRIPT))} "
+                f"{shlex.quote(str(deck_path))} {shlex.quote(str(patch_path))}"
+            )
+            return self._runtime_bash_action(
+                "apply_patch",
+                command,
+                (deck_path, patch_path),
+            )
+
+        if artifact_root is not None and self.stage == "apply_redesign":
+            deck_path = artifact_root / "deck.json"
+            redesign_path = artifact_root / "deck.redesign.json"
+            command = (
+                f"${{BOX_AGENT_NODE:-node}} {shlex.quote(str(_APPLY_REDESIGN_SCRIPT))} "
+                f"{shlex.quote(str(deck_path))} {shlex.quote(str(redesign_path))}"
+            )
+            return self._runtime_bash_action(
+                "apply_redesign",
+                command,
+                (deck_path, redesign_path),
+            )
+
+        if artifact_root is not None and self.stage == "finalize":
+            deck_path = artifact_root / "deck.json"
+            manifest_path = artifact_root / "assets" / "generated" / "manifest.json"
+            html_path = artifact_root / "index.html"
+            command = (
+                f"${{BOX_AGENT_NODE:-node}} {shlex.quote(str(_FINALIZER_SCRIPT))} "
+                f"{shlex.quote(str(deck_path))} --out {shlex.quote(str(html_path))}"
+            )
+            return self._runtime_bash_action(
+                "finalize",
+                command,
+                (deck_path, manifest_path),
+            )
+
+        if (
+            self.repair_stalled
+            or self.stage != "scaffold"
+            or not self.has_scaffold_input
+            or self.scaffold_input is None
+        ):
+            return None
+        artifact_root = artifact_scan_root(
+            self.workspace_dir,
+            self.artifact_root_dir,
+        )
+        if artifact_root is None:
+            return None
+        outline_path = artifact_root / "outline.json"
+        if not outline_path.is_file() or (artifact_root / "deck.json").exists():
+            return None
+        try:
+            outline_digest = hashlib.sha256(outline_path.read_bytes()).hexdigest()[:16]
+        except OSError:
+            return None
+        action_id = f"controlled-presentation:scaffold:{outline_digest}"
+        if action_id in self._dispatched_deterministic_action_ids:
+            return None
+
+        command_parts = [
+            "cd",
+            shlex.quote(str(artifact_root)),
+            "&&",
+            "${BOX_AGENT_NODE:-node}",
+            shlex.quote(str(_INSPECT_SCRIPT)),
+            "--outline",
+            "outline.json",
+            "--out",
+            "deck.json",
+        ]
+        if (
+            self.scaffold_input.get("image_generation_policy")
+            == "forbidden_by_user"
+        ):
+            command_parts.append("--no-images")
+
+        self._dispatched_deterministic_action_ids.add(action_id)
+        return WorkflowAction(
+            action_id=action_id,
+            capability="controlled_presentation.scaffold",
+            tool_name="bash",
+            arguments={
+                "command": " ".join(command_parts),
+                "timeout": 120,
+            },
+        )
+
     def plan_scope_error(
         self,
         tool_name: str,
@@ -2719,7 +2992,10 @@ class ControlledPresentationPolicy:
         )
         if image_policy_rebase_error is not None:
             return image_policy_rebase_error
-        if self.stage == "research" and self.research_revalidation is None:
+        if (
+            self.stage == "research"
+            and _is_research_validation_call(tool_name, arguments)
+        ):
             unread_urls = _research_unread_verified_urls(
                 tool_name,
                 arguments,
@@ -2730,10 +3006,7 @@ class ControlledPresentationPolicy:
                 self._research_search_source_text,
             )
             if unread_urls:
-                displayed = ", ".join(unread_urls[:5])
-                if len(unread_urls) > 5:
-                    displayed += f" (+{len(unread_urls) - 5} more)"
-                return _RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR.format(urls=displayed)
+                self._pending_unread_evidence_urls.update(unread_urls)
         if (
             self.stage == "research"
             and self._research_discovery_exhausted
@@ -3112,6 +3385,19 @@ class ControlledPresentationPolicy:
                 if key is not None:
                     self._research_json_reads_since_mutation.add(key)
         if validation_call:
+            downgraded = _downgrade_unread_verified_evidence(
+                tool_name,
+                arguments,
+                self.workspace_dir,
+                self.artifact_root_dir,
+                self._pending_unread_evidence_urls,
+            )
+            self._pending_unread_evidence_urls.clear()
+            if downgraded:
+                _log.info(
+                    "controlled_presentation/research_evidence_downgraded rows=%d",
+                    downgraded,
+                )
             if _research_validation_failed(
                 tool_name,
                 arguments,

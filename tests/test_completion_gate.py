@@ -52,7 +52,13 @@ from box_agent.workflows.presentation_contract import (
     IMAGE_GENERATION_POLICY_OPTION,
     image_generation_policy_update,
 )
-from box_agent.events import DoneEvent, InjectedMessageEvent, StopReason, ToolCallResult
+from box_agent.events import (
+    DoneEvent,
+    InjectedMessageEvent,
+    StopReason,
+    ToolCallResult,
+    ToolCallStart,
+)
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.execution_result_tool import ReportExecutionResultTool
@@ -312,6 +318,43 @@ class CountingBashTool(EchoTool):
     async def execute(self, command: str, timeout=None, run_in_background=False):
         self.calls += 1
         return ToolResult(success=True, content=f"ran:{command}")
+
+
+class RuntimeOwnedScaffoldBashTool(CountingBashTool):
+    runtime_workflow_actions = frozenset({"controlled_presentation.scaffold"})
+
+    def __init__(self, output_dir: Path):
+        super().__init__()
+        self.output_dir = output_dir
+        self.commands: list[str] = []
+
+    async def execute(self, command: str, timeout=None, run_in_background=False):
+        self.calls += 1
+        self.commands.append(command)
+        (self.output_dir / "deck.json").write_text("{}", encoding="utf-8")
+        return ToolResult(success=True, content="scaffolded deck.json")
+
+
+class RuntimeOwnedResearchValidationBashTool(CountingBashTool):
+    runtime_workflow_actions = frozenset(
+        {"controlled_presentation.research_validate"}
+    )
+
+    def __init__(self, report_path: Path, dependencies: tuple[Path, ...]):
+        super().__init__()
+        self.report_path = report_path
+        self.dependencies = dependencies
+        self.commands: list[str] = []
+
+    async def execute(self, command: str, timeout=None, run_in_background=False):
+        self.calls += 1
+        self.commands.append(command)
+        newer = max(
+            self.report_path.stat().st_mtime_ns,
+            *(path.stat().st_mtime_ns for path in self.dependencies),
+        ) + 10_000_000
+        os.utime(self.report_path, ns=(newer, newer))
+        return ToolResult(success=True, content="research validation refreshed")
 
 
 class ArtifactWriteTool(EchoTool):
@@ -1015,6 +1058,38 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
     assert '"verified_facts":[{"entity":"Example Entity"' in checkpoint
     assert '"canonical":"Example Entity | Example Entity published verified' in checkpoint
     assert "Research delivery mode is full" in checkpoint
+
+
+def test_fast_profile_uses_targeted_research_for_inferred_factual_presentation(
+    tmp_path,
+):
+    gate = build_auto_completion_gate(
+        "制作一份 2026 世界杯商业价值分析 PPT",
+        tmp_path,
+        execution_profile="fast",
+    )
+
+    assert gate is not None
+    assert gate.workflow_options["research_mode"] == "targeted"
+    assert gate.web_search_total_limit is None
+    assert document_preload_skill_names(("pptx", "research-synthesis"), gate) == [
+        "pptx"
+    ]
+
+
+def test_fast_profile_preserves_explicit_deep_research_request(tmp_path):
+    gate = build_auto_completion_gate(
+        "搜索官方来源并交叉验证 2026 世界杯商业价值，然后制作 PPT",
+        tmp_path,
+        execution_profile="fast",
+    )
+
+    assert gate is not None
+    assert gate.workflow_options["research_mode"] == "deep"
+    assert document_preload_skill_names(("pptx",), gate) == [
+        "pptx",
+        "research-synthesis",
+    ]
 
 
 def test_research_checkpoint_uses_public_managed_browser_tool_names(tmp_path):
@@ -2348,7 +2423,8 @@ def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
 
 
 def test_stale_research_report_forces_one_exact_revalidation(tmp_path):
-    research = tmp_path / "output" / "research"
+    artifact_root = tmp_path / "output" / "tasks" / "task-1"
+    research = artifact_root / "research"
     research.mkdir(parents=True)
     for index in range(1, 4):
         (research / f"market_dim{index:02d}.md").write_text(
@@ -2382,7 +2458,7 @@ def test_stale_research_report_forces_one_exact_revalidation(tmp_path):
 
     policy = ControlledPresentationPolicy(
         workspace_dir=str(tmp_path),
-        artifact_root_dir=None,
+        artifact_root_dir=artifact_root,
         research_mode="deep",
     )
     checkpoint = policy.build_checkpoint()
@@ -2396,6 +2472,22 @@ def test_stale_research_report_forces_one_exact_revalidation(tmp_path):
     assert policy.research_revalidation is not None
     command = policy.research_revalidation["command"]
     assert "validate_research_artifacts.py" in command
+    action = policy.next_deterministic_action()
+    assert action is not None
+    assert action.capability == "controlled_presentation.research_validate"
+    assert action.arguments["command"] == (
+        f"cd {shlex.quote(str(artifact_root.resolve()))} && {command}"
+    )
+    assert "\n" not in action.arguments["command"]
+    assert policy.next_deterministic_action() is None
+    changed_again = changed.stat().st_mtime_ns + 10_000_000
+    os.utime(changed, ns=(changed_again, changed_again))
+    changed_checkpoint = policy.build_checkpoint()
+    assert changed_checkpoint is not None
+    policy.update_checkpoint(changed_checkpoint)
+    changed_action = policy.next_deterministic_action()
+    assert changed_action is not None
+    assert changed_action.action_id != action.action_id
 
     blocked = policy.tool_call_error(
         "user_browser_read_page",
@@ -2420,7 +2512,6 @@ def test_stale_research_report_forces_one_exact_revalidation(tmp_path):
         )
         is None
     )
-    artifact_root = tmp_path / "output"
     assert (
         policy.tool_call_error(
             "bash",
@@ -2446,12 +2537,145 @@ def test_stale_research_report_forces_one_exact_revalidation(tmp_path):
             is not None
         )
 
-    refreshed = newer + 10_000_000
+    refreshed = changed_again + 10_000_000
     os.utime(report, ns=(refreshed, refreshed))
     checkpoint = policy.build_checkpoint()
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint
     assert '"revalidation"' not in checkpoint
+
+
+def test_task_scoped_initial_research_validation_is_runtime_owned(tmp_path):
+    artifact_root = tmp_path / "output" / "tasks" / "task-1"
+    research = artifact_root / "research"
+    research.mkdir(parents=True)
+    for name in (
+        "market_dim01.md",
+        "market_cross_verification.md",
+        "market_insight.md",
+    ):
+        (research / name).write_text(name, encoding="utf-8")
+    (research / "market_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "market",
+                "target_entities": [],
+                "evidence": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=artifact_root,
+        research_mode="deep",
+    )
+
+    checkpoint = policy.build_checkpoint()
+
+    assert checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}research" in checkpoint
+    assert '"initial":true' in checkpoint
+    policy.update_checkpoint(checkpoint)
+    action = policy.next_deterministic_action()
+    assert action is not None
+    assert action.capability == "controlled_presentation.research_validate"
+    assert action.arguments["command"].startswith(
+        f"cd {shlex.quote(str(artifact_root.resolve()))} && "
+    )
+    assert "--topic market --route B" in action.arguments["command"]
+    assert "\n" not in action.arguments["command"]
+
+
+def test_deterministic_presentation_commands_are_runtime_owned(tmp_path):
+    artifact_root = tmp_path / "output" / "tasks" / "task-1"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "outline.json").write_text("{}", encoding="utf-8")
+    (artifact_root / "deck.json").write_text("{}", encoding="utf-8")
+    (artifact_root / "deck.patch.json").write_text("{}", encoding="utf-8")
+    manifest = artifact_root / "assets" / "generated" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=artifact_root,
+    )
+
+    expected = (
+        ("outline_qa", "outline_validate", "validate_outline.js"),
+        ("apply_patch", "apply_patch", "apply_deck_patch.js"),
+        ("finalize", "finalize", "finalize_controlled_deck.js"),
+    )
+    for stage, capability_suffix, script_name in expected:
+        policy.stage = stage
+        action = policy.next_deterministic_action()
+        assert action is not None
+        assert action.capability == f"controlled_presentation.{capability_suffix}"
+        assert script_name in action.arguments["command"]
+        assert "\n" not in action.arguments["command"]
+
+
+@pytest.mark.asyncio
+async def test_stale_research_report_is_revalidated_by_runtime_before_model(tmp_path):
+    research = tmp_path / "output" / "research"
+    research.mkdir(parents=True)
+    dimensions = tuple(
+        research / f"market_dim{index:02d}.md" for index in range(1, 4)
+    )
+    for index, path in enumerate(dimensions, start=1):
+        path.write_text(f"dimension {index}", encoding="utf-8")
+    cross_verification = research / "market_cross_verification.md"
+    cross_verification.write_text("cross verification", encoding="utf-8")
+    insight = research / "market_insight.md"
+    insight.write_text("insight", encoding="utf-8")
+    report = _write_valid_research_report(research, topic="market")
+    changed = dimensions[1]
+    newer = report.stat().st_mtime_ns + 10_000_000
+    os.utime(changed, ns=(newer, newer))
+    bash_tool = RuntimeOwnedResearchValidationBashTool(
+        report,
+        (*dimensions, cross_verification, insight),
+    )
+    llm = MockLLM([_final("done")])
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"bash": bash_tool},
+            max_steps=5,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                workflow_options={"research_mode": "deep"},
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert bash_tool.calls == 1
+    assert llm._idx == 1
+    assert len(bash_tool.commands) == 1
+    command = bash_tool.commands[0]
+    assert command.startswith(
+        f"cd {shlex.quote(str((tmp_path / 'output').resolve()))} && "
+    )
+    assert "validate_research_artifacts.py" in command
+    assert "\n" not in command
+    start = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallStart) and event.tool_name == "bash"
+    )
+    assert start.tool_call_id.startswith("workflow_")
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == start.tool_call_id
+    )
+    assert result.success is True
 
 
 def test_outline_semantic_issue_survives_successful_repair_steps(tmp_path):
@@ -2539,7 +2763,7 @@ def test_framework_outline_checkpoint_exempts_structural_pages(tmp_path):
     )
 
 
-def test_research_validator_requires_successful_exact_page_reads(tmp_path):
+def test_research_validator_downgrades_rows_without_captured_exact_page_reads(tmp_path):
     research = tmp_path / "research"
     research.mkdir()
     source_url = "https://example.com/report?utm_source=search"
@@ -2578,41 +2802,20 @@ def test_research_validator_requires_successful_exact_page_reads(tmp_path):
         )
     }
 
-    blocked = policy.tool_call_error(
+    assert policy.tool_call_error(
         "bash",
         validator,
         verified_evidence_urls=set(),
-    )
-    assert blocked is not None
-    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in blocked
-    assert source_url in blocked
-
+    ) is None
     policy.record_tool_result(
-        "user_browser_open_tab_and_read",
-        {"url": "https://example.com/report"},
-        ToolResult(
-            success=True,
-            content=json.dumps(
-                {
-                    "ok": True,
-                    "data": {
-                        "url": "https://example.com/report",
-                        "title": "Example report",
-                        "content": "Example published a report.",
-                    },
-                }
-            ),
-        ),
+        "bash",
+        validator,
+        ToolResult(success=True, content="validator completed"),
     )
 
-    assert (
-        policy.tool_call_error(
-            "bash",
-            validator,
-            verified_evidence_urls={"https://example.com/report"},
-        )
-        is None
-    )
+    payload = json.loads((research / "topic_evidence.json").read_text())
+    assert payload["evidence"][0]["status"] == "unverified"
+    assert "Runtime could not bind" in payload["evidence"][0]["unverified_reason"]
 
 
 def test_research_validator_accepts_custom_mcp_exact_page_excerpt(tmp_path):
@@ -2675,6 +2878,13 @@ def test_research_validator_accepts_custom_mcp_exact_page_excerpt(tmp_path):
         )
         is None
     )
+    policy.record_tool_result(
+        "bash",
+        validator,
+        ToolResult(success=True, content="validator completed"),
+    )
+    payload = json.loads((research / "topic_evidence.json").read_text())
+    assert payload["evidence"][0]["status"] == "verified"
 
 
 def test_research_validator_accepts_url_bound_search_summary(tmp_path):
@@ -2762,16 +2972,21 @@ def test_research_validator_accepts_url_bound_search_summary(tmp_path):
     payload = json.loads((research / "topic_evidence.json").read_text())
     payload["evidence"][0]["evidence_excerpt"] = "A different result summary."
     (research / "topic_evidence.json").write_text(json.dumps(payload))
-    blocked = policy.tool_call_error(
+    assert policy.tool_call_error(
         "bash",
         validator,
         verified_evidence_urls={source_url},
+    ) is None
+    policy.record_tool_result(
+        "bash",
+        validator,
+        ToolResult(success=True, content="validator completed"),
     )
-    assert blocked is not None
-    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in blocked
+    payload = json.loads((research / "topic_evidence.json").read_text())
+    assert payload["evidence"][0]["status"] == "unverified"
 
 
-def test_research_validator_rejects_locally_rewritten_verified_excerpt(tmp_path):
+def test_research_validator_downgrades_locally_rewritten_verified_excerpt(tmp_path):
     research = tmp_path / "research"
     research.mkdir()
     source_url = "https://example.com/report"
@@ -2827,15 +3042,18 @@ def test_research_validator_rejects_locally_rewritten_verified_excerpt(tmp_path)
         )
     }
 
-    blocked = policy.tool_call_error(
+    assert policy.tool_call_error(
         "bash",
         validator,
         verified_evidence_urls={source_url},
+    ) is None
+    policy.record_tool_result(
+        "bash",
+        validator,
+        ToolResult(success=True, content="validator completed"),
     )
-
-    assert blocked is not None
-    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in blocked
-    assert "locally rewritten excerpts" in blocked
+    payload = json.loads((research / "topic_evidence.json").read_text())
+    assert payload["evidence"][0]["status"] == "unverified"
 
 
 def test_research_error_page_does_not_establish_direct_source(tmp_path):
@@ -2867,7 +3085,7 @@ def test_research_error_page_does_not_establish_direct_source(tmp_path):
     assert policy._research_successful_direct_read_attempts == 0
 
 
-def test_research_validator_rejects_verified_homepage_navigation(tmp_path):
+def test_research_validator_downgrades_verified_homepage_navigation(tmp_path):
     research = tmp_path / "research"
     research.mkdir()
     source_url = "https://example.com/"
@@ -2906,14 +3124,18 @@ def test_research_validator_rejects_verified_homepage_navigation(tmp_path):
         )
     }
 
-    blocked = policy.tool_call_error(
+    assert policy.tool_call_error(
         "bash",
         validator,
         verified_evidence_urls={source_url},
+    ) is None
+    policy.record_tool_result(
+        "bash",
+        validator,
+        ToolResult(success=True, content="validator completed"),
     )
-
-    assert blocked is not None
-    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in blocked
+    payload = json.loads((research / "topic_evidence.json").read_text())
+    assert payload["evidence"][0]["status"] == "unverified"
 
 
 def test_research_direct_read_limit_rejections_do_not_globally_stall(tmp_path):
@@ -6322,6 +6544,72 @@ async def test_controlled_scaffold_blocks_layout_ids_and_optional_flags(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_controlled_scaffold_is_dispatched_by_runtime_before_model(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "Exact title",
+                        "message": "Exact message",
+                        "bullets": ["Exact bullet"],
+                        "layout": "cover",
+                        "visual": "hero image",
+                        "evidence": ["Exact evidence"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    llm = MockLLM([_final("done")])
+    bash_tool = RuntimeOwnedScaffoldBashTool(output)
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"bash": bash_tool},
+            max_steps=5,
+            completion_gate=CompletionGate(
+                workflow_checkpoint_kind="controlled_presentation",
+                max_continuations=0,
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    assert bash_tool.calls == 1
+    assert llm._idx == 1
+    assert bash_tool.commands == [
+        "cd "
+        f"{shlex.quote(str(output.resolve()))} && "
+        "${BOX_AGENT_NODE:-node} "
+        f"{shlex.quote(str(INSPECTOR_SCRIPT))} "
+        "--outline outline.json --out deck.json"
+    ]
+    start = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallStart) and event.tool_name == "bash"
+    )
+    assert start.tool_call_id.startswith("workflow_")
+    result = next(
+        event
+        for event in events
+        if isinstance(event, ToolCallResult)
+        and event.tool_call_id == start.tool_call_id
+    )
+    assert result.success is True
+
+
+@pytest.mark.asyncio
 async def test_controlled_scaffold_allows_minimal_contract_call(tmp_path):
     output = tmp_path / "output"
     output.mkdir()
@@ -6422,6 +6710,36 @@ def test_controlled_scaffold_requires_single_line_cd_prefix(command):
 
     assert error is not None
     assert "CONTROLLED_PRESENTATION_SCAFFOLD_INPUT_READY" in error
+
+
+def test_controlled_scaffold_runtime_action_preserves_forbidden_image_policy(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text('{"slides": []}', encoding="utf-8")
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=output,
+        stage="scaffold",
+        has_scaffold_input=True,
+        scaffold_input={"image_generation_policy": "forbidden_by_user"},
+    )
+
+    action = policy.next_deterministic_action()
+
+    assert action is not None
+    assert action.capability == "controlled_presentation.scaffold"
+    assert action.arguments["command"].endswith(
+        "--outline outline.json --out deck.json --no-images"
+    )
+    assert (
+        policy.tool_call_error(
+            action.tool_name,
+            action.arguments,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    assert policy.next_deterministic_action() is None
 
 
 @pytest.mark.asyncio

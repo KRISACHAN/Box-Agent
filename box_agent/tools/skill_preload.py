@@ -8,6 +8,7 @@ from hashlib import sha256
 from typing import Any, Literal, Mapping
 
 from box_agent.config import ToolLimitsConfig
+from box_agent.execution_profile import ExecutionProfile
 from box_agent.loop_guards import CompletionGate
 from box_agent.tools.skill_loader import SkillLoader
 from box_agent.workflows.external_skill import EXTERNAL_SKILL_WORKFLOW_KIND
@@ -175,11 +176,13 @@ def web_search_total_limit_for_active_skills(
     matched_skill_names: tuple[str, ...],
     preloaded_skill_names: tuple[str, ...] = (),
     tool_limits: ToolLimitsConfig | None = None,
+    execution_profile: ExecutionProfile = "standard",
 ) -> int | None:
     """Expand the per-turn search budget only for research synthesis."""
-    if "research-synthesis" in matched_skill_names or (
-        "research-synthesis" in preloaded_skill_names
-    ):
+    matched_research_is_active = (
+        execution_profile != "fast" and "research-synthesis" in matched_skill_names
+    )
+    if matched_research_is_active or "research-synthesis" in preloaded_skill_names:
         return (
             tool_limits or ToolLimitsConfig()
         ).web_search.deep_research_total_calls

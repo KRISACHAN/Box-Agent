@@ -494,6 +494,7 @@ def main() -> int:
     wide_files: list[Path] = []
     files_to_check: list[Path] = []
     evidence_summary: dict[str, object] = {}
+    dimension_target_met = True
 
     if not research_dir.exists():
         errors.append(f"research dir does not exist: {research_dir}")
@@ -519,7 +520,8 @@ def main() -> int:
                     errors.append(f"missing required file: {file_name}")
 
         if len(dim_files) < args.min_dimensions:
-            errors.append(
+            dimension_target_met = False
+            warnings.append(
                 f"expected at least {args.min_dimensions} dimension files, found {len(dim_files)}"
             )
             noncanonical_dims = sorted(research_dir.glob(f"{args.topic}-dim*.md"))
@@ -591,7 +593,10 @@ def main() -> int:
     if not errors and verified_evidence_count == 0:
         errors.append("no verified evidence available for downstream factual handoff")
 
-    quality_ok = not errors
+    # Dimension count is a research-quality target, not a structural delivery
+    # requirement. Preserve the gap in QA while allowing a partial handoff when
+    # the minimum usable artifact contract is present.
+    quality_ok = not errors and dimension_target_met
     required_outputs_present = bool(
         research_dir.is_dir()
         and dim_files
@@ -684,14 +689,19 @@ def main() -> int:
         print(f"WARN: {warning}", file=sys.stderr)
 
     if errors:
+        label = "WARN" if delivery_allowed else "ERROR"
         for error in errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-        return 1
+            print(f"{label}: {error}", file=sys.stderr)
 
-    print(
-        f"OK: {args.route} artifacts for topic '{args.topic}' validated in {research_dir}"
-    )
-    return 0
+    if delivery_allowed:
+        status = "full" if handoff_status == "full" else handoff_status
+        print(
+            f"OK: {args.route} artifacts for topic '{args.topic}' accepted "
+            f"for {status} delivery in {research_dir}"
+        )
+        return 0
+
+    return 1
 
 
 if __name__ == "__main__":

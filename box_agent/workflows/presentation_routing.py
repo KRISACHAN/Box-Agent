@@ -9,6 +9,7 @@ from typing import Final
 from ..artifacts import OUTPUT_SUBDIR
 from ..config import ToolLimitsConfig
 from ..delivery import strip_negated_format_clauses
+from ..execution_profile import ExecutionProfile
 from ..loop_guards import (
     FINAL_SUMMARY_EXCLUDED_TOOLS,
     CompletionGate,
@@ -138,7 +139,17 @@ _PRESENTATION_BUDGET_EXEMPT_TOOLS: Final[frozenset[str]] = (
 )
 
 
-def _research_mode(user_text: str) -> str:
+def has_explicit_external_research_action(user_text: str) -> bool:
+    """Return whether the user explicitly requests external evidence work."""
+    text = _HOST_PRESENTATION_CONFIG_RE.sub(" ", user_text).strip()
+    return _EXPLICIT_EXTERNAL_RESEARCH_ACTION_RE.search(text) is not None
+
+
+def _research_mode(
+    user_text: str,
+    *,
+    execution_profile: ExecutionProfile = "standard",
+) -> str:
     # Host metadata contains routing words such as ``source`` and role labels
     # such as ``市场``. It informs deck planning, but must not masquerade as the
     # user's request to search or research external evidence.
@@ -149,7 +160,7 @@ def _research_mode(user_text: str) -> str:
     # amount of material already present in the prompt. Long references and a
     # detailed page plan can guide the deck, but they do not satisfy a request
     # to search, fact-check, or use authoritative sources.
-    if _EXPLICIT_EXTERNAL_RESEARCH_ACTION_RE.search(text):
+    if has_explicit_external_research_action(text):
         return "deep"
     if _RESEARCH_SOURCE_FIRST_RE.search(text):
         return "source_first"
@@ -179,7 +190,7 @@ def _research_mode(user_text: str) -> str:
     if len(topic) < 4:
         return "auto"
     if len(substantive_lines) <= 2 and len(text) <= 400:
-        return "deep"
+        return "targeted" if execution_profile == "fast" else "deep"
     return "auto"
 
 
@@ -198,6 +209,7 @@ def build_presentation_completion_gate(
     *,
     confirmed_presentation: bool = False,
     tool_limits: ToolLimitsConfig | None = None,
+    execution_profile: ExecutionProfile = "standard",
 ) -> CompletionGate | None:
     """Build the presentation workflow gate, or return None for another router."""
     if not confirmed_presentation and classify_presentation_request(user_text) is None:
@@ -223,7 +235,7 @@ def build_presentation_completion_gate(
             deadline_seconds=900.0,
         )
 
-    research_mode = _research_mode(user_text)
+    research_mode = _research_mode(user_text, execution_profile=execution_profile)
     effective_tool_limits = tool_limits or ToolLimitsConfig()
     limits = effective_tool_limits.presentation
     return CompletionGate(

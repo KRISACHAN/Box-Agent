@@ -136,6 +136,7 @@ from box_agent.completion import (
     build_auto_completion_gate,
     cancels_pending_completion_gate,
     completion_gate_has_workflow_lifecycle,
+    has_explicit_external_research_action,
     pending_completion_gate_for_storage,
     rebase_pending_completion_gate,
     should_resume_pending_completion_gate,
@@ -177,6 +178,11 @@ from box_agent.acp.follow_up_suggestions import (
 from box_agent.llm.lightweight import LightweightPromptError, run_lightweight_prompt
 from box_agent.acp.project_context import build_project_startup_context_prompt
 from box_agent.experts import ExpertSessionContext
+from box_agent.execution_profile import (
+    FAST_OPTIONAL_SKILLS,
+    ExecutionProfile,
+    normalize_execution_profile,
+)
 from box_agent.memory import MemoryManager
 from box_agent.retry import RetryConfig as RetryConfigBase
 from box_agent.schema import LLMProvider, Message
@@ -870,6 +876,8 @@ class SessionState:
     seen_injection_ids: set[str] = field(default_factory=set)  # per-turn dedup of inject IDs (idempotent retries)
     memory_block: str | None = None  # cached memory recall, re-applied when mode switches
     thinking_enabled: bool = False  # extended thinking toggle from _meta.deep_think
+    execution_profile: ExecutionProfile = "standard"
+    explicitly_allowed_skill_names: set[str] = field(default_factory=set)
     env_context: "EnvContext | None" = None  # cached env_context, re-applied when mode switches
     skill_runtime_context: "SkillRuntimeContext | None" = None
     skill_loader: Any | None = None  # session-local loader for expert-only recommended skills
@@ -1400,6 +1408,7 @@ class BoxACPAgent:
         # Pydantic aliases _meta to field_meta
         session_mode = None
         deep_think = False
+        execution_profile = normalize_execution_profile(None)
         env_context: EnvContext | None = None
         expert_context: ExpertSessionContext | None = None
         upstream_session_id = ""
@@ -1421,6 +1430,9 @@ class BoxACPAgent:
             client_info = ClientInfo.from_meta(meta.get("client_info")) or client_info
             session_mode = meta.get("session_mode")
             deep_think = bool(meta.get("deep_think", False))
+            execution_profile = normalize_execution_profile(
+                meta.get("execution_profile")
+            )
             utility = bool(meta.get("utility", False))
             force_plan_start = _meta_bool(meta, "force_plan_start", "forcePlanStart")
             require_plan_approval = _meta_bool(
@@ -1507,6 +1519,7 @@ class BoxACPAgent:
             message=(
                 f"Creating session, workspace={workspace}, session_mode={session_mode}, "
                 f"artifact_mode={artifact_mode}, deep_think={deep_think}, "
+                f"execution_profile={execution_profile}, "
                 f"force_plan_start={force_plan_start}, "
                 f"require_plan_approval={require_plan_approval}, "
                 f"llm_source={llm_binding['source'] if llm_binding else 'default'}, "
@@ -1682,6 +1695,10 @@ class BoxACPAgent:
                 log.info("session/memory", session_id=session_id, message="Memory context injected")
 
         preloaded_skill_hashes: dict[str, str] = {}
+        explicitly_allowed_skill_names: set[str] = set()
+        blocked_skill_names = (
+            FAST_OPTIONAL_SKILLS if execution_profile == "fast" else frozenset()
+        )
         if utility:
             # Pure text transform: no base tools, no workspace/sandbox tools.
             tools: list = []
@@ -1697,6 +1714,10 @@ class BoxACPAgent:
                         session_skill_loader,
                         include_disabled=expert_context is not None,
                         preloaded_skill_hashes=preloaded_skill_hashes,
+                        blocked_skill_names=blocked_skill_names,
+                        explicitly_allowed_skill_names=(
+                            explicitly_allowed_skill_names
+                        ),
                     )
                     if isinstance(tool, GetSkillTool)
                     or (
@@ -1812,6 +1833,8 @@ class BoxACPAgent:
             memory_extractor=session_extractor,
             memory_block=memory_block,
             thinking_enabled=deep_think,
+            execution_profile=execution_profile,
+            explicitly_allowed_skill_names=explicitly_allowed_skill_names,
             env_context=env_context,
             skill_runtime_context=skill_runtime_context,
             skill_loader=session_skill_loader,
@@ -1831,6 +1854,7 @@ class BoxACPAgent:
                 "workspace": str(workspace),
                 "session_mode": session_mode,
                 "artifact_mode": artifact_mode,
+                "execution_profile": execution_profile,
                 "title": upstream_title,
                 "utility": utility,
                 "context_window": session_context_window,
@@ -2498,6 +2522,14 @@ class BoxACPAgent:
             state.skill_loader,
             plan_detection_text,
         )
+        state.explicitly_allowed_skill_names.clear()
+        if explicit_skill is not None:
+            state.explicitly_allowed_skill_names.add(explicit_skill.name)
+        if (
+            state.execution_profile == "fast"
+            and has_explicit_external_research_action(plan_detection_text)
+        ):
+            state.explicitly_allowed_skill_names.add("research-synthesis")
         explicit_skill_uses_controlled_workflow = (
             explicit_skill is not None
             and explicit_skill.source == "builtin"
@@ -2575,6 +2607,7 @@ class BoxACPAgent:
                 confirmed_presentation=True,
                 allow_controlled_presentation=True,
                 tool_limits=self._config.tool_limits,
+                execution_profile=state.execution_profile,
             )
             if explicit_skill is not None
             and explicit_skill_uses_controlled_workflow
@@ -2607,6 +2640,7 @@ class BoxACPAgent:
                     or provider_uses_controlled_workflow
                 ),
                 tool_limits=self._config.tool_limits,
+                execution_profile=state.execution_profile,
             )
         )
         if (
@@ -4474,8 +4508,18 @@ class BoxACPAgent:
                     if state.skill_selector is not None
                     else ()
                 ),
-                tuple(state.preloaded_skill_names),
+                # Explicit user requirements are active policy inputs even
+                # before the model calls get_skill on demand.
+                tuple(
+                    dict.fromkeys(
+                        (
+                            *state.preloaded_skill_names,
+                            *sorted(state.explicitly_allowed_skill_names),
+                        )
+                    )
+                ),
                 tool_limits=self._config.tool_limits,
+                execution_profile=state.execution_profile,
             ),
             completion_gate=completion_gate,
             artifact_detection_enabled=state.artifact_mode != "project",

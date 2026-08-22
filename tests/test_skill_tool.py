@@ -97,6 +97,41 @@ async def test_get_skill_tool_returns_full_content_when_preloaded_skill_changed(
 
 
 @pytest.mark.asyncio
+async def test_get_skill_tool_honors_profile_block_until_user_explicitly_allows_skill(
+    skill_loader,
+):
+    explicitly_allowed: set[str] = set()
+    tool = GetSkillTool(
+        skill_loader,
+        blocked_skill_names={"test-skill-0"},
+        explicitly_allowed_skill_names=explicitly_allowed,
+    )
+
+    blocked = await tool.execute(skill_name="test-skill-0")
+    assert not blocked.success
+    assert "execution profile" in blocked.error
+    assert "do not retry" in blocked.error
+
+    explicitly_allowed.add("test-skill-0")
+    allowed = await tool.execute(skill_name="test-skill-0")
+    assert allowed.success
+    assert "Test skill 0 content" in allowed.content
+
+    skill = skill_loader.get_skill("test-skill-0")
+    assert skill is not None
+    preloaded = GetSkillTool(
+        skill_loader,
+        blocked_skill_names={"test-skill-0"},
+        preloaded_skill_hashes={
+            skill.name: sha256(skill.to_prompt().encode("utf-8")).hexdigest()
+        },
+    )
+    preloaded_result = await preloaded.execute(skill_name="test-skill-0")
+    assert preloaded_result.success
+    assert "already preloaded" in preloaded_result.content
+
+
+@pytest.mark.asyncio
 async def test_get_skill_tool_nonexistent(skill_loader):
     """Test getting non-existent skill"""
     tool = GetSkillTool(skill_loader)

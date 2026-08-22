@@ -178,7 +178,7 @@ async def _stream_with_activity(
                 await closer()
             except (RuntimeError, asyncio.CancelledError):
                 pass
-from .schema import LLMResponse, Message, StreamEvent
+from .schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from .tools.base import (
     EventEmittingTool,
     Tool,
@@ -195,7 +195,7 @@ from .turn_policy import (
     text_is_short_non_task_reply,
     text_requests_plan_start,
 )
-from .workflow_policy import WorkflowPolicy
+from .workflow_policy import WorkflowAction, WorkflowPolicy
 from .workflow_checkpoint_store import (
     clear_workflow_checkpoint,
     save_workflow_checkpoint,
@@ -3167,6 +3167,7 @@ async def run_agent_loop(
                 verified_evidence_urls.add(normalized)
 
     for step in range(max_steps):
+        workflow_action: WorkflowAction | None = None
         if resource_ledger is not None:
             invalidated = resource_ledger.reconcile(messages)
             if invalidated:
@@ -3421,6 +3422,16 @@ async def run_agent_loop(
                 verified_evidence_urls.update(
                     checkpoint_update.recovered_evidence_urls
                 )
+                if not (
+                    force_plan_for_turn and "plan_write" not in succeeded_tools
+                ):
+                    next_action = getattr(
+                        workflow_policy,
+                        "next_deterministic_action",
+                        None,
+                    )
+                    if callable(next_action):
+                        workflow_action = next_action()
 
         # ── Fresh tool-result aggregate budget (Layer 1) ───
         # This runs immediately before the next LLM request. Decisions are
@@ -3724,6 +3735,21 @@ async def run_agent_loop(
         offered_tools_by_name = {tool.name: tool for tool in tool_list}
         offered_tools_by_call_name = build_tool_name_index(tool_list)
         offered_tool_names = frozenset(offered_tools_by_name)
+        if workflow_action is not None:
+            action_tool = offered_tools_by_name.get(workflow_action.tool_name)
+            supported_actions = getattr(
+                action_tool,
+                "runtime_workflow_actions",
+                frozenset(),
+            )
+            if workflow_action.capability not in supported_actions:
+                _log.warning(
+                    "workflow/action_unsupported action_id=%s capability=%s tool=%s",
+                    workflow_action.action_id,
+                    workflow_action.capability,
+                    workflow_action.tool_name,
+                )
+                workflow_action = None
 
         def _tool_target_identity(tool_name: str) -> tuple[str | None, str | None]:
             tool = offered_tools_by_name.get(tool_name)
@@ -3758,7 +3784,7 @@ async def run_agent_loop(
                 cache_fingerprint_sink(cache_fingerprint)
             except Exception:
                 _log.debug("cache fingerprint sink failed", exc_info=True)
-        if logger:
+        if logger and workflow_action is None:
             logger.log_request(
                 messages=messages,
                 tools=tool_list,
@@ -3766,7 +3792,9 @@ async def run_agent_loop(
             )
 
         llm_debug_sink_token = (
-            set_llm_debug_sink(logger.log_llm_debug_record) if logger else None
+            set_llm_debug_sink(logger.log_llm_debug_record)
+            if logger and workflow_action is None
+            else None
         )
         try:
             # Stream thinking and visible text deltas as soon as the provider
@@ -3799,7 +3827,37 @@ async def run_agent_loop(
                 effective_call_kind = workflow_call_kind()
             if effective_call_kind:
                 stream_kwargs["call_kind"] = effective_call_kind
-            llm_stream = llm.generate_stream(**stream_kwargs)
+            if workflow_action is None:
+                llm_stream = llm.generate_stream(**stream_kwargs)
+            else:
+                action = workflow_action
+                tool_call_id = "workflow_" + hashlib.sha256(
+                    action.action_id.encode("utf-8")
+                ).hexdigest()[:24]
+
+                async def _deterministic_action_stream() -> AsyncIterator[StreamEvent]:
+                    yield StreamEvent(
+                        type="finish",
+                        finish_reason="tool",
+                        tool_calls=[
+                            ToolCall(
+                                id=tool_call_id,
+                                type="function",
+                                function=FunctionCall(
+                                    name=action.tool_name,
+                                    arguments=action.arguments,
+                                ),
+                            )
+                        ],
+                    )
+
+                _log.info(
+                    "workflow/action_dispatch action_id=%s capability=%s tool=%s",
+                    action.action_id,
+                    action.capability,
+                    action.tool_name,
+                )
+                llm_stream = _deterministic_action_stream()
             async for chunk in _stream_with_activity(llm_stream):
                 if cancelled():
                     break
@@ -3890,21 +3948,30 @@ async def run_agent_loop(
                 oversized_tool_calls=finish_event.oversized_tool_calls,
             )
             provider_request_id = finish_event.provider_request_id
-            yield LLMOutputEvent(
-                step=step + 1,
-                content=response.content,
-                thinking=response.thinking,
-                tool_calls=[tc.model_dump() for tc in response.tool_calls] if response.tool_calls else None,
-                finish_reason=response.finish_reason,
-                usage=(
-                    response.usage.model_dump(
-                        include={"prompt_tokens", "completion_tokens", "total_tokens"}
-                    )
-                    if response.usage
-                    else None
-                ),
-                provider_request_id=provider_request_id,
-            )
+            if workflow_action is None:
+                yield LLMOutputEvent(
+                    step=step + 1,
+                    content=response.content,
+                    thinking=response.thinking,
+                    tool_calls=(
+                        [tc.model_dump() for tc in response.tool_calls]
+                        if response.tool_calls
+                        else None
+                    ),
+                    finish_reason=response.finish_reason,
+                    usage=(
+                        response.usage.model_dump(
+                            include={
+                                "prompt_tokens",
+                                "completion_tokens",
+                                "total_tokens",
+                            }
+                        )
+                        if response.usage
+                        else None
+                    ),
+                    provider_request_id=provider_request_id,
+                )
 
         except Exception as exc:
             from .llm.error_messages import classify_llm_error, extract_llm_error_code
@@ -3971,11 +4038,11 @@ async def run_agent_loop(
             yield TokenUsageEvent(total_tokens=api_total_tokens)
 
         # ── Hook: LLM response ─────────────────────────────
-        if hook_mgr.hooks:
+        if hook_mgr.hooks and workflow_action is None:
             await hook_mgr.fire_llm_response(response=response)
 
         # ── Log response ────────────────────────────────────
-        if logger:
+        if logger and workflow_action is None:
             logger.log_response(
                 content=response.content,
                 thinking=response.thinking,

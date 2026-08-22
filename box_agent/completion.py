@@ -14,6 +14,7 @@ from .delivery import (
     is_meta_prompt_rewrite_request,
     strip_negated_format_clauses,
 )
+from .execution_profile import ExecutionProfile
 from .loop_guards import CompletionGate, artifact_signatures_for_globs
 from .turn_policy import text_is_short_acknowledgement
 from .workflows.presentation_contract import (
@@ -23,7 +24,10 @@ from .workflows.presentation_contract import (
     WORKFLOW_KIND,
     image_generation_policy_update,
 )
-from .workflows.presentation_routing import build_presentation_completion_gate
+from .workflows.presentation_routing import (
+    build_presentation_completion_gate,
+    has_explicit_external_research_action,
+)
 
 
 _PENDING_GATE_CANCEL_PHRASES: Final[tuple[str, ...]] = (
@@ -256,6 +260,7 @@ def build_auto_completion_gate(
     confirmed_presentation: bool = False,
     allow_controlled_presentation: bool = True,
     tool_limits: ToolLimitsConfig | None = None,
+    execution_profile: ExecutionProfile = "standard",
 ) -> CompletionGate | None:
     """Create an evidence-backed gate for a recognized deliverable request."""
     requires_host_receipt, execution_result_criteria_count = (
@@ -283,6 +288,7 @@ def build_auto_completion_gate(
             workspace_dir,
             confirmed_presentation=confirmed_presentation,
             tool_limits=tool_limits,
+            execution_profile=execution_profile,
         )
         if allow_controlled_presentation
         else None

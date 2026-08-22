@@ -528,11 +528,14 @@ def _presentation_handoff(research_files: tuple[Path, ...]) -> dict[str, object]
 
 def _stale_research_revalidation(
     workspace_dir: str | Path,
+    artifact_root_dir: str | Path | None,
     research_files: tuple[Path, ...],
 ) -> dict[str, object] | None:
     """Return one deterministic validator call when research changed after QA."""
-    workspace_root = Path(workspace_dir)
-    canonical_research_root = workspace_root / OUTPUT_SUBDIR / "research"
+    artifact_root = artifact_scan_root(workspace_dir, artifact_root_dir)
+    if artifact_root is None:
+        return None
+    canonical_research_root = artifact_root / "research"
     report_paths = [
         path
         for path in research_files
@@ -607,6 +610,87 @@ def _stale_research_revalidation(
             for path in stale_dependencies
         ],
     }
+
+
+def _initial_research_validation(
+    workspace_dir: str | Path,
+    artifact_root_dir: str | Path | None,
+    research_files: tuple[Path, ...],
+) -> dict[str, object] | None:
+    """Return a deterministic first validator call once minimum inputs exist."""
+    artifact_root = artifact_scan_root(workspace_dir, artifact_root_dir)
+    if artifact_root is None:
+        return None
+    research_root = artifact_root / "research"
+    if not research_root.is_dir():
+        return None
+    reports = [
+        path
+        for path in research_files
+        if path.name.endswith(("_research_check.json", "_presentation_handoff.json"))
+        and path.is_file()
+    ]
+    if reports:
+        return None
+
+    def non_empty_files(paths: Iterable[Path]) -> list[Path]:
+        return [
+            path
+            for path in paths
+            if path.is_file() and path.stat().st_size > 0
+        ]
+
+    evidence_files = sorted(
+        research_root.glob("*_evidence.json"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    for evidence_file in evidence_files:
+        topic = evidence_file.name.removesuffix("_evidence.json")
+        if not topic or Path(topic).name != topic:
+            continue
+        dimensions = non_empty_files(research_root.glob(f"{topic}_dim*.md"))
+        cross_verification = research_root / f"{topic}_cross_verification.md"
+        insight = research_root / f"{topic}_insight.md"
+        if not dimensions or not cross_verification.is_file() or not insight.is_file():
+            continue
+        wide_files = non_empty_files(research_root.glob(f"{topic}_wide*.md"))
+        route = "A" if wide_files else "B"
+        report_argument = (
+            Path("research") / "qa" / f"{topic}_research_check.json"
+        ).as_posix()
+        script_path = _RESEARCH_SYNTHESIS_SCRIPTS_DIR / "validate_research_artifacts.py"
+        command = " ".join(
+            [
+                "${BOX_AGENT_PYTHON:-python3}",
+                shlex.quote(str(script_path)),
+                "--research-dir",
+                "research",
+                "--topic",
+                shlex.quote(topic),
+                "--route",
+                route,
+                "--report",
+                shlex.quote(report_argument),
+            ]
+        )
+        dependencies = [
+            evidence_file,
+            *dimensions,
+            cross_verification,
+            insight,
+            *wide_files,
+        ]
+        return {
+            "required": True,
+            "initial": True,
+            "command": command,
+            "report": report_argument,
+            "stale_dependencies": [
+                path.relative_to(research_root).as_posix() for path in dependencies
+            ],
+        }
+    return None
 
 
 def _manifest_generation_progress(
@@ -1428,18 +1512,28 @@ def build_checkpoint_text(
         artifact_root_dir,
     )
     research_handoff = _presentation_handoff(research_files) if research_ready else {}
-    stale_revalidation = (
-        _stale_research_revalidation(workspace_dir, research_files)
+    research_validation = (
+        _stale_research_revalidation(
+            workspace_dir,
+            artifact_root_dir,
+            research_files,
+        )
         if research_required and not research_ready
         else None
     )
+    if research_required and not research_ready and research_validation is None:
+        research_validation = _initial_research_validation(
+            workspace_dir,
+            artifact_root_dir,
+            research_files,
+        )
     research_delivery_mode = str(
         research_handoff.get("delivery_mode") or "invalid"
     )
     research_fallback = (
         research_required
         and not research_ready
-        and stale_revalidation is None
+        and research_validation is None
         and (
             research_fallback_allowed
             or _research_fallback_available(research_files)
@@ -1701,13 +1795,17 @@ def build_checkpoint_text(
         and html_path is None
     ):
         stage = "research"
-        if stale_revalidation is not None:
+        if research_validation is not None:
+            validation_reason = (
+                "The minimum research artifacts are ready and need their first QA report. "
+                if research_validation.get("initial") is True
+                else "The research files are newer than their QA report, so the report is stale. "
+            )
             next_action = (
-                "The research files are newer than their QA report, so the report is "
-                "stale. Do not search, browse, read, list, or rewrite any artifact. "
-                "Your only next tool call must run this validator command exactly once: `"
-                f"{stale_revalidation['command']}`. The fresh generic presentation "
-                "handoff will advance to full, partial, or framework delivery."
+                validation_reason
+                + "Do not search, browse, read, list, or rewrite any artifact. The runtime "
+                "will run the deterministic validator before the next model step and use "
+                "its full, partial, or framework handoff."
             )
         elif research_search_exhausted:
             direct_read_instruction = (
@@ -2400,8 +2498,8 @@ def build_checkpoint_text(
                 "mode": research_mode,
                 "ready": research_ready,
                 **(
-                    {"revalidation": stale_revalidation}
-                    if stale_revalidation is not None
+                    {"revalidation": research_validation}
+                    if research_validation is not None
                     else {}
                 ),
                 **research_handoff,

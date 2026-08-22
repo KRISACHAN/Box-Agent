@@ -45,6 +45,10 @@ class Tool:
 
     aliases: tuple[str, ...] = ()
     parallel_safe: bool = False
+    # Trusted workflow policies may synthesize calls only for capabilities a
+    # concrete tool explicitly opts into. This keeps the workflow seam from
+    # becoming a general-purpose way to invoke arbitrary tools.
+    runtime_workflow_actions: frozenset[str] = frozenset()
     # ``None`` uses the shared context-scaled result limit. Tools with a real
     # lower operational bound may declare it explicitly; tools that already
     # self-bound output may opt out with ``math.inf`` and still hand complete

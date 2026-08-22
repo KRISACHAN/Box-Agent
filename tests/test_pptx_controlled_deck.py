@@ -9158,6 +9158,39 @@ def test_public_research_outline_warns_for_numeric_claims_missing_from_evidence(
     )
 
 
+def test_public_research_outline_ignores_campaign_name_digits(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1)
+    outline["source_mode"] = "public_authoritative_research"
+    outline["slides"][0].update(
+        {
+            "title": "双11全渠道营销策划",
+            "message": "围绕双11建立跨渠道协同机制。",
+            "bullets": ["双11主会场与会员运营联动", "保持统一活动节奏"],
+            "evidence": [],
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--min-slides",
+        "1",
+        "--max-slides",
+        "1",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert not any(
+        'numeric literal "11"' in warning for warning in payload["warnings"]
+    )
+
+
 def test_public_research_outline_warns_when_actual_source_url_is_missing(
     tmp_path: Path,
 ) -> None:

@@ -774,6 +774,18 @@ class BashTool(Tool):
     """
 
     aliases = ("exec", "terminal")
+    runtime_workflow_actions = frozenset(
+        {
+            "controlled_presentation.apply_patch",
+            "controlled_presentation.apply_redesign",
+            "controlled_presentation.finalize",
+            "controlled_presentation.image_policy_rebase",
+            "controlled_presentation.image_status_sync",
+            "controlled_presentation.outline_validate",
+            "controlled_presentation.research_validate",
+            "controlled_presentation.scaffold",
+        }
+    )
 
     max_result_size_chars = math.inf
 
