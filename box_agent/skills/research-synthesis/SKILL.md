@@ -99,23 +99,25 @@ simple factual lookup, one-source Q&A, or ordinary code changes.
   the still-uncovered dimension or conflict; do not rerun a near-equivalent
   entity/fact query merely because an authority-ranked or `site:` query was empty.
 - If an exact public URL is already known, read it with an actually available
-  browser tool. In officev3, use `managed_browser_*` for independent public-web
-  reads. Activate the exact `managed_browser_navigate` and
-  `managed_browser_snapshot` tool names together, then verify one URL at a time
-  with `managed_browser_navigate(url)` followed by `managed_browser_snapshot()`.
+  exact-page tool. Prefer `web_extract`, or a user-selected MCP reader that
+  accepts the exact URL and returns that page's body. In officev3,
+  `managed_browser_*` is also valid for independent public-web reads. Activate
+  `managed_browser_navigate` and `managed_browser_snapshot` together, then
+  verify one URL at a time with navigate followed by snapshot.
   Navigation metadata alone is not a failed body read; the snapshot body is the
   evidence content bound to that URL.
   Use `user_browser_*` when the read depends on the user's current page,
   login state, cookies, extensions, or intranet access; this does not require a
   separate authorization prompt. Do not route between browser modes through a
   `source_preference` argument.
-- Treat search results as discovery, not evidence. Open the source page before
-  marking a claim verified, and capture a short excerpt that actually supports
-  the claim and names the target entity. Never transfer a search-result snippet
-  directly into the verified evidence ledger.
+- Search-result summaries may support medium-confidence evidence when each row
+  is bound to that result's exact URL, uses `evidence_basis=search_summary`, and
+  copies an excerpt returned for that same result. Never cross-bind one result's
+  summary to another URL or locally rewrite the excerpt. Read the exact page when
+  stronger evidence is useful or the summary does not support the claim.
 - After bounded search, verify no more than five unique exact article, report,
   filing, or data-page URLs. Never use an origin homepage or retry the same URL
-  with the same browser backend. Do not issue parallel Playwright navigations;
+  with the same page-reading backend. Do not issue parallel Playwright navigations;
   finish each navigate/snapshot pair before opening another URL. If two
   consecutive direct reads yield no usable source text, stop browsing, mark the
   remaining candidates `unverified`, and

@@ -3136,6 +3136,35 @@ async def run_agent_loop(
             "guidance. Do not retry the unchanged call."
         )
 
+    def _record_workflow_visible_evidence(
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+        visible_content: str,
+    ) -> None:
+        """Record URL evidence from the exact result exposed to the model."""
+        if workflow_policy is None or not result.success or not visible_content.strip():
+            return
+        record_visible = getattr(workflow_policy, "record_visible_tool_result", None)
+        if callable(record_visible):
+            record_visible(tool_name, arguments, result, visible_content)
+        evidence_urls = getattr(workflow_policy, "evidence_urls", None)
+        if callable(evidence_urls):
+            urls = evidence_urls(tool_name, arguments, result)
+        elif workflow_policy.is_direct_evidence_read_tool(tool_name):
+            direct_url = workflow_policy.direct_evidence_url(
+                tool_name,
+                arguments,
+                result,
+            )
+            urls = (direct_url,) if direct_url else ()
+        else:
+            urls = ()
+        for url in urls:
+            normalized = _normalize_search_url(url)
+            if normalized:
+                verified_evidence_urls.add(normalized)
+
     for step in range(max_steps):
         if resource_ledger is not None:
             invalidated = resource_ledger.reconcile(messages)
@@ -5406,25 +5435,12 @@ async def run_agent_loop(
                 if inspected:
                     web_search_step_structured_results += 1
                 web_search_step_labels.extend(new_labels[:3])
-            elif (
-                result.success
-                and workflow_policy is not None
-                and workflow_policy.is_direct_evidence_read_tool(fn_name)
-                and (result.model_context or result.content or "").strip()
-            ):
-                direct_evidence_url = getattr(
-                    workflow_policy,
-                    "direct_evidence_url",
-                    None,
-                )
-                direct_url = (
-                    direct_evidence_url(fn_name, fn_args, result)
-                    if callable(direct_evidence_url)
-                    else _first_present(fn_args, ("url", "URL", "href"))
-                )
-                normalized_direct_url = _normalize_search_url(direct_url)
-                if normalized_direct_url:
-                    verified_evidence_urls.add(normalized_direct_url)
+            _record_workflow_visible_evidence(
+                fn_name,
+                fn_args,
+                result,
+                tc_content,
+            )
 
             # Append the tool message BEFORE yielding any events. The yields
             # below hand control back to the consumer, which may suspend or
@@ -6013,25 +6029,12 @@ async def run_agent_loop(
                     if inspected:
                         web_search_step_structured_results += 1
                     web_search_step_labels.extend(new_labels[:3])
-                elif (
-                    result.success
-                    and workflow_policy is not None
-                    and workflow_policy.is_direct_evidence_read_tool(fn_name)
-                    and (result.model_context or result.content or "").strip()
-                ):
-                    direct_evidence_url = getattr(
-                        workflow_policy,
-                        "direct_evidence_url",
-                        None,
-                    )
-                    direct_url = (
-                        direct_evidence_url(fn_name, par_fn_args, result)
-                        if callable(direct_evidence_url)
-                        else _first_present(par_fn_args, ("url", "URL", "href"))
-                    )
-                    normalized_direct_url = _normalize_search_url(direct_url)
-                    if normalized_direct_url:
-                        verified_evidence_urls.add(normalized_direct_url)
+                _record_workflow_visible_evidence(
+                    fn_name,
+                    par_fn_args,
+                    result,
+                    par_content,
+                )
 
                 # Append the tool message BEFORE yielding any events — see
                 # the equivalent comment in the sequential branch above for

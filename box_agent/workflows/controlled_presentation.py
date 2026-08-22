@@ -19,7 +19,11 @@ from urllib.parse import urlsplit
 
 from ..config import ToolLimitsConfig
 from ..artifacts import artifact_scan_root
-from ..evidence import extract_http_urls, normalize_search_url
+from ..evidence import (
+    extract_http_urls,
+    extract_search_result_evidence,
+    normalize_search_url,
+)
 from ..tools.base import ToolResult
 from ..tools.browser_tool_names import is_browser_tool_name
 from ..workflow_policy import WorkflowCheckpointUpdate
@@ -41,6 +45,7 @@ MANAGED_RESEARCH_SNAPSHOT_TOOLS: Final[frozenset[str]] = frozenset(
 )
 DIRECT_RESEARCH_READ_TOOLS: Final[frozenset[str]] = frozenset(
     {
+        "web_extract",
         "user_browser_open_tab_and_read",
         "user_browser_read_page",
         "user_browser_read_article",
@@ -256,18 +261,17 @@ _RESEARCH_ARTIFACT_TARGET_TOOL_ERROR = (
 )
 _RESEARCH_SEARCH_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research searches "
-    "are complete. Do not call web_search or tool_search again. Search snippets are "
-    "discovery only: read a small set of unique exact authoritative candidate URLs "
-    "before marking their evidence rows verified. Do not require first-party coverage "
-    "when another suitable authoritative source supports the claim; then complete the "
-    "ledger and validation report."
+    "are complete. Do not call web_search or tool_search again. URL-bound provider "
+    "summaries may support medium-confidence evidence when the ledger excerpt is copied "
+    "from that exact result; read a small set of exact authoritative pages only when "
+    "stronger evidence is useful. Then complete the ledger and validation report."
 )
 _RESEARCH_EXECUTE_CODE_NETWORK_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_NETWORK_TOOL_REQUIRED: network access through "
     "execute_code bypasses research accounting and source provenance. Do not use "
     "Python network libraries, URL-reading data APIs, socket connections, or curl/wget "
     "subprocesses for research retrieval. Call tool_search with one short capability or "
-    "exact tool name at a time, then use web_search or an activated browser_* tool."
+    "exact tool name at a time, then use web_search or an activated exact-page reader."
 )
 _NETWORK_MODULE_PREFIXES: Final[tuple[str, ...]] = (
     "requests",
@@ -295,7 +299,7 @@ _PROCESS_CALL_NAMES: Final[frozenset[str]] = frozenset(
 _RESEARCH_DIRECT_READ_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_DIRECT_READ_COMPLETE: the bounded direct-source "
     "verification pass is complete after five attempts or two consecutive reads that "
-    "did not yield usable source content. Do not retry browser reads. Mark any unread "
+    "did not yield usable source content. Do not retry exact-page reads. Mark any unread "
     "source rows unverified (or omit optional unsupported claims), then finish the "
     "evidence ledger and run validate_research_artifacts.py."
 )
@@ -307,7 +311,7 @@ _RESEARCH_EXACT_SOURCE_URL_REQUIRED_TOOL_ERROR = (
 )
 _RESEARCH_DIRECT_URL_ALREADY_ATTEMPTED_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_DIRECT_URL_ALREADY_ATTEMPTED: this exact source URL was "
-    "already attempted with the same browser backend. Do not retry it. Use one "
+    "already attempted with the same page-reading backend. Do not retry it. Use one "
     "different exact candidate URL, use the alternate browser backend once, or mark "
     "the source unverified and continue."
 )
@@ -324,11 +328,12 @@ _RESEARCH_SNAPSHOT_NAVIGATION_REQUIRED_TOOL_ERROR = (
 )
 _RESEARCH_UNREAD_EVIDENCE_URL_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL: the evidence ledger marks URLs as "
-    "verified even though this run has not successfully read those exact source pages, "
-    "or its evidence_excerpt is not present in the successful page result: {urls}. "
-    "Search snippets and locally rewritten excerpts do not establish provenance. Open "
-    "each URL with a browser read tool and copy a supporting excerpt from that result, "
-    "or change the row to unverified with unverified_reason, then rerun the validator."
+    "verified even though this run has not captured supporting content for those exact "
+    "source URLs, or its evidence_excerpt is absent from the captured result: {urls}. "
+    "A supporting excerpt must come from either that exact result's provider summary or "
+    "an exact-page read in this run; locally rewritten excerpts do not establish "
+    "provenance. Copy the captured excerpt, or change the row to unverified with "
+    "unverified_reason, then rerun the validator."
 )
 _RESEARCH_LOCAL_READ_COMPLETE_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_RESEARCH_LOCAL_READ_COMPLETE: bounded research is "
@@ -1197,6 +1202,59 @@ def _is_substantive_research_url(value: Any) -> bool:
     return bool(parsed.path.strip("/") or parsed.query)
 
 
+_DIRECT_URL_ARGUMENT_NAMES: Final[tuple[str, ...]] = (
+    "url",
+    "URL",
+    "href",
+    "uri",
+    "source_url",
+    "target_url",
+)
+_NON_PAGE_READ_RESEARCH_TOOLS: Final[frozenset[str]] = frozenset(
+    {
+        "web_search",
+        "tool_search",
+        "search",
+        "search_files",
+        "read_file",
+        "write_file",
+        "append_file",
+        "edit_file",
+        "staged_file_write",
+        "bash",
+        "execute_code",
+        "generate_image",
+    }
+)
+
+
+def _research_direct_url_argument(arguments: dict[str, Any]) -> str:
+    """Return an exact URL explicitly bound by a tool invocation."""
+    for name in _DIRECT_URL_ARGUMENT_NAMES:
+        value = arguments.get(name)
+        if isinstance(value, str) and value.strip():
+            return normalize_search_url(value)
+    return ""
+
+
+def _is_direct_research_read_call(
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> bool:
+    """Classify exact-page reads by evidence shape, not provider identity.
+
+    Known browser pairs remain explicit because snapshots inherit the URL from a
+    preceding navigation. Other user-selected MCP tools qualify only when the
+    invocation itself binds a substantive public URL. Search/query tools and
+    browser state side channels stay discovery-only.
+    """
+    if tool_name in DIRECT_RESEARCH_READ_TOOLS:
+        return True
+    if tool_name in _NON_PAGE_READ_RESEARCH_TOOLS or is_browser_tool_name(tool_name):
+        return False
+    return _is_substantive_research_url(_research_direct_url_argument(arguments))
+
+
 def _research_result_establishes_direct_source(
     tool_name: str,
     arguments: dict[str, Any],
@@ -1204,7 +1262,7 @@ def _research_result_establishes_direct_source(
 ) -> bool:
     """Return whether a successful direct read reached substantive source content."""
     if (
-        tool_name not in DIRECT_RESEARCH_READ_TOOLS
+        not _is_direct_research_read_call(tool_name, arguments)
         or not result.success
         or _research_result_is_empty(result)
     ):
@@ -1236,12 +1294,13 @@ def _research_direct_source_content(
 ) -> tuple[str, str]:
     """Extract page text and the resolved URL from one direct-read result."""
     content = result.content if isinstance(result.content, str) else ""
-    resolved_url = str(
-        arguments.get("url") or arguments.get("URL") or arguments.get("href") or ""
-    )
+    resolved_url = _research_direct_url_argument(arguments)
     page_url_match = re.search(r"(?im)^-\s*Page URL:\s*(\S+)\s*$", content)
     if page_url_match:
         resolved_url = page_url_match.group(1)
+    extract_url_match = re.search(r"(?im)^\[URL\]:\s*(\S+)\s*$", content)
+    if extract_url_match:
+        resolved_url = extract_url_match.group(1)
     try:
         payload = json.loads(content)
     except (TypeError, json.JSONDecodeError):
@@ -1270,17 +1329,15 @@ def _research_direct_read_key(
     arguments: dict[str, Any],
 ) -> tuple[str, str] | None:
     """Return the exact URL and backend family for direct-read deduplication."""
-    url = normalize_search_url(
-        arguments.get("url") or arguments.get("URL") or arguments.get("href")
-    )
+    url = _research_direct_url_argument(arguments)
     if not url.startswith(("http://", "https://")):
         return None
-    backend = (
-        "playwright"
-        if tool_name
-        in MANAGED_RESEARCH_NAVIGATE_TOOLS | MANAGED_RESEARCH_SNAPSHOT_TOOLS
-        else "gateway"
-    )
+    if tool_name in MANAGED_RESEARCH_NAVIGATE_TOOLS | MANAGED_RESEARCH_SNAPSHOT_TOOLS:
+        backend = "playwright"
+    elif tool_name in GATEWAY_RESEARCH_READ_TOOLS:
+        backend = "browser-gateway"
+    else:
+        backend = tool_name
     return url, backend
 
 
@@ -1296,9 +1353,10 @@ def _research_unread_verified_urls(
     workspace_dir: str | None,
     artifact_root_dir: str | Path | None,
     verified_evidence_urls: set[str],
-    verified_evidence_content: dict[str, str],
+    direct_evidence_content: dict[str, str],
+    search_evidence_content: dict[str, str],
 ) -> tuple[str, ...]:
-    """Return ledger URLs incorrectly marked verified without a page read."""
+    """Return verified ledger URLs unsupported by captured source content."""
     ledger = _research_validation_ledger(
         tool_name,
         arguments,
@@ -1325,7 +1383,10 @@ def _research_unread_verified_urls(
         url = row.get("source_url")
         normalized = normalize_search_url(url)
         excerpt = _normalized_source_text(row.get("evidence_excerpt"))
-        source_text = verified_evidence_content.get(normalized, "")
+        source_text = direct_evidence_content.get(
+            normalized,
+            search_evidence_content.get(normalized, ""),
+        )
         if normalized.startswith(("http://", "https://")) and (
             not _is_substantive_research_url(normalized)
             or normalized not in trusted
@@ -1943,7 +2004,10 @@ class ControlledPresentationPolicy:
     _research_json_reads_since_mutation: set[str] = field(default_factory=set)
     _research_browser_connector_unavailable: bool = False
     _research_direct_read_keys: set[tuple[str, str]] = field(default_factory=set)
+    _research_direct_read_tool_names: set[str] = field(default_factory=set)
     _research_direct_source_text: dict[str, str] = field(default_factory=dict)
+    _research_search_source_text: dict[str, str] = field(default_factory=dict)
+    _research_last_evidence_urls: set[str] = field(default_factory=set)
     _research_pending_playwright_url: str | None = None
     _research_last_direct_source_url: str | None = None
     _successful_mutation_since_checkpoint: bool = False
@@ -2336,6 +2400,7 @@ class ControlledPresentationPolicy:
             if changed
             else set()
         )
+        recovered_urls.update(self._research_search_source_text)
         if changed:
             self._last_checkpoint_text = checkpoint_text
         return WorkflowCheckpointUpdate(
@@ -2477,6 +2542,15 @@ class ControlledPresentationPolicy:
         parallel: bool = False,
     ) -> str | None:
         """Return a blocking error for a workflow-invalid tool call."""
+        direct_read_call = (
+            self.stage == "research"
+            and _is_direct_research_read_call(tool_name, arguments)
+        )
+        if direct_read_call:
+            # Remember dynamically selected MCP readers before the kernel reserves
+            # budgets. Trust is still established only after a successful result
+            # contains substantive page text bound to the requested URL.
+            self._research_direct_read_tool_names.add(tool_name)
         handoff_error = _research_handoff_error(
             self.stage,
             self.research_mode,
@@ -2536,7 +2610,7 @@ class ControlledPresentationPolicy:
             return _RESEARCH_SNAPSHOT_NAVIGATION_REQUIRED_TOOL_ERROR
         if (
             self.stage == "research"
-            and tool_name in DIRECT_RESEARCH_READ_TOOLS
+            and direct_read_call
             and self._research_direct_read_complete
         ):
             return _RESEARCH_DIRECT_READ_COMPLETE_TOOL_ERROR
@@ -2570,6 +2644,7 @@ class ControlledPresentationPolicy:
                 self.artifact_root_dir,
                 verified_evidence_urls,
                 self._research_direct_source_text,
+                self._research_search_source_text,
             )
             if unread_urls:
                 displayed = ", ".join(unread_urls[:5])
@@ -2591,7 +2666,7 @@ class ControlledPresentationPolicy:
         if (
             self.stage == "research"
             and self.research_search_exhausted
-            and tool_name in DIRECT_RESEARCH_READ_TOOLS
+            and direct_read_call
         ):
             if tool_name in MANAGED_RESEARCH_SNAPSHOT_TOOLS:
                 return None
@@ -2763,6 +2838,7 @@ class ControlledPresentationPolicy:
         executed: bool = True,
     ) -> None:
         """Update deterministic-repair state after one tool result."""
+        self._research_last_evidence_urls.clear()
         if not executed:
             self._record_policy_rejection(result)
             return
@@ -2846,12 +2922,15 @@ class ControlledPresentationPolicy:
             else:
                 self._research_successful_discovery_attempts += 1
 
-        if self.stage == "research" and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS:
+        direct_read_call = _is_direct_research_read_call(tool_name, arguments)
+        if self.stage == "research" and (
+            tool_name == "web_search" or direct_read_call
+        ):
             self._research_tool_attempts += 1
             self._research_calls_since_checkpoint += 1
             self._research_last_direct_source_url = None
             establishes_direct_source = False
-            counts_direct_read = tool_name in DIRECT_RESEARCH_READ_TOOLS
+            counts_direct_read = direct_read_call
             effective_arguments = arguments
             if tool_name in MANAGED_RESEARCH_NAVIGATE_TOOLS and result.success:
                 page_text, resolved_url = _research_direct_source_content(
@@ -2868,7 +2947,8 @@ class ControlledPresentationPolicy:
                 pending_url = self._research_pending_playwright_url
                 self._research_pending_playwright_url = None
                 effective_arguments = {**arguments, "url": pending_url or ""}
-            if tool_name in DIRECT_RESEARCH_READ_TOOLS:
+            if direct_read_call:
+                self._research_direct_read_tool_names.add(tool_name)
                 if counts_direct_read:
                     self._research_direct_read_attempts += 1
                     direct_read_key = _research_direct_read_key(
@@ -2901,7 +2981,8 @@ class ControlledPresentationPolicy:
                             _normalized_source_text(page_text)
                         )
                         self._research_last_direct_source_url = resolved_url
-            if tool_name in DIRECT_RESEARCH_READ_TOOLS and counts_direct_read:
+                        self._research_last_evidence_urls.add(resolved_url)
+            if direct_read_call and counts_direct_read:
                 if establishes_direct_source:
                     self._research_consecutive_unproductive_direct_reads = 0
                 else:
@@ -3047,20 +3128,60 @@ class ControlledPresentationPolicy:
         """Return whether a research-stage call is exempt from delivery budget."""
         return (
             self.stage == "research"
-            and tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
+            and (
+                tool_name in RESEARCH_BUDGET_EXEMPT_TOOLS
+                or tool_name in self._research_direct_read_tool_names
+            )
         )
+
+    def record_visible_tool_result(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+        visible_content: str,
+    ) -> None:
+        """Capture URL-bound search summaries actually exposed to the model."""
+        if self.stage != "research" or not result.success:
+            return
+        if _is_direct_research_read_call(tool_name, arguments):
+            return
+        extracted = extract_search_result_evidence(visible_content)
+        for url, text in extracted.items():
+            normalized_text = _normalized_source_text(text)
+            if not normalized_text:
+                continue
+            existing = self._research_search_source_text.get(url, "")
+            self._research_search_source_text[url] = existing + normalized_text
+            self._research_last_evidence_urls.add(url)
+
+    def evidence_urls(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+    ) -> frozenset[str]:
+        """Return URL evidence established by the latest visible tool result."""
+        if not result.success:
+            return frozenset()
+        return frozenset(self._research_last_evidence_urls)
 
     def uses_evidence_read_budget(self, tool_name: str) -> bool:
         """Return whether this call uses the bounded direct-read batch."""
         return (
             self.stage == "research"
-            and tool_name in DIRECT_RESEARCH_READ_TOOLS
+            and (
+                tool_name in DIRECT_RESEARCH_READ_TOOLS
+                or tool_name in self._research_direct_read_tool_names
+            )
         )
 
-    @staticmethod
-    def is_direct_evidence_read_tool(tool_name: str) -> bool:
+    def is_direct_evidence_read_tool(self, tool_name: str) -> bool:
         """Return whether a successful result can establish URL provenance."""
-        return tool_name in DIRECT_RESEARCH_READ_TOOLS
+        return (
+            tool_name in DIRECT_RESEARCH_READ_TOOLS
+            or tool_name in self._research_direct_read_tool_names
+        )
 
     def direct_evidence_url(
         self,
@@ -3069,7 +3190,7 @@ class ControlledPresentationPolicy:
         result: ToolResult,
     ) -> str | None:
         """Return the source URL established by the most recent direct-read result."""
-        if not result.success or tool_name not in DIRECT_RESEARCH_READ_TOOLS:
+        if not result.success or not self.is_direct_evidence_read_tool(tool_name):
             return None
         return self._research_last_direct_source_url
 
