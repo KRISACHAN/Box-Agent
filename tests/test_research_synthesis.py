@@ -128,6 +128,55 @@ def test_validator_writes_success_report_for_reduced_focused_route(
     )
 
 
+def test_validator_preserves_search_summary_evidence_basis(tmp_path: Path) -> None:
+    research = tmp_path / "research"
+    _write_focused_research(
+        research,
+        evidence=[
+            {
+                "entity": "Example Corp",
+                "claim": "Example Corp published a market update.",
+                "source_url": "https://example.org/market-update",
+                "source_type": "secondary",
+                "evidence_excerpt": "Example Corp published a market update.",
+                "evidence_basis": "search_summary",
+                "confidence": "medium",
+                "status": "verified",
+            }
+        ],
+    )
+    report = research / "qa" / "topic_research_check.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR),
+            "--research-dir",
+            str(research),
+            "--topic",
+            "topic",
+            "--route",
+            "B",
+            "--min-dimensions",
+            "3",
+            "--report",
+            str(report),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["verified_evidence_count"] == 1
+    assert payload["verified_evidence"][0]["evidence_basis"] == "search_summary"
+    assert (
+        payload["presentation_handoff"]["verified_facts"][0]["evidence_basis"]
+        == "search_summary"
+    )
+
+
 def test_validator_writes_failed_report_when_research_is_too_shallow(
     tmp_path: Path,
 ) -> None:
@@ -551,14 +600,16 @@ def test_research_instructions_preserve_depth_without_rephrased_query_loops() ->
 
     assert "covering distinct evidence gaps" in skill
     assert "do not rerun a near-equivalent" in skill
-    assert "use `managed_browser_*` for independent public-web" in skill
+    assert "Prefer `web_extract`, or a user-selected MCP reader" in skill
+    assert "`managed_browser_*` is also valid for independent public-web" in skill
     assert "Use `user_browser_*` when the read depends on the user's current page" in skill
     assert "does not require a\n  separate authorization prompt" in skill
     assert "Do not route between browser modes through a" in skill
     assert "five distinct evidence intents" in routes
     assert "reworded versions of an already-run entity/fact query do not add depth" in routes
     assert "`research/{topic}_evidence.json`" in skill
-    assert "search-result snippet alone is not evidence" in prompts
+    assert "URL-bound search-result summary may be medium-confidence evidence" in prompts
+    assert "evidence_basis=search_summary" in skill
     assert "user_input_alignment" in output_contract
     assert "verified_evidence" in output_contract
 

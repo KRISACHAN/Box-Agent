@@ -3688,7 +3688,7 @@ async def test_controlled_outline_accepts_url_from_prior_web_search(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_controlled_research_does_not_treat_search_result_as_page_read(tmp_path):
+async def test_controlled_research_accepts_url_bound_search_summary(tmp_path):
     query = "official report"
     source_url = "https://example.gov/reports/latest"
     research = tmp_path / "research"
@@ -3702,11 +3702,12 @@ async def test_controlled_research_does_not_treat_search_result_as_page_read(tmp
                 "evidence": [
                     {
                         "entity": "Example",
-                        "claim": "Example published the latest report.",
+                        "claim": "Snippet for official report",
                         "source_url": source_url,
-                        "source_type": "first_party",
-                        "evidence_excerpt": "Example published the latest report.",
-                        "confidence": "high",
+                        "source_type": "secondary",
+                        "evidence_excerpt": "Snippet for official report",
+                        "evidence_basis": "search_summary",
+                        "confidence": "medium",
                         "status": "verified",
                     }
                 ],
@@ -3796,9 +3797,8 @@ async def test_controlled_research_does_not_treat_search_result_as_page_read(tmp
         if isinstance(event, ToolCallResult)
         and event.tool_call_id == "validate-without-read"
     )
-    assert bash.calls == 0
-    assert result.success is False
-    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in (result.error or "")
+    assert bash.calls == 1
+    assert result.success is True
 
 
 @pytest.mark.asyncio

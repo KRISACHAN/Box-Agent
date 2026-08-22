@@ -58,7 +58,8 @@ Source rules:
 - Route D: treat file evidence as primary and external sources as supplement.
 - Search routes: prioritize primary and authoritative sources.
 - Resolve the target entity before accepting a result. Open the source page;
-  a search-result snippet alone is not evidence.
+  a URL-bound search-result summary may be medium-confidence evidence when its
+  exact returned excerpt is preserved with `evidence_basis=search_summary`.
 - For every candidate claim, add or update one row in
   [workspace]/research/[topic]_evidence.json using the output-contract schema.
 - Mark a row `verified` only when the excerpt names the entity and directly

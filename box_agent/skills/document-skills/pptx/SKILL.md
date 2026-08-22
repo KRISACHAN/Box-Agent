@@ -313,11 +313,16 @@ before scaffolding. Run this gate at the start of every new deck:
    slide-relevant evidence gaps instead of lightly rephrasing an already-run
    entity/fact query. An empty authority-ranked or `site:` result does not by
    itself justify repeating the same intent without the filter. If an exact
-   first-party URL is known, read it with an actually available direct browser
-   tool. In officev3, use `managed_browser_*` for independent public-web reads
-   and `user_browser_*` when research depends on the user's current page, login
+   first-party URL is known, read it with an available exact-page tool. Prefer
+   `web_extract`, or a user-selected MCP reader that accepts the exact URL and
+   returns page body text. In officev3, `managed_browser_*` is also valid for
+   independent public-web reads, and `user_browser_*` applies when research
+   depends on the user's current page, login
    state, cookies, extensions, or intranet access; this does not require a
-   separate authorization prompt. Do not switch modes through `source_preference`.
+   separate authorization prompt. A URL-bound search summary may support a
+   medium-confidence row when its exact excerpt is preserved with
+   `evidence_basis=search_summary`; never bind it to a different result URL.
+   Do not switch modes through `source_preference`.
    Persist durable
    findings in `research/` (relative to the presentation artifact root; the host
    stores it as `output/research/`), and stop only when the slide-relevant dimensions and

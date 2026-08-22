@@ -1027,23 +1027,25 @@ def test_research_checkpoint_uses_public_managed_browser_tool_names(tmp_path):
     assert checkpoint is not None
     assert "managed_browser_navigate" in checkpoint
     assert "managed_browser_snapshot" in checkpoint
+    assert "web_extract" in checkpoint
+    assert "user-selected MCP tool" in checkpoint
     assert re.search(r"(?<!managed_)\bbrowser_navigate\b", checkpoint) is None
     assert re.search(r"(?<!managed_)\bbrowser_snapshot\b", checkpoint) is None
 
 
-def test_research_tool_sets_contain_only_public_browser_names():
-    configured_names = (
-        DIRECT_RESEARCH_READ_TOOLS
-        | GATEWAY_RESEARCH_READ_TOOLS
+def test_research_browser_tool_sets_contain_only_public_browser_names():
+    browser_names = (
+        GATEWAY_RESEARCH_READ_TOOLS
         | MANAGED_RESEARCH_NAVIGATE_TOOLS
         | MANAGED_RESEARCH_SNAPSHOT_TOOLS
     )
 
-    assert configured_names
+    assert browser_names
     assert all(
         name.startswith(("managed_browser_", "user_browser_"))
-        for name in configured_names
+        for name in browser_names
     )
+    assert "web_extract" in DIRECT_RESEARCH_READ_TOOLS
 
 
 @pytest.mark.parametrize(
@@ -1053,6 +1055,7 @@ def test_research_tool_sets_contain_only_public_browser_names():
         "user_browser_read_page",
         "managed_browser_navigate",
         "managed_browser_snapshot",
+        "web_extract",
     ],
 )
 def test_research_policy_uses_public_browser_names_directly(tmp_path, public_name):
@@ -1068,6 +1071,140 @@ def test_research_policy_uses_public_browser_names_directly(tmp_path, public_nam
     assert policy.is_direct_evidence_read_tool(public_name)
     assert policy.uses_evidence_read_budget(public_name)
     assert policy.exempts_tool_budget(public_name)
+
+
+def test_research_web_extract_establishes_exact_page_evidence(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    source_url = "https://example.com/reports/market"
+    result = ToolResult(
+        success=True,
+        content=(
+            f"[URL]: {source_url}\n"
+            "[Content]:\nExample published a verified market report."
+        ),
+    )
+
+    assert (
+        policy.tool_call_error(
+            "web_extract",
+            {"url": source_url},
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    policy.record_tool_result("web_extract", {"url": source_url}, result)
+
+    assert policy._research_successful_direct_read_attempts == 1
+    assert source_url in policy._research_direct_source_text
+    assert policy.direct_evidence_url("web_extract", {"url": source_url}, result) == source_url
+
+
+def test_research_custom_mcp_reader_uses_evidence_contract_not_tool_name(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    tool_name = "company_page_reader"
+    source_url = "https://example.com/reports/custom"
+    arguments = {"target_url": source_url}
+    result = ToolResult(
+        success=True,
+        content="Example published a verified report through a custom MCP.",
+    )
+
+    assert (
+        policy.tool_call_error(
+            tool_name,
+            arguments,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    assert policy.uses_evidence_read_budget(tool_name)
+    assert policy.exempts_tool_budget(tool_name)
+    policy.record_tool_result(tool_name, arguments, result)
+
+    assert policy.is_direct_evidence_read_tool(tool_name)
+    assert source_url in policy._research_direct_source_text
+    assert policy.direct_evidence_url(tool_name, arguments, result) == source_url
+
+
+def test_research_custom_search_summary_establishes_url_bound_evidence(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+    )
+    source_url = "https://example.com/reports/search-result"
+    result = ToolResult(
+        success=True,
+        content=json.dumps(
+            {
+                "results": [
+                    {
+                        "url": source_url,
+                        "title": "Example market report",
+                        "summary": "Example published a verified market result.",
+                    }
+                ]
+            }
+        ),
+    )
+    policy.record_tool_result("company_search", {"query": "market report"}, result)
+    policy.record_visible_tool_result(
+        "company_search",
+        {"query": "market report"},
+        result,
+        result.content,
+    )
+
+    assert policy.is_direct_evidence_read_tool("company_search") is False
+    assert source_url in policy._research_search_source_text
+    assert policy.evidence_urls("company_search", {}, result) == frozenset(
+        {source_url}
+    )
+    assert policy._research_successful_direct_read_attempts == 0
+
+
+def test_research_title_only_search_result_remains_discovery_only(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        research_mode="deep",
+        stage="research",
+    )
+    result = ToolResult(
+        success=True,
+        content=json.dumps(
+            {
+                "results": [
+                    {
+                        "url": "https://example.com/reports/title-only",
+                        "title": "Title only",
+                    }
+                ]
+            }
+        ),
+    )
+    policy.record_tool_result("company_search", {"query": "report"}, result)
+    policy.record_visible_tool_result(
+        "company_search",
+        {"query": "report"},
+        result,
+        result.content,
+    )
+
+    assert policy.evidence_urls("company_search", {}, result) == frozenset()
 
 
 def test_deep_research_checkpoint_accepts_partial_delivery_handoff(tmp_path):
@@ -1993,8 +2130,9 @@ def test_deep_research_without_direct_read_tool_requires_unverified_ledger(
         assert checkpoint is not None
         policy.update_checkpoint(checkpoint)
 
-    assert "No direct browser read tool is available in this run" in checkpoint
-    assert "mark candidate rows status=unverified with unverified_reason" in checkpoint
+    assert "No exact-page read tool is available in this run" in checkpoint
+    assert "use URL-bound search summaries" in checkpoint
+    assert "otherwise mark the row unverified" in checkpoint
     assert "do not call web_search again" in checkpoint
 
 
@@ -2042,7 +2180,7 @@ def test_successful_tool_search_does_not_consume_research_rounds(
         )
         is None
     )
-    assert "No direct browser read tool is available in this run" not in checkpoint
+    assert "No exact-page read tool is available in this run" not in checkpoint
 
 
 def test_deep_research_counts_empty_tool_search_rounds_and_falls_back(tmp_path):
@@ -2184,11 +2322,11 @@ def test_deep_research_stops_search_but_requires_report_after_successful_rounds(
     )
     assert search_complete_error == (
         "CONTROLLED_PRESENTATION_RESEARCH_SEARCH_COMPLETE: bounded research "
-        "searches are complete. Do not call web_search or tool_search again. Search "
-        "snippets are discovery only: read a small set of unique exact authoritative "
-        "candidate URLs before marking their evidence rows verified. Do not require "
-        "first-party coverage when another suitable authoritative source supports the "
-        "claim; then complete the ledger and validation report."
+        "searches are complete. Do not call web_search or tool_search again. URL-bound "
+        "provider summaries may support medium-confidence evidence when the ledger "
+        "excerpt is copied from that exact result; read a small set of exact "
+        "authoritative pages only when stronger evidence is useful. Then complete the "
+        "ledger and validation report."
     )
     assert (
         policy.tool_call_error(
@@ -2474,6 +2612,162 @@ def test_research_validator_requires_successful_exact_page_reads(tmp_path):
         )
         is None
     )
+
+
+def test_research_validator_accepts_custom_mcp_exact_page_excerpt(tmp_path):
+    research = tmp_path / "research"
+    research.mkdir()
+    source_url = "https://example.com/report/custom"
+    excerpt = "Example published a verified custom-source report."
+    (research / "topic_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "topic",
+                "target_entities": [],
+                "evidence": [
+                    {
+                        "entity": "Example",
+                        "claim": excerpt,
+                        "source_url": source_url,
+                        "source_type": "first_party",
+                        "evidence_excerpt": excerpt,
+                        "confidence": "high",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=tmp_path / "output",
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    tool_name = "company_exact_page"
+    arguments = {"source_url": source_url}
+    result = ToolResult(success=True, content=f"Page title\n{excerpt}")
+    assert (
+        policy.tool_call_error(
+            tool_name,
+            arguments,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    policy.record_tool_result(tool_name, arguments, result)
+
+    validator = {
+        "command": (
+            "python validate_research_artifacts.py --research-dir research "
+            "--topic topic --route B --report research/qa/topic_research_check.json"
+        )
+    }
+    assert (
+        policy.tool_call_error(
+            "bash",
+            validator,
+            verified_evidence_urls={source_url},
+        )
+        is None
+    )
+
+
+def test_research_validator_accepts_url_bound_search_summary(tmp_path):
+    research = tmp_path / "research"
+    research.mkdir()
+    source_url = "https://example.com/report/search-summary"
+    excerpt = "Example published a search-supported market report."
+    (research / "topic_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "topic": "topic",
+                "target_entities": [
+                    {
+                        "entity": "Example",
+                        "aliases": ["Example"],
+                        "official_domains": [],
+                    }
+                ],
+                "evidence": [
+                    {
+                        "entity": "Example",
+                        "claim": excerpt,
+                        "source_url": source_url,
+                        "source_type": "secondary",
+                        "evidence_excerpt": excerpt,
+                        "evidence_basis": "search_summary",
+                        "confidence": "medium",
+                        "status": "verified",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=tmp_path / "output",
+        research_mode="deep",
+        stage="research",
+        research_search_exhausted=True,
+    )
+    search_result = ToolResult(
+        success=True,
+        content=json.dumps(
+            {
+                "results": [
+                    {
+                        "url": source_url,
+                        "title": "Example report",
+                        "summary": excerpt,
+                    },
+                    {
+                        "url": "https://example.org/other",
+                        "title": "Other report",
+                        "summary": "A different result summary.",
+                    },
+                ]
+            }
+        ),
+    )
+    policy.record_tool_result("company_search", {"query": "Example"}, search_result)
+    policy.record_visible_tool_result(
+        "company_search",
+        {"query": "Example"},
+        search_result,
+        search_result.content,
+    )
+    validator = {
+        "command": (
+            "python validate_research_artifacts.py --research-dir research "
+            "--topic topic --route B --report research/qa/topic_research_check.json"
+        )
+    }
+
+    assert (
+        policy.tool_call_error(
+            "bash",
+            validator,
+            verified_evidence_urls={source_url},
+        )
+        is None
+    )
+
+    payload = json.loads((research / "topic_evidence.json").read_text())
+    payload["evidence"][0]["evidence_excerpt"] = "A different result summary."
+    (research / "topic_evidence.json").write_text(json.dumps(payload))
+    blocked = policy.tool_call_error(
+        "bash",
+        validator,
+        verified_evidence_urls={source_url},
+    )
+    assert blocked is not None
+    assert "CONTROLLED_PRESENTATION_UNREAD_EVIDENCE_URL" in blocked
 
 
 def test_research_validator_rejects_locally_rewritten_verified_excerpt(tmp_path):

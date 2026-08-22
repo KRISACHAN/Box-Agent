@@ -33,6 +33,7 @@ SOURCE_TYPES = frozenset(
 )
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 EVIDENCE_STATUSES = frozenset({"verified", "conflicting", "unverified"})
+EVIDENCE_BASES = frozenset({"page_body", "search_summary", "user_input"})
 SEARCH_RESULT_HOSTS = frozenset(
     {
         "bing.com",
@@ -278,6 +279,7 @@ def validate_evidence_ledger(
         source_type = str(record["source_type"]).casefold()
         confidence = str(record["confidence"]).casefold()
         status = str(record["status"]).casefold()
+        evidence_basis = str(record.get("evidence_basis") or "").casefold()
         if source_type not in SOURCE_TYPES:
             errors.append(
                 f"{label}.source_type must be one of {', '.join(sorted(SOURCE_TYPES))}"
@@ -291,6 +293,16 @@ def validate_evidence_ledger(
                 f"{label}.status must be one of {', '.join(sorted(EVIDENCE_STATUSES))}"
             )
             continue
+        if evidence_basis and evidence_basis not in EVIDENCE_BASES:
+            errors.append(
+                f"{label}.evidence_basis must be one of "
+                f"{', '.join(sorted(EVIDENCE_BASES))}"
+            )
+        if evidence_basis == "search_summary" and confidence == "high":
+            warnings.append(
+                f"{label}: search_summary evidence should normally use "
+                "confidence=medium"
+            )
         status_counts[status] += 1
 
         source_url = str(record["source_url"])
@@ -428,18 +440,19 @@ def validate_evidence_ledger(
         verified_by_entity[entity_key] += 1
         if valid_first_party:
             first_party_by_entity[entity_key] += 1
-        verified_evidence.append(
-            {
-                "entity": record["entity"],
-                "claim": record["claim"],
-                "source_url": record["source_url"],
-                "source_type": source_type,
-                "evidence_excerpt": record["evidence_excerpt"],
-                "confidence": confidence,
-                "status": status,
-                "canonical": canonical,
-            }
-        )
+        verified_record = {
+            "entity": record["entity"],
+            "claim": record["claim"],
+            "source_url": record["source_url"],
+            "source_type": source_type,
+            "evidence_excerpt": record["evidence_excerpt"],
+            "confidence": confidence,
+            "status": status,
+            "canonical": canonical,
+        }
+        if evidence_basis:
+            verified_record["evidence_basis"] = evidence_basis
+        verified_evidence.append(verified_record)
 
     for entity_key, entity_spec in entities.items():
         if verified_by_entity[entity_key] == 0:
@@ -609,14 +622,16 @@ def main() -> int:
         "delivery_mode": handoff_status,
         "verified_facts": [
             {
-                field: record[field]
-                for field in (
-                    "entity",
-                    "claim",
-                    "source_type",
-                    "source_url",
-                    "canonical",
-                )
+                "entity": record["entity"],
+                "claim": record["claim"],
+                "source_type": record["source_type"],
+                "source_url": record["source_url"],
+                "canonical": record["canonical"],
+                **(
+                    {"evidence_basis": record["evidence_basis"]}
+                    if record.get("evidence_basis")
+                    else {}
+                ),
             }
             for record in evidence_summary.get("verified_evidence", [])
         ],
