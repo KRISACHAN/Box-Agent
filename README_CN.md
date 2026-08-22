@@ -292,11 +292,24 @@ box-agent setup             # 配置向导
 box-agent config            # 查看/编辑配置
 box-agent doctor            # 健康检查
 box-agent log               # 打开日志目录
+box-agent trace-viewer      # 打开离线 Agent Trace 诊断页面
 box-agent goal status       # 查看当前工作区持久目标
 box-agent goal complete --evidence "测试已通过"
 box-agent install-browser   # 安装 Playwright MCP 所需 Chromium（约 200MB）
 box-agent install-node      # 安装技能脚本使用的托管 Node.js 运行时（macOS）
 ```
+
+### Agent Trace 诊断
+
+运行 `box-agent trace-viewer` 可打开随包发布的离线开发者诊断页。打开 `~/.box-agent/log/sessions/` 可先查看按时间从新到旧排列的全部 trace 总览，再选择一次运行查看单轮指标、LLM/工具 Waterfall、原始事件，以及从 system prompt、user、assistant/tool 到 final response 的完整纵向链路；也可以直接打开单个 `.jsonl` 文件。
+
+如果内置浏览器不提供原生文件选择器，可启动仅监听本机回环地址的服务，并在页面中输入 trace 目录路径：
+
+```bash
+uv run python -m box_agent.trace_viewer.server --port 8766
+```
+
+离线模式由浏览器直接读取文件；服务模式只读取输入目录当前层级的 `.jsonl` 文件，每秒检查一次文件元数据，并在文件新增或变化时刷新总览；只有元数据变化后才会通过 `127.0.0.1` 重新读取 trace 正文。服务会拒绝 `Host` 或 `Origin` 不是当前回环地址的请求，避免 DNS rebinding 页面读取本地 trace。两种模式都不会访问外部网络。Chromium 和 Edge 在用户授权文件句柄后可持续跟随新增记录；拖放和普通文件选择器加载的是静态快照。Session trace 可能包含 prompt、工具参数、输出和业务数据，应按敏感诊断资料处理。
 
 会话内命令：`/help`、`/clear`、`/clear_all`、`/history`、`/stats`、`/sandbox_status`、`/log`、`/goal`、`/memory review`、`/exit`
 

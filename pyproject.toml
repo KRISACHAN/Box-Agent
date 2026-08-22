@@ -89,7 +89,10 @@ exclude = ["tests*"]
 # Include skills directory (git submodule) as package data
 # After moving submodule to box_agent/skills
 [tool.setuptools.package-data]
-box_agent = ["skills/**/*", "config/*"]
+box_agent = ["skills/**/*", "config/*", "trace_viewer/*"]
+
+[tool.setuptools.exclude-package-data]
+box_agent = ["trace_viewer/__pycache__/*", "trace_viewer/*.pyc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

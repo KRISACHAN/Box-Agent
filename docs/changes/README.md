@@ -59,6 +59,7 @@ decision, read those entries together.
 | MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 | Sub-agent delegation | `sub_agent_tool.py`, `sub_agent_capabilities.py`, `required_tools`, `write_scope`, `files` | The public request is flat; runtime-derived policy limits implicit tools to trusted local readers, keeps process/external/unknown MCP capabilities fail-closed, and scopes path writes. | Supersedes the caller-authored nested constraint contract while retaining its runtime enforcement goals. | [2026-08-19 flattened contract](#2026-08-19--flattened-sub-agent-contract-with-derived-policy) |
 | Workflow ownership | `workflow_owner_store.py`, explicit Skills, ACP decisions, presentation recovery | Runtime-selected owner precedes artifact discovery. Unknown Skills use the generic external lifecycle; foreign `deck.json` files cannot activate controlled finalization. | Pending implementation; hardens external-Skill and controlled-presentation recovery. | [2026-08-20 owner hardening](#2026-08-20--workflow-owner-precedence-for-third-party-skills) |
+| Agent Trace diagnostics | `box_agent/trace_viewer/`, `box-agent trace-viewer`, `box-agent-session-trace/v1` | The packaged viewer is a read-only v1 trace consumer; static access stays browser-local and the optional directory service is loopback-only, authority-validated, explicit-path, top-level JSONL, and size-bounded. | Pending review; adds diagnostics without changing the trace writer, Core, provider, or ACP contracts. | [2026-08-20 trace viewer](#2026-08-20--local-agent-trace-diagnostics) |
 | Model routing and controlled presentations | `box_agent/llm/model_routing.py`, `box_agent/workflows/presentation_*`, controlled PPTX | Automatic child-model routing uses a host allowlist, while presentation-specific state and recovery remain outside the generic kernel. | PR #30 is the main record; later research hardening must be checked where relevant. | [PR #30](#2026-08-14--runtime-routing-and-presentation-reliability-pr-30), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 
 For research execution, Todo/progress behavior, browser routing, or contributor
@@ -103,6 +104,36 @@ Release, provider API, and ACP compatibility have their own sources under
 - Rollback: revert the implementation, rebuild the prior runtime, and remove
   managed entries or set `disabled: true`; unrelated user MCP config remains
   intact.
+
+### 2026-08-20 — local Agent Trace diagnostics
+
+- Change: implementation prepared for
+  [PR #61](https://github.com/Raccoon-Office/Box-Agent/pull/61); no merge or
+  release reference exists yet.
+- Durable boundary: `box_agent/trace_viewer/` is a read-only consumer of
+  `box-agent-session-trace/v1`. It reconstructs directory summaries,
+  waterfalls, raw events, and the system → user → assistant/tool → final
+  conversation chain without changing the writer, Core, provider, or ACP
+  contracts.
+- Privacy and service boundary: static mode reads only browser-selected files.
+  The optional HTTP service rejects non-loopback binds and requests whose
+  `Host` or `Origin` does not match its exact loopback authority. It accepts an
+  explicit local directory, ignores symlinks, nested files, and non-JSONL
+  files, caps each trace at 50 MiB and a directory at 200 MiB, and exposes no
+  mutation or remote telemetry path. Trace prompts, tool data, and outputs
+  remain sensitive local artifacts.
+- Compatibility and packaging: the CLI subcommand and package assets are
+  additive; unknown v1 fields and events remain visible. Source tests and a
+  successful wheel/sdist build do not prove installation into OfficeV3 or any
+  other frozen runtime.
+- Proof anchors: `tests/test_trace_viewer.py`,
+  `tests/test_trace_viewer_server.py`, `tests/js/trace_model.test.js`, package
+  content checks, and a real Chromium directory probe that detected a new trace
+  without a page refresh.
+- Residual gap and rollback: the service intentionally scans only one directory
+  level and requires a user-entered path when the browser picker is unavailable.
+  Revert the eventual PR implementation and rebuild any consuming
+  package/runtime; no data migration is required.
 
 ### 2026-08-20 — built-in tool-name compatibility aliases
 

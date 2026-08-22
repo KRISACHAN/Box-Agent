@@ -315,11 +315,24 @@ box-agent setup              # config wizard
 box-agent config             # show/edit config
 box-agent doctor             # health check
 box-agent log                # open log directory
+box-agent trace-viewer       # open the offline Agent Trace diagnostics page
 box-agent goal status        # show persistent workspace goal
 box-agent goal complete --evidence "tests passed"
 box-agent install-browser   # install Chromium for Playwright MCP (~200MB)
 box-agent install-node      # install managed Node.js runtime for skills (macOS)
 ```
+
+### Agent Trace diagnostics
+
+Run `box-agent trace-viewer` to open the packaged, offline developer viewer. Open `~/.box-agent/log/sessions/` for a newest-first overview of every trace, then select one run to inspect per-turn metrics, LLM/tool waterfalls, raw events, and the complete system → user → assistant/tool → final-response chain. You can still open one `.jsonl` file directly.
+
+If an embedded browser does not expose the native file picker, run the loopback-only service and enter the trace directory path in the page:
+
+```bash
+uv run python -m box_agent.trace_viewer.server --port 8766
+```
+
+The offline page reads files in the browser. Service mode reads only top-level `.jsonl` files from the directory you enter, checks their metadata once per second, and refreshes the ledger when files are added or changed; trace bodies are transferred over `127.0.0.1` only when that metadata changes. The service rejects requests whose `Host` or `Origin` is not its exact loopback authority, preventing a rebinding site from reading local traces. Neither mode makes external network requests. Chromium and Edge can keep following appended records after you grant a file handle; drag/drop and ordinary file inputs load a snapshot. Session traces may contain prompts, tool arguments, outputs, and business data—handle them as sensitive diagnostic artifacts.
 
 ### Browser automation (optional)
 
