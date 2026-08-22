@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    >
+    <title>Box Agent Trace</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-block">
+        <span class="brand-mark" aria-hidden="true">B//</span>
+        <div>
+          <p class="eyebrow">Developer diagnostics</p>
+          <h1>Agent Trace</h1>
+        </div>
+      </div>
+      <div class="file-actions">
+        <div class="file-identity">
+          <span id="file-mode" class="status-dot" data-status="idle">No trace loaded</span>
+          <strong id="file-name">Open a session JSONL file</strong>
+        </div>
+        <input id="file-input" class="visually-hidden" type="file" accept=".jsonl,application/json">
+        <input id="directory-input" class="visually-hidden" type="file" accept=".jsonl,application/json" webkitdirectory multiple>
+        <button id="all-traces" class="button" type="button" hidden>All traces</button>
+        <button id="open-directory" class="button button-primary" type="button">Open folder</button>
+        <button id="open-file" class="button" type="button">Open trace</button>
+        <button id="follow-file" class="button" type="button" disabled>Follow: off</button>
+      </div>
+    </header>
+
+    <aside class="privacy-note">
+      Trace files can contain prompts, tool arguments, and business data. This viewer stays local and makes no external network requests.
+    </aside>
+    <div id="warning-bar" class="warning-bar" role="status" hidden></div>
+
+    <section id="overview-view" class="catalog-page" aria-labelledby="catalog-title">
+      <div class="catalog-hero">
+        <div>
+          <p class="eyebrow">Trace directory</p>
+          <h2 id="catalog-title">Session run ledger</h2>
+          <p id="catalog-directory-name">Choose a directory to compare every trace at a glance.</p>
+        </div>
+        <button id="overview-open-directory" class="button button-primary" type="button">Choose trace folder</button>
+      </div>
+
+      <section class="catalog-summary" aria-label="Directory summary">
+        <div class="catalog-metric"><span>Traces</span><strong id="catalog-trace-count">—</strong></div>
+        <div class="catalog-metric"><span>Turns</span><strong id="catalog-turn-count">—</strong></div>
+        <div class="catalog-metric"><span>Total time</span><strong id="catalog-duration">—</strong></div>
+        <div class="catalog-metric"><span>LLM / tools</span><strong id="catalog-calls">—</strong></div>
+        <div class="catalog-metric"><span>Tokens</span><strong id="catalog-tokens">—</strong></div>
+        <div class="catalog-metric"><span>Errors</span><strong id="catalog-error-count">—</strong></div>
+      </section>
+
+      <div id="catalog-empty" class="catalog-empty">
+        <span class="catalog-glyph" aria-hidden="true">⌁</span>
+        <h3 id="catalog-empty-title">No trace directory selected</h3>
+        <p id="catalog-empty-description">Open the folder that contains your session JSONL files. Files stay in this browser tab.</p>
+      </div>
+
+      <div id="catalog-ledger" class="catalog-ledger" hidden>
+        <table class="catalog-table">
+          <thead>
+            <tr><th>Trace / session</th><th>Started</th><th>Model</th><th>Turns</th><th>LLM / tools</th><th>Duration</th><th>Tokens</th><th>Result</th></tr>
+          </thead>
+          <tbody id="trace-catalog"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div id="detail-view" hidden>
+      <section id="summary-strip" class="summary-strip" aria-label="Turn summary">
+      <div class="metric"><span>Turn time</span><strong id="metric-duration">—</strong></div>
+      <div class="metric"><span>LLM calls</span><strong id="metric-llm">—</strong></div>
+      <div class="metric"><span>Tool calls</span><strong id="metric-tools">—</strong></div>
+      <div class="metric"><span>Tokens</span><strong id="metric-tokens">—</strong></div>
+      <div class="metric"><span>Errors</span><strong id="metric-errors">—</strong></div>
+      <div class="metric metric-state"><span>Stop reason</span><strong id="metric-stop">—</strong></div>
+      </section>
+
+      <div id="workspace-shell" class="workspace-shell">
+      <aside class="turn-rail" aria-label="Trace navigation">
+        <label class="search-field" for="trace-search">
+          <span>Find in trace</span>
+          <input id="trace-search" type="search" placeholder="Event, tool, model, ID…" disabled>
+        </label>
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Drop a JSONL trace file">
+          <strong>Drop JSONL</strong>
+          <span>or use Open trace</span>
+        </div>
+        <div class="rail-heading">
+          <span>Turns</span>
+          <small id="turn-count">0</small>
+        </div>
+        <div id="turn-list" class="turn-list" role="listbox" aria-label="Turns"></div>
+        <fieldset class="filter-group" disabled>
+          <legend>Visible events</legend>
+          <label><input type="checkbox" data-filter="llm" checked> LLM</label>
+          <label><input type="checkbox" data-filter="tool" checked> Tools</label>
+          <label><input type="checkbox" data-filter="error" checked> Errors</label>
+          <label><input type="checkbox" data-filter="context" checked> Context</label>
+          <label><input type="checkbox" data-filter="thinking"> Thinking</label>
+        </fieldset>
+      </aside>
+
+      <main class="trace-stage">
+        <nav class="view-tabs" aria-label="Trace views" role="tablist">
+          <button type="button" role="tab" data-view="waterfall" aria-selected="true">Waterfall</button>
+          <button type="button" role="tab" data-view="conversation" aria-selected="false">Conversation</button>
+          <button type="button" role="tab" data-view="events" aria-selected="false">Events</button>
+        </nav>
+
+        <section id="empty-state" class="empty-state">
+          <div class="empty-signal" aria-hidden="true"><span></span><span></span><span></span></div>
+          <p class="eyebrow">Awaiting trace input</p>
+          <h2>See the run the way the model saw it.</h2>
+          <p>Load one <code>box-agent-session-trace/v1</code> JSONL file to inspect causality, payloads, and latency without leaving your machine.</p>
+          <button id="empty-open-file" class="button button-primary" type="button">Choose a trace</button>
+        </section>
+
+        <section id="waterfall-view" class="view-panel" role="tabpanel" aria-label="Waterfall" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Timing</p><h2>Call waterfall</h2></div>
+            <p id="slowest-call" class="panel-note">Select a turn to calculate hotspots.</p>
+          </div>
+          <div id="waterfall-axis" class="waterfall-axis" aria-hidden="true"></div>
+          <div id="waterfall-rows" class="waterfall-rows"></div>
+        </section>
+
+        <section id="conversation-view" class="view-panel" role="tabpanel" aria-label="Conversation" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Causal order</p><h2>Prompt to final response</h2></div>
+            <p class="panel-note">Tool branches sit beneath the response that requested them.</p>
+          </div>
+          <div id="conversation-chain" class="conversation-chain"></div>
+        </section>
+
+        <section id="events-view" class="view-panel" role="tabpanel" aria-label="Events" hidden>
+          <div class="panel-heading">
+            <div><p class="eyebrow">Lossless view</p><h2>Event ledger</h2></div>
+            <p id="event-count" class="panel-note">0 events</p>
+          </div>
+          <div class="event-table-wrap">
+            <table class="event-table">
+              <thead><tr><th>Line</th><th>Time</th><th>Event</th><th>Step</th><th>Call ID</th></tr></thead>
+              <tbody id="event-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <aside id="inspector" class="inspector" aria-label="Selected trace detail">
+        <div class="inspector-heading">
+          <div><p class="eyebrow">Inspector</p><h2 id="inspector-title">Nothing selected</h2></div>
+          <div class="inspector-actions">
+            <button id="copy-detail" class="icon-button" type="button" disabled>Copy</button>
+            <button id="close-inspector" class="icon-button close-button" type="button" aria-label="Close inspector" title="Close inspector">×</button>
+          </div>
+        </div>
+        <dl id="inspector-meta" class="inspector-meta"></dl>
+        <div class="inspector-tabs" role="tablist" aria-label="Detail format">
+          <button type="button" role="tab" data-detail="content" aria-selected="true">Content</button>
+          <button type="button" role="tab" data-detail="raw" aria-selected="false">Raw JSON</button>
+        </div>
+        <pre id="inspector-content" class="inspector-content">Select a span, message, tool call, or event.</pre>
+      </aside>
+      </div>
+      <button id="inspector-backdrop" class="inspector-backdrop" type="button" aria-label="Close inspector" hidden></button>
+    </div>
+
+    <dialog id="directory-dialog" class="directory-dialog" aria-labelledby="directory-dialog-title">
+      <div class="directory-dialog-heading">
+        <div>
+          <p class="eyebrow">Local trace service</p>
+          <h2 id="directory-dialog-title">Open trace directory</h2>
+        </div>
+        <button id="cancel-directory-path" class="icon-button close-button" type="button" aria-label="Close directory dialog">×</button>
+      </div>
+      <label class="directory-path-field" for="directory-path">
+        <span>Directory path</span>
+        <input id="directory-path" type="text" autocomplete="off" placeholder="D:\path\to\traces">
+      </label>
+      <p class="directory-dialog-note">Only top-level <code>.jsonl</code> files are read through the loopback service.</p>
+      <p id="directory-path-error" class="directory-path-error" role="alert" hidden></p>
+      <div class="directory-dialog-actions">
+        <button id="dismiss-directory-path" class="button" type="button">Cancel</button>
+        <button id="load-directory-path" class="button button-primary" type="button">Load directory</button>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="trace_model.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -7,3 +7,7 @@ recursive-include box_agent/config *
 include box_agent/config/config-example.yaml
 include box_agent/config/mcp-example.json
 include box_agent/config/system_prompt.md
+
+recursive-include box_agent/trace_viewer *
+recursive-exclude box_agent/trace_viewer *.pyc
+prune box_agent/trace_viewer/__pycache__

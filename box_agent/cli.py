@@ -76,6 +76,7 @@ from box_agent.tools.runtime import (
     resolve_cli_shell_python,
 )
 from box_agent.tools.skill_execution_env import build_skill_execution_env
+from box_agent.trace_viewer import launch_trace_viewer
 from box_agent.utils import calculate_display_width
 from box_agent.acp.project_context import build_project_startup_context_prompt
 from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
@@ -1047,6 +1048,7 @@ Examples:
   box-agent doctor --json                # Machine-readable health check
   box-agent log                          # Show log directory and recent files
   box-agent log agent_run_xxx.log        # Read a specific log file
+  box-agent trace-viewer                 # Open the offline session trace viewer
         """,
     )
     parser.add_argument(
@@ -1227,6 +1229,11 @@ Examples:
     subparsers.add_parser(
         "install-browser",
         help="Install Chromium for Playwright MCP browser tools (~200MB)",
+    )
+
+    subparsers.add_parser(
+        "trace-viewer",
+        help="Open the offline developer viewer for session trace JSONL files",
     )
 
     # install-node subcommand
@@ -2851,6 +2858,11 @@ def main() -> int:
     # Handle install-browser subcommand
     if args.command == "install-browser":
         asyncio.run(cmd_install_browser())
+        return 0
+
+    # Trace diagnostics must remain available even when LLM config is absent.
+    if args.command == "trace-viewer":
+        launch_trace_viewer()
         return 0
 
     # Handle install-node subcommand
