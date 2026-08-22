@@ -2507,7 +2507,10 @@ async def test_acp_default_artifact_mode_creates_output(tmp_path):
     assert state.artifact_mode == "output"
     assert "cwd 已是 `{workspace}/output/`" in state.agent.system_prompt
     assert session.field_meta == {
-        "capabilities": {"session_continuation_versions": [1]}
+        "capabilities": {
+            "session_continuation_versions": [1],
+            "managed_mcp_config_versions": [1],
+        }
     }
 
 
@@ -4224,7 +4227,10 @@ async def test_acp_new_session_injects_core_memory_without_returning_it(tmp_path
     )
 
     assert session.field_meta == {
-        "capabilities": {"session_continuation_versions": [1]}
+        "capabilities": {
+            "session_continuation_versions": [1],
+            "managed_mcp_config_versions": [1],
+        }
     }
     assert "--- MEMORY START ---" in agent._sessions[session.sessionId].agent.system_prompt
     assert "User prefers concise Chinese responses" in agent._sessions[session.sessionId].agent.system_prompt

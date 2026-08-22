@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from box_agent.tools.mcp_bootstrap import (
+    HOSTED_SEARCH_URL_ENV,
     HOSTED_SEARCH_SERVER_NAME,
     MANAGED_MCP_SCHEMA_KEY,
     bootstrap_managed_mcp_config,
@@ -149,6 +150,86 @@ def test_bootstrap_preserves_host_environment_url_on_first_migration(
 
     assert search["url"] == environment_url
     assert search["disabled"] is False
+
+
+def test_bootstrap_applies_host_url_override_to_official_managed_endpoint(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "mcp.json"
+    config.write_text(
+        json.dumps(
+            {
+                MANAGED_MCP_SCHEMA_KEY: 1,
+                "mcpServers": {
+                    HOSTED_SEARCH_SERVER_NAME: {
+                        "url": "https://xiaohuanxiong.com/api/web/mcp/web_search/v1/mcp",
+                        "disabled": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        HOSTED_SEARCH_URL_ENV,
+        "https://code-test.xiaohuanxiong.com/api/web/mcp/web_search/v1/mcp",
+    )
+
+    bootstrap_managed_mcp_config(config)
+    search = json.loads(config.read_text(encoding="utf-8"))["mcpServers"][
+        HOSTED_SEARCH_SERVER_NAME
+    ]
+
+    assert search["url"] == (
+        "https://code-test.xiaohuanxiong.com/api/web/mcp/web_search/v1/mcp"
+    )
+    assert search["disabled"] is True
+
+
+def test_bootstrap_host_override_does_not_replace_custom_search_provider(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "mcp.json"
+    config.write_text(
+        json.dumps(
+            {
+                MANAGED_MCP_SCHEMA_KEY: 1,
+                "mcpServers": {
+                    HOSTED_SEARCH_SERVER_NAME: {
+                        "url": "https://mcp.example.com/custom-search",
+                        "disabled": False,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bootstrap_managed_mcp_config(
+        config,
+        hosted_search_url=(
+            "https://code-test.xiaohuanxiong.com/api/web/mcp/web_search/v1/mcp"
+        ),
+    )
+    search = json.loads(config.read_text(encoding="utf-8"))["mcpServers"][
+        HOSTED_SEARCH_SERVER_NAME
+    ]
+
+    assert search["url"] == "https://mcp.example.com/custom-search"
+
+
+def test_bootstrap_rejects_invalid_host_url_without_writing(tmp_path: Path) -> None:
+    config = tmp_path / "mcp.json"
+
+    result = bootstrap_managed_mcp_config(
+        config,
+        hosted_search_url="file:///etc/passwd",
+    )
+
+    assert result.changed is False
+    assert result.warning is not None
+    assert config.exists() is False
 
 
 def test_bootstrap_is_idempotent(tmp_path: Path) -> None:

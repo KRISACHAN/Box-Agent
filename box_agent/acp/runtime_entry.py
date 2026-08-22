@@ -5,11 +5,13 @@ anything at module level that prints to stdout — the ACP protocol owns
 stdout exclusively.
 """
 
+import json
 import os
 import sys
 
 
 WEB_EXTRACT_MCP_ARG = "--web-extract-mcp"
+BOOTSTRAP_MCP_CONFIG_ARG = "--bootstrap-mcp-config"
 
 
 class _McpStdoutProxy:
@@ -24,6 +26,29 @@ class _McpStdoutProxy:
 
 
 def main() -> None:
+    if sys.argv[1:] == [BOOTSTRAP_MCP_CONFIG_ARG]:
+        from box_agent.tools.mcp_bootstrap import (
+            MANAGED_MCP_CONFIG_VERSION,
+            bootstrap_managed_mcp_config,
+            default_managed_mcp_config_path,
+        )
+
+        result = bootstrap_managed_mcp_config(default_managed_mcp_config_path())
+        print(
+            json.dumps(
+                {
+                    "managed_mcp_config_version": MANAGED_MCP_CONFIG_VERSION,
+                    "path": str(result.path),
+                    "changed": result.changed,
+                    "warning": result.warning,
+                },
+                ensure_ascii=False,
+            )
+        )
+        if result.warning:
+            raise SystemExit(1)
+        return
+
     if sys.argv[1:] == [WEB_EXTRACT_MCP_ARG]:
         # Reuse the frozen runtime binary for the bundled stdio MCP server.
         # This keeps desktop packaging to one PyInstaller payload while still

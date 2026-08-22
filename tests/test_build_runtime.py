@@ -123,6 +123,7 @@ def test_runtime_manifest_advertises_bundled_web_extract_mcp() -> None:
     )
 
     assert manifest["entry"] == "bin/box-agent-acp"
+    assert manifest["managed_mcp_config_version"] == 1
     assert manifest["mcp_servers"] == {
         "box-agent-web-extract": {
             "entry": "bin/box-agent-acp",

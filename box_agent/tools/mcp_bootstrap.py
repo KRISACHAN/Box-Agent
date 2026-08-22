@@ -11,10 +11,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 MANAGED_MCP_SCHEMA_KEY = "boxAgentManagedMcpVersion"
 MANAGED_MCP_SCHEMA_VERSION = 1
+MANAGED_MCP_CONFIG_VERSION = 1
+HOSTED_SEARCH_URL_ENV = "BOX_AGENT_HOSTED_SEARCH_URL"
 HOSTED_SEARCH_SERVER_NAME = "mcp-server-askecho-search-infinity"
 HOSTED_SEARCH_SERVER: dict[str, Any] = {
     "description": "Office Raccoon hosted web search",
@@ -24,6 +27,8 @@ HOSTED_SEARCH_SERVER: dict[str, Any] = {
     "disabled": False,
 }
 _SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_OFFICIAL_HOST_SUFFIX = "xiaohuanxiong.com"
+_OFFICIAL_HOST_IPS = {"10.158.136.99"}
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,56 @@ def _runtime_root(explicit_root: Path | None = None) -> Path | None:
     if not getattr(sys, "frozen", False):
         return None
     return Path(sys.executable).resolve().parent.parent
+
+
+def default_managed_mcp_config_path() -> Path:
+    """Return the shared user MCP configuration owned by Box-Agent."""
+    return Path.home() / ".box-agent" / "config" / "mcp.json"
+
+
+def _normalize_hosted_search_url(value: str) -> str | None:
+    normalized = value.strip()
+    if not normalized:
+        return None
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        return None
+    return normalized
+
+
+def _is_official_hosted_search_url(value: str) -> bool:
+    try:
+        hostname = (urlsplit(value).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return (
+        hostname == _OFFICIAL_HOST_SUFFIX
+        or hostname.endswith(f".{_OFFICIAL_HOST_SUFFIX}")
+        or hostname in _OFFICIAL_HOST_IPS
+    )
+
+
+def _resolve_hosted_search_server(
+    explicit_url: str | None,
+) -> tuple[dict[str, Any] | None, str | None, bool]:
+    configured = explicit_url
+    if configured is None:
+        configured = os.environ.get(HOSTED_SEARCH_URL_ENV)
+    if configured is None:
+        return dict(HOSTED_SEARCH_SERVER), None, False
+    normalized = _normalize_hosted_search_url(configured)
+    if normalized is None:
+        return None, f"Invalid {HOSTED_SEARCH_URL_ENV}: expected an absolute HTTP(S) URL", True
+    return {**HOSTED_SEARCH_SERVER, "url": normalized}, None, True
 
 
 def _bundled_mcp_servers(runtime_root: Path | None) -> dict[str, dict[str, Any]]:
@@ -128,17 +183,28 @@ def _merge_managed_entry(
     return current
 
 
-def _preserve_existing_hosted_search_url(
+def _merge_hosted_search_url(
     existing: object,
     managed: dict[str, Any],
+    *,
+    host_override: bool,
 ) -> dict[str, Any]:
-    """Keep a host- or user-selected environment URL when one already exists."""
+    """Apply host environment changes without replacing a custom provider."""
     if not isinstance(existing, dict):
         return managed
     existing_url = existing.get("url")
     if not isinstance(existing_url, str) or not existing_url.strip():
         return managed
-    return {**managed, "url": existing_url.strip()}
+    current_url = existing_url.strip()
+    if host_override:
+        expected_path = urlsplit(HOSTED_SEARCH_SERVER["url"]).path
+        try:
+            current_path = urlsplit(current_url).path
+        except ValueError:
+            current_path = ""
+        if _is_official_hosted_search_url(current_url) and current_path == expected_path:
+            return managed
+    return {**managed, "url": current_url}
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -166,6 +232,7 @@ def bootstrap_managed_mcp_config(
     *,
     runtime_root: Path | None = None,
     web_extract_command: str | None = None,
+    hosted_search_url: str | None = None,
 ) -> McpBootstrapResult:
     """Add hosted and runtime-bundled MCP servers to the user configuration.
 
@@ -174,6 +241,11 @@ def bootstrap_managed_mcp_config(
     while refreshing runtime-relative executable paths.
     """
     path = path.expanduser()
+    hosted_search_server, hosted_search_warning, host_override = (
+        _resolve_hosted_search_server(hosted_search_url)
+    )
+    if hosted_search_server is None:
+        return McpBootstrapResult(path=path, warning=hosted_search_warning)
     if path.exists():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -202,7 +274,7 @@ def bootstrap_managed_mcp_config(
         )
 
     already_migrated = payload.get(MANAGED_MCP_SCHEMA_KEY) == MANAGED_MCP_SCHEMA_VERSION
-    managed_servers = {HOSTED_SEARCH_SERVER_NAME: HOSTED_SEARCH_SERVER}
+    managed_servers = {HOSTED_SEARCH_SERVER_NAME: hosted_search_server}
     bundled_servers = _bundled_mcp_servers(_runtime_root(runtime_root))
     managed_servers.update(bundled_servers)
     if "box-agent-web-extract" not in bundled_servers:
@@ -212,7 +284,11 @@ def bootstrap_managed_mcp_config(
     for name, managed in managed_servers.items():
         existing = servers.get(name)
         if name == HOSTED_SEARCH_SERVER_NAME:
-            managed = _preserve_existing_hosted_search_url(existing, managed)
+            managed = _merge_hosted_search_url(
+                existing,
+                managed,
+                host_override=host_override,
+            )
         servers[name] = _merge_managed_entry(
             existing,
             managed,

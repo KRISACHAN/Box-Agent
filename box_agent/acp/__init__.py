@@ -1864,7 +1864,10 @@ class BoxACPAgent:
 
         kwargs: dict[str, Any] = {"sessionId": session_id}
         response_meta: dict[str, Any] = {}
-        response_meta["capabilities"] = {"session_continuation_versions": [1]}
+        response_meta["capabilities"] = {
+            "session_continuation_versions": [1],
+            "managed_mcp_config_versions": [1],
+        }
         skills = (
             session_skill_loader.list_skills_metadata()
             if session_skill_loader is not None

@@ -3,10 +3,34 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 
 from box_agent.acp import runtime_entry
 from box_agent.mcp_servers import web_extract_server
+from box_agent.tools import mcp_bootstrap
+
+
+def test_runtime_entry_bootstraps_managed_mcp_config(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["box-agent-acp", "--bootstrap-mcp-config"])
+    monkeypatch.setattr(mcp_bootstrap.shutil, "which", lambda _command: None)
+
+    runtime_entry.main()
+
+    response = json.loads(capsys.readouterr().out)
+    config_path = tmp_path / ".box-agent" / "config" / "mcp.json"
+    assert response == {
+        "managed_mcp_config_version": 1,
+        "path": str(config_path),
+        "changed": True,
+        "warning": None,
+    }
+    assert config_path.is_file()
 
 
 def test_runtime_entry_dispatches_web_extract_mcp(monkeypatch, tmp_path) -> None:

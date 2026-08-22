@@ -65,6 +65,7 @@ def test_windows_manifest_advertises_bundled_web_extract_mcp(
     assert manifest["platform"] == "win32"
     assert manifest["arch"] == "x64"
     assert manifest["entry"] == "bin/box-agent-acp.exe"
+    assert manifest["managed_mcp_config_version"] == 1
     assert manifest["external_python_sandbox"] is False
     assert manifest["bundled_stable_runtimes"] == [
         "portable_git",

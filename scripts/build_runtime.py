@@ -33,6 +33,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from box_agent.tools.runtime import DEFAULT_NODE_VERSION, NodeRuntimeManager
 from box_agent.tools.jupyter_tool import SANDBOX_DEFAULT_PACKAGES
+from box_agent.tools.mcp_bootstrap import MANAGED_MCP_CONFIG_VERSION
 
 # ── Win-only bundled tool versions ────────────────────────────
 # bash + coreutils. PortableGit ships as a 7-Zip self-extracting .exe.
@@ -419,6 +420,7 @@ def build_runtime_manifest(
         "arch": arch,
         "entry": entry_path,
         "mode": "standalone",
+        "managed_mcp_config_version": MANAGED_MCP_CONFIG_VERSION,
         "external_python_sandbox": external_python_sandbox,
         "bundled_stable_runtimes": list(bundled_components),
         "mcp_servers": {
