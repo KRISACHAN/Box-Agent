@@ -136,6 +136,24 @@ def _rmtree_with_retry(
             time.sleep(delay_seconds * (attempt + 1))
 
 
+def _windows_pyinstaller_hidden_imports() -> list[str]:
+    """Return the shared runtime hidden imports for the Windows build."""
+    from scripts import build_runtime
+
+    return build_runtime.pyinstaller_hidden_imports(
+        external_python_sandbox=False,
+    )
+
+
+def _windows_pyinstaller_collect_args() -> list[str]:
+    """Return the shared runtime collect args for the Windows build."""
+    from scripts import build_runtime
+
+    return build_runtime.pyinstaller_collect_args(
+        external_python_sandbox=False,
+    )
+
+
 def _run_pyinstaller(bin_dir: Path) -> None:
     """Run PyInstaller and copy the output into ``bin_dir``."""
     work_dir = bin_dir.parent.parent / "pyinstaller_work"
@@ -157,33 +175,11 @@ def _run_pyinstaller(bin_dir: Path) -> None:
         if Path(src).exists():
             datas_args.extend(["--add-data", f"{src}{os.pathsep}{dst}"])
 
-    hidden_imports = [
-        "box_agent", "box_agent.acp", "box_agent.acp.debug_logger",
-        "box_agent.agent", "box_agent.cli", "box_agent.config", "box_agent.core",
-        "box_agent.events", "box_agent.llm", "box_agent.llm.anthropic_client",
-        "box_agent.llm.openai_client", "box_agent.llm.llm_wrapper",
-        "box_agent.logger", "box_agent.retry", "box_agent.schema",
-        "box_agent.tools", "box_agent.tools.bash_tool", "box_agent.tools.file_tools",
-        "box_agent.tools.jupyter_tool", "box_agent.tools.mcp_loader",
-        "box_agent.tools.skill_tool", "box_agent.utils",
-        "tiktoken", "tiktoken_ext", "tiktoken_ext.openai_public",
-        "httpx", "httpcore", "anthropic", "openai", "pydantic", "yaml", "mcp", "acp",
-        "jupyter_client", "jupyter_client.provisioning",
-        "jupyter_client.provisioning.local_provisioner",
-        "ipykernel", "ipykernel.inprocess", "ipykernel.inprocess.manager",
-        "ipykernel_launcher", "jupyter_core",
-        "debugpy", "debugpy._vendored",
-        "pandas", "numpy", "matplotlib", "matplotlib.backends",
-        "matplotlib.backends.backend_agg",
-        "seaborn", "openpyxl", "xlrd", "sklearn", "sklearn.cluster",
-        "sklearn.linear_model", "sklearn.preprocessing",
-        "docx", "pypdf", "pdfplumber", "reportlab",
-        "reportlab.pdfgen", "reportlab.lib", "pptx",
-        "pip", "pip._internal", "pip._internal.cli", "pip._internal.cli.main",
-    ]
+    hidden_imports = _windows_pyinstaller_hidden_imports()
     hidden_args: list[str] = []
     for imp in hidden_imports:
         hidden_args.extend(["--hidden-import", imp])
+    collect_args = _windows_pyinstaller_collect_args()
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -192,19 +188,7 @@ def _run_pyinstaller(bin_dir: Path) -> None:
         "--distpath", str(dist_dir),
         "--workpath", str(work_dir),
         "--specpath", str(spec_dir),
-        *datas_args, *hidden_args,
-        "--collect-all", "tiktoken",
-        "--collect-all", "tiktoken_ext",
-        "--collect-all", "jupyter_client",
-        "--collect-all", "ipykernel",
-        "--collect-all", "jupyter_core",
-        "--collect-all", "debugpy",
-        "--collect-all", "matplotlib",
-        "--collect-submodules", "pandas",
-        "--collect-submodules", "seaborn",
-        "--collect-submodules", "openpyxl",
-        "--collect-submodules", "sklearn",
-        "--collect-submodules", "pip",
+        *datas_args, *hidden_args, *collect_args,
         str(entry_point),
     ]
 
@@ -255,14 +239,20 @@ def _install_node_win(runtime_dir: Path) -> None:
 
 
 def _write_manifest(runtime_dir: Path, version: str) -> None:
-    manifest = {
-        "name": "box-agent",
-        "version": version,
-        "platform": "win32",
-        "arch": "x64",
-        "entry": "bin/box-agent-acp.exe",
-        "mode": "standalone",
-    }
+    from scripts import build_runtime
+
+    manifest = build_runtime.build_runtime_manifest(
+        version=version,
+        plat="win32",
+        arch="x64",
+        entry_path="bin/box-agent-acp.exe",
+        external_python_sandbox=False,
+        bundled_components=build_runtime.bundled_stable_runtime_components(
+            plat="win32",
+            arch="x64",
+            external_python_sandbox=False,
+        ),
+    )
     (runtime_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
