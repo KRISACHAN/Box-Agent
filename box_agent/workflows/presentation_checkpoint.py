@@ -904,6 +904,17 @@ def _content_patch_input(
         props = deck_slide.get("props")
         props_dict = props if isinstance(props, dict) else {}
         layout_id = deck_slide.get("layout_id")
+        item_range = deck_slide.get("source_outline_item_range")
+        outline_bullets = outline_slide.get("bullets")
+        if (
+            isinstance(item_range, dict)
+            and isinstance(outline_bullets, list)
+            and isinstance(item_range.get("start"), int)
+            and isinstance(item_range.get("end"), int)
+        ):
+            outline_bullets = outline_bullets[
+                item_range["start"] - 1 : item_range["end"]
+            ]
         missing_fact_evidence = _missing_fact_evidence(
             outline_slide.get("evidence")
         )
@@ -915,13 +926,18 @@ def _content_patch_input(
                 "slide_id": deck_slide.get("id") or f"slide-{index + 1:02d}",
                 "layout_id": layout_id,
                 "source_outline_page": outline_index + 1,
+                **(
+                    {"source_outline_item_range": item_range}
+                    if isinstance(item_range, dict)
+                    else {}
+                ),
                 "title": outline_slide.get("title"),
                 "title_prop_path": _outline_title_prop_path(
                     deck_slide.get("layout_id"),
                     props_dict,
                 ),
                 "message": outline_slide.get("message"),
-                "bullets": outline_slide.get("bullets"),
+                "bullets": outline_bullets,
                 "evidence": outline_slide.get("evidence"),
                 "disclosure_required": bool(missing_fact_evidence),
                 "disclosure_evidence": missing_fact_evidence,
@@ -931,7 +947,7 @@ def _content_patch_input(
                 "allowed_numeric_literals": _numeric_literals(
                     outline_slide.get("evidence"),
                     outline_slide.get("message") if user_provided_source else None,
-                    outline_slide.get("bullets") if user_provided_source else None,
+                    outline_bullets if user_provided_source else None,
                 ),
                 # The page count is a structural deck fact, not researched topic
                 # evidence. It is safe only in cover metadata explicitly labelled
@@ -1223,10 +1239,31 @@ def _qa_repair_input(
             and isinstance(outline_slides[outline_index], dict)
             else None
         )
+        item_range = slide.get("source_outline_item_range")
+        outline_bullets = (
+            outline_slide.get("bullets")
+            if outline_slide is not None
+            else None
+        )
+        if (
+            isinstance(item_range, dict)
+            and isinstance(outline_bullets, list)
+            and isinstance(item_range.get("start"), int)
+            and isinstance(item_range.get("end"), int)
+        ):
+            outline_bullets = outline_bullets[
+                item_range["start"] - 1 : item_range["end"]
+            ]
         affected_slides.append(
             {
                 "slide_id": slide.get("id"),
                 "source_outline_page": outline_index + 1,
+                **(
+                    {"source_outline_item_range": item_range}
+                    if isinstance(item_range, dict)
+                    else {}
+                ),
+                "current_layout_id": slide.get("layout_id"),
                 "current_props": slide.get("props"),
                 "protected_title_prop_path": _outline_title_prop_path(
                     slide.get("layout_id"),
@@ -1240,7 +1277,7 @@ def _qa_repair_input(
                     {
                         "title": outline_slide.get("title"),
                         "message": outline_slide.get("message"),
-                        "bullets": outline_slide.get("bullets"),
+                        "bullets": outline_bullets,
                         "evidence": outline_slide.get("evidence"),
                     }
                     if outline_slide is not None
@@ -1268,6 +1305,29 @@ def _qa_repair_input(
         },
         ensure_ascii=False,
         separators=(",", ":"),
+    )
+
+
+def _deck_spec_requires_redesign(report_path: Path) -> bool:
+    """Return whether fresh deck-spec issues require a layout-level mutation."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    raw_issues = report.get("issues") if isinstance(report, dict) else None
+    issues = [issue for issue in raw_issues or [] if isinstance(issue, str)]
+    return any(
+        "layout capacity mismatch" in issue
+        or "does not express outline visual intent" in issue
+        or (
+            "design_contract.slides." in issue
+            and (
+                "visual_kind:" in issue
+                or "direction:" in issue
+                or "relationship:" in issue
+            )
+        )
+        for issue in issues
     )
 
 
@@ -1436,6 +1496,7 @@ def build_checkpoint_text(
         )
     )
     patch_path = artifact_root / "deck.patch.json"
+    redesign_path = artifact_root / "deck.redesign.json"
     manifest_path = artifact_root / "assets" / "generated" / "manifest.json"
     (
         generated_ready,
@@ -1471,6 +1532,7 @@ def build_checkpoint_text(
     outline_argument = shlex.quote(str(artifact_root / "outline.json"))
     deck_argument = shlex.quote(str(artifact_root / "deck.json"))
     patch_argument = shlex.quote(str(artifact_root / "deck.patch.json"))
+    redesign_argument = shlex.quote(str(artifact_root / "deck.redesign.json"))
     html_argument = shlex.quote(str(artifact_root / "index.html"))
     manifest_argument = shlex.quote(
         str(artifact_root / "assets" / "generated" / "manifest.json")
@@ -1500,6 +1562,10 @@ def build_checkpoint_text(
     apply_patch_command = _controlled_pptx_command(
         "apply_deck_patch.js",
         f"{deck_argument} {patch_argument}",
+    )
+    apply_redesign_command = _controlled_pptx_command(
+        "apply_deck_redesign.js",
+        f"{deck_argument} {redesign_argument}",
     )
     finalize_command = _controlled_pptx_command(
         "finalize_controlled_deck.js",
@@ -1900,8 +1966,10 @@ def build_checkpoint_text(
                 "array of strings. Do not use "
                 "aliases such as goal, slide_no, layout_intent, or visual_intent. "
                 "Set source_mode=public_authoritative_research after public "
-                "research, give every page one distinct message and 2-5 "
-                "substantive bullets, and do not spend multiple pages repeating "
+                "research, give every page one distinct message and at least two "
+                "substantive bullets. For a qualitative visual collection, provide one "
+                "bullet per declared item; the scaffold will split overflow into linked "
+                "slides instead of truncating it. Do not spend multiple pages repeating "
                 "the same fact. On a public-research page, every Arabic-number "
                 "literal used in its title, message, or bullets must also appear "
                 "verbatim in that page's evidence array; evidence is the fact "
@@ -2012,6 +2080,18 @@ def build_checkpoint_text(
                 patch_needs_apply = patch_mtime > deck_mtime
             except OSError:
                 patch_needs_apply = False
+        redesign_exists = redesign_path.is_file() and redesign_path.stat().st_size > 0
+        redesign_json_error = (
+            _json_document_error(redesign_path) if redesign_exists else None
+        )
+        redesign_needs_apply = False
+        if redesign_exists and redesign_json_error is None:
+            try:
+                redesign_needs_apply = (
+                    redesign_path.stat().st_mtime_ns > deck_path.stat().st_mtime_ns
+                )
+            except OSError:
+                redesign_needs_apply = False
 
         if (
             image_generation_policy == IMAGE_GENERATION_EXPLICIT_RETRY
@@ -2117,8 +2197,9 @@ def build_checkpoint_text(
                 "{\"slides\":{...}}: nest each supplied slide_id under slides and "
                 "never put slide-01/slide-02 keys at the top level. Include every ready "
                 "generated media path in its declared prop or background. Keep "
-                "slide N on outline page N: preserve its exact outline title and "
-                "content anchors. On a quantitative page keep every allowed numeric "
+                "each deck slide on its declared source_outline_page and, when present, "
+                "author only its source_outline_item_range. Preserve the exact outline "
+                "title and content anchors. On a quantitative page keep every allowed numeric "
                 "literal with its matching label; values may be split across KPI/chart "
                 "fields, so do not duplicate a full source sentence in every cell. On "
                 "a qualitative page keep at least one exact atomic message/bullet "
@@ -2170,8 +2251,9 @@ def build_checkpoint_text(
                 "call read_file, execute_code, bash, inspect/list, or any discovery "
                 "tool first. The patch envelope must be exactly top-level "
                 "{\"slides\":{...}}: nest each supplied slide_id under slides and "
-                "never put slide-01/slide-02 keys at the top level. Keep slide N on "
-                "outline page N: preserve its exact outline title and content anchors. "
+                "never put slide-01/slide-02 keys at the top level. Keep each deck slide "
+                "on its declared source_outline_page and author only its optional "
+                "source_outline_item_range; preserve the exact outline title and content anchors. "
                 "On a quantitative page keep every allowed numeric literal with its "
                 "matching label; values may be split across KPI/chart fields, so do "
                 "not duplicate a full source sentence in every cell. On a qualitative "
@@ -2196,20 +2278,46 @@ def build_checkpoint_text(
                 "copy. For public research, omit an unsupported "
                 "optional claim rather than exposing 待补充. Do not recreate deck.json."
             )
-        elif report_states["deck_spec.json"] == "failed":
-            stage = "deck_spec_repair"
+        elif redesign_exists and redesign_json_error is not None:
+            stage = "deck_redesign_repair"
             next_action = (
-                "REPAIR_INPUT below contains the fresh report issues and exact "
-                "affected slide context. Do not reread the report or deck. Create or "
-                "revise a minimal "
-                "deck.patch.json containing only the named slide prop/background "
-                "paths. The filesystem checkpoint will apply it and then invoke the "
-                "single deterministic finalizer; do not run a validator yourself. "
-                "Do not reread absent later QA reports, do "
-                "not rewrite the full deck, and never copy an "
-                "INTERNAL_MODEL_HISTORY_PLACEHOLDER or omitted-tool-argument marker "
-                "into a file."
+                "The existing deck.redesign.json is not complete, valid JSON "
+                f"({redesign_json_error}). REPAIR_INPUT contains the fresh layout-level "
+                "issues and affected slide context. Rewrite only deck.redesign.json; "
+                "do not read or rewrite deck.json."
             )
+        elif redesign_needs_apply:
+            stage = "apply_redesign"
+            next_action = (
+                f"Run `{apply_redesign_command}` now. It is the single controlled "
+                "layout mutation for the fresh deck.redesign.json. Do not rewrite either "
+                "file or run validators first."
+            )
+        elif report_states["deck_spec.json"] == "failed":
+            if _deck_spec_requires_redesign(report_dir / "deck_spec.json"):
+                stage = "deck_redesign_repair"
+                next_action = (
+                    "REPAIR_INPUT below contains a fresh layout-capacity or layout-contract "
+                    "failure plus the affected slide's current layout and props. Write one "
+                    "minimal deck.redesign.json that changes only the affected slide's "
+                    "layout_id and replacement props. The filesystem checkpoint will apply "
+                    "it with apply_deck_redesign.js and then invoke the finalizer. Do not "
+                    "write deck.patch.json or rewrite deck.json."
+                )
+            else:
+                stage = "deck_spec_repair"
+                next_action = (
+                    "REPAIR_INPUT below contains the fresh report issues and exact "
+                    "affected slide context. Do not reread the report or deck. Create or "
+                    "revise a minimal "
+                    "deck.patch.json containing only the named slide prop/background "
+                    "paths. The filesystem checkpoint will apply it and then invoke the "
+                    "single deterministic finalizer; do not run a validator yourself. "
+                    "Do not reread absent later QA reports, do "
+                    "not rewrite the full deck, and never copy an "
+                    "INTERNAL_MODEL_HISTORY_PLACEHOLDER or omitted-tool-argument marker "
+                    "into a file."
+                )
         elif report_states["deck_spec.json"] != "ok":
             stage = "finalize"
             next_action = (
@@ -2277,7 +2385,8 @@ def build_checkpoint_text(
         if stage == "outline_repair"
         else (
             _qa_repair_input(report_dir / "deck_spec.json", deck_path, outline_path)
-            if stage == "deck_spec_repair" and deck_path is not None
+            if stage in {"deck_spec_repair", "deck_redesign_repair"}
+            and deck_path is not None
             else None
         )
     )

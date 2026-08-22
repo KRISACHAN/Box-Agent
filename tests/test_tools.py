@@ -21,7 +21,10 @@ from box_agent.tools import (
     add_workspace_tools,
 )
 from box_agent.tools.file_tools import MAX_SEARCH_OFFSET, MAX_SEARCH_OUTPUT_CHARS
-from box_agent.tools.bash_tool import _detect_dingtalk_workspace_violation
+from box_agent.tools.bash_tool import (
+    _detect_dingtalk_workspace_violation,
+    _detect_lark_user_mode_violation,
+)
 from box_agent.tools.permissions import CapabilityPolicy, PermissionEngine
 
 
@@ -1206,6 +1209,28 @@ async def test_bash_tool_requires_lark_business_commands_to_use_user_identity():
 
     assert not result.success
     assert "must pass `--as user`" in (result.error or "")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "lark-cli skills",
+        "lark-cli skills list",
+        "lark-cli skills read lark-base",
+        "$BOX_AGENT_LARK_CLI skills read lark-base",
+        "${BOX_AGENT_LARK_CLI} skills list",
+        "%BOX_AGENT_LARK_CLI% skills read lark-base",
+    ],
+)
+def test_lark_user_mode_policy_allows_local_embedded_skill_reads(command):
+    assert _detect_lark_user_mode_violation(command) is None
+
+
+def test_lark_user_mode_policy_does_not_exempt_other_skill_commands():
+    error = _detect_lark_user_mode_violation("lark-cli skills install lark-base")
+
+    assert error is not None
+    assert "must pass `--as user`" in error
 
 
 @pytest.mark.asyncio

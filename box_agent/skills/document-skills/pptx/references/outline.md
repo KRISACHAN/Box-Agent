@@ -253,8 +253,11 @@ does not get trapped in a repair loop.
 - Titles should be short and presentation-ready.
 - `message` should be a claim, not a topic label. Prefer "AI cuts manual QC
   scheduling from hours to minutes" over "Product overview".
-- `bullets` should have 2-5 items; each supports `message` and maps to
-  distinct content on the slide. Avoid restating the title.
+- `bullets` should have at least 2 items; each supports `message` and maps to
+  distinct content on the slide. When a qualitative collection declares an
+  item count, provide exactly one bullet per item and keep counts in the title,
+  message, and visual consistent. The scaffold splits overflow into linked
+  slides; do not trim or merge items to fit a template. Avoid restating the title.
 - Avoid repetitive slides with the same title, message, layout, or visual.
 - Do not reuse the same evidence as the main support for more than two pages;
   combine repetitive pages or research another distinct fact.
@@ -289,7 +292,11 @@ It is not a substitute for human/model narrative judgment.
 
 After validation passes, pass it directly to the scaffold with
 `--outline outline.json`. The scaffold writes `source_outline_page` onto every
-slide and, for `public_authoritative_research`, imports each non-empty
+slide. When a typed visual collection exceeds one layout's readable capacity,
+the scaffold emits multiple deck slides for the same outline page and records a
+contiguous `source_outline_item_range` on each split slide; the ranges must cover
+the original collection exactly once. For `public_authoritative_research`, it
+imports each non-empty
 `slides[].evidence` string into `truth_contract.research_facts`. The slide title,
 core message, visual intent, and evidence notes must stay on the same numbered
 page through the content patch. Compile the validated deck to `index.html`; do

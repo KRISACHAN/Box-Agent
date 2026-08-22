@@ -45,11 +45,12 @@ class Tool:
 
     aliases: tuple[str, ...] = ()
     parallel_safe: bool = False
-    # Model-facing results above this size are persisted by the shared agent
-    # loop. Tools that already self-bound output may opt out with ``math.inf``;
-    # they can still hand complete recoverable text to the persistence seam
-    # through ``ToolResult.persistence_content``.
-    max_result_size_chars: float = 50_000
+    # ``None`` uses the shared context-scaled result limit. Tools with a real
+    # lower operational bound may declare it explicitly; tools that already
+    # self-bound output may opt out with ``math.inf`` and still hand complete
+    # recoverable text to the persistence seam through
+    # ``ToolResult.persistence_content``.
+    max_result_size_chars: float | None = None
 
     def compaction_state(self) -> tuple[str, str] | None:
         """Return trusted read-only runtime state for history compaction."""

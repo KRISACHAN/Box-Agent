@@ -10579,6 +10579,9 @@
       "defaultProps": {
         "subtitle": "",
         "variant": "cards"
+      },
+      "counts": {
+        "metrics": "items"
       }
     },
     {
@@ -11349,6 +11352,10 @@
         "diagram_kind": "architecture",
         "direction": "RIGHT",
         "note": ""
+      },
+      "counts": {
+        "nodes": "nodes",
+        "edges": "edges"
       }
     },
     {
@@ -11548,6 +11555,9 @@
         "subtitle": "",
         "insight": "",
         "variant": "management"
+      },
+      "counts": {
+        "metrics": "items"
       }
     },
     {
@@ -11781,6 +11791,9 @@
         "insight": "",
         "source": "",
         "variant": "horizontal"
+      },
+      "counts": {
+        "categories": "items"
       }
     },
     {
@@ -12177,6 +12190,11 @@
         "highlights": [],
         "insight": "",
         "source": ""
+      },
+      "counts": {
+        "categories": "categories",
+        "series": "series",
+        "highlights": "highlights"
       }
     },
     {
@@ -12394,6 +12412,10 @@
         "high_label": "高",
         "insight": "",
         "source": ""
+      },
+      "counts": {
+        "rows": "rows",
+        "columns": "columns"
       }
     },
     {
@@ -12617,6 +12639,10 @@
         "insight": "",
         "source": "",
         "variant": "ledger"
+      },
+      "counts": {
+        "rows": "rows",
+        "columns": "columns"
       }
     },
     {
@@ -13418,6 +13444,10 @@
         "subtitle": "",
         "address": "",
         "note": ""
+      },
+      "counts": {
+        "zones": "zones",
+        "metrics": "metrics"
       }
     },
     {
@@ -13860,6 +13890,10 @@
       "defaultProps": {
         "subtitle": "",
         "note": ""
+      },
+      "counts": {
+        "nodes": "nodes",
+        "metrics": "metrics"
       }
     },
     {

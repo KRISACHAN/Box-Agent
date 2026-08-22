@@ -30,7 +30,7 @@ provider: "anthropic"
 # `max_output_tokens` is the per-request output cap (`max_tokens` on the wire).
 # Default for user-configured endpoints stays below the common 65,536
 # output-token ceiling. Hosted xiaohuanxiong.com endpoints default to 80,000
-# when this field is omitted. The summarization trigger is derived: 80% of
+# when this field is omitted. The summarization trigger is derived: 90% of
 # (context_window - max_output_tokens). ACP built-in model bindings may override
 # both values per model; these fields remain the fallback for custom endpoints.
 context_window: 180000

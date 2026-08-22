@@ -5,7 +5,7 @@ Box-Agent controls context growth at two boundaries:
 1. Tool results are persisted before they can dominate a later model request.
 2. Conversation history is summarized only when the next request approaches the model's effective input limit.
 
-The two mechanisms are deliberately separate. Tool-result storage is lossless: the complete result remains on disk and the model receives a preview. Context summarization is lossy, so it runs later and preserves a bounded working set.
+The two mechanisms are deliberately separate. Tool-result storage is lossless at the storage layer: the complete result remains on disk while the model keeps a bounded head-and-tail working preview plus the recovery path. Context summarization is lossy, so it runs later and preserves a bounded working set.
 
 ## Request lifecycle
 
@@ -25,7 +25,7 @@ tool finishes
 
 ### Immediate per-result check
 
-The default maximum model-facing result is 20,000 characters. A tool can expose `max_result_size_chars`; the effective limit is the smaller of the declaration and the default. Only ordinary results that have not already been processed enter this generic policy.
+The minimum shared model-facing result limit is 20,000 characters and scales with the active model's safe input window as `max(20,000, context_token_limit * 0.25)`. Tools that do not declare `max_result_size_chars` use this contextual limit; a tool may still declare a lower explicit operational bound. Only ordinary results that have not already been processed enter this generic policy.
 
 The following results are not processed a second time:
 
@@ -41,7 +41,7 @@ When an eligible result exceeds the limit:
 - an array containing only text blocks is serialized as formatted JSON and saved as `.json`;
 - files live under `~/.box-agent/sessions/<session>/tool-results/<tool_use_id>.<ext>`;
 - exclusive-create (`x`, equivalent to `wx`) prevents overwriting an existing result;
-- a stable `<persisted-output>` preview replaces the model-facing content.
+- a stable `<persisted-output>` head-and-tail preview replaces the model-facing content.
 
 The original result is preserved when it is below the limit, contains an image or any other non-text block, or cannot be persisted. Empty output is normalized to `(<Tool name> completed with no output)`; for Bash this is `(Bash completed with no output)`.
 
@@ -53,10 +53,10 @@ Tools may still bound their own output for operational reasons. When they do, th
 
 The preview algorithm:
 
-1. Takes at most the first 2,000 characters.
-2. Prefers the last newline within that window when it lies in the second half.
-3. Otherwise cuts exactly at 2,000 characters.
-4. Adds `...` only when more content exists.
+1. Keeps at most 2,000 characters in total.
+2. Preserves both the beginning and the end with an explicit omitted-middle marker.
+3. Prefers nearby newline boundaries when that avoids partial lines.
+4. Preserves the exact head and tail even for a single long line.
 
 For an ordinary unprocessed result, the model-facing form is:
 
@@ -64,7 +64,7 @@ For an ordinary unprocessed result, the model-facing form is:
 <persisted-output>
 Output too large (...). Full output saved to: ...
 
-Preview (first 2.0KB):
+Preview (head + tail, up to 2.0KB):
 ...
 </persisted-output>
 ```
@@ -73,12 +73,12 @@ For a self-bounded tool that supplies `persistence_content`, the body is labeled
 
 ### Aggregate fresh-result budget
 
-Before every LLM request, results first seen during the current conversation are checked against a default 50,000-character aggregate budget. The pass:
+Before every LLM request, results first seen during the current conversation are checked against a contextual aggregate budget of `max(50,000, context_token_limit * 0.50)` characters. The pass:
 
 1. Considers only fresh `tool_use_id` values.
 2. Excludes selected `model_context` projections, but still counts self-bounded tools whose per-result declaration is infinity. Infinity disables immediate per-result persistence; it does not exempt a parallel batch from the aggregate budget.
 3. Sorts eligible results from largest to smallest.
-4. Uses a path-only persisted wrapper for this aggregate pass and counts the wrapper's actual model-facing length.
+4. Keeps a head-and-tail preview plus the recovery path, shrinking each preview according to the batch budget, and counts the wrapper's actual model-facing length.
 5. Persists and replaces the largest results until the actual remaining fresh content is at or below the budget.
 
 Unsupported blocks and persistence failures remain unchanged. Since IDs are marked seen during the pass, later requests do not reconsider the same results. This handles a batch of parallel tool calls whose individual results are below the per-result limit but are too large together.
@@ -90,11 +90,11 @@ Unsupported blocks and persistence failures remain unchanged. Since IDs are mark
 The trigger is derived from the model's input budget:
 
 ```text
-autoCompactThreshold = 0.8 * (context_window - max_output_tokens)
+autoCompactThreshold = 0.9 * (context_window - max_output_tokens)
 ```
 
 `LLMConfig.context_token_limit` reserves the configured maximum output budget,
-then keeps 20% of the remaining input budget as headroom for estimation drift
+then keeps 10% of the remaining input budget as headroom for estimation drift
 and the summary request.
 
 ACP model bindings may override both values with the selected model's

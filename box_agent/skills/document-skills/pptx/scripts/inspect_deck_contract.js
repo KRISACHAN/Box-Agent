@@ -9,6 +9,7 @@ const {
   createEditorProps,
   createTechnicalDiagramPreset,
   getLayout,
+  getVisualCollectionContract,
   manifestRecord,
 } = require("../layouts/registry.js");
 const {
@@ -34,6 +35,7 @@ const {
 const {
   analyzeOutlineLayoutIntent,
   expectedVisualItemCount,
+  expectedVisualItemContract,
   outlineHasPlottableChartEvidence,
   outlineHasQuantitativeEvidence,
   outlineIntentRecord,
@@ -458,45 +460,57 @@ function buildSlide(layoutId, index, outlineSlide = null) {
   };
 }
 
-const VISUAL_COLLECTION_FIELDS = Object.freeze({
-  "cover-editorial-v1": "tags",
-  "statement-focus-v1": "proofs",
-  "cards-grid-v1": "items",
-  "quadrant-matrix-v1": "items",
-  "pyramid-hierarchy-v1": "items",
-  "timeline-horizontal-v1": "steps",
-  "factory-process-line-v1": "stations",
-  "legal-case-logic-v1": "sections",
-  "property-factsheet-v1": "zones",
-  "commerce-funnel-v1": "stages",
-  "supply-network-v1": "nodes",
-  "table-data-v1": "rows",
-  "closing-next-steps-v1": "actions",
-});
+function nestedValue(value, fieldPath) {
+  return String(fieldPath || "")
+    .split(".")
+    .filter(Boolean)
+    .reduce((current, part) => (
+      current && typeof current === "object" ? current[part] : undefined
+    ), value);
+}
 
-function visualCollectionLimit(layoutId) {
-  const field = VISUAL_COLLECTION_FIELDS[layoutId];
+function visualCollectionCapacity(layoutId, outlineSlide = null) {
+  const requested = expectedVisualItemContract(outlineSlide);
+  const collection = getVisualCollectionContract(
+    layoutId,
+    requested && requested.dimension
+  );
   const layout = getLayout(layoutId);
-  const contract = layout && layout.fields ? layout.fields[field] : null;
-  return contract && Number.isInteger(contract.maxItems)
-    ? contract.maxItems
+  const contract = layout && layout.fields && collection
+    ? nestedValue(layout.fields, collection.path)
+    : null;
+  return contract && Number.isInteger(contract.minItems) && Number.isInteger(contract.maxItems)
+    ? { minItems: contract.minItems, maxItems: contract.maxItems }
     : null;
 }
 
+function visualCollectionLimit(layoutId, outlineSlide = null) {
+  const capacity = visualCollectionCapacity(layoutId, outlineSlide);
+  return capacity ? capacity.maxItems : null;
+}
+
 function alignScaffoldVisualCardinality(layoutId, props, outlineSlide) {
-  const expected = expectedVisualItemCount(outlineSlide);
-  const field = VISUAL_COLLECTION_FIELDS[layoutId];
+  const requested = expectedVisualItemContract(outlineSlide);
+  const expected = requested && requested.count;
+  const collectionContract = getVisualCollectionContract(
+    layoutId,
+    requested && requested.dimension
+  );
+  const field = collectionContract && collectionContract.path;
   const layout = getLayout(layoutId);
-  const contract = layout && layout.fields ? layout.fields[field] : null;
-  const collection = field && Array.isArray(props[field]) ? props[field] : null;
+  const contract = layout && layout.fields && field
+    ? nestedValue(layout.fields, field)
+    : null;
+  const collection = field ? nestedValue(props, field) : null;
   if (
     !expected
     || !field
     || !contract
     || !collection
-    || expected <= collection.length
+    || (Number.isInteger(contract.minItems) && expected < contract.minItems)
     || (Number.isInteger(contract.maxItems) && expected > contract.maxItems)
   ) return;
+  if (collection.length > expected) collection.splice(expected);
   const seed = collection.length ? collection[collection.length - 1] : null;
   while (collection.length < expected) {
     const item = seed === null ? "待填充" : JSON.parse(JSON.stringify(seed));
@@ -511,10 +525,44 @@ function alignScaffoldVisualCardinality(layoutId, props, outlineSlide) {
       if (Object.prototype.hasOwnProperty.call(item, "title")) {
         item.title = `第 ${ordinal} 个视觉项`;
       }
+      if (Object.prototype.hasOwnProperty.call(item, "id")) {
+        item.id = `${(requested && requested.dimension) || "item"}-${ordinal}`;
+      }
+      if (Object.prototype.hasOwnProperty.call(item, "label")) {
+        item.label = `视觉项 ${ordinal}`;
+      }
+      if (Object.prototype.hasOwnProperty.call(item, "name")) {
+        item.name = `序列 ${ordinal}`;
+      }
     } else if (Array.isArray(item) && item.length) {
       item[0] = `视觉项 ${ordinal}`;
+    } else if (typeof item === "string") {
+      collection.push(`视觉项 ${ordinal}`);
+      continue;
     }
     collection.push(item);
+  }
+  if (layoutId === "chart-data-v1" && field === "categories") {
+    (props.series || []).forEach(series => {
+      if (!Array.isArray(series.values)) series.values = [];
+      series.values.splice(expected);
+      while (series.values.length < expected) {
+        series.values.push(series.values[series.values.length - 1] || "0");
+      }
+    });
+  }
+  if (["table-data-v1", "heatmap-matrix-v1"].includes(layoutId) && field === "columns") {
+    (props.rows || []).forEach(row => {
+      if (!Array.isArray(row)) return;
+      row.splice(expected);
+      while (row.length < expected) row.push("—");
+    });
+  }
+  if (layoutId === "technical-diagram-v1" && field === "nodes") {
+    const nodeIds = new Set((props.nodes || []).map(node => node.id));
+    props.edges = (props.edges || []).filter(edge => (
+      nodeIds.has(edge.source) && nodeIds.has(edge.target)
+    ));
   }
 }
 
@@ -641,8 +689,8 @@ function normalizeOutlineDrivenLayoutIds(
       return "table-data-v1";
     }
     const explicitVisualItemCount = expectedVisualItemCount(slide);
-    const timelineMaxItems = visualCollectionLimit("timeline-horizontal-v1");
-    const cardsMaxItems = visualCollectionLimit("cards-grid-v1");
+    const timelineMaxItems = visualCollectionLimit("timeline-horizontal-v1", slide);
+    const cardsMaxItems = visualCollectionLimit("cards-grid-v1", slide);
     if (
       layoutId === "timeline-horizontal-v1"
       && Number.isInteger(timelineMaxItems)
@@ -661,7 +709,7 @@ function normalizeOutlineDrivenLayoutIds(
       });
       return "cards-grid-v1";
     }
-    const selectedMaxItems = visualCollectionLimit(layoutId);
+    const selectedMaxItems = visualCollectionLimit(layoutId, slide);
     if (
       layoutId === "statement-focus-v1"
       && Number.isInteger(selectedMaxItems)
@@ -726,7 +774,138 @@ function normalizeOutlineDrivenLayoutIds(
     }
     return layoutId;
   });
-  return { layoutIds: effective, normalizations };
+  const capacityChecked = effective.map((layoutId, index) => {
+    const slide = outlineBinding.slides[index];
+    const requested = expectedVisualItemContract(slide);
+    const expected = requested && requested.count;
+    const selectedCapacity = visualCollectionCapacity(layoutId, slide);
+    if (
+      !Number.isInteger(expected)
+      || !selectedCapacity
+      || (
+        expected >= selectedCapacity.minItems
+        && expected <= selectedCapacity.maxItems
+      )
+    ) {
+      return layoutId;
+    }
+    const semantic = analyzeOutlineLayoutIntent(
+      slide,
+      outlineBinding.sourceMode,
+      layoutPolicy
+    );
+    const compatible = semantic
+      ? semantic.allowed_layout_ids.find(candidateId => {
+        const capacity = visualCollectionCapacity(candidateId, slide);
+        return capacity
+          && expected >= capacity.minItems
+          && expected <= capacity.maxItems;
+      })
+      : null;
+    if (!compatible) {
+      const partCount = Math.ceil(expected / selectedCapacity.maxItems);
+      normalizations.push({
+        slide: index + 1,
+        from: layoutId,
+        to: layoutId,
+        strategy: "split",
+        item_count: expected,
+        part_count: partCount,
+        reason: (
+          `outline requests ${expected} visual items outside ${layoutId} capacity ` +
+          `${selectedCapacity.minItems}-${selectedCapacity.maxItems}; split before authoring`
+        ),
+      });
+      return layoutId;
+    }
+    normalizations.push({
+      slide: index + 1,
+      from: layoutId,
+      to: compatible,
+      reason: (
+        `outline requests ${expected} visual items outside ${layoutId} capacity ` +
+        `${selectedCapacity.minItems}-${selectedCapacity.maxItems}`
+      ),
+    });
+    return compatible;
+  });
+  return { layoutIds: capacityChecked, normalizations };
+}
+
+function balancedChunkSizes(total, maximum, minimum) {
+  const partCount = Math.ceil(total / maximum);
+  const base = Math.floor(total / partCount);
+  const remainder = total % partCount;
+  const sizes = Array.from(
+    { length: partCount },
+    (_, index) => base + (index < remainder ? 1 : 0)
+  );
+  return sizes.every(size => size >= minimum && size <= maximum) ? sizes : null;
+}
+
+function expandOutlineDrivenPlan(layoutIds, outlineBinding) {
+  if (!outlineBinding) {
+    return layoutIds.map((layoutId, index) => ({ layoutId, outlineSlide: null, index }));
+  }
+  const plan = [];
+  layoutIds.forEach((layoutId, index) => {
+    const outlineSlide = outlineBinding.slides[index];
+    const requested = expectedVisualItemContract(outlineSlide);
+    const capacity = visualCollectionCapacity(layoutId, outlineSlide);
+    if (
+      !requested
+      || !capacity
+      || (
+        requested.count >= capacity.minItems
+        && requested.count <= capacity.maxItems
+      )
+    ) {
+      plan.push({ layoutId, outlineSlide, sourceOutlinePage: outlineSlide.page });
+      return;
+    }
+    const bullets = Array.isArray(outlineSlide.bullets)
+      ? outlineSlide.bullets.filter(item => String(item || "").trim())
+      : [];
+    const sizes = balancedChunkSizes(
+      requested.count,
+      capacity.maxItems,
+      capacity.minItems
+    );
+    if (!sizes || bullets.length !== requested.count) {
+      throw new Error(
+        `Slide ${index + 1} requires controlled outline expansion for ${requested.count} ` +
+        `${requested.dimension} item(s), but deterministic splitting requires exactly ` +
+        `${requested.count} outline bullets and chunks within ${layoutId} capacity ` +
+        `${capacity.minItems}-${capacity.maxItems}`
+      );
+    }
+    let offset = 0;
+    sizes.forEach((size, partIndex) => {
+      const start = offset + 1;
+      const end = offset + size;
+      const authoringSlide = JSON.parse(JSON.stringify(outlineSlide));
+      authoringSlide.bullets = bullets.slice(offset, end);
+      authoringSlide.visual_item_contract = {
+        dimension: requested.dimension,
+        count: size,
+      };
+      plan.push({
+        layoutId,
+        outlineSlide: authoringSlide,
+        boundOutlineSlide: outlineSlide,
+        sourceOutlinePage: outlineSlide.page,
+        sourceOutlineItemRange: {
+          start,
+          end,
+          total: requested.count,
+          part: partIndex + 1,
+          parts: sizes.length,
+        },
+      });
+      offset = end;
+    });
+  });
+  return plan;
 }
 
 function validateOutlineLayoutFit(orderedLayouts, outlineBinding, layoutPolicy = {}) {
@@ -1148,7 +1327,12 @@ function main() {
     outlineBinding,
     layoutPolicy
   );
-  const effectiveLayoutIds = layoutResolution.layoutIds.map(layoutId => {
+  const authoringPlan = expandOutlineDrivenPlan(
+    layoutResolution.layoutIds,
+    outlineBinding
+  );
+  const effectiveLayoutIds = authoringPlan.map(entry => {
+    const layoutId = entry.layoutId;
     if (!opts.noImages) return layoutId;
     const layout = getLayout(layoutId);
     const requiredSlots = layout && layout.mediaSlots && Array.isArray(layout.mediaSlots.slots)
@@ -1161,7 +1345,12 @@ function main() {
     return layout.noImageFallbackLayoutId;
   });
   const orderedLayouts = effectiveLayoutIds.map(layoutId => getLayout(layoutId));
-  validateOutlineLayoutFit(orderedLayouts, outlineBinding, layoutPolicy);
+  const authoringSlides = authoringPlan.map(entry => entry.outlineSlide);
+  validateOutlineLayoutFit(
+    orderedLayouts,
+    outlineBinding ? { ...outlineBinding, slides: authoringSlides } : null,
+    layoutPolicy
+  );
   const runtimeBinding = runtimeSourceBinding();
   const designContext = {
     title: opts.title,
@@ -1172,7 +1361,7 @@ function main() {
   const themeResolution = selectTheme(opts, designContext);
   const designContract = inferDesignContract(
     designContext,
-    outlineBinding ? outlineBinding.slides : []
+    outlineBinding ? authoringSlides : []
   );
   const theme = themeResolution.theme;
   if (!theme) {
@@ -1214,7 +1403,7 @@ function main() {
     const field = normalizeRequiredField(layout, requirement.field);
     if (!Object.prototype.hasOwnProperty.call(layout.fields, field)) {
       const outlineSlide = outlineBinding
-        ? outlineBinding.slides[requirement.slide - 1]
+        ? authoringSlides[requirement.slide - 1]
         : null;
       if (canRelaxMissingRequiredField(requirement, outlineSlide)) {
         requiredFieldRelaxations.push({
@@ -1281,11 +1470,24 @@ function main() {
           : {}),
         assumptions,
       },
-      slides: orderedLayouts.map((layout, index) => buildSlide(
-        layout.id,
-        index,
-        outlineBinding ? outlineBinding.slides[index] : null
-      )),
+      slides: orderedLayouts.map((layout, index) => {
+        const entry = authoringPlan[index];
+        const slide = buildSlide(
+          layout.id,
+          index,
+          entry && entry.outlineSlide
+        );
+        if (entry && entry.boundOutlineSlide) {
+          slide.outline_intent = outlineIntentRecord(entry.boundOutlineSlide);
+        }
+        if (entry && entry.sourceOutlinePage) {
+          slide.source_outline_page = entry.sourceOutlinePage;
+        }
+        if (entry && entry.sourceOutlineItemRange) {
+          slide.source_outline_item_range = entry.sourceOutlineItemRange;
+        }
+        return slide;
+      }),
     }
     : null;
   if (skeleton) {
@@ -1378,12 +1580,12 @@ function main() {
             deckTitle: opts.title,
             briefText: globalBriefText,
             slideText: [
-              outlineBinding ? outlineBinding.slides[index].title : "",
-              outlineBinding ? outlineBinding.slides[index].message : "",
-              outlineBinding ? outlineBinding.slides[index].visual : "",
-              outlineBinding ? outlineBinding.slides[index].bullets.join("\n") : "",
+              outlineBinding ? authoringSlides[index].title : "",
+              outlineBinding ? authoringSlides[index].message : "",
+              outlineBinding ? authoringSlides[index].visual : "",
+              outlineBinding ? authoringSlides[index].bullets.join("\n") : "",
             ].filter(Boolean).join("\n"),
-            slide: outlineBinding ? outlineBinding.slides[index] : null,
+            slide: outlineBinding ? authoringSlides[index] : null,
             generationForbidden,
           },
           [...existingImageAssets.values()].find(
@@ -1472,6 +1674,7 @@ function main() {
           outline_hash: outlineBinding.hash,
           source_mode: outlineBinding.sourceMode,
           page_count: outlineBinding.slides.length,
+          deck_slide_count: authoringSlides.length,
           evidence_import_count: outlineBinding.importedResearchFacts.length,
         }
         : null,
@@ -1547,11 +1750,15 @@ function main() {
       },
       outline_policy: outlineBinding
         ? {
-          rule: "Slide N must preserve outline page N. Keep its exact title plus content anchors. Quantitative values may be split across KPI/chart fields when every page value and matching label is preserved; qualitative pages need an exact atomic message/bullet fragment. When expected_visual_item_count is present, fill exactly that many items/steps/rows/tags/actions; the page-level need-solution-value framing does not replace the requested visual collection. Do not duplicate full source sentences in every cell, swap page topics, or invent quantitative values for qualitative pages.",
+          rule: "Every deck slide must preserve its source_outline_page. When source_outline_item_range is present, author only that contiguous bullet range and preserve the original outline title; the complete split group must cover every requested item exactly once. Quantitative values may be split across KPI/chart fields when every value and matching label is preserved; qualitative pages need an exact atomic message/bullet fragment. Fill the typed visual item contract exactly. Do not duplicate full source sentences in every cell, swap page topics, truncate collections, or invent quantitative values for qualitative pages.",
           source_mode: outlineBinding.sourceMode,
           evidence_import_count: outlineBinding.importedResearchFacts.length,
-          pages: outlineBinding.slides.map(slide => ({
-            page: slide.page,
+          pages: authoringSlides.map((slide, index) => ({
+            page: index + 1,
+            source_outline_page: authoringPlan[index].sourceOutlinePage,
+            ...(authoringPlan[index].sourceOutlineItemRange
+              ? { source_outline_item_range: authoringPlan[index].sourceOutlineItemRange }
+              : {}),
             title: slide.title,
             message: slide.message,
             bullets: slide.bullets,

@@ -223,8 +223,8 @@ async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp
         "maxTokens": 16000,
     }
     assert second_state.agent.llm.max_output_tokens == 16000
-    assert first_state.agent.token_limit == 92800
-    assert second_state.agent.token_limit == 89600
+    assert first_state.agent.token_limit == 104400
+    assert second_state.agent.token_limit == 100800
 
 
 @pytest.mark.asyncio
@@ -414,7 +414,7 @@ async def test_session_switches_model_between_turns_without_recreating_agent(tmp
         "maxTokens": 16000,
     }
     assert state.agent.llm.max_output_tokens == 16000
-    assert state.agent.token_limit == 89600
+    assert state.agent.token_limit == 100800
     assert main.model == "model-main"
 
 

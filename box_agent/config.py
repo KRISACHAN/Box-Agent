@@ -17,7 +17,7 @@ DEFAULT_MODEL = "claude-sonnet-4-20250514"
 HOSTED_GATEWAY_API_KEY_PLACEHOLDER = "box-agent-auth-json"
 XIAOHUANXIONG_MAX_OUTPUT_TOKENS = 80000
 USER_CONFIGURED_MAX_OUTPUT_TOKENS = 63999
-CONTEXT_INPUT_SAFETY_RATIO = 0.8
+CONTEXT_INPUT_SAFETY_RATIO = 0.9
 
 
 def derive_context_token_limit(context_window: int, max_output_tokens: int) -> int:
@@ -85,8 +85,8 @@ class LLMConfig(BaseModel):
     def context_token_limit(self) -> int:
         """Token threshold that triggers context summarization.
 
-        Derived as 80% of the input budget — i.e. 80% of
-        ``context_window - max_output_tokens``. The 20% headroom absorbs
+        Derived as 90% of the input budget — i.e. 90% of
+        ``context_window - max_output_tokens``. The 10% headroom absorbs
         token-estimate drift and the summarization request itself.
         """
         return derive_context_token_limit(self.context_window, self.max_output_tokens)

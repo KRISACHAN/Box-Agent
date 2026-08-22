@@ -71,6 +71,7 @@ FINALIZER_SCRIPT = (
 )
 INSPECTOR_SCRIPT = FINALIZER_SCRIPT.parent / "inspect_deck_contract.js"
 APPLY_PATCH_SCRIPT = FINALIZER_SCRIPT.parent / "apply_deck_patch.js"
+APPLY_REDESIGN_SCRIPT = FINALIZER_SCRIPT.parent / "apply_deck_redesign.js"
 VALIDATE_OUTLINE_SCRIPT = FINALIZER_SCRIPT.parent / "validate_outline.js"
 REBASE_IMAGE_POLICY_SCRIPT = FINALIZER_SCRIPT.parent / "rebase_image_policy.js"
 
@@ -7521,6 +7522,175 @@ def _write_deck_spec_repair_fixture(tmp_path):
     fresh += 10_000_000
     os.utime(truth, ns=(fresh, fresh))
     return output, deck, deck_spec
+
+
+def _write_deck_redesign_repair_fixture(tmp_path):
+    output, deck, deck_spec = _write_deck_spec_repair_fixture(tmp_path)
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "Ten-stop agenda",
+                        "message": "Walk through all ten stops.",
+                        "bullets": [f"{index:02d} agenda item" for index in range(1, 11)],
+                        "layout": "agenda-grid-v1",
+                        "visual": "numbered agenda with 10 icon nodes",
+                        "evidence": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    deck.write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "id": "slide-01",
+                        "layout_id": "cards-grid-v1",
+                        "source_outline_page": 1,
+                        "props": {
+                            "title": "Ten-stop agenda",
+                            "items": [
+                                {"title": f"Item {index}", "body": "Agenda"}
+                                for index in range(1, 7)
+                            ],
+                        },
+                    }
+                ],
+                "truth_contract": {
+                    "source_facts": [],
+                    "research_facts": [],
+                    "assumptions": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    deck_spec.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "issues": [
+                    "slides.slide-01.props.items: layout capacity mismatch; outline "
+                    "visual explicitly requests 10 visual item(s), but cards-grid-v1 "
+                    "supports at most 6"
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    outline_check = output / "qa" / "outline_check.json"
+    fresh = max(
+        deck.stat().st_mtime_ns,
+        deck_spec.stat().st_mtime_ns,
+        (output / "outline.json").stat().st_mtime_ns,
+    ) + 10_000_000
+    os.utime(outline_check, ns=(fresh, fresh))
+    fresh += 10_000_000
+    os.utime(deck_spec, ns=(fresh, fresh))
+    return output, deck, deck_spec
+
+
+def test_controlled_capacity_failure_routes_through_redesign_repair(tmp_path):
+    output, deck, _ = _write_deck_redesign_repair_fixture(tmp_path)
+
+    checkpoint = completion_gate_progress_text(
+        CompletionGate(workflow_checkpoint_kind="controlled_presentation"),
+        str(tmp_path),
+    )
+
+    assert checkpoint is not None
+    assert (
+        f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}deck_redesign_repair"
+        in checkpoint
+    )
+    assert '"current_layout_id":"cards-grid-v1"' in checkpoint
+    assert "deck.redesign.json" in checkpoint
+    assert "Do not write deck.patch.json" in checkpoint
+
+    redesign = output / "deck.redesign.json"
+    redesign.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    "slide-01": {
+                        "layout_id": "table-data-v1",
+                        "props": {
+                            "title": "Ten-stop agenda",
+                            "columns": ["No.", "Agenda"],
+                            "rows": [[str(index), f"Item {index}"] for index in range(1, 11)],
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    newer = max(redesign.stat().st_mtime_ns, deck.stat().st_mtime_ns) + 10_000_000
+    os.utime(redesign, ns=(newer, newer))
+
+    apply_checkpoint = completion_gate_progress_text(
+        CompletionGate(workflow_checkpoint_kind="controlled_presentation"),
+        str(tmp_path),
+    )
+    assert apply_checkpoint is not None
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}apply_redesign" in apply_checkpoint
+    assert "apply_deck_redesign.js" in apply_checkpoint
+
+
+def test_controlled_redesign_repair_allows_only_redesign_artifact(tmp_path):
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+        stage="deck_redesign_repair",
+        has_repair_input=True,
+    )
+
+    assert policy.tool_call_error(
+        "write_file",
+        {"path": "deck.redesign.json", "content": "{}"},
+        verified_evidence_urls=set(),
+    ) is None
+    assert "CONTROLLED_PRESENTATION_REDESIGN_INPUT_READY" in (
+        policy.tool_call_error(
+            "write_file",
+            {"path": "deck.patch.json", "content": "{}"},
+            verified_evidence_urls=set(),
+        )
+        or ""
+    )
+
+
+def test_controlled_apply_redesign_accepts_only_canonical_command(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=output,
+        stage="apply_redesign",
+    )
+    command = (
+        f"node {APPLY_REDESIGN_SCRIPT} {output / 'deck.json'} "
+        f"{output / 'deck.redesign.json'}"
+    )
+
+    assert policy.tool_call_error(
+        "bash",
+        {"command": command},
+        verified_evidence_urls=set(),
+    ) is None
+    assert "CONTROLLED_PRESENTATION_APPLY_REDESIGN_REQUIRED" in (
+        policy.tool_call_error(
+            "bash",
+            {"command": f"node {APPLY_PATCH_SCRIPT} deck.json deck.patch.json"},
+            verified_evidence_urls=set(),
+        )
+        or ""
+    )
 
 
 @pytest.mark.asyncio

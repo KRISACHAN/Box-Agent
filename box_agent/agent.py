@@ -58,6 +58,7 @@ from .tools.skill_preload import build_active_skills_prompt
 from .tool_result_storage import ToolResultStorage
 from .utils import calculate_display_width
 from .workflow_policy import WorkflowPolicy
+from .session_continuation import ContinuationMessage
 
 
 _log = logging.getLogger(__name__)
@@ -688,6 +689,17 @@ class Agent:
         if self.goal is not None and self.goal.status == "active":
             content = self._apply_goal_context(content)
         self.messages.append(Message(role="user", content=content))
+
+    def seed_continuation_messages(
+        self, messages: tuple[ContinuationMessage, ...]
+    ) -> int:
+        """Seed semantic history into a fresh Agent without tool protocol state."""
+
+        if len(self.messages) != 1 or self.messages[0].role != "system":
+            return 0
+        for message in messages:
+            self.messages.append(Message(role=message.role, content=message.content))
+        return len(messages)
 
     def set_goal(
         self,

@@ -236,9 +236,11 @@ def _detect_lark_user_mode_violation(command: str) -> str | None:
         part = raw_part.strip()
         if _LARK_CLI_ENV_ASSIGNMENT_RE.match(part):
             continue
-        if not _LARK_CLI_RE.search(part):
+        cli_match = _LARK_CLI_RE.search(part)
+        if not cli_match:
             continue
         lowered = part.lower()
+        cli_args = part[cli_match.end() :].lstrip()
 
         if _LARK_BOT_FLAG_RE.search(part):
             return "lark-cli bot identity is disabled in officev3 local-agent sessions; use `--as user`."
@@ -255,6 +257,7 @@ def _detect_lark_user_mode_violation(command: str) -> str | None:
             "--help" in lowered
             or re.search(r"\s(?:--version|-v)\b", lowered)
             or re.search(r"\blark-cli(?:\.(?:cmd|exe))?\s+(?:auth|config|schema|doctor|update)\b", lowered)
+            or re.match(r"skills(?:\s+(?:list|read)\b|\s*$)", cli_args, re.IGNORECASE)
         ):
             continue
 

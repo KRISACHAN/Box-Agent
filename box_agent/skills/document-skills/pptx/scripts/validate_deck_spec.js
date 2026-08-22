@@ -10,26 +10,13 @@ const {
   resolveArtifactPath,
   validateAndNormalizeDeck,
 } = require("./deck_spec_core.js");
+const { getVisualCollectionContract } = require("../layouts/registry.js");
 const {
   analyzeOutlineLayoutIntent,
+  expectedVisualItemContract,
   outlineIntentRecord,
   validateOutlineVisualCardinality,
 } = require("./outline_layout_contract.js");
-
-const DESIGN_COLLECTION_FIELDS = Object.freeze({
-  "statement-focus-v1": "proofs",
-  "cards-grid-v1": "items",
-  "quadrant-matrix-v1": "items",
-  "pyramid-hierarchy-v1": "items",
-  "timeline-horizontal-v1": "steps",
-  "factory-process-line-v1": "stations",
-  "legal-case-logic-v1": "sections",
-  "property-factsheet-v1": "zones",
-  "commerce-funnel-v1": "stages",
-  "supply-network-v1": "nodes",
-  "table-data-v1": "rows",
-  "closing-next-steps-v1": "actions",
-});
 
 const SCAFFOLD_NARRATIVE_FIELDS = new Set([
   "title",
@@ -51,8 +38,14 @@ function designContractResolution(deck) {
   const resolutions = Object.entries(contract.slides || {}).map(([slideId, requirement]) => {
     const slide = deck.slides.find(item => item.id === slideId);
     const layout = slide ? getLayout(slide.layout_id) : null;
-    const collectionField = slide ? DESIGN_COLLECTION_FIELDS[slide.layout_id] : null;
-    const collection = collectionField && slide.props ? slide.props[collectionField] : null;
+    const collectionContract = slide
+      ? getVisualCollectionContract(slide.layout_id, requirement.item_dimension)
+      : null;
+    const collection = collectionContract && slide.props
+      ? collectionContract.path.split(".").reduce((value, part) => (
+        value && typeof value === "object" ? value[part] : undefined
+      ), slide.props)
+      : null;
     const kinds = layout && Array.isArray(layout.visualKinds) ? layout.visualKinds : [];
     const exact = Boolean(
       slide
@@ -266,26 +259,42 @@ function validateOutlineBinding(deckPath, deck) {
     allowIllustrativeQuantitative: allowsIllustrativeQuantitative(deck),
   };
   const requiresPersistedIntent = Number(contract.contract_version || 1) >= 2;
-  if (deckSlides.length !== outlineSlides.length) {
-    issues.push(
-      `slides: deck has ${deckSlides.length} page(s), but outline.json has ` +
-      `${outlineSlides.length}`
-    );
-  }
+  const coveredOutlinePages = new Set();
+  const splitRangesByPage = new Map();
   deckSlides.forEach((slide, index) => {
-    const outlineSlide = outlineSlides[index];
+    const expectedPage = Number.isInteger(slide && slide.source_outline_page)
+      ? slide.source_outline_page
+      : index + 1;
+    const outlineSlide = outlineSlides[expectedPage - 1];
     const slideId = slide && typeof slide.id === "string" ? slide.id : String(index);
     const basePath = `slides.${slideId}`;
     if (!outlineSlide || typeof outlineSlide !== "object") {
-      issues.push(`${basePath}: no matching outline page ${index + 1}`);
+      issues.push(`${basePath}: no matching outline page ${expectedPage}`);
       return;
     }
-    const expectedPage = index + 1;
+    coveredOutlinePages.add(expectedPage);
     if (slide.source_outline_page !== expectedPage) {
       issues.push(
         `${basePath}.source_outline_page: expected ${expectedPage}, got ` +
         `${JSON.stringify(slide.source_outline_page)}`
       );
+    }
+    const itemRange = slide.source_outline_item_range;
+    let effectiveOutlineSlide = outlineSlide;
+    if (itemRange && typeof itemRange === "object") {
+      const requested = expectedVisualItemContract(outlineSlide);
+      const bullets = Array.isArray(outlineSlide.bullets) ? outlineSlide.bullets : [];
+      effectiveOutlineSlide = {
+        ...outlineSlide,
+        bullets: bullets.slice(itemRange.start - 1, itemRange.end),
+        visual_item_contract: {
+          dimension: requested ? requested.dimension : "items",
+          count: itemRange.end - itemRange.start + 1,
+        },
+      };
+      const ranges = splitRangesByPage.get(expectedPage) || [];
+      ranges.push(itemRange);
+      splitRangesByPage.set(expectedPage, ranges);
     }
     const expectedIntent = outlineIntentRecord(outlineSlide);
     const actualIntent = slide && slide.outline_intent;
@@ -299,7 +308,7 @@ function validateOutlineBinding(deckPath, deck) {
         const actual = typeof actualIntent[field] === "string"
           ? actualIntent[field].trim()
           : actualIntent[field];
-        if (actual === expected) return;
+        if (JSON.stringify(actual) === JSON.stringify(expected)) return;
         issues.push(
           `${basePath}.outline_intent.${field}: expected bound outline value ` +
           `${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
@@ -318,7 +327,12 @@ function validateOutlineBinding(deckPath, deck) {
         semantic.allowed_layout_ids.join(", ")
       );
     }
-    issues.push(...validateOutlineVisualCardinality(slide, outlineSlide, basePath));
+    issues.push(...validateOutlineVisualCardinality(
+      slide,
+      effectiveOutlineSlide,
+      basePath,
+      getLayout(slide.layout_id)
+    ));
     const rawPropText = collectText(slide.props).join(" ");
     const propText = normalizeBindingText(rawPropText);
     const expectedTitle = normalizeBindingText(outlineSlide.title);
@@ -329,12 +343,12 @@ function validateOutlineBinding(deckPath, deck) {
       );
     }
     const supportCandidates = [
-      outlineSlide.message,
-      ...(Array.isArray(outlineSlide.bullets) ? outlineSlide.bullets : []),
+      effectiveOutlineSlide.message,
+      ...(Array.isArray(effectiveOutlineSlide.bullets) ? effectiveOutlineSlide.bullets : []),
     ].flatMap(supportBindingCandidates);
     const supportNumericTokens = numericBindingTokens([
-      outlineSlide.message,
-      ...(Array.isArray(outlineSlide.bullets) ? outlineSlide.bullets : []),
+      effectiveOutlineSlide.message,
+      ...(Array.isArray(effectiveOutlineSlide.bullets) ? effectiveOutlineSlide.bullets : []),
     ].join(" "));
     const propNumericTokens = new Set(numericBindingTokens(rawPropText));
     const quantitativeSupportPreserved = supportNumericTokens.length > 0
@@ -348,6 +362,25 @@ function validateOutlineBinding(deckPath, deck) {
         `${basePath}.props: must preserve at least one exact message/bullet fragment from ` +
         `outline page ${expectedPage}; do not replace the page topic`
       );
+    }
+  });
+  outlineSlides.forEach((_, index) => {
+    if (!coveredOutlinePages.has(index + 1)) {
+      issues.push(`outline page ${index + 1}: no matching deck slide`);
+    }
+  });
+  splitRangesByPage.forEach((ranges, page) => {
+    const ordered = [...ranges].sort((left, right) => left.start - right.start);
+    const total = ordered[0] && ordered[0].total;
+    let expectedStart = 1;
+    ordered.forEach(range => {
+      if (range.start !== expectedStart || range.total !== total) {
+        issues.push(`outline page ${page}: split item ranges must be contiguous and share one total`);
+      }
+      expectedStart = range.end + 1;
+    });
+    if (Number.isInteger(total) && expectedStart !== total + 1) {
+      issues.push(`outline page ${page}: split item ranges cover ${expectedStart - 1}/${total} items`);
     }
   });
   return {

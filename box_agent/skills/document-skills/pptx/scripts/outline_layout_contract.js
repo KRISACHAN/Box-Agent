@@ -1,6 +1,13 @@
 "use strict";
 
-const { explicitCount } = require("./design_contract_core.js");
+const {
+  explicitCount,
+  explicitCountContract,
+} = require("./design_contract_core.js");
+const {
+  getLayout,
+  getVisualCollectionContract,
+} = require("../layouts/registry.js");
 
 const QUADRANT_RE = /(?:四象限|象限图|2\s*[×xX*]\s*2|二乘二|优先级矩阵|影响[^\n]{0,20}紧急|quadrant|priority\s*matrix)/i;
 const HEATMAP_RE = /(?:风险热力图|热力图|风险矩阵[^\n]{0,16}热力|heat\s*map|risk\s+heat\s*map)/i;
@@ -18,6 +25,7 @@ const PROJECT_CASE_METRICS_RE = /(?:关键数字|数字指标(?:卡)?|项目指�
 const GANTT_RE = /(?:甘特(?:图|计划)?|gantt(?:\s*(?:chart|plan|schedule))?)/i;
 const TIMELINE_RE = /(?:时间轴|路线图|里程碑|节点串联|timeline|roadmap)/i;
 const PROCESS_RE = /(?:三段式|四段式|能力路径|演进路径|流程路径|process\s*flow|journey)/i;
+const AGENDA_RE = /(?:议程|行程|入职地图|agenda(?:[-_\s]*grid)?|编号流程|图标节点)/i;
 const FACTORY_PROCESS_RE = /(?:制造产线|生产线|工位流程|工序节拍|质量控制点|factory\s+line|production\s+line|station\s+flow|shop\s+floor)/i;
 const LEGAL_LOGIC_RE = /(?:IRAC|法律论证|案件逻辑|争点.{0,12}规则.{0,12}分析|issue.{0,12}rule.{0,12}analysis|legal\s+reasoning)/i;
 const PROPERTY_FACTSHEET_RE = /(?:地产底卡|项目底卡|地块分区|资产底卡|用地指标|property\s+factsheet|site\s+facts|parcel\s+plan)/i;
@@ -40,6 +48,9 @@ function outlineIntentRecord(slide) {
     message: text(slide && slide.message),
     layout: text(slide && slide.layout),
     visual: text(slide && slide.visual),
+    ...(slide && slide.visual_item_contract
+      ? { visual_item_contract: JSON.parse(JSON.stringify(slide.visual_item_contract)) }
+      : {}),
   };
 }
 
@@ -304,6 +315,17 @@ function analyzeOutlineLayoutIntent(
       "outline asks for an editable supply network and fulfillment status view"
     );
   }
+  if (AGENDA_RE.test(all)) {
+    const itemCount = explicitCount(slide);
+    return semanticRule(
+      "agenda",
+      "cards-grid-v1",
+      ["cards-grid-v1", "timeline-horizontal-v1"],
+      Number.isInteger(itemCount)
+        ? `outline asks for an editable agenda with ${itemCount} ordered items`
+        : "outline asks for an editable agenda or numbered journey"
+    );
+  }
   if (TIMELINE_RE.test(visual) || /(?:timeline|roadmap)/i.test(layout)) {
     return semanticRule(
       "timeline",
@@ -360,59 +382,61 @@ function expectedVisualItemCount(slide) {
   return explicitCount(slide);
 }
 
-function visualCollectionForSlide(slide) {
-  if (!slide || !slide.props) return null;
-  if (slide.layout_id === "cover-editorial-v1") {
-    return { field: "tags", value: slide.props.tags };
-  }
-  if (slide.layout_id === "cards-grid-v1") {
-    return { field: "items", value: slide.props.items };
-  }
-  if (slide.layout_id === "quadrant-matrix-v1") {
-    return { field: "items", value: slide.props.items };
-  }
-  if (slide.layout_id === "pyramid-hierarchy-v1") {
-    return { field: "items", value: slide.props.items };
-  }
-  if (slide.layout_id === "timeline-horizontal-v1") {
-    return { field: "steps", value: slide.props.steps };
-  }
-  if (slide.layout_id === "factory-process-line-v1") {
-    return { field: "stations", value: slide.props.stations };
-  }
-  if (slide.layout_id === "legal-case-logic-v1") {
-    return { field: "sections", value: slide.props.sections };
-  }
-  if (slide.layout_id === "property-factsheet-v1") {
-    return { field: "zones", value: slide.props.zones };
-  }
-  if (slide.layout_id === "commerce-funnel-v1") {
-    return { field: "stages", value: slide.props.stages };
-  }
-  if (slide.layout_id === "supply-network-v1") {
-    return { field: "nodes", value: slide.props.nodes };
-  }
-  if (slide.layout_id === "table-data-v1") {
-    return { field: "rows", value: slide.props.rows };
-  }
-  if (slide.layout_id === "heatmap-matrix-v1") {
-    return { field: "rows", value: slide.props.rows };
-  }
-  if (slide.layout_id === "closing-next-steps-v1") {
-    return { field: "actions", value: slide.props.actions };
-  }
-  if (slide.layout_id === "statement-focus-v1") {
-    return { field: "proofs", value: slide.props.proofs };
-  }
-  return null;
+function expectedVisualItemContract(slide, layoutId = null) {
+  const requested = explicitCountContract(slide);
+  if (!requested || !layoutId) return requested;
+  const collection = getVisualCollectionContract(layoutId, requested.dimension);
+  return collection
+    ? { ...requested, field: collection.path, resolved_dimension: collection.dimension }
+    : requested;
 }
 
-function validateOutlineVisualCardinality(slide, outlineSlide, basePath) {
-  const expected = expectedVisualItemCount(outlineSlide);
-  if (!expected) return [];
-  const collection = visualCollectionForSlide(slide);
+function pathValue(value, fieldPath) {
+  return String(fieldPath || "")
+    .split(".")
+    .filter(Boolean)
+    .reduce((current, part) => (
+      current && typeof current === "object" ? current[part] : undefined
+    ), value);
+}
+
+function visualCollectionForSlide(slide) {
+  if (!slide || !slide.props) return null;
+  const requested = expectedVisualItemContract(slide.outline_intent || slide);
+  const collection = getVisualCollectionContract(
+    slide.layout_id,
+    requested && requested.dimension
+  );
+  return collection
+    ? { field: collection.path, value: pathValue(slide.props, collection.path) }
+    : null;
+}
+
+function validateOutlineVisualCardinality(slide, outlineSlide, basePath, layout = null) {
+  const requested = expectedVisualItemContract(outlineSlide, slide.layout_id);
+  if (!requested) return [];
+  const expected = requested.count;
+  const collection = visualCollectionForSlide({
+    ...slide,
+    outline_intent: outlineSlide,
+  });
   if (!collection || !Array.isArray(collection.value)) return [];
   if (collection.value.length === expected) return [];
+  const effectiveLayout = layout || getLayout(slide.layout_id);
+  const collectionContract = effectiveLayout && effectiveLayout.fields
+    ? pathValue(effectiveLayout.fields, collection.field)
+    : null;
+  if (
+    collectionContract
+    && Number.isInteger(collectionContract.maxItems)
+    && expected > collectionContract.maxItems
+  ) {
+    return [
+      `${basePath}.props.${collection.field}: layout capacity mismatch; outline visual ` +
+      `explicitly requests ${expected} visual item(s), but ${slide.layout_id} supports at most ` +
+      `${collectionContract.maxItems}`,
+    ];
+  }
   return [
     `${basePath}.props.${collection.field}: outline visual explicitly requests ${expected} ` +
     `visual item(s), got ${collection.value.length}`,
@@ -422,6 +446,7 @@ function validateOutlineVisualCardinality(slide, outlineSlide, basePath) {
 module.exports = {
   analyzeOutlineLayoutIntent,
   expectedVisualItemCount,
+  expectedVisualItemContract,
   outlineHasPlottableChartEvidence,
   outlineHasQuantitativeEvidence,
   outlineIntentRecord,

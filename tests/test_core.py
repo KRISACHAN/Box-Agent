@@ -4958,7 +4958,55 @@ async def test_parallel_fresh_results_apply_aggregate_budget_before_next_llm_cal
     ]
     assert len(next_request_results) == 3
     assert sum("<persisted-output>" in str(message.content) for message in next_request_results) == 1
+    persisted = next(
+        message
+        for message in next_request_results
+        if "<persisted-output>" in str(message.content)
+    )
+    assert "Preview (head + tail" in str(persisted.content)
+    assert "middle omitted from preview" in str(persisted.content)
     assert len(list((tmp_path / "aggregate-test" / "tool-results").glob("*.txt"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_large_context_keeps_moderate_single_result_for_next_llm_call(tmp_path):
+    from box_agent.tool_result_storage import ToolResultStorage
+
+    call = ToolCall(
+        id="large-context-result",
+        type="function",
+        function=FunctionCall(
+            name="sized_parallel",
+            arguments={"fill": "z", "size": 60_000},
+        ),
+    )
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(content="", tool_calls=[call], finish_reason="tool"),
+            LLMResponse(content="done", finish_reason="stop"),
+        ]
+    )
+    storage = ToolResultStorage(tmp_path)
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"sized_parallel": SizedParallelTool()},
+            max_steps=5,
+            token_limit=374_400,
+            tool_result_storage=storage,
+            session_id="large-context",
+        )
+    )
+
+    tool_message = next(
+        message
+        for message in llm.message_calls[1]
+        if message.role == "tool" and message.tool_call_id == call.id
+    )
+    assert tool_message.content == "z" * 60_000
+    assert not (tmp_path / "large-context" / "tool-results").exists()
 
 
 @pytest.mark.asyncio

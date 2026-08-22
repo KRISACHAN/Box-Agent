@@ -18,8 +18,9 @@ const {
   validateSourceBoundDeck,
 } = require("./validate_deck_truth.js");
 const {
-  expectedVisualItemCount,
+  expectedVisualItemContract,
 } = require("./outline_layout_contract.js");
+const { getVisualCollectionContract } = require("../layouts/registry.js");
 
 function usage(exitCode = 2) {
   console.log("Usage: apply_deck_patch.js deck.json deck.patch.json");
@@ -461,10 +462,17 @@ function normalizePatchProps(slide, supplied, changes) {
       recordChange(changes, `${basePath}.${key}: dropped unknown field for ${slide.layout_id}`);
       return;
     }
-    const expectedVisualItems = expectedVisualItemCount(slide.outline_intent);
+    const expectedVisualContract = expectedVisualItemContract(slide.outline_intent);
+    const expectedCollection = getVisualCollectionContract(
+      slide.layout_id,
+      expectedVisualContract && expectedVisualContract.dimension
+    );
+    const expectedVisualItems = expectedVisualContract && expectedVisualContract.count;
     if (
       contract.type === "array"
       && Array.isArray(value)
+      && expectedCollection
+      && expectedCollection.path === key
       && Number.isInteger(contract.maxItems)
       && expectedVisualItems > contract.maxItems
       && value.length >= expectedVisualItems

@@ -5,7 +5,7 @@ Box-Agent 在两个边界控制上下文增长：
 1. 工具结果在占满后续模型请求之前按需落盘；
 2. 只有下一次请求接近模型有效输入上限时，才压缩会话历史。
 
-两者彼此独立。工具结果落盘是无损的：完整结果保存在磁盘，模型只看到预览；会话摘要是有损的，因此更晚触发，并显式保留一个有界的工作集。
+两者彼此独立。工具结果落盘在存储层是无损的：完整结果保存在磁盘，模型保留有界的 head + tail 工作预览和恢复路径；会话摘要是有损的，因此更晚触发，并显式保留一个有界的工作集。
 
 ## 请求生命周期
 
@@ -25,7 +25,7 @@ Box-Agent 在两个边界控制上下文增长：
 
 ### 单结果即时检查
 
-默认模型可见结果上限为 20,000 字符。工具可以声明 `max_result_size_chars`，实际使用声明值与默认值中较小者。只有尚未处理的普通结果进入这条通用策略。
+模型可见单结果下限为 20,000 字符，并随当前模型的安全输入上限扩大：`max(20,000, context_token_limit * 0.25)`。未声明 `max_result_size_chars` 的工具使用这个共享动态值；工具可以声明更低的明确上限。只有尚未处理的普通结果进入这条通用策略。
 
 以下结果不会再做二次压缩：
 
@@ -41,7 +41,7 @@ Box-Agent 在两个边界控制上下文增长：
 - 只含 text block 的数组格式化序列化后保存为 `.json`；
 - 文件路径为 `~/.box-agent/sessions/<session>/tool-results/<tool_use_id>.<ext>`；
 - 使用独占创建模式 `x`（等价于 `wx`），已有文件不会被覆盖；
-- 模型侧结果替换为稳定的 `<persisted-output>` 预览。
+- 模型侧结果替换为稳定的 `<persisted-output>` head + tail 预览。
 
 以下情况保留原结果：未超过阈值、包含图片或任何非 text block、持久化失败。空输出规范化为 `(<工具名> completed with no output)`，Bash 对应 `(Bash completed with no output)`。
 
@@ -51,10 +51,10 @@ Box-Agent 在两个边界控制上下文增长：
 
 ### 预览策略
 
-1. 最多取前 2,000 个字符；
-2. 若该窗口后半段存在换行，优先在最后一个换行处截断；
-3. 否则直接截在第 2,000 个字符；
-4. 只有后面仍有内容时才添加 `...`。
+1. 总计最多保留 2,000 个字符；
+2. 同时保留开头和结尾，中间插入明确的 omitted 标记；
+3. 在合适时优先沿换行边界裁剪，避免制造半行；
+4. 单行文本也保留其精确 head 和 tail。
 
 对尚未处理的普通结果，模型看到的形式为：
 
@@ -62,7 +62,7 @@ Box-Agent 在两个边界控制上下文增长：
 <persisted-output>
 Output too large (...). Full output saved to: ...
 
-Preview (first 2.0KB):
+Preview (head + tail, up to 2.0KB):
 ...
 </persisted-output>
 ```
@@ -71,12 +71,12 @@ Preview (first 2.0KB):
 
 ### fresh 结果总预算
 
-每次 LLM 请求前，对本会话首次出现的工具结果执行默认 50,000 字符总预算检查：
+每次 LLM 请求前，对本会话首次出现的工具结果执行动态总预算检查：`max(50,000, context_token_limit * 0.50)` 字符。
 
 1. 只处理 fresh `tool_use_id`；
 2. 排除已经采用 `model_context` 的结果，但仍统计单结果声明为 Infinity 的自处理工具；Infinity 只关闭即时单结果落盘，不代表并行批次可绕过聚合预算；
 3. 按可落盘结果大小从大到小排序；
-4. 总预算路径使用只含恢复路径的包装，并按包装后的模型侧实际长度记账；
+4. 总预算路径保留可按结果份数自动收紧的 head + tail 预览和恢复路径，并按包装后的模型侧实际长度记账；
 5. 依次持久化并替换最大结果，直到实际剩余 fresh 内容不超过预算。
 
 不支持的 block 和落盘失败结果保持不变。检查时 ID 会被标记为已见，因此后续请求不会反复处理。这条路径专门覆盖并行工具调用：单个结果都没有超限，但合计内容过大。
@@ -86,10 +86,10 @@ Preview (first 2.0KB):
 ### 触发阈值
 
 ```text
-autoCompactThreshold = 0.8 * (context_window - max_output_tokens)
+autoCompactThreshold = 0.9 * (context_window - max_output_tokens)
 ```
 
-`LLMConfig.context_token_limit` 会先预留配置的最大输出预算，再从剩余输入预算中保留 20% 作为 token 估算误差和摘要请求的余量。
+`LLMConfig.context_token_limit` 会先预留配置的最大输出预算，再从剩余输入预算中保留 10% 作为 token 估算误差和摘要请求的余量。
 
 ACP 模型绑定可以通过当前所选模型的 `contextWindow` 和 `maxTokens` 覆盖这两个值。Agent 在创建会话时推导输入阈值，并在轮次之间切换模型绑定时重新计算。绑定没有提供能力数据时回退 `config.yaml`；用户自定义模型预设仍由这里的配置值提供能力声明。
 

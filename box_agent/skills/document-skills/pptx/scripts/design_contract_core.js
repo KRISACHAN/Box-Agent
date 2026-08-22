@@ -197,44 +197,100 @@ function visualKind(slide) {
   return null;
 }
 
-function explicitCount(slide) {
+function countDimension(value) {
+  const text = String(value || "");
+  const rules = [
+    [/(?:连接|连线|边(?:关系)?|edges?)/i, "edges"],
+    [/(?:节点|nodes?)/i, "nodes"],
+    [/(?:外围系统|系统(?:项)?|systems?)/i, "systems"],
+    [/(?:数据序列|系列|series)/i, "series"],
+    [/(?:类别|分类|categories?)/i, "categories"],
+    [/(?:亮点|highlights?)/i, "highlights"],
+    [/(?:指标|KPI|metrics?)/i, "metrics"],
+    [/(?:标签|tags?)/i, "tags"],
+    [/(?:论据|证明|proofs?)/i, "proofs"],
+    [/(?:章节|小节|sections?)/i, "sections"],
+    [/(?:层级|分层|层(?!面)|layers?)/i, "layers"],
+    [/(?:工位|stations?)/i, "stations"],
+    [/(?:分区|区域|zones?)/i, "zones"],
+    [/(?:行动|actions?)/i, "actions"],
+    [/(?:阶段|步骤|里程碑|steps?|milestones?)/i, "steps"],
+    [/(?:(?<!排)列(?:字段|表)?|columns?)/i, "columns"],
+    [/(?:行(?:项目)?|rows?)/i, "rows"],
+    [/(?:议程|行程|agenda)/i, "agenda"],
+    [/(?:卡片|cards?)/i, "cards"],
+  ];
+  const matched = rules.find(([pattern]) => pattern.test(text));
+  return matched ? matched[1] : "items";
+}
+
+function explicitCountContract(slide) {
+  const persisted = slide && slide.visual_item_contract;
+  if (
+    persisted
+    && Number.isInteger(persisted.count)
+    && persisted.count >= 0
+    && typeof persisted.dimension === "string"
+    && persisted.dimension.trim()
+  ) {
+    return { count: persisted.count, dimension: persisted.dimension.trim() };
+  }
   const visual = [slide && slide.title, slide && slide.visual]
     .filter(Boolean)
     .join("\n");
   const kind = visualKind(slide);
   const words = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
   const parseCount = value => /^\d+$/.test(value) ? Number(value) : words[value];
-  if (kind === "quadrant") return 4;
+  if (kind === "quadrant") return { count: 4, dimension: "items" };
   if (kind === "pyramid") {
     const lowerLayer = visual.match(
       /(?:下层|下方|支撑层)[^。；\n]{0,48}?([0-9]{1,2}|[一二三四五六七八九十])\s*(?:条|个|项|类|节点|卡片|支撑)/u
     );
     if (lowerLayer) {
       const parsed = parseCount(lowerLayer[1]);
-      if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 11) return parsed + 1;
+      if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 23) {
+        return { count: parsed + 1, dimension: "items" };
+      }
     }
   }
-  const match = visual.match(/(?:^|[^0-9一二三四五六七八九十])([0-9]{1,2}|[一二三四五六七八九十])\s*(?:条|个|项|类|段(?:式)?|象限|节点|阶段|主线|里程碑|卡片|标签)/u);
+  const match = visual.match(/(?:^|[^0-9一二三四五六七八九十])([0-9]{1,2}|[一二三四五六七八九十])\s*(?:条|个|项|类|张|段(?:式)?|象限|节点|阶段|主线|里程碑|卡片|标签|层|系统|行|列|章节|工位|分区|区域|序列|系列|指标|KPI|连接|连线)/u);
   if (match) {
     const parsed = parseCount(match[1]);
-    if (Number.isInteger(parsed) && parsed >= 2 && parsed <= 12) return parsed;
+    if (Number.isInteger(parsed) && parsed >= 2 && parsed <= 24) {
+      const localText = visual.slice(match.index, match.index + match[0].length + 18);
+      const localDimension = countDimension(localText);
+      return {
+        count: parsed,
+        dimension: localDimension === "items"
+          ? countDimension(visual)
+          : localDimension,
+      };
+    }
   }
   const bullets = Array.isArray(slide && slide.bullets)
     ? slide.bullets.filter(item => String(item || "").trim())
     : [];
   return ["pyramid", "numbered-actions"].includes(kind) && bullets.length >= 2
-    ? bullets.length
+    ? { count: bullets.length, dimension: kind === "pyramid" ? "items" : "actions" }
     : null;
+}
+
+function explicitCount(slide) {
+  const contract = explicitCountContract(slide);
+  return contract ? contract.count : null;
 }
 
 function slideContract(slide) {
   const kind = visualKind(slide);
   if (!["pyramid", "numbered-actions", "quadrant"].includes(kind)) return null;
-  const itemCount = explicitCount(slide);
+  const itemContract = explicitCountContract(slide);
+  const itemCount = itemContract && itemContract.count;
   return {
     visual_kind: kind,
     source: "explicit",
-    ...(itemCount ? { item_count: itemCount } : {}),
+    ...(itemCount
+      ? { item_count: itemCount, item_dimension: itemContract.dimension }
+      : {}),
     ...(kind === "pyramid"
       ? { direction: "top-down", relationship: "one-to-many", hierarchy_depth: 2 }
       : {}),
@@ -332,6 +388,9 @@ function validateAndNormalizeDesignContract(value, issues) {
             ? contract.source
             : "inferred",
           ...(Number.isInteger(contract.item_count) ? { item_count: contract.item_count } : {}),
+          ...(typeof contract.item_dimension === "string" && contract.item_dimension.trim()
+            ? { item_dimension: contract.item_dimension.trim() }
+            : {}),
           ...(contract.direction ? { direction: String(contract.direction) } : {}),
           ...(contract.relationship ? { relationship: String(contract.relationship) } : {}),
           ...(Number.isInteger(contract.hierarchy_depth)
@@ -408,6 +467,7 @@ function mixHex(base, overlay, overlayWeight) {
 
 module.exports = {
   explicitCount,
+  explicitCountContract,
   inferDesignContract,
   inferPaletteContract,
   paletteWithOverrides,

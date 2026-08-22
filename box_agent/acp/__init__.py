@@ -120,6 +120,7 @@ from box_agent.llm.model_routing import normalize_auto_routing, resolve_model_cl
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
 from box_agent.task_context import TaskContext, normalize_task_id
+from box_agent.session_continuation import parse_session_continuation
 from box_agent.task_registry import (
     ArtifactLineage,
     begin_task,
@@ -889,6 +890,7 @@ class SessionState:
     follow_up_suggestions_enabled: bool = False
     follow_up_suggestions_task: asyncio.Task[None] | None = None
     turn_counter: int = 0
+    continuation_applied: bool = False
     current_turn_id: str = ""
     source_text: str = ""  # accumulated real user requests for source-bound artifact checks
     pending_completion_gate: CompletionGate | None = None
@@ -902,6 +904,8 @@ class SessionState:
 
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
 _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 4_096
+_TITLE_MAX_OUTPUT_TOKENS = 8_000
+
 
 def _bind_user_source_text(state: SessionState, user_request: str) -> None:
     """Expose accumulated real user text to local provenance-aware tools.
@@ -1860,6 +1864,7 @@ class BoxACPAgent:
 
         kwargs: dict[str, Any] = {"sessionId": session_id}
         response_meta: dict[str, Any] = {}
+        response_meta["capabilities"] = {"session_continuation_versions": [1]}
         skills = (
             session_skill_loader.list_skills_metadata()
             if session_skill_loader is not None
@@ -2238,6 +2243,44 @@ class BoxACPAgent:
                 max_tokens=requested_max_output_tokens,
                 context_token_limit=requested_token_limit,
             )
+        if state.turn_counter == 0 and not state.continuation_applied:
+            continuation = parse_session_continuation(
+                prompt_meta.get("session_continuation")
+                or prompt_meta.get("sessionContinuation")
+            )
+            state.continuation_applied = True
+            if (
+                continuation is not None
+                and continuation.product_session_id == state.upstream_session_id
+            ):
+                seeded_count = state.agent.seed_continuation_messages(
+                    continuation.messages
+                )
+                seeded_chars = sum(
+                    len(message.content) for message in continuation.messages
+                )
+                log.info(
+                    "session/continuation_applied",
+                    session_id=session_id,
+                    count=seeded_count,
+                    chars=seeded_chars,
+                    truncated=continuation.truncated,
+                    reason=continuation.reason,
+                    source_task_id=continuation.source_task_id,
+                    target_task_id=continuation.target_task_id,
+                )
+                if state.trace_writer is not None:
+                    state.trace_writer.write(
+                        "session.continuation",
+                        data={
+                            "message_count": seeded_count,
+                            "chars": seeded_chars,
+                            "truncated": continuation.truncated,
+                            "reason": continuation.reason,
+                            "source_task_id": continuation.source_task_id,
+                            "target_task_id": continuation.target_task_id,
+                        },
+                    )
         state.turn_counter += 1
         provided_turn_id = _meta_string(prompt_meta, "turn_id", "turnId")
         turn_id = provided_turn_id or f"{session_id}-turn-{state.turn_counter}"
@@ -3624,9 +3667,11 @@ class BoxACPAgent:
             except (TypeError, ValueError):
                 return {"error": {"code": "invalid_args", "message": "timeoutMs must be a number"}}
 
+        max_output_tokens_cap = None
         if "title" in normalized_purpose:
             routing_tags = ("summary", "rewrite", "fast")
             routing_ability = 1
+            max_output_tokens_cap = _TITLE_MAX_OUTPUT_TOKENS
         elif "presentation" in normalized_purpose:
             routing_tags = ("presentation", "analysis")
             routing_ability = 1
@@ -3655,6 +3700,7 @@ class BoxACPAgent:
             strategy="utility",
             task_tags=routing_tags,
             required_ability_level=routing_ability,
+            max_output_tokens_cap=max_output_tokens_cap,
         )
         utility_llm.set_request_context(
             session_id=session_id,

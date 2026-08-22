@@ -78,6 +78,7 @@
               "visual_kind": { "type": "string", "minLength": 1 },
               "source": { "enum": ["explicit", "recommended", "inferred"] },
               "item_count": { "type": "integer", "minimum": 1, "maximum": 40 },
+              "item_dimension": { "type": "string", "minLength": 1 },
               "direction": { "type": "string" },
               "relationship": { "type": "string" },
               "hierarchy_depth": { "type": "integer", "minimum": 1, "maximum": 8 }
@@ -149,6 +150,18 @@
             "type": "integer",
             "minimum": 1
           },
+          "source_outline_item_range": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start", "end", "total", "part", "parts"],
+            "properties": {
+              "start": { "type": "integer", "minimum": 1 },
+              "end": { "type": "integer", "minimum": 1 },
+              "total": { "type": "integer", "minimum": 1 },
+              "part": { "type": "integer", "minimum": 1 },
+              "parts": { "type": "integer", "minimum": 1 }
+            }
+          },
           "outline_intent": {
             "type": "object",
             "description": "Immutable semantic intent copied from the bound outline page so layout fit remains verifiable after authoring and editor saves.",
@@ -158,7 +171,16 @@
               "title": { "type": "string", "minLength": 1, "maxLength": 120 },
               "message": { "type": "string", "minLength": 1, "maxLength": 500 },
               "layout": { "type": "string", "minLength": 1, "maxLength": 120 },
-              "visual": { "type": "string", "minLength": 1, "maxLength": 300 }
+              "visual": { "type": "string", "minLength": 1, "maxLength": 300 },
+              "visual_item_contract": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["dimension", "count"],
+                "properties": {
+                  "dimension": { "type": "string", "minLength": 1 },
+                  "count": { "type": "integer", "minimum": 0, "maximum": 40 }
+                }
+              }
             }
           },
           "layout_drafts": {

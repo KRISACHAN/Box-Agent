@@ -18,6 +18,8 @@ from .tools.base import Tool
 DEFAULT_MAX_RESULT_SIZE_CHARS = 20_000
 DEFAULT_TOOL_RESULTS_BUDGET_CHARS = 50_000
 PREVIEW_SIZE_CHARS = 2_000
+CONTEXT_RESULT_LIMIT_RATIO = 0.25
+CONTEXT_AGGREGATE_BUDGET_RATIO = 0.50
 PERSISTED_OUTPUT_TAG = "<persisted-output>"
 PERSISTED_OUTPUT_CLOSING_TAG = "</persisted-output>"
 
@@ -47,14 +49,32 @@ def generate_preview(
     content: str,
     max_chars: int = PREVIEW_SIZE_CHARS,
 ) -> tuple[str, bool]:
-    """Return a head preview, preferring a nearby complete-line boundary."""
+    """Return a bounded head-and-tail preview of one persisted result."""
 
     if len(content) <= max_chars:
         return content, False
-    truncated = content[:max_chars]
-    last_newline = truncated.rfind("\n")
-    cut_point = last_newline if last_newline > max_chars * 0.5 else max_chars
-    return content[:cut_point], True
+    if max_chars <= 0:
+        return "", True
+
+    marker = "\n...[middle omitted from preview]...\n"
+    if max_chars <= len(marker) + 1:
+        head_chars = max_chars // 2
+        tail_chars = max_chars - head_chars
+        return content[:head_chars] + content[-tail_chars:], True
+
+    available = max_chars - len(marker)
+    head_chars = available // 2
+    tail_chars = available - head_chars
+    head = content[:head_chars]
+    tail = content[-tail_chars:]
+
+    last_newline = head.rfind("\n")
+    if last_newline > len(head) * 0.5:
+        head = head[:last_newline]
+    first_newline = tail.find("\n")
+    if 0 <= first_newline < len(tail) * 0.5:
+        tail = tail[first_newline + 1 :]
+    return f"{head}{marker}{tail}", True
 
 
 def build_persisted_output(
@@ -70,9 +90,11 @@ def build_persisted_output(
         f"Full output saved to: {result.path}\n"
     )
     if result.preview:
-        label = preview_label or f"Preview (first {_format_size(PREVIEW_SIZE_CHARS)})"
+        label = preview_label or (
+            f"Preview (head + tail, up to {_format_size(PREVIEW_SIZE_CHARS)})"
+        )
         message += f"\n{label}:\n{result.preview}"
-        message += "\n...\n" if result.has_more else "\n"
+        message += "\n"
     return message + PERSISTED_OUTPUT_CLOSING_TAG
 
 
@@ -137,16 +159,42 @@ class ToolResultStorage:
         self,
         root_dir: str | Path,
         *,
-        default_result_limit: int = DEFAULT_MAX_RESULT_SIZE_CHARS,
-        aggregate_budget: int = DEFAULT_TOOL_RESULTS_BUDGET_CHARS,
+        default_result_limit: int | None = None,
+        aggregate_budget: int | None = None,
     ) -> None:
         self.root_dir = Path(root_dir)
-        self.default_result_limit = default_result_limit
-        self.aggregate_budget = aggregate_budget
+        self._contextual_result_limit = default_result_limit is None
+        self._contextual_aggregate_budget = aggregate_budget is None
+        self.default_result_limit = (
+            DEFAULT_MAX_RESULT_SIZE_CHARS
+            if default_result_limit is None
+            else default_result_limit
+        )
+        self.aggregate_budget = (
+            DEFAULT_TOOL_RESULTS_BUDGET_CHARS
+            if aggregate_budget is None
+            else aggregate_budget
+        )
         self._default_session_id = f"local-{uuid4().hex}"
         self._seen_ids: set[str] = set()
         self._replacements: dict[str, str] = {}
         self._initialized = False
+
+    def set_context_token_limit(self, token_limit: int) -> None:
+        """Scale default result budgets to the active model's safe input window."""
+
+        if token_limit <= 0:
+            raise ValueError("token_limit must be positive")
+        if self._contextual_result_limit:
+            self.default_result_limit = max(
+                DEFAULT_MAX_RESULT_SIZE_CHARS,
+                int(token_limit * CONTEXT_RESULT_LIMIT_RATIO),
+            )
+        if self._contextual_aggregate_budget:
+            self.aggregate_budget = max(
+                DEFAULT_TOOL_RESULTS_BUDGET_CHARS,
+                int(token_limit * CONTEXT_AGGREGATE_BUDGET_RATIO),
+            )
 
     def initialize_history(self, messages: list[Message]) -> None:
         """Freeze pre-existing results so resumed history is never retroactively changed."""
@@ -215,10 +263,12 @@ class ToolResultStorage:
             self._seen_ids.add(message.tool_call_id)
             return message
 
-        declared_limit = getattr(tool, "max_result_size_chars", self.default_result_limit)
-        if not isinstance(declared_limit, (int, float)) or math.isinf(declared_limit):
+        declared_limit = getattr(tool, "max_result_size_chars", None)
+        if isinstance(declared_limit, (int, float)) and math.isinf(declared_limit):
             return message
-        threshold = min(int(declared_limit), self.default_result_limit)
+        threshold = self.default_result_limit
+        if isinstance(declared_limit, (int, float)):
+            threshold = min(int(declared_limit), threshold)
         if _content_size(model_content) <= threshold:
             return message
 
@@ -267,20 +317,42 @@ class ToolResultStorage:
         for size, index, message in sorted(candidates, key=lambda item: -item[0]):
             if remaining_chars <= self.aggregate_budget:
                 break
-            replacement = self._persist_content(
-                message.content,
-                message.tool_call_id or "tool-result",
-                session_id=session_id,
-                include_preview=False,
-            )
+            required_reduction = remaining_chars - self.aggregate_budget
+            target_replacement_size = max(1, size - required_reduction)
+            preview_limit = PREVIEW_SIZE_CHARS
+
+            def build_replacement(limit: int) -> str | None:
+                value = self._persist_content(
+                    message.content,
+                    message.tool_call_id or "tool-result",
+                    session_id=session_id,
+                    preview_max_chars=limit,
+                )
+                if value is not None and message.name == "read_file":
+                    value += (
+                        "\nRe-read the original path from the matching read_file call with "
+                        "a smaller offset/limit to recover exact content."
+                    )
+                return value
+
+            replacement = build_replacement(preview_limit)
             if replacement is None:
                 continue
-            if message.name == "read_file":
-                replacement += (
-                    "\nRead the original path from the matching tool call with a smaller "
-                    "offset/limit to recover exact content; do not reread this persisted "
-                    "output as one large page."
+            if len(replacement) > target_replacement_size:
+                serialized = _content_text(message.content)
+                current_preview_size = (
+                    len(generate_preview(serialized[0], preview_limit)[0])
+                    if serialized is not None
+                    else preview_limit
                 )
+                preview_limit = max(
+                    1,
+                    current_preview_size
+                    - (len(replacement) - target_replacement_size),
+                )
+                replacement = build_replacement(preview_limit)
+                if replacement is None:
+                    continue
             replacement_size = len(replacement)
             if replacement_size >= size:
                 continue
@@ -303,7 +375,7 @@ class ToolResultStorage:
         *,
         session_id: str,
         model_content: str | list[dict[str, Any]] | None = None,
-        include_preview: bool = True,
+        preview_max_chars: int = PREVIEW_SIZE_CHARS,
     ) -> str | None:
         serialized = _content_text(content)
         if serialized is None:
@@ -340,14 +412,26 @@ class ToolResultStorage:
         except OSError:
             return None
         preview_label = None
-        if not include_preview:
-            preview, has_more = "", True
-        elif model_content is None:
-            preview, has_more = generate_preview(content_text)
+        if model_content is None:
+            preview, has_more = generate_preview(
+                content_text,
+                max_chars=preview_max_chars,
+            )
+            preview_label = (
+                "Preview (head + tail, up to "
+                f"{_format_size(preview_max_chars)})"
+            )
         else:
             serialized_model_content = _content_text(model_content)
             if serialized_model_content is None:
-                preview, has_more = generate_preview(content_text)
+                preview, has_more = generate_preview(
+                    content_text,
+                    max_chars=preview_max_chars,
+                )
+                preview_label = (
+                    "Preview (head + tail, up to "
+                    f"{_format_size(preview_max_chars)})"
+                )
             else:
                 preview = serialized_model_content[0]
                 has_more = False

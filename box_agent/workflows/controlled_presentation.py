@@ -141,10 +141,16 @@ _MUTATION_TOOLS: Final[frozenset[str]] = frozenset(
     }
 )
 _REPAIR_STAGES: Final[frozenset[str]] = frozenset(
-    {"outline_repair", "deck_spec_repair", "content_patch_repair"}
+    {
+        "outline_repair",
+        "deck_spec_repair",
+        "deck_redesign_repair",
+        "content_patch_repair",
+    }
 )
 _POLICY_REJECTION_STAGES: Final[frozenset[str]] = (
-    _REPAIR_STAGES | frozenset({"research", "outline", "scaffold", "apply_patch"})
+    _REPAIR_STAGES
+    | frozenset({"research", "outline", "scaffold", "apply_patch", "apply_redesign"})
 )
 _REPEATED_EXECUTION_FAILURE_LIMIT: Final[int] = 2
 _REPEATED_POLICY_REJECTION_LIMIT: Final[int] = 3
@@ -153,6 +159,12 @@ _REPAIR_TOOL_ERROR = (
     "checkpoint already contains the fresh hard deck-spec issues, affected current "
     "props, and outline context. Write the minimal deck.patch.json now; do not reread "
     "stale inputs or run another command first."
+)
+_REDESIGN_REPAIR_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_REDESIGN_INPUT_READY: REPAIR_INPUT contains a fresh "
+    "layout-level deck-spec failure plus the affected slide's current layout and "
+    "props. Write only deck.redesign.json with the minimal layout_id/props change; "
+    "do not write deck.patch.json, reread stale inputs, or run another command first."
 )
 _OUTLINE_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_OUTLINE_REPAIR_INPUT_READY: REPAIR_INPUT in the "
@@ -189,6 +201,12 @@ _APPLY_PATCH_TOOL_ERROR = (
     "deck.patch.json. A trailing 2>&1 stderr merge is allowed, but do not add a pipe, "
     "another redirection, another command, substitute another script, or rewrite "
     "deck.json directly."
+)
+_APPLY_REDESIGN_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_APPLY_REDESIGN_REQUIRED: run the single deterministic "
+    "apply_deck_redesign.js command from the latest checkpoint with deck.json and "
+    "deck.redesign.json. Do not add pipes, redirections, or another command, and do "
+    "not rewrite deck.json directly."
 )
 _APPLY_PATCH_REPAIR_TOOL_ERROR = (
     "CONTROLLED_PRESENTATION_APPLY_PATCH_REPAIR_REQUIRED: the latest deterministic "
@@ -381,6 +399,7 @@ _PPTX_SCRIPTS_DIR = (
 _FINALIZER_SCRIPT = _PPTX_SCRIPTS_DIR / "finalize_controlled_deck.js"
 _INSPECT_SCRIPT = _PPTX_SCRIPTS_DIR / "inspect_deck_contract.js"
 _APPLY_PATCH_SCRIPT = _PPTX_SCRIPTS_DIR / "apply_deck_patch.js"
+_APPLY_REDESIGN_SCRIPT = _PPTX_SCRIPTS_DIR / "apply_deck_redesign.js"
 _REBASE_IMAGE_POLICY_SCRIPT = _PPTX_SCRIPTS_DIR / "rebase_image_policy.js"
 _VALIDATE_OUTLINE_SCRIPT = _PPTX_SCRIPTS_DIR / "validate_outline.js"
 _JSON_MISSING = object()
@@ -859,6 +878,68 @@ def _apply_patch_failure_signature(
     marker = payload.find("Error:")
     semantic = payload[marker:] if marker >= 0 else payload
     return re.sub(r"\s+", " ", semantic).strip()[:4000]
+
+
+def _apply_redesign_error(
+    stage: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+    workspace_dir: str | None,
+    artifact_root_dir: str | Path | None,
+) -> str | None:
+    if stage != "apply_redesign":
+        return None
+    command = arguments.get("command")
+    if tool_name != "bash" or not isinstance(command, str):
+        return _APPLY_REDESIGN_TOOL_ERROR
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return _APPLY_REDESIGN_TOOL_ERROR
+    script_indexes = [
+        index
+        for index, token in enumerate(tokens)
+        if Path(token).name == "apply_deck_redesign.js"
+    ]
+    if len(script_indexes) != 1 or script_indexes[0] < 1:
+        return _APPLY_REDESIGN_TOOL_ERROR
+    script_index = script_indexes[0]
+    node_token = tokens[script_index - 1]
+    if not (
+        Path(node_token).name in {"node", "node.exe"}
+        or "BOX_AGENT_NODE" in node_token
+    ):
+        return _APPLY_REDESIGN_TOOL_ERROR
+    supplied_script = Path(tokens[script_index])
+    if (
+        not supplied_script.is_absolute()
+        or supplied_script.resolve() != _APPLY_REDESIGN_SCRIPT
+    ):
+        return _APPLY_REDESIGN_TOOL_ERROR
+    command_prefix = tokens[: script_index - 1]
+    if command_prefix and not (
+        len(command_prefix) == 3
+        and command_prefix[0] == "cd"
+        and command_prefix[1]
+        and command_prefix[2] == "&&"
+    ):
+        return _APPLY_REDESIGN_TOOL_ERROR
+    supplied_paths = tokens[script_index + 1 :]
+    if len(supplied_paths) != 2:
+        return _APPLY_REDESIGN_TOOL_ERROR
+    if not _is_canonical_artifact_target(
+        supplied_paths[0],
+        "deck.json",
+        workspace_dir,
+        artifact_root_dir,
+    ) or not _is_canonical_artifact_target(
+        supplied_paths[1],
+        "deck.redesign.json",
+        workspace_dir,
+        artifact_root_dir,
+    ):
+        return _APPLY_REDESIGN_TOOL_ERROR
+    return None
 
 
 def _content_patch_repair_error(
@@ -1596,6 +1677,8 @@ def _outline_target_error(
 def _repair_artifact_name(stage: str | None) -> str | None:
     if stage == "outline_repair":
         return "outline.json"
+    if stage == "deck_redesign_repair":
+        return "deck.redesign.json"
     if stage in {"deck_spec_repair", "content_patch_repair"}:
         return "deck.patch.json"
     return None
@@ -2726,6 +2809,19 @@ class ControlledPresentationPolicy:
             )
         ):
             return _REPAIR_TOOL_ERROR
+        if (
+            self.stage == "deck_redesign_repair"
+            and self.has_repair_input
+            and (
+                tool_name not in _REPAIR_ALLOWED_TOOLS
+                or not _repair_write_call_allowed(
+                    self.stage,
+                    tool_name,
+                    arguments,
+                )
+            )
+        ):
+            return _REDESIGN_REPAIR_TOOL_ERROR
         image_status_error = _image_status_error(self.stage, tool_name, arguments)
         if image_status_error is not None:
             return image_status_error
@@ -2741,6 +2837,15 @@ class ControlledPresentationPolicy:
         )
         if apply_patch_error is not None:
             return apply_patch_error
+        apply_redesign_error = _apply_redesign_error(
+            self.stage,
+            tool_name,
+            arguments,
+            self.workspace_dir,
+            self.artifact_root_dir,
+        )
+        if apply_redesign_error is not None:
+            return apply_redesign_error
         return _finalize_error(self.stage, tool_name, arguments)
 
     def _clear_step_failure(self, stage: str) -> None:

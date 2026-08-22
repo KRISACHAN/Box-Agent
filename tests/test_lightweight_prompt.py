@@ -254,6 +254,33 @@ async def test_extmethod_llm_prompt_success():
 
 
 @pytest.mark.asyncio
+async def test_extmethod_title_prompt_caps_output_at_eight_thousand_tokens(monkeypatch):
+    llm = _FakeLLM(content="short title")
+    agent = _StubAgent(llm)
+    captured: dict[str, Any] = {}
+
+    def fake_resolve_model_client(client, **kwargs):
+        captured.update(kwargs)
+        return client, {"mode": "test"}
+
+    monkeypatch.setattr(
+        "box_agent.acp.resolve_model_client",
+        fake_resolve_model_client,
+    )
+
+    resp = await agent.extMethod(
+        "llm/prompt",
+        {
+            "prompt": "give me a title",
+            "_meta": {"purpose": "title"},
+        },
+    )
+
+    assert resp["text"] == "short title"
+    assert captured["max_output_tokens_cap"] == 8_000
+
+
+@pytest.mark.asyncio
 async def test_extmethod_llm_prompt_empty_returns_error():
     agent = _StubAgent(_FakeLLM())
     resp = await agent.extMethod("llm/prompt", {"prompt": ""})

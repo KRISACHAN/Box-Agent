@@ -7,6 +7,10 @@ const {
   runtimeSourceBinding,
 } = require("./deck_spec_core.js");
 const { slideContract } = require("./design_contract_core.js");
+const {
+  analyzeOutlineLayoutIntent,
+  expectedVisualItemContract,
+} = require("./outline_layout_contract.js");
 
 const PAGE_TOKEN_SOURCE = "(?:\\d{1,2}|[一二两三四五六七八九]?十[一二三四五六七八九]?|[一二两三四五六七八九])";
 const PAGE_RANGE_RE = new RegExp(
@@ -82,6 +86,21 @@ function outlineBulletCount(slide) {
     if (numberedItems.length === contract.item_count) return numberedItems.length;
   }
   return bullets.length;
+}
+
+function declaredAgendaItemCounts(slide) {
+  const words = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  const counts = new Set();
+  [slide && slide.title, slide && slide.message, slide && slide.visual]
+    .filter(value => typeof value === "string")
+    .forEach(value => {
+      const pattern = /(?:^|[^0-9一二三四五六七八九十])([0-9]{1,2}|[一二三四五六七八九十])\s*(?:个|项|条|张|站|视角|节点|卡片|标签)/gu;
+      for (const match of value.matchAll(pattern)) {
+        const count = /^\d+$/.test(match[1]) ? Number(match[1]) : words[match[1]];
+        if (Number.isInteger(count) && count >= 2) counts.add(count);
+      }
+    });
+  return [...counts].sort((left, right) => left - right);
 }
 
 function usage() {
@@ -434,11 +453,32 @@ function validate(outline, opts) {
     }
 
     if (!Array.isArray(slide.bullets)) {
-      issues.push(`${label}: bullets must be an array with 2-5 supporting points`);
+      issues.push(`${label}: bullets must be an array with 2 or more supporting points`);
     } else if (outlineBulletCount(slide) < 2) {
       warnings.push(`${label}: bullets has fewer than 2 items; add more substance`);
-    } else if (outlineBulletCount(slide) > 5) {
-      warnings.push(`${label}: bullets has ${outlineBulletCount(slide)} items; trim to 5 or fewer`);
+    }
+    const semantic = analyzeOutlineLayoutIntent(slide, outline.source_mode);
+    const requestedItems = expectedVisualItemContract(slide);
+    const declaredAgendaCounts = semantic && semantic.kind === "agenda"
+      ? declaredAgendaItemCounts(slide)
+      : [];
+    if (declaredAgendaCounts.length > 1) {
+      issues.push(
+        `${label}: conflicting agenda item counts ${declaredAgendaCounts.join(", ")} ` +
+        "across title/message/visual; use one consistent count"
+      );
+    }
+    if (
+      semantic
+      && semantic.kind === "agenda"
+      && requestedItems
+      && Array.isArray(slide.bullets)
+      && outlineBulletCount(slide) !== requestedItems.count
+    ) {
+      issues.push(
+        `${label}: agenda requests ${requestedItems.count} visual items but bullets ` +
+        `contains ${outlineBulletCount(slide)}; provide one bullet per agenda item`
+      );
     }
 
     const structuralEvidenceExempt = isStructuralEvidenceExemptSlide(slide, index);

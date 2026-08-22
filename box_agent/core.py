@@ -2830,6 +2830,7 @@ async def run_agent_loop(
     result_storage = tool_result_storage or ToolResultStorage(
         Path.home() / ".box-agent" / "sessions"
     )
+    result_storage.set_context_token_limit(token_limit)
     result_storage.initialize_history(messages)
     hook_mgr = HookManager(hooks)
     if (

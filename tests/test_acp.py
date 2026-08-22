@@ -1430,6 +1430,55 @@ async def test_acp_prompt_checks_for_mcp_auth_refresh(acp_agent, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_acp_seeds_negotiated_session_continuation_once(acp_agent):
+    agent, _ = acp_agent
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=None,
+            field_meta={"session_id": "stable-product-session"},
+        )
+    )
+    assert session.field_meta["capabilities"]["session_continuation_versions"] == [1]
+
+    continuation = {
+        "schema_version": "officev3-session-continuation/v1",
+        "product_session_id": "stable-product-session",
+        "reason": "artifact_binding_changed",
+        "source_task_id": "task-b",
+        "target_task_id": "task-a",
+        "messages": [
+            {"role": "user", "content": "制作融资 BP"},
+            {"role": "assistant", "content": "已生成 index.html"},
+        ],
+    }
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "修改第一页标题"}],
+            field_meta={"session_continuation": continuation},
+        )
+    )
+    state = agent._sessions[session.sessionId]
+    assert [(message.role, message.content) for message in state.agent.messages[1:4]] == [
+        ("user", "制作融资 BP"),
+        ("assistant", "已生成 index.html"),
+        ("user", "修改第一页标题"),
+    ]
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "继续"}],
+            field_meta={"session_continuation": continuation},
+        )
+    )
+    assert sum(
+        message.role == "user" and message.content == "制作融资 BP"
+        for message in state.agent.messages
+    ) == 1
+
+
+@pytest.mark.asyncio
 async def test_initial_mcp_catalog_ready_is_injected_into_active_turn(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
@@ -2457,7 +2506,9 @@ async def test_acp_default_artifact_mode_creates_output(tmp_path):
     assert state.output_dir == str(tmp_path / "output")
     assert state.artifact_mode == "output"
     assert "cwd 已是 `{workspace}/output/`" in state.agent.system_prompt
-    assert session.field_meta is None
+    assert session.field_meta == {
+        "capabilities": {"session_continuation_versions": [1]}
+    }
 
 
 @pytest.mark.asyncio
@@ -4172,7 +4223,9 @@ async def test_acp_new_session_injects_core_memory_without_returning_it(tmp_path
         SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
     )
 
-    assert session.field_meta is None
+    assert session.field_meta == {
+        "capabilities": {"session_continuation_versions": [1]}
+    }
     assert "--- MEMORY START ---" in agent._sessions[session.sessionId].agent.system_prompt
     assert "User prefers concise Chinese responses" in agent._sessions[session.sessionId].agent.system_prompt
 

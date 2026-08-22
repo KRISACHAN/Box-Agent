@@ -7,6 +7,7 @@ const TRUTH_TEXT_MAX_CHARACTERS = 280;
 
 const {
   getLayout,
+  getVisualCollectionContract,
   layouts,
   manifestRecord,
 } = require("../layouts/registry.js");
@@ -587,6 +588,7 @@ function validateAndNormalizeOutlineIntent(value, fieldPath, issues) {
   };
   const unknown = Object.keys(value).filter(
     key => !Object.prototype.hasOwnProperty.call(contracts, key)
+      && key !== "visual_item_contract"
   );
   if (unknown.length) {
     issues.push(`${fieldPath}: unknown field(s): ${unknown.join(", ")}`);
@@ -596,6 +598,25 @@ function validateAndNormalizeOutlineIntent(value, fieldPath, issues) {
     validateField(value[key], contract, `${fieldPath}.${key}`, issues);
     normalized[key] = typeof value[key] === "string" ? value[key].trim() : value[key];
   });
+  if (value.visual_item_contract !== undefined) {
+    const itemContract = value.visual_item_contract;
+    if (
+      !isPlainObject(itemContract)
+      || !Number.isInteger(itemContract.count)
+      || itemContract.count < 0
+      || typeof itemContract.dimension !== "string"
+      || !itemContract.dimension.trim()
+    ) {
+      issues.push(
+        `${fieldPath}.visual_item_contract: expected {dimension, count}`
+      );
+    } else {
+      normalized.visual_item_contract = {
+        dimension: itemContract.dimension.trim(),
+        count: itemContract.count,
+      };
+    }
+  }
   return normalized;
 }
 
@@ -613,6 +634,9 @@ function normalizeSlide(
     ...(slide.source_outline_page === undefined
       ? {}
       : { source_outline_page: slide.source_outline_page }),
+    ...(slide.source_outline_item_range === undefined
+      ? {}
+      : { source_outline_item_range: { ...slide.source_outline_item_range } }),
     ...(normalizedOutlineIntent ? { outline_intent: normalizedOutlineIntent } : {}),
     ...(normalizedDrafts ? { layout_drafts: normalizedDrafts } : {}),
     ...(normalizedBackground ? { background: normalizedBackground } : {}),
@@ -761,6 +785,7 @@ function validateAndNormalizeDeck(spec) {
       "layout_id",
       "props",
       "source_outline_page",
+      "source_outline_item_range",
       "outline_intent",
       "layout_drafts",
       "background",
@@ -791,6 +816,22 @@ function validateAndNormalizeDeck(spec) {
     if (slide.source_outline_page !== undefined &&
         (!Number.isInteger(slide.source_outline_page) || slide.source_outline_page < 1)) {
       issues.push(`${slidePath}.source_outline_page: expected positive integer`);
+    }
+    if (slide.source_outline_item_range !== undefined) {
+      const range = slide.source_outline_item_range;
+      if (
+        !isPlainObject(range)
+        || !["start", "end", "total", "part", "parts"].every(
+          key => Number.isInteger(range[key]) && range[key] >= 1
+        )
+        || range.start > range.end
+        || range.end > range.total
+        || range.part > range.parts
+      ) {
+        issues.push(
+          `${slidePath}.source_outline_item_range: expected valid start/end/total/part/parts`
+        );
+      }
     }
     const normalizedProps = validateAndNormalizeLayoutProps(
       slide.props,
@@ -829,20 +870,6 @@ function validateAndNormalizeDeck(spec) {
   });
 
   if (normalizedDesignContract && normalizedDesignContract.slides) {
-    const collectionFields = {
-      "statement-focus-v1": "proofs",
-      "cards-grid-v1": "items",
-      "quadrant-matrix-v1": "items",
-      "pyramid-hierarchy-v1": "items",
-      "timeline-horizontal-v1": "steps",
-      "factory-process-line-v1": "stations",
-      "legal-case-logic-v1": "sections",
-      "property-factsheet-v1": "zones",
-      "commerce-funnel-v1": "stages",
-      "supply-network-v1": "nodes",
-      "table-data-v1": "rows",
-      "closing-next-steps-v1": "actions",
-    };
     Object.entries(normalizedDesignContract.slides).forEach(([slideId, contract]) => {
       const slide = normalizedSlides.find(item => item.id === slideId);
       if (!slide) {
@@ -889,9 +916,15 @@ function validateAndNormalizeDeck(spec) {
           `${JSON.stringify(contract.relationship)}`
         );
       }
-      const collectionField = collectionFields[slide.layout_id];
+      const collectionContract = getVisualCollectionContract(
+        slide.layout_id,
+        contract.item_dimension
+      );
+      const collectionField = collectionContract && collectionContract.path;
       const collection = collectionField && slide.props
-        ? slide.props[collectionField]
+        ? collectionField.split(".").reduce((value, part) => (
+          value && typeof value === "object" ? value[part] : undefined
+        ), slide.props)
         : null;
       if (
         contract.source === "explicit"

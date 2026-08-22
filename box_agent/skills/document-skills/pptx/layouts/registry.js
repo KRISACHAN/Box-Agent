@@ -3742,13 +3742,88 @@ function createEditorProps(layoutId, sourceSlide = null) {
   return props;
 }
 
+const VISUAL_COLLECTION_CONTRACTS = Object.freeze({
+  "cover-editorial-v1": [{ dimension: "tags", path: "tags", aliases: ["items"] }],
+  "statement-focus-v1": [{ dimension: "proofs", path: "proofs", aliases: ["items", "metrics"] }],
+  "cards-grid-v1": [{ dimension: "items", path: "items", aliases: ["cards", "agenda", "steps", "metrics"] }],
+  "quadrant-matrix-v1": [{ dimension: "items", path: "items", aliases: ["quadrants", "nodes"] }],
+  "pyramid-hierarchy-v1": [{ dimension: "items", path: "items", aliases: ["layers", "nodes"] }],
+  "text-columns-v1": [{ dimension: "sections", path: "sections", aliases: ["items"] }],
+  "kpi-grid-v1": [{ dimension: "metrics", path: "items", aliases: ["items", "kpis"] }],
+  "architecture-layered-v1": [{ dimension: "layers", path: "layers", aliases: ["items"] }],
+  "system-integration-v1": [{ dimension: "systems", path: "systems", aliases: ["nodes", "items"] }],
+  "technical-diagram-v1": [
+    { dimension: "nodes", path: "nodes", aliases: ["systems", "stages", "items"], primary: true },
+    { dimension: "edges", path: "edges", aliases: ["connections"] },
+  ],
+  "dashboard-overview-v1": [{ dimension: "metrics", path: "items", aliases: ["items", "domains"] }],
+  "chart-bar-v1": [{ dimension: "categories", path: "items", aliases: ["items", "bars"] }],
+  "chart-data-v1": [
+    { dimension: "categories", path: "categories", aliases: ["items"], primary: true },
+    { dimension: "series", path: "series" },
+    { dimension: "highlights", path: "highlights", aliases: ["metrics"] },
+  ],
+  "heatmap-matrix-v1": [
+    { dimension: "rows", path: "rows", aliases: ["items"], primary: true },
+    { dimension: "columns", path: "columns" },
+  ],
+  "table-data-v1": [
+    { dimension: "rows", path: "rows", aliases: ["items"], primary: true },
+    { dimension: "columns", path: "columns" },
+  ],
+  "timeline-horizontal-v1": [{ dimension: "steps", path: "steps", aliases: ["items", "milestones"] }],
+  "factory-process-line-v1": [{ dimension: "stations", path: "stations", aliases: ["steps", "items"] }],
+  "legal-case-logic-v1": [{ dimension: "sections", path: "sections", aliases: ["steps", "items"] }],
+  "property-factsheet-v1": [
+    { dimension: "zones", path: "zones", aliases: ["items"], primary: true },
+    { dimension: "metrics", path: "metrics" },
+  ],
+  "commerce-funnel-v1": [{ dimension: "stages", path: "stages", aliases: ["steps", "items"] }],
+  "supply-network-v1": [
+    { dimension: "nodes", path: "nodes", aliases: ["items"], primary: true },
+    { dimension: "metrics", path: "metrics" },
+  ],
+  "project-case-study-v1": [{ dimension: "metrics", path: "metrics", aliases: ["items"] }],
+  "closing-next-steps-v1": [{ dimension: "actions", path: "actions", aliases: ["steps", "items"] }],
+});
+
+function getVisualCollectionContracts(layoutId) {
+  return (VISUAL_COLLECTION_CONTRACTS[layoutId] || []).map(deepClone);
+}
+
+function getVisualCollectionContract(layoutId, dimension = null) {
+  const contracts = VISUAL_COLLECTION_CONTRACTS[layoutId] || [];
+  if (!contracts.length) return null;
+  if (dimension) {
+    const exact = contracts.find(contract => (
+      contract.dimension === dimension
+      || (contract.aliases || []).includes(dimension)
+    ));
+    if (exact) return deepClone(exact);
+  }
+  return deepClone(contracts.find(contract => contract.primary) || contracts[0]);
+}
+
 function getLayout(layoutId) {
   return layouts.find(layout => layout.id === layoutId) || null;
 }
 
 function manifestRecord(layout) {
   const { render, ...record } = layout;
-  return record;
+  const countContracts = getVisualCollectionContracts(layout.id);
+  const publishedCountContracts = countContracts.filter(contract => (
+    countContracts.length > 1 || contract.dimension !== contract.path
+  ));
+  return {
+    ...record,
+    ...(publishedCountContracts.length
+      ? {
+        counts: Object.fromEntries(
+          publishedCountContracts.map(contract => [contract.dimension, contract.path])
+        ),
+      }
+      : {}),
+  };
 }
 
 return {
@@ -3757,6 +3832,8 @@ return {
   createTechnicalDiagramPreset,
   escapeHtml,
   getLayout,
+  getVisualCollectionContract,
+  getVisualCollectionContracts,
   layouts,
   manifestRecord,
 };

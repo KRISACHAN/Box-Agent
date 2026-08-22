@@ -27,37 +27,64 @@ def _message(content, tool_call_id="call-1", name="bash") -> Message:
     )
 
 
-def test_default_limits_are_20k_per_result_and_50k_per_fresh_batch() -> None:
+def test_default_budget_floors_are_20k_per_result_and_50k_per_fresh_batch() -> None:
     assert DEFAULT_MAX_RESULT_SIZE_CHARS == 20_000
     assert DEFAULT_TOOL_RESULTS_BUDGET_CHARS == 50_000
 
 
-def test_generate_preview_prefers_nearby_newline_and_marks_more() -> None:
-    content = "a" * 1_500 + "\n" + "b" * 1_000
+def test_generate_preview_keeps_head_and_tail_when_middle_is_omitted() -> None:
+    content = "HEAD_FACT\n" + "x" * 3_000 + "\nTAIL_FACT"
     preview, has_more = generate_preview(content)
 
-    assert preview == "a" * 1_500
+    assert preview.startswith("HEAD_FACT")
+    assert preview.endswith("TAIL_FACT")
+    assert "middle omitted from preview" in preview
+    assert len(preview) <= 2_000
     assert has_more is True
 
 
-def test_generate_preview_uses_exact_limit_when_newline_is_too_early() -> None:
-    content = "short\n" + "x" * 3_000
+def test_generate_preview_uses_exact_limit_for_one_long_line() -> None:
+    content = "H" + "x" * 3_000 + "T"
     preview, has_more = generate_preview(content)
 
     assert len(preview) == 2_000
+    assert preview.startswith("H")
+    assert preview.endswith("T")
     assert has_more is True
+
+
+def test_context_limit_scales_default_budgets_but_not_explicit_overrides(
+    tmp_path: Path,
+) -> None:
+    contextual = ToolResultStorage(tmp_path / "contextual")
+    contextual.set_context_token_limit(374_400)
+
+    assert contextual.default_result_limit == 93_600
+    assert contextual.aggregate_budget == 187_200
+
+    explicit = ToolResultStorage(
+        tmp_path / "explicit",
+        default_result_limit=12_345,
+        aggregate_budget=54_321,
+    )
+    explicit.set_context_token_limit(374_400)
+
+    assert explicit.default_result_limit == 12_345
+    assert explicit.aggregate_budget == 54_321
 
 
 def test_immediate_large_string_is_written_once_and_replaced(tmp_path: Path) -> None:
     storage = ToolResultStorage(tmp_path, default_result_limit=10)
-    original = _message("line one\n" + "x" * 2_500)
+    original = _message("HEAD_FACT\n" + "x" * 2_500 + "\nTAIL_FACT")
 
     first = storage.process_message(original, tool=_Tool(), session_id="session-a")
     path = tmp_path / "session-a" / "tool-results" / "call-1.txt"
     assert path.read_text(encoding="utf-8") == original.content
     assert first.content.startswith("<persisted-output>\n")
     assert str(path) in first.content
-    assert "\n...\n</persisted-output>" in first.content
+    assert "HEAD_FACT" in first.content
+    assert "TAIL_FACT" in first.content
+    assert "middle omitted from preview" in first.content
 
     path.write_text("sentinel", encoding="utf-8")
     second = storage.process_message(original, tool=_Tool(), session_id="session-a")
@@ -166,17 +193,21 @@ def test_fresh_aggregate_budget_persists_largest_then_freezes_ids(tmp_path: Path
 
     first = storage.enforce_fresh_budget(messages, tools=tools, session_id="s")
     assert first.fresh_count == 3
-    assert first.persisted_count == 2
+    assert first.persisted_count >= 2
     assert first.remaining_chars == sum(len(str(message.content)) for message in messages)
     assert first.remaining_chars <= storage.aggregate_budget
     assert "<persisted-output>" in messages[0].content
     assert "<persisted-output>" in messages[1].content
+    assert "Preview (head + tail" in messages[0].content
+    assert "Preview (head + tail" in messages[1].content
 
+    cached_third = messages[2].content
+    third_was_persisted = "<persisted-output>" in str(cached_third)
     messages[2] = _message("c" * 900, "c")
     second = storage.enforce_fresh_budget(messages, tools=tools, session_id="s")
     assert second.fresh_count == 0
     assert second.persisted_count == 0
-    assert messages[2].content == "c" * 900
+    assert messages[2].content == (cached_third if third_was_persisted else "c" * 900)
 
 
 def test_default_aggregate_budget_counts_actual_persisted_wrappers(tmp_path: Path) -> None:
@@ -196,6 +227,34 @@ def test_default_aggregate_budget_counts_actual_persisted_wrappers(tmp_path: Pat
     assert outcome.remaining_chars == actual_chars
     assert actual_chars <= DEFAULT_TOOL_RESULTS_BUDGET_CHARS
     assert outcome.persisted_count > 0
+
+
+def test_aggregate_receipt_keeps_tail_fact_for_next_model_step(tmp_path: Path) -> None:
+    storage = ToolResultStorage(
+        tmp_path,
+        default_result_limit=100_000,
+        aggregate_budget=20_000,
+    )
+    messages = [
+        _message(
+            f"HEAD_{label}\n" + "x" * 15_000 + f"\nTAIL_FACT_{label}",
+            f"call-{label}",
+        )
+        for label in ("A", "B")
+    ]
+
+    outcome = storage.enforce_fresh_budget(
+        messages,
+        tools={"bash": _Tool()},
+        session_id="semantic-batch",
+    )
+
+    assert outcome.persisted_count >= 1
+    for label, message in zip(("A", "B"), messages):
+        if "<persisted-output>" not in str(message.content):
+            continue
+        assert f"HEAD_{label}" in message.content
+        assert f"TAIL_FACT_{label}" in message.content
 
 
 def test_empty_session_ids_use_isolated_storage_namespaces(tmp_path: Path) -> None:
@@ -248,6 +307,7 @@ def test_aggregate_budget_persists_read_results_when_batch_exceeds_limit(
     assert outcome.persisted_count == 1
     assert outcome.remaining_chars <= storage.aggregate_budget
     assert "<persisted-output>" in messages[0].content
+    assert "Preview (head + tail" in messages[0].content
     assert "original path" in messages[0].content
     assert "smaller offset/limit" in messages[0].content
     assert (

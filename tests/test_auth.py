@@ -34,11 +34,11 @@ def test_resolve_auth_token_reads_supported_env(monkeypatch: pytest.MonkeyPatch)
 def test_context_compaction_limit_uses_original_input_budget_formula() -> None:
     config = LLMConfig(context_window=180_000, max_output_tokens=63_999)
 
-    assert config.context_token_limit == 92_800
+    assert config.context_token_limit == 104_400
 
 
 def test_context_compaction_limit_uses_selected_model_capabilities() -> None:
-    assert derive_context_token_limit(128_000, 16_000) == 89_600
+    assert derive_context_token_limit(128_000, 16_000) == 100_800
 
 
 @pytest.mark.parametrize(

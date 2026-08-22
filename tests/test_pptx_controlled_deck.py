@@ -178,6 +178,26 @@ def test_layout_manifest_is_generated_from_registry() -> None:
     assert result.returncode == 0, result.stderr
     manifest = json.loads((SKILL_DIR / "layouts" / "manifest.json").read_text())
     assert manifest["generated_from"] == "layouts/registry.js + themes/*.json"
+
+
+def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
+    manifest = json.loads((SKILL_DIR / "layouts" / "manifest.json").read_text())
+    collection_layouts = 0
+    for layout in manifest["layouts"]:
+        array_fields = {
+            name
+            for name, contract in layout["fields"].items()
+            if contract.get("type") == "array"
+        }
+        if not array_fields:
+            continue
+        collection_layouts += 1
+        published_paths = set((layout.get("counts") or {}).values())
+        if len(array_fields) > 1 or published_paths:
+            assert array_fields <= published_paths, layout["id"]
+        else:
+            assert len(array_fields) == 1
+    assert collection_layouts == 23
     assert manifest["default_theme_id"] == "blue-professional"
     visual_dna_ids = {
         item["template_id"]
@@ -3492,6 +3512,292 @@ def test_scaffold_persists_visual_intent_and_normalizes_strong_layout_mismatches
     assert deck["design"]["family"] == "institutional-grid"
 
 
+def test_scaffold_splits_ten_item_agenda_across_readable_card_pages(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": "今天我们一起走一遍入职地图",
+            "message": "这是一份10站旅程：从认识公司到找到你的下一站。",
+            "bullets": [
+                f"{index:02d} 第 {index} 站：议程内容 {index}"
+                for index in range(1, 11)
+            ],
+            "layout": "agenda-grid-v1",
+            "visual": "编号流程：10个图标节点横向或双列排布，清爽图标风格",
+        }
+    )
+    outline_path.write_text(
+        json.dumps(outline, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    deck_path = tmp_path / "deck.json"
+
+    outline_validation = _run(
+        "validate_outline.js",
+        str(outline_path),
+        "--min-slides",
+        "1",
+        "--max-slides",
+        "1",
+    )
+    assert outline_validation.returncode == 0, (
+        outline_validation.stdout + outline_validation.stderr
+    )
+    assert "trim to 5 or fewer" not in outline_validation.stdout
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    contract = json.loads(scaffold.stdout)
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    report = json.loads(
+        (tmp_path / "qa" / "deck_contract.json").read_text(encoding="utf-8")
+    )
+    assert [slide["layout_id"] for slide in deck["slides"]] == [
+        "cards-grid-v1",
+        "cards-grid-v1",
+    ]
+    assert [len(slide["props"]["items"]) for slide in deck["slides"]] == [5, 5]
+    assert [slide["source_outline_page"] for slide in deck["slides"]] == [1, 1]
+    assert [slide["source_outline_item_range"] for slide in deck["slides"]] == [
+        {"start": 1, "end": 5, "total": 10, "part": 1, "parts": 2},
+        {"start": 6, "end": 10, "total": 10, "part": 2, "parts": 2},
+    ]
+    assert report["layout_plan"] == ["cards-grid-v1", "cards-grid-v1"]
+    assert [
+        page["expected_visual_item_count"]
+        for page in contract["authoring_rules"]["outline_policy"]["pages"]
+    ] == [5, 5]
+
+    patch_path = tmp_path / "deck.patch.json"
+    patch_path.write_text(
+        json.dumps(
+            {
+                "slides": {
+                    slide["id"]: {
+                        "props": {
+                            "eyebrow": "今日行程",
+                            "title": outline["slides"][0]["title"],
+                            "subtitle": outline["slides"][0]["message"],
+                            "variant": "numbered",
+                            "items": [
+                                {
+                                    "kicker": f"{item_index:02d}",
+                                    "title": f"第 {item_index} 站",
+                                    "body": f"议程内容 {item_index}",
+                                }
+                                for item_index in range(
+                                    slide["source_outline_item_range"]["start"],
+                                    slide["source_outline_item_range"]["end"] + 1,
+                                )
+                            ],
+                        }
+                    }
+                    for slide in deck["slides"]
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    applied = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    validated = _run("validate_deck_spec.js", str(deck_path))
+    assert validated.returncode == 0, validated.stdout + validated.stderr
+
+
+def test_outline_rejects_agenda_count_without_one_bullet_per_item(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "入职议程",
+            "message": "完整介绍六项入职内容。",
+            "bullets": ["公司与文化", "组织与制度", "工具与安全", "成长与结语"],
+            "layout": "agenda-grid-v1",
+            "visual": "6张议程卡片",
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+
+    validated = _run("validate_outline.js", str(outline_path))
+
+    assert validated.returncode == 1
+    assert "agenda requests 6 visual items but bullets contains 4" in validated.stdout
+
+
+def test_outline_rejects_conflicting_agenda_counts_across_fields(tmp_path: Path) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "分享提纲",
+            "message": "八个视角，快速读懂行业现状",
+            "bullets": [f"议程项 {index}" for index in range(1, 8)],
+            "layout": "agenda-list-v1",
+            "visual": "目录式七项条目列表",
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+
+    validated = _run("validate_outline.js", str(outline_path))
+
+    assert validated.returncode == 1
+    assert "conflicting agenda item counts 7, 8" in validated.stdout
+
+
+@pytest.mark.parametrize(
+    ("title", "visual", "bullets", "layout_id", "field", "count"),
+    [
+        (
+            "5项KPI总览",
+            "5个KPI指标卡",
+            ["指标一为10%", "指标二为20%"],
+            "kpi-grid-v1",
+            "items",
+            5,
+        ),
+        (
+            "六类趋势",
+            "6个类别的折线图",
+            ["类别一为10", "类别二为20"],
+            "chart-data-v1",
+            "categories",
+            6,
+        ),
+        (
+            "七项风险",
+            "7项风险热力图",
+            ["风险一", "风险二"],
+            "heatmap-matrix-v1",
+            "rows",
+            7,
+        ),
+        (
+            "十节点架构",
+            "10个节点的技术架构图",
+            ["入口连接服务", "服务连接数据"],
+            "technical-diagram-v1",
+            "nodes",
+            10,
+        ),
+    ],
+)
+def test_scaffold_uses_typed_count_contract_for_collection_layouts(
+    tmp_path: Path,
+    title: str,
+    visual: str,
+    bullets: list[str],
+    layout_id: str,
+    field: str,
+    count: int,
+) -> None:
+    case_dir = tmp_path / layout_id
+    case_dir.mkdir()
+    outline_path = case_dir / "outline.json"
+    outline = _write_outline(
+        outline_path,
+        page_count=1,
+        source_mode="user_provided",
+    )
+    outline["slides"][0].update(
+        {
+            "title": title,
+            "message": "按明确的集合维度完整呈现内容。",
+            "bullets": bullets,
+            "layout": layout_id,
+            "visual": visual,
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = case_dir / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    slide = json.loads(deck_path.read_text(encoding="utf-8"))["slides"][0]
+    assert slide["layout_id"] == layout_id
+    assert len(slide["props"][field]) == count
+    if layout_id == "technical-diagram-v1":
+        assert len({item["id"] for item in slide["props"][field]}) == count
+    if layout_id == "chart-data-v1":
+        assert all(
+            len(series["values"]) == count
+            for series in slide["props"]["series"]
+        )
+
+
+@pytest.mark.parametrize(
+    ("title", "visual", "item_count", "layout_id", "field", "chunk_sizes"),
+    [
+        ("8项KPI总览", "8个KPI指标卡", 8, "kpi-grid-v1", "items", [4, 4]),
+        ("10项风险", "10项风险热力图", 10, "heatmap-matrix-v1", "rows", [5, 5]),
+        ("20节点架构", "20个节点的技术架构图", 20, "technical-diagram-v1", "nodes", [10, 10]),
+        ("14类趋势", "14个类别的折线图", 14, "chart-data-v1", "categories", [7, 7]),
+    ],
+)
+def test_scaffold_splits_overflow_for_typed_collection_layouts(
+    tmp_path: Path,
+    title: str,
+    visual: str,
+    item_count: int,
+    layout_id: str,
+    field: str,
+    chunk_sizes: list[int],
+) -> None:
+    case_dir = tmp_path / layout_id
+    case_dir.mkdir()
+    outline_path = case_dir / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": title,
+            "message": "完整呈现所有集合项，不截断内容。",
+            "bullets": [
+                f"{index:02d} 集合项 {index}，示例值 {index * 10}"
+                for index in range(1, item_count + 1)
+            ],
+            "layout": layout_id,
+            "visual": visual,
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = case_dir / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    slides = json.loads(deck_path.read_text(encoding="utf-8"))["slides"]
+    assert [slide["layout_id"] for slide in slides] == [layout_id, layout_id]
+    assert [len(slide["props"][field]) for slide in slides] == chunk_sizes
+    assert [slide["source_outline_page"] for slide in slides] == [1, 1]
+    assert slides[0]["source_outline_item_range"]["start"] == 1
+    assert slides[-1]["source_outline_item_range"]["end"] == item_count
+
+
 def test_scaffold_and_patch_support_six_column_nine_row_gantt(
     tmp_path: Path,
 ) -> None:
@@ -5340,7 +5646,7 @@ def test_deck_contract_normalizes_pitch_layout_and_required_field_aliases(
     normalized_stdout = (
         json.dumps(scaffold_payload, ensure_ascii=False, separators=(",", ":")) + "\n"
     )
-    assert len(normalized_stdout) < 23_500
+    assert len(normalized_stdout) < 23_750
     deck = json.loads(deck_path.read_text())
     assert [slide["layout_id"] for slide in deck["slides"]] == [
         "comparison-two-column-v1",
@@ -11494,6 +11800,7 @@ def test_explicit_palette_and_geometry_become_hard_design_contract(
         "visual_kind": "pyramid",
         "source": "explicit",
         "item_count": 4,
+        "item_dimension": "items",
         "direction": "top-down",
         "relationship": "one-to-many",
         "hierarchy_depth": 2,
@@ -11502,6 +11809,7 @@ def test_explicit_palette_and_geometry_become_hard_design_contract(
         "visual_kind": "numbered-actions",
         "source": "explicit",
         "item_count": 5,
+        "item_dimension": "cards",
         "direction": "left-to-right",
         "relationship": "ordered",
     }
@@ -12229,6 +12537,7 @@ def test_scaffold_normalizes_2x2_priority_matrix_to_editable_quadrant_layout(
         "visual_kind": "quadrant",
         "source": "explicit",
         "item_count": 4,
+        "item_dimension": "items",
         "direction": "x-y",
         "relationship": "matrix",
     }
