@@ -92,7 +92,14 @@ exclude = ["tests*"]
 box_agent = ["skills/**/*", "config/*", "trace_viewer/*"]
 
 [tool.setuptools.exclude-package-data]
-box_agent = ["trace_viewer/__pycache__/*", "trace_viewer/*.pyc"]
+box_agent = [
+    "skills/**/*.pyc",
+    "skills/**/*.pyo",
+    "skills/**/__pycache__/*",
+    "trace_viewer/__pycache__/*",
+    "trace_viewer/*.pyc",
+    "trace_viewer/*.pyo",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

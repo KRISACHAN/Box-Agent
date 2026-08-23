@@ -1,4 +1,5 @@
 recursive-include box_agent/skills *
+global-exclude *.pyc *.pyo
 include box_agent/skills/README.md
 include box_agent/skills/THIRD_PARTY_NOTICES.md
 include box_agent/skills/agent_skills_spec.md
@@ -9,5 +10,5 @@ include box_agent/config/mcp-example.json
 include box_agent/config/system_prompt.md
 
 recursive-include box_agent/trace_viewer *
-recursive-exclude box_agent/trace_viewer *.pyc
+recursive-exclude box_agent/trace_viewer *.pyc *.pyo
 prune box_agent/trace_viewer/__pycache__

@@ -92,6 +92,7 @@ async def test_inspect_images_is_read_only_and_returns_model_output_verbatim(
     assert "instruction determine the content and format" in system_prompt
     assert "Do not describe each image separately" not in system_prompt
     assert "JSON object" not in system_prompt
+    assert llm.messages[1].trace_redact_content is True
     blocks = llm.messages[1].content
     image_block = next(block for block in blocks if block.get("type") == "input_image")
     assert image_block["media_type"] == "image/png"
@@ -173,6 +174,46 @@ async def test_inspect_images_native_rejects_before_reading_when_main_model_is_t
     assert not result.success
     assert result.raw_output["code"] == "IMAGE_NATIVE_UNSUPPORTED"
     assert "missing.png" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_inspect_images_native_capability_tracks_rebound_main_model(tmp_path: Path):
+    class RebindableMainLLM:
+        model = "text-model"
+        auto_model_candidates = (
+            {"model": "text-model", "tags": []},
+            {"model": "vision-model", "tags": ["vision"]},
+        )
+
+    main_llm = RebindableMainLLM()
+    tool = _tool(
+        tmp_path,
+        native_supported=False,
+        native_capability_llm=main_llm,
+    )
+
+    unsupported = await tool.invoke(
+        {
+            "image_paths": ["missing.png"],
+            "instruction": "Describe it.",
+            "strategy": "native",
+        }
+    )
+    assert not unsupported.success
+    assert unsupported.raw_output["code"] == "IMAGE_NATIVE_UNSUPPORTED"
+
+    (tmp_path / "slide.png").write_bytes(_ONE_PIXEL_PNG)
+    main_llm.model = "vision-model"
+    supported = await tool.invoke(
+        {
+            "image_paths": ["slide.png"],
+            "instruction": "Describe it.",
+            "strategy": "native",
+        }
+    )
+
+    assert supported.success, supported.error
+    assert supported.transient_followup_content is not None
 
 
 @pytest.mark.asyncio

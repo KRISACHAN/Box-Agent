@@ -10,6 +10,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from box_agent.llm.capabilities import image_input_support
 from box_agent.schema import Message
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.safety import validate_path_in_workspace
@@ -55,6 +56,7 @@ class ImageInspectionTool(Tool):
         permission_engine: PermissionEngine | None = None,
         relative_root_dir: str | None = None,
         native_supported: bool = False,
+        native_capability_llm: Any | None = None,
     ) -> None:
         self.llm = llm
         self.workspace_dir = Path(workspace_dir).absolute()
@@ -64,6 +66,7 @@ class ImageInspectionTool(Tool):
         self.allow_full_access = allow_full_access
         self._perm = permission_engine
         self.native_supported = native_supported
+        self._native_capability_llm = native_capability_llm
         self._unsupported_error: str | None = None
 
     @property
@@ -143,7 +146,7 @@ class ImageInspectionTool(Tool):
                 "IMAGE_INPUT_INVALID",
                 "strategy must be 'proxy' or 'native'",
             )
-        if normalized_strategy == "native" and not self.native_supported:
+        if normalized_strategy == "native" and not self._native_input_supported():
             return self._error(
                 "IMAGE_NATIVE_UNSUPPORTED",
                 "the active main model is not known to accept image input; "
@@ -197,6 +200,7 @@ class ImageInspectionTool(Tool):
                     images,
                     instruction=normalized_instruction,
                 ),
+                trace_redact_content=True,
             ),
         ]
         try:
@@ -236,6 +240,11 @@ class ImageInspectionTool(Tool):
             raw_output=raw_output,
             model_context=self._model_context(content),
         )
+
+    def _native_input_supported(self) -> bool:
+        if self._native_capability_llm is not None:
+            return image_input_support(self._native_capability_llm) is not False
+        return self.native_supported
 
     @staticmethod
     def _model_context(content: str) -> str:
