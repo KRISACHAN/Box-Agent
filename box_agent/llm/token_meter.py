@@ -63,6 +63,15 @@ class TokenAccumulator:
         self.total_tokens += getattr(usage, "total_tokens", 0) or 0
         self.calls += 1
 
+    def merge(self, other: TokenAccumulator | None) -> None:
+        """Fold a separately scoped accumulator into this one."""
+        if other is None:
+            return
+        self.prompt_tokens += other.prompt_tokens
+        self.completion_tokens += other.completion_tokens
+        self.total_tokens += other.total_tokens
+        self.calls += other.calls
+
 
 _METER: ContextVar[TokenAccumulator | None] = ContextVar(
     "box_agent_token_meter", default=None

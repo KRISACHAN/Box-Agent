@@ -596,7 +596,12 @@ class OpenAIClient(LLMClientBase):
 
             # For user messages
             if msg.role == "user":
-                api_messages.append({"role": "user", "content": msg.content})
+                api_messages.append(
+                    {
+                        "role": "user",
+                        "content": self._convert_input_content(msg.content),
+                    }
+                )
 
             # For assistant messages
             elif msg.role == "assistant":
@@ -644,6 +649,32 @@ class OpenAIClient(LLMClientBase):
                 )
 
         return None, api_messages
+
+    @staticmethod
+    def _convert_input_content(content: Any) -> Any:
+        """Translate canonical multimodal blocks to OpenAI wire blocks."""
+        if not isinstance(content, list):
+            return content
+        converted: list[dict[str, Any]] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "input_image":
+                media_type = block.get("media_type")
+                data = block.get("data")
+                if media_type not in {"image/png", "image/jpeg"} or not isinstance(
+                    data, str
+                ) or not data:
+                    raise ValueError("invalid canonical input_image block")
+                converted.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{media_type};base64,{data}",
+                        },
+                    }
+                )
+            else:
+                converted.append(block)
+        return converted
 
     def _prepare_request(
         self,

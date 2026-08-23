@@ -16,6 +16,7 @@ from box_agent.events import (
     ToolCallResult,
 )
 from box_agent.schema import FunctionCall, LLMResponse, Message, ToolCall
+from box_agent.runtime import invoke_tool_with_permissions
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.permissions import (
     FILESYSTEM_READ,
@@ -263,6 +264,49 @@ class TestPermissionEngineWithGrantStore:
         store.add_grant("memory", "openclaw_import", "session")
         decision = engine.check(MEMORY_OPENCLAW_IMPORT, {})
         assert decision.allowed
+
+
+class TestDirectToolInvocationWithPermissions:
+    """Adapters outside the loop retain the shared permission contract."""
+
+    @pytest.mark.asyncio
+    async def test_approved_request_retries_the_validated_tool(
+        self, engine, grant_store, outside_file
+    ):
+        negotiator = MockNegotiator(grant=True, grant_scope="prompt")
+        negotiator.attach_store(grant_store)
+        tool = PermDeniedTool(engine, outside_file)
+
+        result, policy_decision = await invoke_tool_with_permissions(
+            tool,
+            {"path": outside_file},
+            permission_negotiator=negotiator,
+        )
+
+        assert result.success is True
+        assert tool._call_count == 2
+        assert policy_decision is not None
+        assert policy_decision["decision"] == "approved"
+        assert policy_decision["retry_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_denied_request_returns_without_retry(
+        self, engine, grant_store, outside_file
+    ):
+        negotiator = MockNegotiator(grant=False)
+        negotiator.attach_store(grant_store)
+        tool = PermDeniedTool(engine, outside_file)
+
+        result, policy_decision = await invoke_tool_with_permissions(
+            tool,
+            {"path": outside_file},
+            permission_negotiator=negotiator,
+        )
+
+        assert result.success is False
+        assert tool._call_count == 1
+        assert policy_decision is not None
+        assert policy_decision["decision"] == "denied"
 
 
 class TestNegotiationInCore:
