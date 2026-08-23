@@ -24,12 +24,20 @@ class TestDetectDangerousCommand:
     def test_rm_detected(self):
         assert detect_dangerous_command("rm file.txt") is not None
         assert detect_dangerous_command("rm -rf /tmp/test") is not None
+        assert detect_dangerous_command("echo $(rm file.txt)") is not None
+        assert detect_dangerous_command("bash -c 'rm file.txt'") is not None
+        assert detect_dangerous_command(">audit.log rm file.txt") is not None
+        assert detect_dangerous_command("2>/dev/null rm file.txt") is not None
 
     def test_rmdir_detected(self):
         assert detect_dangerous_command("rmdir empty_dir") is not None
 
     def test_sudo_detected(self):
         assert detect_dangerous_command("sudo apt install foo") is not None
+        assert detect_dangerous_command("env MODE=test sudo apt install foo") is not None
+        assert detect_dangerous_command("sudo -u root apt install foo") is not None
+        assert detect_dangerous_command("sudo -v") is not None
+        assert detect_dangerous_command("sudo --reset-timestamp") is not None
 
     def test_kill_detected(self):
         assert detect_dangerous_command("kill -9 1234") is not None
@@ -48,11 +56,134 @@ class TestDetectDangerousCommand:
         assert detect_dangerous_command("python main.py") is None
         assert detect_dangerous_command("python render_pptx.py deck.pptx --format png") is None
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python3 -c \"print('wide format report')\"",
+            "python3 -c \"dd = 12; print(dd)\"",
+            """python3 << 'EOF'\n# Build the wide format report.\ndd = 12\nprint(dd)\nEOF""",
+            """python3 << 'EOF'\nfrom collections import defaultdict\nvalues = defaultdict(int)\nEOF""",
+        ],
+    )
+    def test_embedded_python_dangerous_words_are_not_shell_commands(self, command):
+        assert detect_dangerous_command(command) is None
+
     def test_dd_detected(self):
         assert detect_dangerous_command("dd if=/dev/zero of=/dev/sda") is not None
+        assert (
+            detect_dangerous_command("echo preparing && dd if=/dev/zero of=/dev/sda")
+            is not None
+        )
 
     def test_mkfs_detected(self):
         assert detect_dangerous_command("mkfs.ext4 /dev/sda1") is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "diskutil eraseDisk APFS Empty /dev/disk2",
+            "diskutil eraseVolume APFS Empty /dev/disk2s1",
+            "diskutil secureErase 0 /dev/disk2",
+        ],
+    )
+    def test_diskutil_erase_detected(self, command):
+        assert detect_dangerous_command(command) is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            r'"C:\Windows\System32\rm.exe" cache.tmp',
+            r'"C:\Windows\System32\format.com" C:',
+        ],
+    )
+    def test_windows_executable_paths_are_detected(self, command, monkeypatch):
+        monkeypatch.setattr(
+            "box_agent.tools.shell_inspection.platform.system",
+            lambda: "Windows",
+        )
+
+        assert detect_dangerous_command(command) is not None
+
+    def test_depth_limited_nested_shell_danger_fails_closed(self):
+        command = "bash -c \"bash -c \\\"bash -c 'rm cache.tmp'\\\"\""
+
+        assert detect_dangerous_command(command) is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "$(printf r)m cache.tmp",
+            "r$(printf m) cache.tmp",
+            "$(printf r)$(printf m) cache.tmp",
+        ],
+    )
+    def test_dynamic_executable_construction_requires_approval(self, command):
+        assert detect_dangerous_command(command) is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'cmd=rm; "$cmd" cache.tmp',
+            "cmd=rm; ${cmd} cache.tmp",
+            "ref=cmd; cmd=rm; ${!ref} cache.tmp",
+            "payload='rm cache.tmp'; bash -c \"$payload\"",
+        ],
+    )
+    def test_parameter_expansion_executable_requires_approval(self, command):
+        assert detect_dangerous_command(command) is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "bash --norc -c 'rm cache.tmp'",
+            "bash --rcfile /dev/null -c 'rm cache.tmp'",
+            "eval 'rm cache.tmp'",
+            "printf 'cache.tmp\\n' | xargs rm",
+            "timeout 5 rm cache.tmp",
+            "nice -n 5 rm cache.tmp",
+            "ionice -c 3 rm cache.tmp",
+            "setsid rm cache.tmp",
+            "chroot /tmp rm cache.tmp",
+            "busybox rm cache.tmp",
+            "/usr/bin/env MODE=test /bin/rm cache.tmp",
+            "env -S 'rm cache.tmp'",
+            "env --split-string='rm cache.tmp'",
+            "/usr/bin/timeout 5 /bin/rm cache.tmp",
+            "find . -name '*.tmp' -exec rm {} +",
+        ],
+    )
+    def test_dispatched_dangerous_commands_require_approval(self, command):
+        assert detect_dangerous_command(command) is not None
+
+    def test_trusted_dws_executable_reference_is_not_generic_danger(self):
+        assert (
+            detect_dangerous_command(
+                "$BOX_AGENT_DINGTALK_CLI doc read --node doc_1"
+            )
+            is None
+        )
+
+    def test_shell_groups_do_not_hide_dangerous_commands(self):
+        assert detect_dangerous_command("(rm first.tmp)") is not None
+        assert detect_dangerous_command("{ rm second.tmp; }") is not None
+
+    def test_fake_heredoc_markers_do_not_hide_later_dangerous_commands(self):
+        quoted = "python3 -c \"print('<<EOF')\"\nrm quoted.tmp"
+        commented = "echo ok # <<EOF\nrm commented.tmp"
+        multiline = 'python3 -c "x=1\nprint(x << 2)\n"\nrm live.tmp'
+
+        assert detect_dangerous_command(quoted) is not None
+        assert detect_dangerous_command(commented) is not None
+        assert detect_dangerous_command(multiline) is not None
+
+    def test_shell_arithmetic_names_are_not_executables(self):
+        assert detect_dangerous_command("echo $((dd + 1))") is None
+        assert detect_dangerous_command("(( dd = 1 ))") is None
+        assert detect_dangerous_command("echo $((value << 1))") is None
+        assert detect_dangerous_command("echo $(( $(rm cache.tmp) + 1 ))") is not None
+
+    def test_malformed_dangerous_command_fails_closed(self):
+        assert detect_dangerous_command("rm 'unterminated") is not None
 
     def test_shutdown_reboot_detected(self):
         assert detect_dangerous_command("shutdown -h now") is not None
@@ -61,6 +192,14 @@ class TestDetectDangerousCommand:
     def test_redirect_to_dev_null_allowed(self):
         assert detect_dangerous_command("cat file > /dev/null") is None
         assert detect_dangerous_command("qlmanage -h >/dev/null 2>&1") is None
+
+    def test_only_real_redirects_to_etc_are_dangerous(self):
+        assert detect_dangerous_command("echo value > /etc/example") is not None
+        assert detect_dangerous_command("echo '> /etc/example'") is None
+        assert (
+            detect_dangerous_command("python3 -c \"print('> /etc/example')\"")
+            is None
+        )
 
     def test_mv_to_dev_null(self):
         assert detect_dangerous_command("mv important.txt /dev/null") is not None

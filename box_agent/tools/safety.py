@@ -5,35 +5,42 @@ and user confirmation for destructive operations.
 """
 
 import re
-import shlex
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
+from .shell_inspection import ShellInvocation, inspect_shell_command
+
 # Global trash directory for file backups
 TRASH_DIR = Path.home() / ".box-agent" / "trash"
 
-# Dangerous command patterns — each is (compiled_regex, human_readable_reason)
-_DANGEROUS_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"\brm\s"), "rm: removes files/directories"),
-    (re.compile(r"\brmdir\s"), "rmdir: removes directories"),
-    (re.compile(r"\bkill\s"), "kill: terminates processes"),
-    (re.compile(r"\bkillall\s"), "killall: terminates processes by name"),
-    (re.compile(r"\bpkill\s"), "pkill: terminates processes by pattern"),
-    (re.compile(r"\bmkfs[\s.]"), "mkfs: formats filesystem"),
-    (re.compile(r"\bdd\s"), "dd: raw disk write"),
-    (re.compile(r"\bshutdown\b"), "shutdown: shuts down the system"),
-    (re.compile(r"\breboot\b"), "reboot: reboots the system"),
-    (re.compile(r"\bsudo\s"), "sudo: runs command as root"),
-    (re.compile(r"\bchmod\s"), "chmod: changes file permissions"),
-    (re.compile(r"\bchown\s"), "chown: changes file ownership"),
-    (re.compile(r"\bmv\s.*\s/dev/null\b"), "mv to /dev/null: destroys file"),
-    (re.compile(r">\|?\s*/etc/"), "write to /etc: modifies system config"),
-    (re.compile(r"(?<!-)\bformat\s"), "format: formats disk"),
-    (re.compile(r"\bdiskutil\s+erase"), "diskutil erase: erases disk"),
-    (re.compile(r"\blaunchctl\s"), "launchctl: manages system services"),
-]
+_DANGEROUS_EXECUTABLE_REASONS = {
+    "chmod": "chmod: changes file permissions",
+    "chown": "chown: changes file ownership",
+    "dd": "dd: raw disk write",
+    "format": "format: formats disk",
+    "kill": "kill: terminates processes",
+    "killall": "killall: terminates processes by name",
+    "launchctl": "launchctl: manages system services",
+    "pkill": "pkill: terminates processes by pattern",
+    "reboot": "reboot: reboots the system",
+    "rm": "rm: removes files/directories",
+    "rmdir": "rmdir: removes directories",
+    "shutdown": "shutdown: shuts down the system",
+}
+_DANGEROUS_CANDIDATE_RE = re.compile(
+    r"(?i)(?:^|[;&|\n])\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*"
+    r"(?:command\s+|env(?:\s+\S+)*?\s+|exec\s+|nohup\s+|sudo\s+)?"
+    r"(?:rm|rmdir|kill|killall|pkill|mkfs(?:\.[^\s;&|]+)?|dd|shutdown|"
+    r"reboot|sudo|chmod|chown|format|diskutil|launchctl)(?:\s|$)"
+)
+_TRUSTED_DYNAMIC_EXECUTABLE_REFERENCES = frozenset(
+    {
+        "$BOX_AGENT_DINGTALK_CLI",
+        "${BOX_AGENT_DINGTALK_CLI}",
+    }
+)
 
 # Patterns indicating scope escape (absolute paths, cd to outside workspace)
 _ESCAPE_PATTERNS: list[tuple[re.Pattern, str]] = [
@@ -97,7 +104,7 @@ _DEV_ALLOWLIST = re.compile(
 
 
 def detect_dangerous_command(command: str) -> str | None:
-    """Check if a shell command contains dangerous patterns.
+    """Check whether the shell actually invokes a dangerous operation.
 
     Args:
         command: The shell command string to check.
@@ -105,10 +112,51 @@ def detect_dangerous_command(command: str) -> str | None:
     Returns:
         A human-readable reason string if the command is dangerous, or None if safe.
     """
-    for pattern, reason in _DANGEROUS_PATTERNS:
-        if pattern.search(command):
+    inspection = inspect_shell_command(command)
+    for invocation in inspection.invocations:
+        if (
+            invocation.dynamic_executable_sources
+            and invocation.executable not in _TRUSTED_DYNAMIC_EXECUTABLE_REFERENCES
+        ):
+            return "Dynamically constructed shell executable"
+        if reason := _dangerous_invocation_reason(invocation):
             return reason
+    if any(_DANGEROUS_CANDIDATE_RE.search(region) for region in inspection.ambiguous_regions):
+        return "Unparseable potentially dangerous shell command"
+    for redirection in inspection.redirections:
+        if ">" in redirection.operator and redirection.target.startswith("/etc/"):
+            return "write to /etc: modifies system config"
     return None
+
+
+def _normalized_executable(value: str) -> str:
+    executable = value.strip("'\"").replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    if executable.endswith((".exe", ".cmd", ".com")):
+        executable = executable.rsplit(".", 1)[0]
+    return executable
+
+
+def _dangerous_invocation_reason(invocation: ShellInvocation) -> str | None:
+    prefix_names = {_normalized_executable(value) for value in invocation.prefix}
+    if "sudo" in prefix_names:
+        return "sudo: runs command as root"
+
+    executable = _normalized_executable(invocation.executable)
+    if executable == "sudo":
+        return "sudo: runs command as root"
+    if executable == "mkfs" or executable.startswith("mkfs."):
+        return "mkfs: formats filesystem"
+    if executable == "mv" and any(
+        argument.rstrip("/") == "/dev/null"
+        for argument in invocation.arguments
+    ):
+        return "mv to /dev/null: destroys file"
+    if executable == "diskutil" and any(
+        argument.casefold() in {"erase", "erasedisk", "erasevolume", "secureerase"}
+        for argument in invocation.arguments
+    ):
+        return "diskutil erase: erases disk"
+    return _DANGEROUS_EXECUTABLE_REASONS.get(executable)
 
 
 def _extract_path_token(command: str, match: re.Match, reason: str) -> str | None:
@@ -350,33 +398,25 @@ def extract_rm_targets(command: str, cwd: str | None = None) -> list[Path]:
         List of resolved Path objects that rm would target.
     """
     targets: list[Path] = []
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return targets
-
-    # Find the rm command and extract targets after it
-    found_rm = False
-    for token in tokens:
-        if not found_rm:
-            if token in ("rm", "rmdir"):
-                found_rm = True
-            # Also handle chained commands: ... && rm ...
-            elif token in (";", "&&", "||"):
+    seen: set[Path] = set()
+    for invocation in inspect_shell_command(command).invocations:
+        if _normalized_executable(invocation.executable) not in {"rm", "rmdir"}:
+            continue
+        options_finished = False
+        for token in invocation.arguments:
+            if token == "--":
+                options_finished = True
                 continue
-            continue
-
-        # Skip flags
-        if token.startswith("-"):
-            continue
-        # Skip command separators — reset rm search
-        if token in (";", "&&", "||", "|"):
-            found_rm = False
-            continue
-
-        path = Path(token)
-        if not path.is_absolute() and cwd:
-            path = Path(cwd) / path
-        targets.append(path.resolve())
+            if not options_finished and token.startswith("-"):
+                continue
+            if re.match(r"^\d*(?:>|>>|<)", token):
+                continue
+            path = Path(token)
+            if not path.is_absolute() and cwd:
+                path = Path(cwd) / path
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                targets.append(resolved)
 
     return targets
