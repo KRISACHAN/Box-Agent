@@ -63,6 +63,7 @@ decision, read those entries together.
 | Workflow ownership | `workflow_owner_store.py`, explicit Skills, ACP decisions, presentation recovery | Runtime-selected owner precedes artifact discovery. Unknown Skills use the generic external lifecycle; foreign `deck.json` files cannot activate controlled finalization. | Pending implementation; hardens external-Skill and controlled-presentation recovery. | [2026-08-20 owner hardening](#2026-08-20--workflow-owner-precedence-for-third-party-skills) |
 | Agent Trace diagnostics | `box_agent/trace_viewer/`, `box-agent trace-viewer`, `box-agent-session-trace/v1` | The packaged viewer is a read-only v1 trace consumer; static access stays browser-local and the optional directory service is loopback-only, authority-validated, explicit-path, top-level JSONL, and size-bounded. | Pending review; adds diagnostics without changing the trace writer, Core, provider, or ACP contracts. | [2026-08-20 trace viewer](#2026-08-20--local-agent-trace-diagnostics) |
 | Model routing and controlled presentations | `box_agent/llm/model_routing.py`, `box_agent/workflows/presentation_*`, controlled PPTX | Automatic child-model routing uses a host allowlist, while presentation-specific state and recovery remain outside the generic kernel. | PR #30 is the main record; later research hardening must be checked where relevant. | [PR #30](#2026-08-14--runtime-routing-and-presentation-reliability-pr-30), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
+| Configurable operational limits | `box_agent/config.py`, `box_agent/core.py` (`provider_stale_seconds`), `image_generation_tool.py` (`max_dimension`), `setup.py` (`generate_image` gating), `openai_client.py` (SenseNova prefixes) | Hardcoded stale/image/thinking limits become config/env with unchanged defaults; generic image endpoints clamp oversized sizes and unconfigured `generate_image` is not registered. | Pending; defaults unchanged except the generic image clamp and `generate_image` gating. | [2026-08-21 configurable limits](#2026-08-21--configurable-runtime-operational-limits) |
 
 For research execution, Todo/progress behavior, browser routing, or contributor
 branch history, also check
@@ -261,6 +262,42 @@ Release, provider API, and ACP compatibility have their own sources under
   tests, foreign-deck recovery tests, and controlled checkpoint command tests.
 - Runtime boundary: source verification does not prove OfficeV3 adoption until
   the runtime is rebuilt, installed, restarted, and replayed with a fresh task.
+
+### 2026-08-21 — configurable runtime operational limits
+
+- Change: implementation on `feat/configurable-runtime-limits`; no merge or
+  release reference exists yet.
+- Configuration surface: previously hardcoded operational values become
+  config/env. The stale timeout and built-in SenseNova detection keep their
+  historical defaults; the generic image clamp and tool-registration gate are
+  intentional default behavior changes described below:
+  - `agent.provider_stale_seconds` (default 180) plus
+    `BOX_AGENT_PROVIDER_STALE_SECONDS`, threaded through
+    `Agent` → `run_agent_loop` → `_stream_with_activity` and into sub-agents.
+    Non-positive, non-finite (`inf`/`nan`), or unparseable overrides are ignored
+    so the stale guard cannot be silently disabled.
+  - `image_generation.max_dimension` (default 1024) plus `BOX_AGENT_IMAGE_MAX_DIM`
+    (`0` disables).
+  - `BOX_AGENT_SENSENOVA_MODEL_PREFIXES` is an operator-only additive override
+    for model families whose thinking and pseudo-tool-call wire contract matches
+    SenseNova. Built-ins are always kept; extra prefixes require an explicit
+    family boundary suffix to avoid broad accidental matches.
+- Compatibility default change: generic/custom OpenAI-compatible image endpoints
+  now clamp an explicit oversized `size` to the configured longest edge (default
+  1024) to avoid 504s. OpenAI, Doubao/Seedream, and host-aligned `/images/gen`
+  endpoints keep their own size rules and are not clamped.
+- Registration change: `generate_image` is no longer registered when no image
+  endpoint is configured (via config or env); an unconfigured tool could only
+  fail on every call.
+- Proof anchors: `tests/test_image_generation_tool.py`,
+  `tests/test_llm_activity.py`, `tests/test_openai_client_sensenova.py`,
+  `tests/test_sub_agent_tool.py`.
+- Rollback: revert the implementation commit; unset the new env vars / config
+  keys to restore prior values. Only the generic image clamp and the
+  `generate_image` gating change any default behavior.
+- Runtime boundary: source tests and Python builds do not prove OfficeV3
+  adoption. The packaged runtime must be rebuilt, installed, restarted, and
+  exercised in a fresh task before claiming desktop delivery.
 
 ## Recent material changes on `main`
 
