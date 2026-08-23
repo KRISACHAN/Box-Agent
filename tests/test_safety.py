@@ -13,6 +13,7 @@ from box_agent.tools.safety import (
     detect_dangerous_command,
     detect_scope_escape,
     extract_rm_targets,
+    trusted_runtime_executable_references,
     validate_path_in_workspace,
 )
 
@@ -119,6 +120,90 @@ class TestDetectDangerousCommand:
     )
     def test_dynamic_executable_construction_requires_approval(self, command):
         assert detect_dangerous_command(command) is not None
+
+    @pytest.mark.parametrize(
+        ("name", "reference"),
+        [
+            ("BOX_AGENT_NODE", "${BOX_AGENT_NODE:-node}"),
+            ("BOX_AGENT_NODE", "$BOX_AGENT_NODE"),
+            ("BOX_AGENT_PYTHON", "${BOX_AGENT_PYTHON:-python3}"),
+            ("BOX_AGENT_NPM", "${BOX_AGENT_NPM:-npm}"),
+            ("BOX_AGENT_NPX", "${BOX_AGENT_NPX:-npx}"),
+        ],
+    )
+    def test_injected_runtime_executable_reference_is_trusted(
+        self,
+        tmp_path,
+        name,
+        reference,
+    ):
+        executable = tmp_path / name.lower()
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        trusted = trusted_runtime_executable_references({name: str(executable)})
+
+        assert detect_dangerous_command(
+            f"{reference} scripts/validate.js",
+            trusted_executable_references=trusted,
+        ) is None
+
+    @pytest.mark.parametrize(
+        "environment",
+        [
+            {},
+            {"BOX_AGENT_NODE": "node"},
+        ],
+    )
+    def test_unverified_runtime_executable_reference_requires_approval(
+        self,
+        environment,
+    ):
+        trusted = trusted_runtime_executable_references(environment)
+
+        assert detect_dangerous_command(
+            "${BOX_AGENT_NODE:-node} scripts/validate.js",
+            trusted_executable_references=trusted,
+        ) is not None
+
+    def test_runtime_reference_with_untrusted_fallback_requires_approval(self, tmp_path):
+        executable = tmp_path / "node"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        trusted = trusted_runtime_executable_references(
+            {"BOX_AGENT_NODE": str(executable)}
+        )
+
+        assert detect_dangerous_command(
+            "${BOX_AGENT_NODE:-rm} cache.tmp",
+            trusted_executable_references=trusted,
+        ) is not None
+        assert detect_dangerous_command(
+            "$BOX_AGENT_UNKNOWN scripts/validate.js",
+            trusted_executable_references=trusted,
+        ) is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "BOX_AGENT_NODE=rm; $BOX_AGENT_NODE cache.tmp",
+            "export BOX_AGENT_NODE=rm; ${BOX_AGENT_NODE:-node} cache.tmp",
+            "BOX_AGENT_NODE=$(printf rm); ${BOX_AGENT_NODE} cache.tmp",
+            "printf -v BOX_AGENT_NODE rm; $BOX_AGENT_NODE cache.tmp",
+            "source runtime-env.sh; $BOX_AGENT_NODE cache.tmp",
+        ],
+    )
+    def test_runtime_reference_reassignment_requires_approval(self, tmp_path, command):
+        executable = tmp_path / "node"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        trusted = trusted_runtime_executable_references(
+            {"BOX_AGENT_NODE": str(executable)}
+        )
+
+        assert detect_dangerous_command(
+            command,
+            trusted_executable_references=trusted,
+        ) is not None
 
     @pytest.mark.parametrize(
         "command",

@@ -504,6 +504,34 @@ def test_empty_runtime_env_does_not_inject_python_vars():
         assert "BOX_AGENT_PYTHON3" not in tool._subprocess_env
 
 
+@pytest.mark.asyncio
+async def test_verified_runtime_node_reference_runs_without_approval(tmp_path):
+    node_path = tmp_path / "node"
+    node_path.write_text("#!/bin/sh\nprintf 'runtime-node-ok\\n'\n", encoding="utf-8")
+    node_path.chmod(0o755)
+    tool = BashTool(runtime_env={"BOX_AGENT_NODE": str(node_path)})
+
+    result = await tool.execute(command="${BOX_AGENT_NODE:-node}")
+
+    assert result.success, result.error
+    assert result.stdout.strip() == "runtime-node-ok"
+    assert result.permission_request is None
+
+
+@pytest.mark.asyncio
+async def test_non_executable_runtime_node_reference_still_requires_approval(tmp_path):
+    node_path = tmp_path / "node"
+    node_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    node_path.chmod(0o644)
+    tool = BashTool(runtime_env={"BOX_AGENT_NODE": str(node_path)})
+
+    result = await tool.execute(command="${BOX_AGENT_NODE:-node}")
+
+    assert not result.success
+    assert "Dynamically constructed shell executable" in result.error
+    assert result.permission_request is not None
+
+
 def test_runtime_env_can_be_updated_for_future_subprocesses():
     tool = BashTool()
 

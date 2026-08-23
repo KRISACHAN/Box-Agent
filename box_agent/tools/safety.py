@@ -4,13 +4,15 @@ Provides dangerous command detection, path validation, file backup,
 and user confirmation for destructive operations.
 """
 
+import os
 import re
 import shutil
 import sys
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 
-from .shell_inspection import ShellInvocation, inspect_shell_command
+from .shell_inspection import ShellInspection, ShellInvocation, inspect_shell_command
 
 # Global trash directory for file backups
 TRASH_DIR = Path.home() / ".box-agent" / "trash"
@@ -40,6 +42,19 @@ _TRUSTED_DYNAMIC_EXECUTABLE_REFERENCES = frozenset(
         "$BOX_AGENT_DINGTALK_CLI",
         "${BOX_AGENT_DINGTALK_CLI}",
     }
+)
+_RUNTIME_EXECUTABLE_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "BOX_AGENT_NODE": ("node",),
+    "BOX_AGENT_NPM": ("npm",),
+    "BOX_AGENT_NPX": ("npx",),
+    "BOX_AGENT_PYTHON": ("python3",),
+    "BOX_AGENT_PYTHON3": ("python3",),
+    "BOX_AGENT_SANDBOX_PYTHON": ("python3",),
+    "BOX_AGENT_BUNDLED_PYTHON": ("python3",),
+}
+_SHELL_ASSIGNMENT_WORD_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
+_SHELL_VARIABLE_NAME_RE = re.compile(
+    r"^(?:\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}|%([A-Za-z_][A-Za-z0-9_]*)%)$"
 )
 
 # Patterns indicating scope escape (absolute paths, cd to outside workspace)
@@ -103,20 +118,67 @@ _DEV_ALLOWLIST = re.compile(
 )
 
 
-def detect_dangerous_command(command: str) -> str | None:
+def trusted_runtime_executable_references(
+    environment: Mapping[str, str] | None,
+) -> frozenset[str]:
+    """Return trusted shell references backed by injected executable paths."""
+
+    if not environment:
+        return frozenset()
+    references: set[str] = set()
+    for name, fallbacks in _RUNTIME_EXECUTABLE_FALLBACKS.items():
+        value = environment.get(name)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        executable = Path(value)
+        try:
+            trusted = (
+                executable.is_absolute()
+                and executable.is_file()
+                and os.access(executable, os.X_OK)
+            )
+        except OSError:
+            trusted = False
+        if not trusted:
+            continue
+        references.update({f"${name}", f"${{{name}}}", f"%{name}%"})
+        references.update(f"${{{name}:-{fallback}}}" for fallback in fallbacks)
+    return frozenset(references)
+
+
+def detect_dangerous_command(
+    command: str,
+    *,
+    trusted_executable_references: Iterable[str] = (),
+) -> str | None:
     """Check whether the shell actually invokes a dangerous operation.
 
     Args:
         command: The shell command string to check.
+        trusted_executable_references: Exact variable references whose current
+            environment values were verified as executable absolute paths.
 
     Returns:
         A human-readable reason string if the command is dangerous, or None if safe.
     """
+    trusted_references = _TRUSTED_DYNAMIC_EXECUTABLE_REFERENCES | frozenset(
+        trusted_executable_references
+    )
     inspection = inspect_shell_command(command)
+    mutated_variables, unknown_environment_mutation = _shell_environment_mutations(
+        inspection
+    )
     for invocation in inspection.invocations:
+        reference_variable = _shell_reference_variable(invocation.executable)
+        trusted_dynamic_reference = (
+            invocation.executable in trusted_references
+            and invocation.dynamic_executable_evidence == invocation.executable
+            and not unknown_environment_mutation
+            and reference_variable not in mutated_variables
+        )
         if (
             invocation.dynamic_executable_sources
-            and invocation.executable not in _TRUSTED_DYNAMIC_EXECUTABLE_REFERENCES
+            and not trusted_dynamic_reference
         ):
             return "Dynamically constructed shell executable"
         if reason := _dangerous_invocation_reason(invocation):
@@ -134,6 +196,41 @@ def _normalized_executable(value: str) -> str:
     if executable.endswith((".exe", ".cmd", ".com")):
         executable = executable.rsplit(".", 1)[0]
     return executable
+
+
+def _shell_reference_variable(reference: str) -> str | None:
+    match = _SHELL_VARIABLE_NAME_RE.fullmatch(reference)
+    if match is None:
+        return None
+    return next((value for value in match.groups() if value), None)
+
+
+def _shell_environment_mutations(
+    inspection: ShellInspection,
+) -> tuple[set[str], bool]:
+    mutated: set[str] = set()
+    unknown = False
+    for invocation in inspection.invocations:
+        words = invocation.words
+        executable = _normalized_executable(invocation.executable)
+        for word in words:
+            if match := _SHELL_ASSIGNMENT_WORD_RE.match(word):
+                mutated.add(match.group(1))
+        if executable in {"read", "unset"}:
+            mutated.update(
+                word
+                for word in invocation.arguments
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", word)
+            )
+        if executable == "printf" and "-v" in invocation.arguments:
+            index = invocation.arguments.index("-v")
+            if index + 1 < len(invocation.arguments):
+                name = invocation.arguments[index + 1]
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                    mutated.add(name)
+        if executable in {".", "eval", "source"}:
+            unknown = True
+    return mutated, unknown
 
 
 def _dangerous_invocation_reason(invocation: ShellInvocation) -> str | None:

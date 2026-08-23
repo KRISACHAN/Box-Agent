@@ -32,6 +32,7 @@ from .safety import (
     detect_dangerous_command,
     detect_scope_escape,
     extract_rm_targets,
+    trusted_runtime_executable_references,
 )
 
 if TYPE_CHECKING:
@@ -1285,7 +1286,12 @@ Examples:
 
             # 1. Only an explicitly trusted full-access session may bypass the
             # approval prompt. Hard product blocks above and deletion backups remain.
-            danger_reason = detect_dangerous_command(command)
+            danger_reason = detect_dangerous_command(
+                command,
+                trusted_executable_references=trusted_runtime_executable_references(
+                    self._subprocess_env
+                ),
+            )
             if danger_reason:
                 if (
                     not self.bypass_dangerous_command_approval
