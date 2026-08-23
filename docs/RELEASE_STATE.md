@@ -1,11 +1,32 @@
 # Release State
 
-## Unreleased — 0.8.85
+## v0.9.6 (2026-08-23)
 
-- Source package metadata and the built-in Skills manifest target `0.8.85`.
-- Release artifacts, tags, PyPI/GitHub publication, and officev3 runtime
-  rebuild/install/probe have not been produced yet. Add artifact hashes only
-  after those steps succeed.
+- **Commit:** release commit tagged `v0.9.6`
+- **PyPI:** https://pypi.org/project/box-agent/0.9.6/
+- **GitHub release:** https://github.com/Raccoon-Office/Box-Agent/releases/tag/v0.9.6
+- **Compare:** https://github.com/Raccoon-Office/Box-Agent/compare/v0.8.79...v0.9.6
+
+### Artifacts (SHA256)
+
+| File | SHA256 |
+| --- | --- |
+| `box_agent-0.9.6-py3-none-any.whl` | `35aed572ababc6e00645b23c57715e9a4b54d461ed11dc037478a43e97cc2753` |
+| `box_agent-0.9.6.tar.gz` | `5c607cc67aab46bef2d6b8680935ff4ce2f3fbddab3a828c3c8191b250eb0dd4` |
+| `box-agent-runtime-v0.9.6-darwin-arm64.tar.gz` | `5335918ea728dcae0cb32a69a9eb141e220e9a8b18b99442aafda7784b73c7ee` |
+
+### Proof and known gaps
+
+- The repository preflight passed with 3,041 tests, 17 skipped tests, and one
+  intentional deselection; the focused version, runtime-build, and Skill-loader
+  suite passed all 48 tests.
+- The wheel and sdist passed `twine check` and contained no `__pycache__`,
+  `.pyc`, `.pyo`, `.DS_Store`, or `.omx` entries.
+- The darwin-arm64 runtime archive advertised version `0.9.6`, reached
+  `ACP protocol ready`, and kept protocol stdout clean before the handshake.
+- **Runtime: darwin-arm64 only.** No darwin-x64, Linux, or Windows runtime was
+  built. The runtime was not installed into officev3, and no host restart or
+  fresh live task was performed as part of this release.
 
 ## v0.8.79 (2026-07-13)
 
