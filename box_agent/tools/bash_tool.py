@@ -26,6 +26,7 @@ from .base import Tool, ToolResult
 from .argument_limits import MAX_BASH_COMMAND_CHARS
 from .pptx_safety import detect_pptx_self_check_bypass
 from .runtime import bundled_win_bash
+from .shell_inspection import inspect_shell_command
 from .safety import (
     backup_file,
     detect_dangerous_command,
@@ -138,8 +139,6 @@ _DINGTALK_DWS_RE = re.compile(
     re.IGNORECASE,
 )
 _DINGTALK_DWS_EXECUTABLE_NAMES = frozenset({"dws", "dws.exe", "dws.cmd"})
-_DINGTALK_DIRECT_EXEC_WRAPPERS = frozenset({"command", "env", "exec", "nohup", "sudo"})
-_DINGTALK_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _DINGTALK_CONTROL_FLAGS = frozenset({
     "--profile",
     "--client-id",
@@ -273,76 +272,6 @@ def _detect_dingtalk_workspace_violation(command: str) -> str | None:
     invoking raw APIs would let an agent escape the desktop product's consent
     and scope model, so the runtime—not the UI prompt—enforces this allowlist.
     """
-    def split_shell_segments(value: str) -> tuple[list[str], bool, bool]:
-        """Split top-level shell lists without losing unspaced operators.
-
-        ``shlex`` tokenizes words, not shell grammar: ``x;dws`` and newlines
-        therefore cannot be validated after ``shlex.split``.  This scanner is
-        intentionally small because DWS policy permits exactly one direct
-        command; it only needs to identify list/pipeline syntax and shell
-        substitutions before parsing individual command words.
-        """
-        segments: list[str] = []
-        start = 0
-        quote: str | None = None
-        escaped = False
-        has_control = False
-        has_substitution = False
-        index = 0
-        while index < len(value):
-            char = value[index]
-            if escaped:
-                escaped = False
-                index += 1
-                continue
-            if char == "\\" and quote != "'":
-                escaped = True
-                index += 1
-                continue
-            if char == "'" and quote != '"':
-                quote = None if quote == "'" else "'"
-                index += 1
-                continue
-            if char == '"' and quote != "'":
-                quote = None if quote == '"' else '"'
-                index += 1
-                continue
-            if quote != "'" and (
-                char == "`"
-                or value.startswith("$(", index)
-                or value.startswith("<(", index)
-                or value.startswith(">(", index)
-            ):
-                has_substitution = True
-            if quote is None and char in ";&|\n":
-                segments.append(value[start:index])
-                has_control = True
-                # Treat && and || as one separator.  A single & or | is just
-                # as unsafe for this direct-command policy.
-                if index + 1 < len(value) and value[index + 1] == char and char in "&|":
-                    index += 1
-                start = index + 1
-            index += 1
-        segments.append(value[start:])
-        return segments, has_control, has_substitution
-
-    def shell_words(value: str) -> list[str] | None:
-        try:
-            words = shlex.split(value, posix=platform.system() != "Windows")
-        except ValueError:
-            return None
-        # In non-POSIX mode shlex preserves surrounding quotes.  Strip one
-        # matching pair so a Windows path such as "C:\\Program Files\\...\\dws.exe"
-        # reaches the same executable-name check as a POSIX path.
-        if platform.system() == "Windows":
-            words = [
-                word[1:-1]
-                if len(word) >= 2 and word[0] == word[-1] and word[0] in {'"', "'"}
-                else word
-                for word in words
-            ]
-        return words
-
     def is_dws_executable(token: str) -> bool:
         if token in {
             "$BOX_AGENT_DINGTALK_CLI",
@@ -356,53 +285,74 @@ def _detect_dingtalk_workspace_violation(command: str) -> str | None:
         base = token.replace("\\", "/").rsplit("/", 1)[-1].lower()
         return base in _DINGTALK_DWS_EXECUTABLE_NAMES
 
-    def invoked_dws_index(words: list[str]) -> int | None:
-        index = 0
-        while index < len(words) and _DINGTALK_ENV_ASSIGNMENT_RE.match(words[index]):
-            index += 1
-        if index < len(words) and is_dws_executable(words[index]):
-            return index
-        if (
-            index >= len(words)
-            or words[index].lower() not in _DINGTALK_DIRECT_EXEC_WRAPPERS
+    def mentions_dws(value: str) -> bool:
+        if bool(
+            _DINGTALK_DWS_RE.search(value)
+            or _DINGTALK_DWS_RE.search(re.sub(r"\\([A-Za-z])", r"\1", value))
         ):
-            return None
-        wrapper = words[index].lower()
-        index += 1
-        if wrapper == "command" and index < len(words) and words[index] in {"-v", "-V"}:
-            return None
-        while index < len(words) and (
-            words[index].startswith("-") or _DINGTALK_ENV_ASSIGNMENT_RE.match(words[index])
-        ):
-            index += 1
-        return index if index < len(words) and is_dws_executable(words[index]) else None
+            return True
+        # Dynamic executable construction may split the spelling across quotes,
+        # parameter expansions, or static printf escapes. Normalize only for
+        # evidence that a dynamic command may target DWS; ordinary static
+        # invocations still use the exact executable-name check above.
+        normalized = re.sub(
+            r"\\([0-7]{3})",
+            lambda match: chr(int(match.group(1), 8)),
+            value,
+        )
+        normalized = re.sub(
+            r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}\n]+\}|[@*#?$!0-9_-])",
+            "",
+            normalized,
+        )
+        normalized = re.sub(r"[^A-Za-z]", "", normalized).casefold()
+        normalized = re.sub(r"(?:echo|printf)", "", normalized)
+        return "dws" in normalized
 
-    segments, has_control, has_substitution = split_shell_segments(command)
-    parsed_segments: list[tuple[list[str], int]] = []
-    for segment in segments:
-        words = shell_words(segment.strip())
-        if words is None:
-            return "DWS command could not be parsed and is blocked by the DingTalk integration policy."
-        dws_index = invoked_dws_index(words)
-        if dws_index is not None:
-            parsed_segments.append((words, dws_index))
-
-    # Command substitutions can hide a nested DWS invocation inside another
-    # command word.  The product does not need substitutions for supported DWS
-    # operations, so any substitution containing a DWS spelling is rejected.
-    substitution_mentions_dws = has_substitution and bool(
-        _DINGTALK_DWS_RE.search(command)
-        or _DINGTALK_DWS_RE.search(re.sub(r"\\([A-Za-z])", r"\1", command))
+    inspection = inspect_shell_command(
+        command,
+        posix=platform.system() != "Windows",
     )
-    if not parsed_segments and not substitution_mentions_dws:
+    dws_invocations = [
+        invocation
+        for invocation in inspection.invocations
+        if is_dws_executable(invocation.executable)
+    ]
+    if any(mentions_dws(region) for region in inspection.ambiguous_regions):
+        return "DWS command could not be parsed and is blocked by the DingTalk integration policy."
+
+    # A substitution used as the executable can assemble `dws` from fragments
+    # with no complete policy keyword visible before execution. Fail closed;
+    # substitutions used only in assignments or arguments remain allowed.
+    dynamic_invocations = [
+        invocation
+        for invocation in inspection.invocations
+        if invocation.dynamic_executable_sources
+        and not is_dws_executable(invocation.executable)
+    ]
+    if any(
+        mentions_dws(invocation.dynamic_executable_evidence)
+        for invocation in dynamic_invocations
+    ):
+        return (
+            "Dynamic executable construction with DWS evidence is "
+            "disabled by the DingTalk integration policy."
+        )
+    if not dws_invocations:
         return None
-    if has_control or has_substitution:
+    if (
+        inspection.has_control_operators
+        or inspection.substitutions
+        or any(invocation.indirect for invocation in dws_invocations)
+    ):
         return (
             "Shell chaining and command substitution are disabled for DWS commands. "
             "Run one allowed DWS command directly."
         )
 
-    tokens, dws_index = parsed_segments[0]
+    invocation = dws_invocations[0]
+    tokens = list(invocation.words)
+    dws_index = invocation.executable_index
     prefix = tokens[:dws_index]
     if any(_DINGTALK_CONTROL_ENV_ASSIGNMENT_RE.match(token) for token in prefix):
         return "DWS OAuth profile and client credentials are managed by officev3 and cannot be overridden by the agent."

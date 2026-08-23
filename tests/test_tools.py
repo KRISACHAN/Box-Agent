@@ -1297,11 +1297,18 @@ def test_dingtalk_dws_policy_allows_officev3_bundled_absolute_binary_path():
         "export BOX_AGENT_DINGTALK_CLI=/opt/officev3/dws; dws auth login",
         r"d\ws auth login",
         'dws doc read --node "$(dws auth login)"',
+        "bash -c 'dws auth status'",
+        "bash -c \"bash -c \\\"bash -c 'dws auth status'\\\"\"",
+        "(dws auth status)",
+        "{ dws auth status; }",
+        "dws 'unterminated",
         "dws doc read --node doc_1 --profile another",
         "dws doc read --node doc_1 --client-id another",
         "dws doc read --node doc_1 --client-secret secret",
         "DWS_PROFILE=another dws doc read --node doc_1",
         "PATH=/tmp dws doc read --node doc_1",
+        "env -u HOME dws auth login",
+        "sudo -u root dws auth login",
     ],
 )
 def test_dingtalk_dws_policy_blocks_control_plane_bypasses(command: str):
@@ -1319,6 +1326,86 @@ def test_dingtalk_dws_policy_blocks_control_plane_bypasses(command: str):
     ],
 )
 def test_dingtalk_dws_policy_allows_commands_that_only_mention_dws(command: str):
+    assert _detect_dingtalk_workspace_violation(command) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $((dws + 1))",
+        "(( dws = 1 ))",
+        'value="$(cat <<EOF\ndws auth login\nEOF\n)"',
+        'value="$(echo ok # dws auth login\n)"',
+    ],
+)
+def test_dingtalk_dws_policy_allows_arithmetic_variable_names(command: str):
+    assert _detect_dingtalk_workspace_violation(command) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -c \"print('<<EOF')\"\ndws auth login",
+        'python3 -c "x=1\nprint(x << 2)\n"\ndws auth login',
+        "echo ok # <<EOF\ndws auth login",
+        "echo $(( $(dws auth login) + 1 ))",
+        "$(echo dws) auth login",
+        "$(printf d)ws auth login",
+        "d$(printf ws) auth login",
+        "$(printf d)$(printf ws) auth login",
+        r"$(printf '\144\167\163') auth login",
+    ],
+)
+def test_dingtalk_dws_policy_checks_commands_near_shell_data(command: str):
+    assert _detect_dingtalk_workspace_violation(command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dws_var=dws; $dws_var auth login",
+        "D=d\"w\"s; $D auth login",
+        "ref=cmd; cmd=dws; ${!ref} auth login",
+        "payload='dws auth login'; bash -c \"$payload\"",
+        "bash --norc -c 'dws auth login'",
+        "bash --rcfile /dev/null -c 'dws auth login'",
+        "eval 'dws auth login'",
+        "env -S 'dws auth login'",
+        "env --split-string='dws auth login'",
+        "printf 'auth\\n' | xargs dws auth login",
+        "find . -exec dws auth login {} +",
+    ],
+)
+def test_dingtalk_dws_policy_blocks_parameterized_and_dispatched_calls(
+    command: str,
+):
+    assert _detect_dingtalk_workspace_violation(command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "$(printf git) status",
+        "$(printf git) dws.txt",
+        "$(printf git) --msg dws",
+        "$(printf echo) ok",
+        "$(printf ls) -la",
+    ],
+)
+def test_dingtalk_dws_policy_ignores_proven_unrelated_dynamic_commands(
+    command: str,
+):
+    assert _detect_dingtalk_workspace_violation(command) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        """python3 << 'EOF'\n# Let's inspect the values.\nprint('ok')\nEOF""",
+        """python3 << 'EOF'\n# Filter values near the Q1'24 x-axis label.\nprint('ok')\nEOF""",
+    ],
+)
+def test_dingtalk_dws_policy_ignores_non_dws_heredoc_bodies(command: str):
     assert _detect_dingtalk_workspace_violation(command) is None
 
 
