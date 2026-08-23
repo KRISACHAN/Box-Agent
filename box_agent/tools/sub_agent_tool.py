@@ -260,6 +260,7 @@ class SubAgentTool(EventEmittingTool):
         batch_synthesis_timeout_seconds: float = _DEFAULT_BATCH_SYNTHESIS_TIMEOUT_SECONDS,
         artifact_detection_enabled: bool = True,
         artifact_root_dir: str | None = None,
+        provider_stale_seconds: float | None = None,
     ):
         super().__init__()
         self._llm = llm
@@ -290,6 +291,9 @@ class SubAgentTool(EventEmittingTool):
         self._batch_synthesis_timeout_seconds = batch_synthesis_timeout_seconds
         self._artifact_detection_enabled = artifact_detection_enabled
         self._artifact_root_dir = artifact_root_dir
+        # Inherit the parent's provider-stale cutoff so slow-model configs also
+        # apply to child agents. None lets run_agent_loop resolve env/default.
+        self._provider_stale_seconds = provider_stale_seconds
 
     def set_parent_system_prompt(self, system_prompt: str) -> None:
         """Attach parent constraints without advertising parent-only MCP search."""
@@ -725,6 +729,7 @@ class SubAgentTool(EventEmittingTool):
                 tool_limits=self._tool_limits,
                 token_limit=self._token_limit,
                 workspace_dir=self._workspace_dir,
+                provider_stale_seconds=self._provider_stale_seconds,
                 no_progress_limit=self._no_progress_limit,
                 artifact_detection_enabled=self._artifact_detection_enabled,
                 artifact_root_dir=self._artifact_root_dir,
