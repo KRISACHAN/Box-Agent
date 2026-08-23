@@ -142,6 +142,128 @@ class CapturingStreamLLM(MockLLM):
             yield event
 
 
+class TransientImageTool(Tool):
+    transient_followup_allowed = True
+
+    @property
+    def name(self) -> str:
+        return "transient_image"
+
+    @property
+    def description(self) -> str:
+        return "Attach one test image to the next model request."
+
+    @property
+    def parameters(self) -> dict:
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+
+    async def execute(self) -> ToolResult:
+        receipt = "image attached transiently"
+        return ToolResult(
+            success=True,
+            content=receipt,
+            model_context=receipt,
+            transient_followup_content=[
+                {"type": "text", "text": "Inspect this image."},
+                {
+                    "type": "input_image",
+                    "media_type": "image/png",
+                    "data": "aGVsbG8=",
+                    "width": 1,
+                    "height": 1,
+                    "source_bytes": 5,
+                    "sha256": "test-digest",
+                },
+            ],
+        )
+
+
+def _transient_tool_call() -> ToolCall:
+    return ToolCall(
+        id="image-1",
+        type="function",
+        function=FunctionCall(name="transient_image", arguments={}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_transient_image_is_sent_once_without_entering_durable_history():
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                finish_reason="tool",
+                tool_calls=[_transient_tool_call()],
+            ),
+            LLMResponse(content="I inspected it.", finish_reason="stop"),
+        ]
+    )
+    llm.capabilities = {"image_input": True}
+    messages = _msgs()
+
+    await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={"transient_image": TransientImageTool()},
+            max_steps=5,
+            token_limit=10_000,
+        )
+    )
+
+    assert len(llm.message_calls) == 2
+    request_overlay = llm.message_calls[1][-1]
+    assert request_overlay.role == "user"
+    assert request_overlay.trace_redact_content is True
+    assert any(
+        block.get("type") == "input_image"
+        for block in request_overlay.content
+    )
+    assert all(
+        not (
+            isinstance(message.content, list)
+            and any(block.get("type") == "input_image" for block in message.content)
+        )
+        for message in messages
+    )
+    assert messages[-1].content == "I inspected it."
+    assert messages[-1].request_only_input_tokens > 0
+
+
+@pytest.mark.asyncio
+async def test_transient_image_over_budget_becomes_a_safe_tool_failure():
+    llm = CapturingStreamLLM(
+        [
+            LLMResponse(
+                content="",
+                finish_reason="tool",
+                tool_calls=[_transient_tool_call()],
+            ),
+            LLMResponse(content="Use the proxy strategy.", finish_reason="stop"),
+        ]
+    )
+    llm.capabilities = {"image_input": True}
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"transient_image": TransientImageTool()},
+            max_steps=5,
+            token_limit=1_000,
+        )
+    )
+
+    tool_result = next(event for event in events if isinstance(event, ToolCallResult))
+    assert not tool_result.success
+    assert "TRANSIENT_FOLLOWUP_TOO_LARGE" in tool_result.error
+    assert not any(
+        isinstance(message.content, list)
+        and any(block.get("type") == "input_image" for block in message.content)
+        for message in llm.message_calls[1]
+    )
+
+
 @pytest.mark.asyncio
 async def test_context_limit_pauses_only_after_durable_workflow_checkpoint(
     tmp_path,
@@ -6774,6 +6896,25 @@ def test_context_pressure_uses_latest_response_usage_plus_new_messages():
 
     assert estimated == 160 + _fallback_context_estimate([added], None)
     assert source == "usage"
+
+
+def test_context_pressure_subtracts_consumed_request_only_image_estimate():
+    from box_agent.core import _estimate_context_from_latest_response
+
+    response = Message(
+        role="assistant",
+        content="image inspected",
+        usage=TokenUsage(input_tokens=5_000, output_tokens=100),
+        request_only_input_tokens=4_000,
+    )
+
+    estimated, source = _estimate_context_from_latest_response(
+        [Message(role="system", content="sys"), response],
+        None,
+    )
+
+    assert source == "usage"
+    assert estimated == 1_100
 
 
 def test_context_pressure_includes_tools_activated_after_latest_usage():

@@ -710,6 +710,9 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                 allow_full_access=allow_full_access,
                 permission_engine=permission_engine,
                 relative_root_dir=str(relative_root),
+                native_supported=(
+                    image_llm is llm and image_input_support(llm) is not False
+                ),
             )
         )
         _out(f"{Colors.GREEN}✅ Loaded image inspection tool (inspect_images){Colors.RESET}")

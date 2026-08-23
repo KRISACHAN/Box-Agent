@@ -30,6 +30,13 @@ class ToolResult(BaseModel):
     # object leaves the execution loop; excluding it avoids duplicating a large
     # payload in serialized host events.
     persistence_content: str | None = Field(default=None, exclude=True)
+    # Canonical request-only content to expose to the active model exactly once
+    # on its next call. Core never appends this payload to durable conversation
+    # history; raw multimodal bytes are trace-redacted and released after use.
+    transient_followup_content: list[dict[str, Any]] | None = Field(
+        default=None,
+        exclude=True,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +56,9 @@ class Tool:
     # concrete tool explicitly opts into. This keeps the workflow seam from
     # becoming a general-purpose way to invoke arbitrary tools.
     runtime_workflow_actions: frozenset[str] = frozenset()
+    # Explicit opt-in for the transient Tool -> next-model-request seam. MCP and
+    # ordinary tools remain unable to inject request-only user content.
+    transient_followup_allowed: bool = False
     # ``None`` uses the shared context-scaled result limit. Tools with a real
     # lower operational bound may declare it explicitly; tools that already
     # self-bound output may opt out with ``math.inf`` and still hand complete

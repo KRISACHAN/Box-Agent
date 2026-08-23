@@ -38,6 +38,43 @@ def test_sanitize_for_logging_redacts_auth_headers() -> None:
     assert sanitized["extra_headers"]["X-Trace"] == "keep"
 
 
+@pytest.mark.parametrize(
+    "block, redacted_field",
+    [
+        (
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "secret-image-payload",
+                },
+            },
+            ("source", "data"),
+        ),
+        (
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,secret-image-payload",
+                },
+            },
+            ("image_url", "url"),
+        ),
+    ],
+)
+def test_sanitize_for_logging_always_redacts_inline_image_payloads(
+    block,
+    redacted_field,
+) -> None:
+    sanitized = sanitize_for_logging(block)
+
+    assert "secret-image-payload" not in str(sanitized)
+    redacted = sanitized[redacted_field[0]][redacted_field[1]]
+    assert redacted["redacted"] is True
+    assert redacted["characters"] > 0
+
+
 def test_summarize_request_payload_for_logging_compacts_large_messages_and_tools() -> None:
     long_text = "x" * 2000
     payload = {

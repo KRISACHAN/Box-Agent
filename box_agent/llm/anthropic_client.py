@@ -257,7 +257,30 @@ class AnthropicClient(LLMClientBase):
                     }
                 )
 
-        return system_message, api_messages
+        # Anthropic requires strict user/assistant alternation. A tool result
+        # is represented as a user message, and a request-only image overlay
+        # may immediately follow it, so coalesce adjacent user turns.
+        merged_messages: list[dict[str, Any]] = []
+        for api_message in api_messages:
+            if (
+                merged_messages
+                and api_message["role"] == "user"
+                and merged_messages[-1]["role"] == "user"
+            ):
+                previous_content = merged_messages[-1]["content"]
+                current_content = api_message["content"]
+                if isinstance(previous_content, str):
+                    previous_content = [{"type": "text", "text": previous_content}]
+                if isinstance(current_content, str):
+                    current_content = [{"type": "text", "text": current_content}]
+                merged_messages[-1]["content"] = [
+                    *previous_content,
+                    *current_content,
+                ]
+            else:
+                merged_messages.append(api_message)
+
+        return system_message, merged_messages
 
     @staticmethod
     def _convert_input_content(content: Any) -> Any:

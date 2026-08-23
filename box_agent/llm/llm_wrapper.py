@@ -24,6 +24,47 @@ from .token_meter import record_usage
 logger = logging.getLogger(__name__)
 
 
+def _trace_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _trace_request_message(message: Message) -> dict[str, Any]:
+    payload = message.model_dump(exclude_none=True)
+    if not message.trace_redact_content or not isinstance(message.content, list):
+        return payload
+
+    redacted_blocks: list[dict[str, Any]] = []
+    for block in message.content:
+        block_type = str(block.get("type") or "unknown")
+        if block_type == "text":
+            redacted_blocks.append(
+                {
+                    "type": "text",
+                    "text": str(block.get("text") or ""),
+                }
+            )
+            continue
+        if block_type == "input_image":
+            redacted_blocks.append(
+                {
+                    "type": "input_image",
+                    "media_type": str(block.get("media_type") or ""),
+                    "width": _trace_int(block.get("width")),
+                    "height": _trace_int(block.get("height")),
+                    "source_bytes": _trace_int(block.get("source_bytes")),
+                    "sha256": str(block.get("sha256") or ""),
+                    "redacted": True,
+                }
+            )
+            continue
+        redacted_blocks.append({"type": block_type, "redacted": True})
+    payload["content"] = redacted_blocks
+    return payload
+
+
 def _trace_llm_request(
     *,
     llm_call_id: str,
@@ -45,7 +86,7 @@ def _trace_llm_request(
         data={
             "provider": provider,
             "model": model,
-            "messages": messages,
+            "messages": [_trace_request_message(message) for message in messages],
             "tools": tools or [],
             "thinking_enabled": thinking_enabled,
             "request_session_id": session_id,
