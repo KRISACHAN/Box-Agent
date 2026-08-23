@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional
 
 from box_agent.config import Config, ToolLimitsConfig
+from box_agent.llm.capabilities import image_input_support, model_candidate_has_tag
 from box_agent.llm.model_routing import resolve_model_client
 from box_agent.tools.base import Tool
 from box_agent.tools.argument_limits import RECOMMENDED_GENERATED_BODY_CHARS
@@ -50,35 +51,33 @@ from box_agent.tools.schedule_tool import CreateScheduledTaskTool
 from box_agent.tools.skill_tool import create_skill_tools
 from box_agent.tools.sub_agent_tool import SubAgentTool
 from box_agent.tools.todo_tool import TodoReadTool, TodoStore, TodoWriteTool
-from box_agent.tools.vision_review_tool import VisionReviewTool
+from box_agent.tools.image_inspection_tool import ImageInspectionTool
 
 if TYPE_CHECKING:
     from box_agent.tools.permissions import PermissionEngine
 
 
-def _vision_capable_llm(llm: Any | None) -> Any | None:
+def _image_capable_llm(llm: Any | None) -> Any | None:
     """Return an image-capable client, or None for known text-only bindings."""
     if llm is None:
         return None
 
+    current_support = image_input_support(llm)
+    if current_support is True:
+        return llm
+
     model = str(getattr(llm, "model", "") or "").strip()
     candidates = tuple(getattr(llm, "auto_model_candidates", ()) or ())
     if candidates:
-        current = next(
-            (
-                candidate
-                for candidate in candidates
-                if isinstance(candidate, Mapping) and candidate.get("model") == model
-            ),
-            None,
-        )
-        if current is not None and "vision" in current.get("tags", ()):
-            return llm
         vision_candidates = tuple(
             candidate
             for candidate in candidates
             if isinstance(candidate, Mapping)
-            and "vision" in candidate.get("tags", ())
+            and model_candidate_has_tag(candidate, "vision")
+            and not (
+                current_support is False
+                and candidate.get("model") == model
+            )
         )
         if not vision_candidates:
             return None
@@ -92,16 +91,7 @@ def _vision_capable_llm(llm: Any | None) -> Any | None:
         )
         return resolved if diagnostic.get("mode") == "auto" else None
 
-    normalized_model = model.lower()
-    api_base = str(getattr(llm, "api_base", "") or "").lower()
-    deepseek_vision_model = (
-        "vision" in normalized_model or "deepseek-vl" in normalized_model
-    )
-    if not deepseek_vision_model and (
-        "api.deepseek.com" in api_base or normalized_model.startswith("deepseek-")
-    ):
-        return None
-    return llm
+    return None if current_support is False else llm
 
 
 def build_sandbox_info_prompt(use_output_dir: bool = True) -> str:
@@ -708,21 +698,21 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         _out(f"{Colors.GREEN}✅ Loaded Jupyter sandbox tool (execute_code){Colors.RESET}")
         _out(f"{Colors.GREEN}✅ Loaded sandbox status tool{Colors.RESET}")
 
-    # Vision review tool — only expose it when the bound model can actually
+    # Image inspection tool — only expose it when the bound model can actually
     # accept image blocks. Known text-only endpoints otherwise invite costly,
     # futile resize/retry loops during presentation QA.
-    vision_llm = _vision_capable_llm(llm)
-    if vision_llm is not None:
+    image_llm = _image_capable_llm(llm)
+    if image_llm is not None:
         tools.append(
-            VisionReviewTool(
-                llm=vision_llm,
+            ImageInspectionTool(
+                llm=image_llm,
                 workspace_dir=str(workspace_dir),
                 allow_full_access=allow_full_access,
                 permission_engine=permission_engine,
                 relative_root_dir=str(relative_root),
             )
         )
-        _out(f"{Colors.GREEN}✅ Loaded vision review tool (vision_review){Colors.RESET}")
+        _out(f"{Colors.GREEN}✅ Loaded image inspection tool (inspect_images){Colors.RESET}")
 
     # Image generation tool — standard Box-Agent capability shared by CLI and ACP
     image_generation_config = getattr(config, "image_generation", None)

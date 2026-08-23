@@ -234,7 +234,12 @@ class AnthropicClient(LLMClientBase):
 
                     api_messages.append({"role": "assistant", "content": content_blocks})
                 else:
-                    api_messages.append({"role": msg.role, "content": msg.content})
+                    api_messages.append(
+                        {
+                            "role": msg.role,
+                            "content": self._convert_input_content(msg.content),
+                        }
+                    )
 
             # For tool result messages
             elif msg.role == "tool":
@@ -253,6 +258,34 @@ class AnthropicClient(LLMClientBase):
                 )
 
         return system_message, api_messages
+
+    @staticmethod
+    def _convert_input_content(content: Any) -> Any:
+        """Translate canonical multimodal blocks to Anthropic wire blocks."""
+        if not isinstance(content, list):
+            return content
+        converted: list[dict[str, Any]] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "input_image":
+                media_type = block.get("media_type")
+                data = block.get("data")
+                if media_type not in {"image/png", "image/jpeg"} or not isinstance(
+                    data, str
+                ) or not data:
+                    raise ValueError("invalid canonical input_image block")
+                converted.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": data,
+                        },
+                    }
+                )
+            else:
+                converted.append(block)
+        return converted
 
     def _prepare_request(
         self,

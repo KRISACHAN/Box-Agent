@@ -163,6 +163,13 @@ callers should use `invoke()` so they do not bypass argument validation.
 Malformed parameter schemas fail closed with `INVALID_TOOL_SCHEMA`; schema and
 argument values are omitted from that diagnostic.
 
+Adapters that must invoke a deterministic Tool outside the agent loop, such as
+ACP processing a structured attachment before the next model turn, must use
+`box_agent.runtime.invoke_tool_with_permissions()`. It preserves the same
+schema validation, host permission negotiation, bounded retry, and repeated-
+request protection as model-selected tool calls. Calling `Tool.invoke()`
+directly is appropriate only when no runtime permission request can occur.
+
 #### Tool Names and Aliases
 
 `Tool.name` is the canonical name serialized in the provider-facing tool

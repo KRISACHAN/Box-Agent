@@ -137,7 +137,7 @@ def test_files_keep_general_loop_when_additional_tools_are_requested() -> None:
         required_tools=[
             "bash",
             "read_file",
-            "vision_review",
+            "inspect_images",
             "web_search",
             "write_file",
         ],

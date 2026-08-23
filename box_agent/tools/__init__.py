@@ -16,6 +16,7 @@ from .request_user_decision_tool import RequestUserDecisionTool
 from .request_user_input_tool import RequestUserInputTool
 from .setup import add_workspace_tools, await_skill_discovery, initialize_base_tools
 from .todo_tool import TodoReadTool, TodoStore, TodoWriteTool
+from .image_inspection_tool import ImageInspectionTool
 from .vision_review_tool import VisionReviewTool
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "TodoStore",
     "TodoWriteTool",
     "TodoReadTool",
+    "ImageInspectionTool",
     "VisionReviewTool",
     "add_workspace_tools",
     "await_skill_discovery",

@@ -41,6 +41,27 @@ def test_accumulator_folds_usage():
         reset_token_meter(token)
 
 
+def test_accumulator_merges_separately_scoped_usage():
+    outer = start_token_meter()
+    try:
+        record_usage(TokenUsage(prompt_tokens=3, completion_tokens=2, total_tokens=5))
+        first = get_token_meter()
+        inner = start_token_meter()
+        try:
+            record_usage(TokenUsage(prompt_tokens=7, completion_tokens=4, total_tokens=11))
+            second = get_token_meter()
+        finally:
+            reset_token_meter(inner)
+
+        first.merge(second)
+        assert first.prompt_tokens == 10
+        assert first.completion_tokens == 6
+        assert first.total_tokens == 16
+        assert first.calls == 2
+    finally:
+        reset_token_meter(outer)
+
+
 def test_record_usage_without_active_meter_is_noop():
     # No meter started in this context.
     assert get_token_meter() is None

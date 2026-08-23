@@ -29,7 +29,7 @@ _BATCH_FILES_ALLOWED_TOOLS = frozenset({"read_file"})
 DEFAULT_SAFE_TOOL_NAMES = frozenset({"query_jsonl", "read_file", "search_files"})
 PATH_SCOPED_WRITE_TOOLS = frozenset({"append_file", "edit_file", "write_file"})
 TRUSTED_NETWORK_TOOL_NAMES = frozenset(
-    {"generate_image", "vision_review", "web_extract", "web_search"}
+    {"generate_image", "inspect_images", "web_extract", "web_search"}
 )
 TRUSTED_UNSCOPED_WRITE_TOOLS = frozenset({"generate_image"})
 PERMISSION_GATED_PROCESS_TOOL_NAMES = frozenset({"bash"})
@@ -67,7 +67,7 @@ BUILTIN_TOOL_CAPABILITIES: dict[str, ToolCapabilityMetadata] = {
     "sandbox_status": ToolCapabilityMetadata(read=True, process=True),
     "web_search": ToolCapabilityMetadata(read=True, network=True),
     "web_extract": ToolCapabilityMetadata(read=True, network=True),
-    "vision_review": ToolCapabilityMetadata(read=True, network=True),
+    "inspect_images": ToolCapabilityMetadata(read=True, network=True),
     "generate_image": ToolCapabilityMetadata(write=True, network=True),
     "get_skill": ToolCapabilityMetadata(read=True),
     "memory_read": ToolCapabilityMetadata(read=True),

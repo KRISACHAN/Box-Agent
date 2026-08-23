@@ -147,6 +147,13 @@ box-agent goal complete --evidence "uv run pytest tests/ -q passed"
 3.  在类中实现所需的属性和方法。
 4.  在 Agent 初始化时注册你的新工具。
 
+运行时通过 `Tool.invoke(arguments)` 校验参数 Schema，再调用工具的
+`execute()`。如果 ACP 等适配器必须在 Agent loop 之外确定性调用工具，而且该
+工具可能返回权限请求，应使用
+`box_agent.runtime.invoke_tool_with_permissions()`；它会复用 Schema 校验、宿主
+权限协商、有界重试和重复请求保护。只有确定不会触发运行时权限请求时，适配器
+才应直接调用 `Tool.invoke()`。
+
 #### 工具名称与别名
 
 `Tool.name` 是 Provider 工具 Schema 中唯一暴露的 canonical name。工具还可以
