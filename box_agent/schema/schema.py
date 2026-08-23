@@ -104,6 +104,14 @@ class Message(BaseModel):
     tool_call_id: str | None = None
     name: str | None = None  # For tool role
     usage: TokenUsage | None = None
+    # Estimated request-only input included in this response's provider usage
+    # but intentionally absent from the next durable request. Persist the
+    # numeric adjustment so context estimation remains correct after resume.
+    request_only_input_tokens: int = Field(default=0, ge=0)
+    # Request-only multimodal overlays may carry raw image bytes to a provider
+    # without persisting them in durable traces. Excluded from serialization so
+    # this remains an internal observability directive.
+    trace_redact_content: bool = Field(default=False, exclude=True)
 
 
 class LLMResponse(BaseModel):

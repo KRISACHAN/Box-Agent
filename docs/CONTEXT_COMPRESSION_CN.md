@@ -1,11 +1,13 @@
 # 上下文压缩
 
-Box-Agent 在两个边界控制上下文增长：
+Box-Agent 在两个边界控制持久上下文增长：
 
 1. 工具结果在占满后续模型请求之前按需落盘；
 2. 只有下一次请求接近模型有效输入上限时，才压缩会话历史。
 
 两者彼此独立。工具结果落盘在存储层是无损的：完整结果保存在磁盘，模型保留有界的 head + tail 工作预览和恢复路径；会话摘要是有损的，因此更晚触发，并显式保留一个有界的工作集。
+
+原生图片检查走第三条“仅本次请求”路径。规范化图片块只附加到主模型的一次请求，不进入持久消息历史；预算按解码后的图片尺寸估算，而不是按 Base64 字符长度计算。原始图片载荷不会写入 session trace 或 provider debug log。
 
 ## 请求生命周期
 
@@ -14,10 +16,23 @@ Box-Agent 在两个边界控制上下文增长：
   -> 检查单个结果
   -> 追加 tool messages
   -> 下一次 LLM 请求前检查 fresh 结果总预算
+  -> 从文本历史上限中预留本次图片预算
   -> 估算下一次请求大小
   -> 达到阈值才压缩历史
+  -> 附加临时图片覆盖层
   -> 调用 LLM
+  -> provider 成功响应后释放覆盖层
 ```
+
+## 仅本次请求的原生图片输入
+
+只有当前主模型已知或预期支持图片输入时，才允许调用 `inspect_images(..., strategy="native")`。默认 `proxy` 策略保持原有工具模型路径并返回文本。
+
+原生策略沿用 proxy 路径的 PNG/JPEG 数量、尺寸、方向校正和降采样限制，然后通过 ToolResult 内部字段返回 provider-neutral 的 `input_image` 块。Core 只接受显式 opt-in 工具提供的这类内容，同时验证主模型能力，并对整批临时内容实施不超过安全输入上限 30% 的预算。图片成本按宽高保守估算，每张最少 512 tokens、最多 4,096 tokens；Base64 传输长度不会再被当作会话文本。
+
+覆盖层只追加到下一次 provider 调用的内存消息列表，不参与 ToolResult 序列化、会话持久化、普通 AgentLogger 历史、cache fingerprint 或摘要输入。Session trace 只保留文字以及图片的媒体类型、宽高、源字节数和摘要；provider debug log 会始终脱敏 Anthropic Base64 source 与 OpenAI-compatible data URL，即使显式开启 full-payload logging 也不会记录原图。空的 provider-stale 重试会暂时保留覆盖层；一旦收到实际内容或正常结束就立即释放。能力或预算校验失败时，工具结果会变成有界错误，提示改用 `strategy="proxy"` 或减少图片数量。
+
+Provider 返回的 usage 仍会包含本次图片输入。因此对应 assistant message 只持久化一个纯数字的 request-only 估算值；下一次上下文计算会先扣除它，再累加后续持久消息。这样已释放图片不会导致提前压缩，重启恢复后也能继续正确估算，同时不保存任何图片字节。
 
 ## 超长工具结果落盘
 

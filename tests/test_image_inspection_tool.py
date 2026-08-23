@@ -124,6 +124,58 @@ async def test_inspect_images_bounds_model_context_without_truncating_result(
 
 
 @pytest.mark.asyncio
+async def test_inspect_images_native_returns_request_only_canonical_blocks(
+    tmp_path: Path,
+):
+    image = tmp_path / "slide.png"
+    image.write_bytes(_ONE_PIXEL_PNG)
+    llm = FakeVisionLLM()
+    tool = _tool(tmp_path, llm, native_supported=True)
+
+    result = await tool.invoke(
+        {
+            "image_paths": ["slide.png"],
+            "instruction": "Check readability.",
+            "strategy": "native",
+        }
+    )
+
+    assert result.success, result.error
+    assert llm.calls == 0
+    assert result.raw_output["type"] == "image_inspection_native"
+    assert "data" not in result.raw_output["images"][0]
+    assert result.raw_output["images"][0]["sha256"]
+    assert result.transient_followup_content is not None
+    image_block = next(
+        block
+        for block in result.transient_followup_content
+        if block["type"] == "input_image"
+    )
+    assert image_block["media_type"] == "image/png"
+    assert base64.b64decode(image_block["data"]) == _ONE_PIXEL_PNG
+    assert "untrusted visual evidence" in result.transient_followup_content[0]["text"]
+    assert "transient_followup_content" not in result.model_dump()
+    assert set(tmp_path.iterdir()) == {image}
+
+
+@pytest.mark.asyncio
+async def test_inspect_images_native_rejects_before_reading_when_main_model_is_text_only(
+    tmp_path: Path,
+):
+    result = await _tool(tmp_path, native_supported=False).invoke(
+        {
+            "image_paths": ["missing.png"],
+            "instruction": "Describe it.",
+            "strategy": "native",
+        }
+    )
+
+    assert not result.success
+    assert result.raw_output["code"] == "IMAGE_NATIVE_UNSUPPORTED"
+    assert "missing.png" not in result.error
+
+
+@pytest.mark.asyncio
 async def test_inspect_images_lets_instruction_determine_multi_image_answer(tmp_path: Path):
     (tmp_path / "first.png").write_bytes(_ONE_PIXEL_PNG)
     (tmp_path / "second.png").write_bytes(_ONE_PIXEL_PNG)
@@ -388,7 +440,8 @@ def test_add_workspace_tools_registers_inspect_images_when_llm_is_available(
         output=lambda *_: None,
     )
 
-    assert any(tool.name == "inspect_images" for tool in tools)
+    tool = next(tool for tool in tools if tool.name == "inspect_images")
+    assert tool.native_supported is True
 
 
 def test_add_workspace_tools_omits_inspect_images_for_known_text_only_model(
@@ -536,6 +589,7 @@ def test_add_workspace_tools_routes_inspect_images_to_catalog_vision_model(
     tool = next(tool for tool in tools if tool.name == "inspect_images")
     assert tool.llm.model == "vision-model"
     assert tool.llm.max_output_tokens == 8192
+    assert tool.native_supported is False
 
 
 def test_explicit_text_only_current_model_routes_to_other_vision_candidate(

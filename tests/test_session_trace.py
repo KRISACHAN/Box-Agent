@@ -341,6 +341,68 @@ async def test_llm_wrapper_records_request_response_tokens_and_ttfb(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_llm_wrapper_redacts_request_only_image_payload_from_trace(tmp_path):
+    class FakeUnderlying:
+        retry_callback = None
+
+        async def generate_stream(self, messages, tools=None, **kwargs):
+            yield StreamEvent(type="finish", finish_reason="stop")
+
+    client = LLMClient(api_key="test", provider=LLMProvider.ANTHROPIC, model="test-model")
+    client._client = FakeUnderlying()
+    writer = SessionTraceWriter(
+        session_id="office-session-image",
+        acp_session_id="sess-image",
+        trace_dir=tmp_path,
+        enabled=True,
+    )
+    token = set_session_trace_writer(writer, turn_id="turn-image")
+    try:
+        events = [
+            event
+            async for event in client.generate_stream(
+                [
+                    Message(
+                        role="user",
+                        content=[
+                            {"type": "text", "text": "Inspect it."},
+                            {
+                                "type": "input_image",
+                                "media_type": "image/png",
+                                "data": "secret-base64-payload",
+                                "width": 10,
+                                "height": 20,
+                                "source_bytes": 123,
+                                "sha256": "digest",
+                            },
+                        ],
+                        trace_redact_content=True,
+                    )
+                ],
+                session_id="office-session-image",
+                turn_id="turn-image",
+            )
+        ]
+    finally:
+        reset_session_trace_writer(token)
+
+    assert [event.type for event in events] == ["finish"]
+    request = _records(writer)[0]
+    serialized = json.dumps(request, ensure_ascii=False)
+    assert "secret-base64-payload" not in serialized
+    image_block = request["data"]["messages"][0]["content"][1]
+    assert image_block == {
+        "type": "input_image",
+        "media_type": "image/png",
+        "width": 10,
+        "height": 20,
+        "source_bytes": 123,
+        "sha256": "digest",
+        "redacted": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_core_records_tool_request_and_response_without_changing_events(tmp_path):
     class ToolThenDoneLLM:
         def __init__(self):

@@ -31,6 +31,29 @@ def test_anthropic_adapter_converts_canonical_image_block():
     }
 
 
+def test_anthropic_adapter_merges_tool_result_with_transient_image_user_turn():
+    client = AnthropicClient(api_key="test", api_base="https://example.test", model="m")
+    messages = [
+        Message(
+            role="tool",
+            content="image attached transiently",
+            tool_call_id="image-1",
+            name="inspect_images",
+        ),
+        _message(),
+    ]
+
+    _system, converted = client._convert_messages(messages)
+
+    assert len(converted) == 1
+    assert converted[0]["role"] == "user"
+    assert [block["type"] for block in converted[0]["content"]] == [
+        "tool_result",
+        "text",
+        "image",
+    ]
+
+
 def test_openai_adapter_converts_canonical_image_block():
     client = OpenAIClient(api_key="test", api_base="https://example.test", model="m")
 

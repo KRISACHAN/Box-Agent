@@ -74,6 +74,7 @@ from .events import (
 )
 from .hooks import HookManager
 from .logger import AgentLogger
+from .llm.capabilities import image_input_support
 from .llm.debug_logging import reset_llm_debug_sink, set_llm_debug_sink
 from .model_history import is_model_history_placeholder
 from .session_trace import emit_session_trace
@@ -120,6 +121,10 @@ TOOL_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
 # provider emits another SSE chunk.  Match the conservative baseline used by
 # mature long-running agents while retaining bounded recovery below.
 LLM_PROVIDER_STALE_SECONDS: Final[float] = 180.0
+TRANSIENT_FOLLOWUP_CONTEXT_RATIO: Final[float] = 0.30
+TRANSIENT_IMAGE_DEFAULT_TOKENS: Final[int] = 4_096
+TRANSIENT_IMAGE_MAX_TOKENS: Final[int] = 4_096
+TRANSIENT_IMAGE_PIXEL_TOKEN_DIVISOR: Final[int] = 600
 MAX_PROVIDER_STALE_RECOVERIES: Final[int] = 3
 MAX_TOOL_PERMISSION_RETRIES: Final[int] = 4
 _PROVIDER_STALE_SECONDS_ENV: Final[str] = "BOX_AGENT_PROVIDER_STALE_SECONDS"
@@ -1584,6 +1589,114 @@ def _message_chars(message: Message) -> int:
     return total + 16
 
 
+def _transient_followup_token_estimate(blocks: list[dict[str, Any]]) -> int:
+    """Estimate canonical request-only content without counting image base64."""
+    total = 32
+    for block in blocks:
+        block_type = block.get("type")
+        if block_type == "text":
+            text = str(block.get("text") or "")
+            total += max(1, len(text.encode("utf-8")) // 3)
+            continue
+        if block_type != "input_image":
+            raise ValueError(f"unsupported transient content block: {block_type!r}")
+        media_type = block.get("media_type")
+        data = block.get("data")
+        if (
+            media_type not in {"image/png", "image/jpeg"}
+            or not isinstance(data, str)
+            or not data
+        ):
+            raise ValueError("invalid canonical transient input_image block")
+        try:
+            width = max(0, int(block.get("width") or 0))
+            height = max(0, int(block.get("height") or 0))
+        except (TypeError, ValueError):
+            width = height = 0
+        image_tokens = (
+            math.ceil((width * height) / TRANSIENT_IMAGE_PIXEL_TOKEN_DIVISOR)
+            if width and height
+            else TRANSIENT_IMAGE_DEFAULT_TOKENS
+        )
+        total += min(
+            TRANSIENT_IMAGE_MAX_TOKENS,
+            max(512, image_tokens),
+        )
+    return total
+
+
+def _validate_transient_followup_result(
+    *,
+    result: ToolResult,
+    tool: Tool | None,
+    llm: Any,
+    token_limit: int,
+    pending_token_estimate: int,
+) -> tuple[ToolResult, list[dict[str, Any]] | None, int]:
+    blocks = result.transient_followup_content
+    if not result.success or not blocks:
+        return result, None, 0
+    if tool is None or not tool.transient_followup_allowed:
+        return (
+            ToolResult(
+                success=False,
+                error="TRANSIENT_FOLLOWUP_NOT_ALLOWED: tool did not opt into request-only content",
+                raw_output={"code": "TRANSIENT_FOLLOWUP_NOT_ALLOWED"},
+            ),
+            None,
+            0,
+        )
+    if image_input_support(llm) is False:
+        return (
+            ToolResult(
+                success=False,
+                error=(
+                    "IMAGE_NATIVE_UNSUPPORTED: the active model does not support image input; "
+                    "retry inspect_images with strategy='proxy'"
+                ),
+                raw_output={"code": "IMAGE_NATIVE_UNSUPPORTED"},
+            ),
+            None,
+            0,
+        )
+    try:
+        estimate = _transient_followup_token_estimate(blocks)
+    except ValueError as exc:
+        return (
+            ToolResult(
+                success=False,
+                error=f"TRANSIENT_FOLLOWUP_INVALID: {exc}",
+                raw_output={"code": "TRANSIENT_FOLLOWUP_INVALID"},
+            ),
+            None,
+            0,
+        )
+    budget = min(
+        max(512, int(token_limit * TRANSIENT_FOLLOWUP_CONTEXT_RATIO)),
+        max(1, token_limit - 512),
+    )
+    if pending_token_estimate + estimate > budget:
+        return (
+            ToolResult(
+                success=False,
+                error=(
+                    "TRANSIENT_FOLLOWUP_TOO_LARGE: image input would exceed the "
+                    "request-only context budget "
+                    f"({pending_token_estimate + estimate} > {budget} tokens); "
+                    "use strategy='proxy' or fewer images"
+                ),
+                raw_output={
+                    "code": "TRANSIENT_FOLLOWUP_TOO_LARGE",
+                    "estimated_tokens": pending_token_estimate + estimate,
+                    "budget_tokens": budget,
+                },
+            ),
+            None,
+            0,
+        )
+    return result, list(blocks), estimate
+
+
 def _bound_text_middle(
     text: str,
     max_chars: int,
@@ -1698,7 +1811,11 @@ def _estimate_context_from_latest_response(
             if added_messages
             else 0
         )
-        usage_estimate = usage.context_tokens + added_tokens
+        durable_usage_tokens = max(
+            0,
+            usage.context_tokens - messages[index].request_only_input_tokens,
+        )
+        usage_estimate = durable_usage_tokens + added_tokens
         # Deferred MCP activation can change the next request's tool schemas
         # after the provider usage boundary. Compare with the complete current
         # request estimate so newly exposed schemas are never omitted.
@@ -3114,6 +3231,8 @@ async def run_agent_loop(
     effective_provider_stale_seconds = _resolve_provider_stale_seconds(
         provider_stale_seconds
     )
+    pending_transient_followup_blocks: list[dict[str, Any]] = []
+    pending_transient_followup_tokens = 0
 
     # Per-turn guard for tools that can be repeatedly requested by the model
     # after it already has enough evidence. Once a budget is reached, later
@@ -3487,10 +3606,23 @@ async def run_agent_loop(
                 result_storage.aggregate_budget,
             )
         # ── Usage-driven context summarization (Layer 2) ───
+        transient_message = (
+            Message(
+                role="user",
+                content=list(pending_transient_followup_blocks),
+                trace_redact_content=True,
+            )
+            if pending_transient_followup_blocks
+            else None
+        )
+        history_token_limit = max(
+            1,
+            token_limit - pending_transient_followup_tokens,
+        )
         result = await _maybe_summarize(
             llm,
             messages,
-            token_limit,
+            history_token_limit,
             api_total_tokens,
             False,
             session_id=session_id,
@@ -3846,7 +3978,11 @@ async def run_agent_loop(
             thinking_chunk_count = 0
 
             stream_kwargs = {
-                "messages": messages,
+                "messages": (
+                    [*messages, transient_message]
+                    if transient_message is not None
+                    else messages
+                ),
                 "tools": tool_list,
                 "thinking_enabled": thinking_enabled,
                 "session_id": session_id,
@@ -3863,6 +3999,11 @@ async def run_agent_loop(
                 effective_call_kind = workflow_call_kind()
             if effective_call_kind:
                 stream_kwargs["call_kind"] = effective_call_kind
+            request_only_input_tokens = (
+                pending_transient_followup_tokens
+                if workflow_action is None and transient_message is not None
+                else 0
+            )
             if workflow_action is None:
                 llm_stream = llm.generate_stream(**stream_kwargs)
             else:
@@ -4127,12 +4268,23 @@ async def run_agent_loop(
             content=response.content,
             thinking=response.thinking,
             usage=response.usage,
+            request_only_input_tokens=request_only_input_tokens,
             tool_calls=(
                 [tool_call.model_copy(deep=True) for tool_call in response.tool_calls]
                 if response.tool_calls
                 else None
             ),
         )
+
+        # Raw image blocks are a one-shot request overlay. Retain them only
+        # when an empty provider-stale response will be retried verbatim.
+        if workflow_action is None and (
+            response.finish_reason != "provider_stale"
+            or (response.content or "").strip()
+            or (response.thinking or "").strip()
+        ):
+            pending_transient_followup_blocks.clear()
+            pending_transient_followup_tokens = 0
 
         if response.finish_reason == "provider_stale":
             has_partial_content = bool(response.content.strip())
@@ -5464,6 +5616,18 @@ async def run_agent_loop(
                 browser_snapshot_target,
             )
             result = _activate_skill_result(fn_name, fn_args, result)
+            result, transient_blocks, transient_estimate = (
+                _validate_transient_followup_result(
+                    result=result,
+                    tool=offered_tools_by_name.get(fn_name),
+                    llm=llm,
+                    token_limit=token_limit,
+                    pending_token_estimate=pending_transient_followup_tokens,
+                )
+            )
+            if transient_blocks:
+                pending_transient_followup_blocks.extend(transient_blocks)
+                pending_transient_followup_tokens += transient_estimate
             pending_model_history_recovery = (
                 _record_model_history_placeholder_recovery_result(
                     pending_model_history_recovery,
@@ -6072,6 +6236,18 @@ async def run_agent_loop(
                     result,
                     par_browser_snapshot_targets.get(tc_id),
                 )
+                result, transient_blocks, transient_estimate = (
+                    _validate_transient_followup_result(
+                        result=result,
+                        tool=offered_tools_by_name.get(fn_name),
+                        llm=llm,
+                        token_limit=token_limit,
+                        pending_token_estimate=pending_transient_followup_tokens,
+                    )
+                )
+                if transient_blocks:
+                    pending_transient_followup_blocks.extend(transient_blocks)
+                    pending_transient_followup_tokens += transient_estimate
                 _record_nested_tool_budget(fn_name, result)
                 if workflow_policy is not None:
                     begin_tool_decision = getattr(

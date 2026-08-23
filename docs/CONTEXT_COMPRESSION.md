@@ -1,11 +1,17 @@
 # Context Compression
 
-Box-Agent controls context growth at two boundaries:
+Box-Agent controls durable context growth at two boundaries:
 
 1. Tool results are persisted before they can dominate a later model request.
 2. Conversation history is summarized only when the next request approaches the model's effective input limit.
 
 The two mechanisms are deliberately separate. Tool-result storage is lossless at the storage layer: the complete result remains on disk while the model keeps a bounded head-and-tail working preview plus the recovery path. Context summarization is lossy, so it runs later and preserves a bounded working set.
+
+Native image inspection uses a third, request-only path. Canonical image blocks
+are attached to exactly one main-model request without entering durable message
+history. Their budget is estimated from decoded image dimensions rather than
+Base64 character length, and the raw payload is redacted from session traces and
+provider debug logs.
 
 ## Request lifecycle
 
@@ -14,10 +20,46 @@ tool finishes
   -> immediate per-result check
   -> tool messages are appended
   -> before the next LLM request, enforce the fresh-result aggregate budget
+  -> reserve any request-only image budget from the text-history limit
   -> estimate the next request size
   -> compact conversation history only when the threshold is reached
+  -> attach the transient image overlay
   -> call the LLM
+  -> release the overlay after a successful provider response
 ```
+
+## Request-only native image input
+
+`inspect_images(..., strategy="native")` is available only when the active main
+model is known or expected to accept image input. The default `proxy` strategy
+keeps the existing utility-model behavior and returns text.
+
+The native strategy validates, orientation-normalizes, and downsamples the same
+bounded PNG/JPEG inputs as the proxy path. It then returns provider-neutral
+`input_image` blocks through an internal ToolResult field. Core accepts that
+field only from an explicitly opted-in Tool, validates the active model
+capability, and applies one aggregate request-only budget capped at 30% of the
+safe input limit. Image cost is estimated conservatively from width and height,
+with a 512-token floor and 4,096-token ceiling per image; Base64 transport size
+is never treated as conversational text.
+
+The overlay is appended only to the in-memory list passed to the next provider
+call. It is excluded from ToolResult serialization, session persistence,
+ordinary AgentLogger history, cache fingerprints, and summarization input.
+Session traces retain only text plus image media type, dimensions, source byte
+count, and digest. Provider debug logging redacts both Anthropic Base64 sources
+and OpenAI-compatible data URLs even when full-payload logging is enabled. An
+empty provider-stale retry retains the overlay; any response content or normal
+finish releases it. If capability or budget validation fails, the Tool result
+becomes a bounded error directing the model to use `strategy="proxy"` or fewer
+images.
+
+Provider usage for the response still includes the image input. The resulting
+assistant message therefore persists only the numeric request-only estimate;
+the next context calculation subtracts it before adding later durable messages.
+This prevents an already released image from causing premature compaction and
+keeps the correction available after session resume without retaining image
+bytes.
 
 ## Oversized tool-result storage
 
@@ -159,3 +201,6 @@ Direct regression coverage lives in:
 - `tests/test_tool_result_storage.py` for type handling, exclusive writes, previews, Read single-result opt-out, failures, deduplication, and aggregate ordering;
 - `tests/test_core.py` for pre-request enforcement, usage-plus-delta estimation, exact-prefix one-shot summarization, fallback estimation, bounded retention, and runtime-state restoration;
 - `tests/test_auth.py` for the derived threshold.
+- `tests/test_image_inspection_tool.py`, `tests/test_multimodal_message_conversion.py`,
+  `tests/test_session_trace.py`, and `tests/test_llm_debug_logging.py` for the
+  request-only native image path, provider conversion, and payload redaction.
