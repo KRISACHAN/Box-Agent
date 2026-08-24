@@ -197,7 +197,7 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
             assert array_fields <= published_paths, layout["id"]
         else:
             assert len(array_fields) == 1
-    assert collection_layouts == 23
+    assert collection_layouts == 27
     assert manifest["default_theme_id"] == "blue-professional"
     visual_dna_ids = {
         item["template_id"]
@@ -341,7 +341,7 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
         "data-intelligence"
     ]
     assert data_intelligence["composition"]["family"] == "analytical-exhibit"
-    assert len(manifest["layouts"]) == 27
+    assert len(manifest["layouts"]) == 31
     assert {layout["id"] for layout in manifest["layouts"]} >= {
         "cover-hero-v1",
         "cover-editorial-v1",
@@ -356,6 +356,10 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
         "heatmap-matrix-v1",
         "table-data-v1",
         "timeline-horizontal-v1",
+        "swimlane-process-v1",
+        "customer-journey-map-v1",
+        "maturity-model-v1",
+        "cause-tree-v1",
         "project-case-study-v1",
         "closing-next-steps-v1",
     }
@@ -408,6 +412,185 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
     assert heatmap["fields"]["columns"]["maxItems"] == 6
     assert heatmap["fields"]["rows"]["maxItems"] == 8
     assert "heatmap" in heatmap["capabilities"]
+
+
+def test_high_frequency_layouts_publish_three_structural_variants() -> None:
+    manifest = json.loads((SKILL_DIR / "layouts" / "manifest.json").read_text())
+    variants = {layout["id"]: layout["variants"] for layout in manifest["layouts"]}
+
+    assert variants["cards-grid-v1"] == ["balanced", "numbered", "featured"]
+    assert variants["quadrant-matrix-v1"] == [
+        "impact-urgency",
+        "equal-cross",
+        "focus-high-high",
+    ]
+    assert variants["comparison-two-column-v1"] == [
+        "contrast",
+        "symmetric",
+        "stacked",
+    ]
+    assert variants["kpi-grid-v1"] == ["cards", "ledger", "hero"]
+    assert variants["timeline-horizontal-v1"] == [
+        "horizontal",
+        "staggered",
+        "phase-band",
+    ]
+
+
+def test_outline_recipe_registry_matches_soft_business_scenarios() -> None:
+    listed = _run("query_outline_recipes.js", "--list")
+    matched = _run("query_outline_recipes.js", "--text", "季度经营分析")
+    unmatched = _run("query_outline_recipes.js", "--text", "通用主题")
+
+    assert listed.returncode == 0, listed.stderr
+    assert [item["id"] for item in json.loads(listed.stdout)["recipes"]] == [
+        "project-review",
+        "sales-proposal",
+        "operating-analysis",
+    ]
+    assert matched.returncode == 0, matched.stderr
+    assert json.loads(matched.stdout)["recipe"]["id"] == "operating-analysis"
+    assert json.loads(matched.stdout)["source"] == "signal_match"
+    assert unmatched.returncode == 0, unmatched.stderr
+    assert json.loads(unmatched.stdout) == {"matched": False, "recipe": None}
+
+
+def test_p0_structural_variants_render_distinct_layout_classes(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "quadrant-matrix-v1",
+        "comparison-two-column-v1",
+        "kpi-grid-v1",
+        "timeline-horizontal-v1",
+        "--theme",
+        "blue-professional",
+        "--family",
+        "analytical-exhibit",
+        "--design-seed",
+        "p0-variant-1",
+        "--out",
+        str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    selected = ["featured", "focus-high-high", "stacked", "hero", "phase-band"]
+    for slide, variant in zip(deck["slides"], selected, strict=True):
+        slide["props"]["variant"] = variant
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    validation = _run("validate_deck_spec.js", str(deck_path))
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    for class_name in (
+        "cards-featured",
+        "quadrant-focus-high-high",
+        "comparison-stacked",
+        "kpis-hero",
+        "timeline-phase-band",
+    ):
+        assert class_name in html
+    assert "cards-featured.cards-count-3 .cards-grid" in html
+    assert '<div class="comparison-arrow" aria-hidden="true">↓</div>' in html
+    assert "body[data-deck-composition] .comparison-stacked .comparison-grid" in html
+    assert "quadrant-focus-high-high .quadrant-grid::before { left: 41%; }" in html
+    assert "quadrant-focus-high-high .quadrant-grid::after { top: 59%; }" in html
+    self_check = _run("html_self_check.js", str(html_path))
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+
+
+def test_business_semantic_layouts_render_editable_contracts(tmp_path: Path) -> None:
+    layout_ids = [
+        "swimlane-process-v1",
+        "customer-journey-map-v1",
+        "maturity-model-v1",
+        "cause-tree-v1",
+    ]
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run("inspect_deck_contract.js", *layout_ids, "--out", str(deck_path))
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+
+    validation = _run("validate_deck_spec.js", str(deck_path))
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html = html_path.read_text(encoding="utf-8")
+    for layout_id in layout_ids:
+        assert f'data-layout-id="{layout_id}"' in html
+    assert "layout-maturity-model maturity-variant-ladder" in html
+    assert "layout-maturity-model maturity-ladder" not in html
+    for prop_path in (
+        "lanes.0.activities.0",
+        "stages.0.opportunity",
+        "levels.0.criteria",
+        "causes.0.factors.0",
+    ):
+        assert f'data-prop-path="{prop_path}"' in html
+
+
+def test_swimlane_requires_one_activity_per_phase(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run("inspect_deck_contract.js", "swimlane-process-v1", "--out", str(deck_path))
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    deck["slides"][0]["props"]["lanes"][0]["activities"].append("多余活动")
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+
+    validation = _run("validate_deck_spec.js", str(deck_path))
+
+    assert validation.returncode != 0
+    assert "activity cell(s) to match columns" in validation.stdout
+
+
+@pytest.mark.parametrize(
+    ("visual", "expected_layout"),
+    [
+        ("角色 × 阶段泳道流程，标出跨部门交接", "swimlane-process-v1"),
+        ("客户旅程图：行为、触点、感受、痛点与机会", "customer-journey-map-v1"),
+        ("五级能力成熟度模型，标记当前与目标状态", "maturity-model-v1"),
+        ("根因树：核心问题、原因类别与影响因素", "cause-tree-v1"),
+    ],
+)
+def test_scaffold_normalizes_business_semantics_to_dedicated_layouts(
+    tmp_path: Path,
+    visual: str,
+    expected_layout: str,
+) -> None:
+    outline_path = tmp_path / expected_layout / "outline.json"
+    outline_path.parent.mkdir(parents=True, exist_ok=True)
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(
+        {
+            "title": "业务结构",
+            "message": "使用专用可编辑结构表达页面关系。",
+            "layout": "business-visual",
+            "visual": visual,
+        }
+    )
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = outline_path.parent / "deck.json"
+
+    scaffold = _run(
+        "inspect_deck_contract.js",
+        "cards-grid-v1",
+        "--outline",
+        str(outline_path),
+        "--out",
+        str(deck_path),
+    )
+
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    assert deck["slides"][0]["layout_id"] == expected_layout
+    contract = json.loads(scaffold.stdout)
+    assert contract["layout_normalizations"][0]["to"] == expected_layout
 
 
 def test_skill_avoids_public_research_permission_and_micro_todo_loops() -> None:
@@ -2071,10 +2254,10 @@ console.log(JSON.stringify({ layouts: slides.length, migrations, enumControls, c
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "layouts": 27,
-        "migrations": 729,
-        "enumControls": 28,
-        "collectionControls": 26,
+        "layouts": 31,
+        "migrations": 961,
+        "enumControls": 29,
+        "collectionControls": 31,
     }
 
 
@@ -2128,7 +2311,7 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
         "commerce-pulse",
         "logistics-control-tower",
     } <= set(theme_ids)
-    assert layout_payload["count"] == 27
+    assert layout_payload["count"] == 31
     assert {item["id"] for item in layout_payload["layouts"]} >= {
         "architecture-layered-v1",
         "system-integration-v1",

@@ -32,6 +32,10 @@ const PROPERTY_FACTSHEET_RE = /(?:地产底卡|项目底卡|地块分区|资产�
 const COMMERCE_FUNNEL_RE = /(?:零售漏斗|电商漏斗|转化漏斗|触达.{0,12}成交|commerce\s+funnel|e-?commerce\s+funnel|conversion\s+funnel)/i;
 const SUPPLY_NETWORK_RE = /(?:供应链网络|物流网络|履约网络|控制塔|control\s+tower|supply\s+network|logistics\s+network|fulfillment\s+network)/i;
 const PYRAMID_RE = /(?:金字塔|pyramid)/i;
+const CUSTOMER_JOURNEY_RE = /(?:客户旅程(?:图|地图)?|用户旅程(?:图|地图)?|customer\s+journey(?:\s+map)?|user\s+journey(?:\s+map)?|journey\s+map)/i;
+const SWIMLANE_RE = /(?:泳道(?:图|流程)?|跨部门流程|跨角色流程|role\s*[×xX*]\s*phase|swim\s*lane|swimlane)/i;
+const MATURITY_RE = /(?:成熟度(?:模型|阶梯|评估)?|能力成熟度|maturity\s+(?:model|ladder|assessment))/i;
+const CAUSE_TREE_RE = /(?:根因(?:树|分析)?|原因树|因果树|鱼骨图|fishbone|cause\s+tree|root\s+cause)/i;
 const NUMBERED_ACTIONS_RE = /(?:行动清单|编号行动|(?<![上下第])[一二三四五六七八九十0-9]+步(?:行动|清单|流程)|numbered\s+actions?)/i;
 const COMPARISON_RE = /(?:双栏对比|前后对比|方案对比|two[- ]column\s*comparison|before\s*(?:and|\/)?\s*after)/i;
 const COVER_RE = /(?:封面|\bcover\b|cover[_-]|\bopening\b)/i;
@@ -124,6 +128,39 @@ function analyzeOutlineLayoutIntent(
       "in editable cards instead of inventing values"
     );
   };
+
+  if (CUSTOMER_JOURNEY_RE.test(all)) {
+    return semanticRule(
+      "customer-journey",
+      "customer-journey-map-v1",
+      ["customer-journey-map-v1"],
+      "outline asks for an editable customer journey with stages, touchpoints, emotion, pain points, and opportunities"
+    );
+  }
+  if (SWIMLANE_RE.test(all)) {
+    return semanticRule(
+      "swimlane-process",
+      "swimlane-process-v1",
+      ["swimlane-process-v1"],
+      "outline asks for an editable role-by-phase swimlane with explicit handoffs"
+    );
+  }
+  if (MATURITY_RE.test(all)) {
+    return semanticRule(
+      "maturity-model",
+      "maturity-model-v1",
+      ["maturity-model-v1"],
+      "outline asks for an editable maturity ladder with level criteria and current/target states"
+    );
+  }
+  if (CAUSE_TREE_RE.test(all)) {
+    return semanticRule(
+      "cause-tree",
+      "cause-tree-v1",
+      ["cause-tree-v1"],
+      "outline asks for an editable root-cause tree with cause categories and contributing factors"
+    );
+  }
 
   if (PYRAMID_RE.test(visual) || PYRAMID_RE.test(layout)) {
     return semanticRule(

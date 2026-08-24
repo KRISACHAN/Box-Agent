@@ -3671,6 +3671,24 @@ body[data-deck-composition="technical-schematic"][data-deck-composition-variant=
   width: 32px;
 }
 
+body[data-deck-composition="technical-schematic"] .layout-maturity-model .slide-header,
+body[data-deck-composition="technical-schematic"][data-deck-composition-variant="spec-sheet"] .layout-maturity-model .slide-header {
+  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+}
+
+body[data-deck-composition="technical-schematic"] .layout-maturity-model .slide-header .eyebrow {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: start;
+}
+
+body[data-deck-composition="technical-schematic"] .layout-maturity-model .slide-header h2,
+body[data-deck-composition="technical-schematic"] .layout-maturity-model .slide-header .header-note {
+  grid-column: 2;
+  min-width: 0;
+}
+
 /* Existing family refinements: variants now move their own HTML ornaments as
    well as changing semantic layout geometry, making repeated decks more legible. */
 body[data-deck-composition="institutional-grid"][data-deck-composition-variant="rail-grid"] .composition-ledger-rail {
@@ -4041,4 +4059,110 @@ body[data-deck-composition="product-showcase"][data-deck-composition-variant="an
 
 body.deck-editing .layout-cover.no-hero {
   grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr) !important;
+}
+
+/* Layout variants own semantic geometry. Composition may restyle their parts,
+   but must not normalize a selected structural variant back to its family grid. */
+body[data-deck-composition] .cards-featured .cards-grid,
+body[data-deck-composition] .kpis-hero .kpi-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+body[data-deck-composition] .cards-featured .content-card:first-child,
+body[data-deck-composition] .kpis-hero .kpi-card:first-child {
+  grid-column: 1 / -1;
+}
+
+body[data-deck-composition] .layout-kpis.kpis-hero .kpi-card:first-child {
+  grid-row: auto;
+  display: grid;
+  grid-template-columns: 260px 300px minmax(0, 1fr) 180px;
+  align-items: center;
+}
+
+body[data-deck-composition] .layout-cards.cards-featured .content-card:first-child {
+  grid-row: auto;
+}
+
+body[data-deck-composition] .cards-featured.cards-count-3 .cards-grid,
+body[data-deck-composition] .kpis-hero.kpis-count-3 .kpi-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body[data-deck-composition] .cards-featured.cards-count-4 .cards-grid,
+body[data-deck-composition] .kpis-hero.kpis-count-4 .kpi-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+body[data-deck-composition] .cards-featured.cards-count-5 .cards-grid,
+body[data-deck-composition] .kpis-hero.kpis-count-5 .kpi-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body[data-deck-composition] .cards-featured.cards-count-6 .cards-grid,
+body[data-deck-composition] .kpis-hero.kpis-count-6 .kpi-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+body[data-deck-composition] .cards-featured.cards-count-6 .content-card:nth-child(n + 2):nth-child(-n + 4),
+body[data-deck-composition] .kpis-hero.kpis-count-6 .kpi-card:nth-child(n + 2):nth-child(-n + 4) {
+  grid-column: span 2;
+}
+
+body[data-deck-composition] .cards-featured.cards-count-6 .content-card:nth-child(n + 5),
+body[data-deck-composition] .kpis-hero.kpis-count-6 .kpi-card:nth-child(n + 5) {
+  grid-column: span 3;
+}
+
+body[data-deck-composition] .kpis-hero .kpi-card:not(:first-child) {
+  display: block;
+}
+
+body[data-deck-composition] .quadrant-focus-high-high .quadrant-grid {
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+  grid-template-rows: minmax(0, 1.18fr) minmax(0, 0.82fr);
+}
+
+body[data-deck-composition] .quadrant-focus-high-high .quadrant-grid::before { left: 41%; }
+body[data-deck-composition] .quadrant-focus-high-high .quadrant-grid::after { top: 59%; }
+
+body[data-deck-composition] .comparison-stacked .comparison-grid {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 58px minmax(0, 1fr);
+  gap: 10px;
+  padding-top: 24px;
+}
+
+body[data-deck-composition] .comparison-stacked .comparison-column {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+body[data-deck-composition] .timeline-phase-band .timeline-track {
+  position: relative;
+  gap: 16px;
+  align-items: center;
+  padding: 54px 0 74px;
+}
+
+body[data-deck-composition] .timeline-phase-band .timeline-step {
+  min-height: 390px;
+  padding: 96px 24px 28px;
+  border: var(--deck-border-width) solid var(--deck-border);
+  border-radius: var(--deck-radius-small);
+  background: var(--deck-surface);
+}
+
+body[data-deck-composition] .timeline-phase-band .timeline-step::before {
+  left: 0;
+  right: 0;
+  top: 0;
+  width: auto;
+  height: 58px;
+  border: 0;
+  border-radius: 0;
+  background: var(--deck-primary-soft);
 }

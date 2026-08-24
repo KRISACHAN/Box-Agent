@@ -185,6 +185,10 @@ function visualKind(slide) {
     .filter(Boolean)
     .join("\n");
   if (/(?:金字塔|pyramid)/i.test(text)) return "pyramid";
+  if (/(?:客户旅程|用户旅程|customer\s+journey|user\s+journey|journey\s+map)/i.test(text)) return "customer-journey";
+  if (/(?:泳道|swim\s*lane|swimlane|role\s*[×xX*]\s*phase)/i.test(text)) return "swimlane";
+  if (/(?:成熟度|maturity\s+(?:model|ladder|assessment))/i.test(text)) return "maturity";
+  if (/(?:根因|原因树|鱼骨图|root\s+cause|cause\s+tree|fishbone)/i.test(text)) return "cause-tree";
   if (/(?:四象限|象限图|2\s*[×xX*]\s*2|二乘二|优先级矩阵|quadrant)/i.test(text)) return "quadrant";
   if (/(?:行动清单|编号行动|action\s*(?:list|items?))/i.test(text)) return "numbered-actions";
   if (/(?:时间轴|路线图|里程碑|timeline|roadmap)/i.test(text)) return "timeline";
@@ -200,6 +204,9 @@ function visualKind(slide) {
 function countDimension(value) {
   const text = String(value || "");
   const rules = [
+    [/(?:泳道|角色|lanes?|roles?)/i, "lanes"],
+    [/(?:原因|分支|causes?|branches?)/i, "causes"],
+    [/(?:成熟度等级|等级|levels?)/i, "levels"],
     [/(?:连接|连线|边(?:关系)?|edges?)/i, "edges"],
     [/(?:节点|nodes?)/i, "nodes"],
     [/(?:外围系统|系统(?:项)?|systems?)/i, "systems"],
@@ -282,7 +289,7 @@ function explicitCount(slide) {
 
 function slideContract(slide) {
   const kind = visualKind(slide);
-  if (!["pyramid", "numbered-actions", "quadrant"].includes(kind)) return null;
+  if (!["pyramid", "numbered-actions", "quadrant", "customer-journey", "swimlane", "maturity", "cause-tree"].includes(kind)) return null;
   const itemContract = explicitCountContract(slide);
   const itemCount = itemContract && itemContract.count;
   return {
@@ -296,6 +303,18 @@ function slideContract(slide) {
       : {}),
     ...(kind === "quadrant"
       ? { direction: "x-y", relationship: "matrix" }
+      : {}),
+    ...(kind === "customer-journey"
+      ? { direction: "left-to-right", relationship: "experience" }
+      : {}),
+    ...(kind === "swimlane"
+      ? { direction: "left-to-right", relationship: "role-phase" }
+      : {}),
+    ...(kind === "maturity"
+      ? { direction: "bottom-up", relationship: "progression" }
+      : {}),
+    ...(kind === "cause-tree"
+      ? { direction: "left-to-right", relationship: "causal" }
       : {}),
     ...(["timeline", "process", "numbered-actions"].includes(kind)
       ? { direction: "left-to-right", relationship: "ordered" }

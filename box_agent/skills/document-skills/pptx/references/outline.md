@@ -205,6 +205,18 @@ does not get trapped in a repair loop.
 
 ## Generation Steps
 
+For a broad project review, sales proposal, or operating analysis request with
+no supplied page order, query the registered soft recipes before drafting:
+
+```bash
+${BOX_AGENT_NODE:-node} scripts/query_outline_recipes.js --text "项目复盘"
+```
+
+The matched beats are a completeness checklist, not a fixed deck. Omit beats
+without source support, merge closely related beats, split dense beats, and
+preserve any explicit user order or page count. The registry lives in
+`references/outline-recipes.json`; do not copy its full contents into this file.
+
 1. Restate the user request as a deck goal, audience, and decision/action the
    deck should drive. Stay within facts supplied by the user or clearly marked
    assumptions that the user explicitly authorized.
@@ -241,9 +253,10 @@ does not get trapped in a repair loop.
    `mini-dashboard`, not just `cards` or `text layout`. For scenario,
    use-case, capability, or demo pages, a plain `cards` layout is acceptable only
    when the cards are content-rich. If each card has just a title and 1-2 short
-   lines, the `visual` must name a second layer such as a demo flow, journey
-   line, role swimlane, before/after comparison, KPI strip, icon/owner row, or
-   capability matrix.
+   lines, the `visual` must name a second layer such as a demo flow, customer
+   journey, role swimlane, before/after comparison, KPI strip, icon/owner row,
+   maturity ladder, cause tree, or capability matrix. Use the dedicated
+   controlled layout when that relationship is the page's primary semantic.
 6. Run `scripts/validate_outline.js outline.json` and fix failures before
    scaffolding `deck.json`.
 

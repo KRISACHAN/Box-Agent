@@ -533,7 +533,7 @@ function renderQuadrantMatrix(slide, index) {
   return slideFrame(
     slide,
     index,
-    "layout-quadrant-matrix",
+    `layout-quadrant-matrix quadrant-${p.variant || "impact-urgency"}`,
     [
       '<header class="slide-header" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
@@ -599,6 +599,7 @@ function comparisonColumn(side, value) {
 
 function renderComparison(slide, index) {
   const p = slide.props;
+  const arrow = p.variant === "stacked" ? "↓" : "→";
   return slideFrame(
     slide,
     index,
@@ -610,7 +611,7 @@ function renderComparison(slide, index) {
       "</header>",
       '<div class="comparison-grid" data-layout-region="content">',
       comparisonColumn("left", p.left),
-      '<div class="comparison-arrow" aria-hidden="true">→</div>',
+      `<div class="comparison-arrow" aria-hidden="true">${arrow}</div>`,
       comparisonColumn("right", p.right),
       "</div>",
     ].join("\n")
@@ -900,6 +901,162 @@ function renderTimeline(slide, index) {
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
       "</header>",
       `<div class="timeline-track" data-layout-region="content">${steps}</div>`,
+    ].join("\n")
+  );
+}
+
+function renderSwimlaneProcess(slide, index) {
+  const p = slide.props;
+  const columns = p.columns || [];
+  const columnStyle = `style="--swimlane-columns:${columns.length}"`;
+  const header = columns.map((column, columnIndex) => (
+    editableText("div", `columns.${columnIndex}`, column, "swimlane-phase")
+  )).join("\n");
+  const lanes = (p.lanes || []).map((lane, laneIndex) => {
+    const activities = (lane.activities || []).map((activity, activityIndex) => [
+      `<div class="swimlane-activity" data-phase-index="${activityIndex}">`,
+      editableText("p", `lanes.${laneIndex}.activities.${activityIndex}`, activity),
+      "</div>",
+    ].join("\n")).join("\n");
+    return [
+      `<div class="swimlane-row" data-item-index="${laneIndex}" ${columnStyle}>`,
+      '<div class="swimlane-role">',
+      `<span aria-hidden="true">${String(laneIndex + 1).padStart(2, "0")}</span>`,
+      editableText("h3", `lanes.${laneIndex}.role`, lane.role),
+      "</div>",
+      `<div class="swimlane-activities">${activities}</div>`,
+      "</div>",
+    ].join("\n");
+  }).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-swimlane-process swimlane-${p.variant || "role-phase"}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      '<div class="swimlane-stage" data-layout-region="content">',
+      `<div class="swimlane-header" ${columnStyle}><span class="swimlane-corner">角色 / 阶段</span>${header}</div>`,
+      lanes,
+      "</div>",
+      editableText("p", "note", p.note || "", "swimlane-note"),
+    ].join("\n")
+  );
+}
+
+function renderCustomerJourney(slide, index) {
+  const p = slide.props;
+  const stages = (p.stages || []).map((stage, stageIndex) => [
+    `<article class="journey-stage journey-emotion-${stage.emotion || "neutral"}" data-item-index="${stageIndex}">`,
+    '<div class="journey-stage-heading">',
+    `<span class="journey-index" aria-hidden="true">${String(stageIndex + 1).padStart(2, "0")}</span>`,
+    editableText("h3", `stages.${stageIndex}.stage`, stage.stage),
+    "</div>",
+    '<div class="journey-row journey-action">',
+    '<span class="journey-row-label">用户行为</span>',
+    editableText("p", `stages.${stageIndex}.action`, stage.action),
+    "</div>",
+    '<div class="journey-row journey-touchpoint">',
+    '<span class="journey-row-label">触点</span>',
+    editableText("p", `stages.${stageIndex}.touchpoint`, stage.touchpoint),
+    "</div>",
+    '<div class="journey-row journey-emotion">',
+    '<span class="journey-row-label">感受</span>',
+    `<span class="journey-emotion-dot" aria-hidden="true"></span>`,
+    editableText("p", `stages.${stageIndex}.emotion_note`, stage.emotion_note || ""),
+    "</div>",
+    '<div class="journey-row journey-pain">',
+    '<span class="journey-row-label">痛点</span>',
+    editableText("p", `stages.${stageIndex}.pain`, stage.pain || ""),
+    "</div>",
+    '<div class="journey-row journey-opportunity">',
+    '<span class="journey-row-label">机会</span>',
+    editableText("p", `stages.${stageIndex}.opportunity`, stage.opportunity || ""),
+    "</div>",
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-customer-journey journey-${p.variant || "experience-curve"} journey-count-${(p.stages || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      `<div class="journey-grid" data-layout-region="content">${stages}</div>`,
+      editableText("p", "insight", p.insight || "", "journey-insight"),
+    ].join("\n")
+  );
+}
+
+function renderMaturityModel(slide, index) {
+  const p = slide.props;
+  const levels = (p.levels || []).map((level, levelIndex) => [
+    `<article class="maturity-level maturity-state-${level.state || "none"}" data-item-index="${levelIndex}">`,
+    '<div class="maturity-level-head">',
+    editableText("p", `levels.${levelIndex}.level`, level.level, "maturity-level-label"),
+    `<span class="maturity-step-index" aria-hidden="true">${String(levelIndex + 1).padStart(2, "0")}</span>`,
+    "</div>",
+    editableText("h3", `levels.${levelIndex}.title`, level.title),
+    editableText("p", `levels.${levelIndex}.criteria`, level.criteria, "maturity-criteria"),
+    editableText("p", `levels.${levelIndex}.status`, level.status || "", "maturity-status"),
+    "</article>",
+  ].join("\n")).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-maturity-model maturity-variant-${p.variant || "ladder"} maturity-count-${(p.levels || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      `<div class="maturity-ladder" data-layout-region="content">${levels}</div>`,
+      editableText("p", "insight", p.insight || "", "maturity-insight"),
+    ].join("\n")
+  );
+}
+
+function renderCauseTree(slide, index) {
+  const p = slide.props;
+  const causes = (p.causes || []).map((cause, causeIndex) => {
+    const factors = (cause.factors || []).map((factor, factorIndex) => (
+      editableText("li", `causes.${causeIndex}.factors.${factorIndex}`, factor)
+    )).join("\n");
+    return [
+      `<article class="cause-branch" data-item-index="${causeIndex}">`,
+      editableText("p", `causes.${causeIndex}.category`, cause.category, "cause-category"),
+      editableText("h3", `causes.${causeIndex}.title`, cause.title),
+      editableText("p", `causes.${causeIndex}.detail`, cause.detail || "", "cause-detail"),
+      `<ul class="cause-factors">${factors}</ul>`,
+      "</article>",
+    ].join("\n");
+  }).join("\n");
+  return slideFrame(
+    slide,
+    index,
+    `layout-cause-tree cause-tree-${p.variant || "branches"} cause-count-${(p.causes || []).length}`,
+    [
+      '<header class="slide-header" data-layout-region="header">',
+      editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
+      editableText("h2", "title", p.title),
+      editableText("p", "subtitle", p.subtitle || "", "header-note"),
+      "</header>",
+      '<div class="cause-tree-stage" data-layout-region="content">',
+      '<article class="cause-problem">',
+      '<span class="cause-problem-label">核心问题</span>',
+      editableText("h3", "problem.title", p.problem.title),
+      editableText("p", "problem.body", p.problem.body || ""),
+      "</article>",
+      `<div class="cause-trunk" aria-hidden="true"></div><div class="cause-branches">${causes}</div>`,
+      "</div>",
+      editableText("p", "insight", p.insight || "", "cause-insight"),
     ].join("\n")
   );
 }
@@ -1881,7 +2038,7 @@ const layouts = [
         enums: {
           variant: {
             label: "卡片样式",
-            options: { balanced: "卡片", numbered: "编号" },
+            options: { balanced: "等权卡片", numbered: "编号清单", featured: "主次分区" },
           },
         },
         collections: {
@@ -1914,7 +2071,7 @@ const layouts = [
       textRegionNames: ["header", "content"],
     }),
     capabilities: ["editable", "pptx-safe"],
-    variants: ["balanced", "numbered"],
+    variants: ["balanced", "numbered", "featured"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(64, { role: "heading" }),
@@ -1924,7 +2081,7 @@ const layouts = [
         title: textField(36, { role: "heading" }),
         body: textField(100, { role: "body" }),
       }),
-      variant: enumField(["balanced", "numbered"], "balanced"),
+      variant: enumField(["balanced", "numbered", "featured"], "balanced"),
     },
     defaultProps: { subtitle: "", variant: "balanced" },
     render: renderCards,
@@ -1935,7 +2092,18 @@ const layouts = [
     editor: {
       label: "优先级四象限",
       description: "按横纵两个维度放置四类可编辑事项",
-      controls: {},
+      controls: {
+        enums: {
+          variant: {
+            label: "矩阵构图",
+            options: {
+              "impact-urgency": "影响 × 紧急",
+              "equal-cross": "等权十字",
+              "focus-high-high": "重点象限",
+            },
+          },
+        },
+      },
       defaultProps: {
         eyebrow: "决策矩阵",
         title: "输入需要排序的问题",
@@ -1948,6 +2116,7 @@ const layouts = [
           { kicker: "低影响 · 高紧急", title: "快速治理", body: "用轻量动作及时消除扰动。" },
           { kicker: "低影响 · 低紧急", title: "持续观察", body: "保留跟踪并控制投入。" },
         ],
+        variant: "impact-urgency",
       },
     },
     roles: ["quadrant", "priority-matrix", "impact-urgency", "decision-matrix"],
@@ -1962,7 +2131,7 @@ const layouts = [
       decisionRule: "The editable quadrant is the primary visual; skip generated media.",
     }),
     capabilities: ["editable", "pptx-safe", "matrix", "quadrant"],
-    variants: ["impact-urgency"],
+    variants: ["impact-urgency", "equal-cross", "focus-high-high"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(72, { role: "heading" }),
@@ -1974,8 +2143,9 @@ const layouts = [
         title: textField(36, { role: "heading" }),
         body: textField(100, { required: false, role: "body" }),
       }),
+      variant: enumField(["impact-urgency", "equal-cross", "focus-high-high"], "impact-urgency"),
     },
-    defaultProps: { subtitle: "" },
+    defaultProps: { subtitle: "", variant: "impact-urgency" },
     render: renderQuadrantMatrix,
   },
   {
@@ -2118,7 +2288,7 @@ const layouts = [
         enums: {
           variant: {
             label: "对比样式",
-            options: { contrast: "对比强调", symmetric: "左右对称" },
+            options: { contrast: "对比强调", symmetric: "左右对称", stacked: "上下推演" },
           },
         },
         collections: {
@@ -2155,7 +2325,7 @@ const layouts = [
       textRegionNames: ["header", "content"],
     }),
     capabilities: ["editable", "pptx-safe"],
-    variants: ["contrast", "symmetric"],
+    variants: ["contrast", "symmetric", "stacked"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(64, { role: "heading" }),
@@ -2171,7 +2341,7 @@ const layouts = [
         items: arrayField(2, 5, textField(72, { role: "body" })),
         footer: textField(72, { required: false, role: "caption" }),
       }),
-      variant: enumField(["contrast", "symmetric"], "contrast"),
+      variant: enumField(["contrast", "symmetric", "stacked"], "contrast"),
     },
     defaultProps: { variant: "contrast" },
     render: renderComparison,
@@ -2186,7 +2356,7 @@ const layouts = [
         enums: {
           variant: {
             label: "数据样式",
-            options: { cards: "卡片", ledger: "账本" },
+            options: { cards: "等权卡片", ledger: "账本", hero: "主指标" },
           },
         },
         collections: {
@@ -2216,7 +2386,7 @@ const layouts = [
       textRegionNames: ["header", "content"],
     }),
     capabilities: ["editable", "pptx-safe", "data"],
-    variants: ["cards", "ledger"],
+    variants: ["cards", "ledger", "hero"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(64, { role: "heading" }),
@@ -2227,7 +2397,7 @@ const layouts = [
         detail: textField(90, { required: false, role: "body" }),
         delta: textField(28, { required: false, role: "label" }),
       }),
-      variant: enumField(["cards", "ledger"], "cards"),
+      variant: enumField(["cards", "ledger", "hero"], "cards"),
     },
     defaultProps: { subtitle: "", variant: "cards" },
     render: renderKpis,
@@ -2880,7 +3050,7 @@ const layouts = [
         enums: {
           variant: {
             label: "时间线样式",
-            options: { horizontal: "水平", staggered: "错落" },
+            options: { horizontal: "水平", staggered: "错落", "phase-band": "阶段带" },
           },
         },
         collections: {
@@ -2913,7 +3083,7 @@ const layouts = [
       textRegionNames: ["header", "content"],
     }),
     capabilities: ["editable", "pptx-safe"],
-    variants: ["horizontal", "staggered"],
+    variants: ["horizontal", "staggered", "phase-band"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(64, { role: "heading" }),
@@ -2923,10 +3093,269 @@ const layouts = [
         title: textField(32, { role: "heading" }),
         body: textField(90, { required: false, role: "body" }),
       }),
-      variant: enumField(["horizontal", "staggered"], "horizontal"),
+      variant: enumField(["horizontal", "staggered", "phase-band"], "horizontal"),
     },
     defaultProps: { subtitle: "", variant: "horizontal" },
     render: renderTimeline,
+  },
+  {
+    id: "swimlane-process-v1",
+    label: "Role-by-phase swimlane process",
+    editor: {
+      label: "泳道流程",
+      description: "按角色与阶段展示任务、交接和协作边界",
+      controls: {
+        collections: {
+          columns: { label: "流程阶段", itemDefault: "新阶段" },
+          lanes: {
+            label: "角色泳道",
+            itemDefault: {
+              role: "新角色",
+              activities: ["输入活动", "输入活动", "输入活动", "输入活动"],
+            },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "协作流程",
+        title: "角色与阶段共同定义交付路径",
+        subtitle: "每个单元格只描述该角色在对应阶段承担的主要活动",
+        columns: ["需求确认", "方案设计", "实施交付", "验收运营"],
+        lanes: [
+          { role: "业务团队", activities: ["明确目标与范围", "确认关键规则", "参与业务验收", "跟踪业务效果"] },
+          { role: "产品与技术", activities: ["评估约束条件", "完成方案与接口", "开发、联调与上线", "监控并持续优化"] },
+          { role: "项目管理", activities: ["建立计划与责任", "组织评审与决策", "管理风险与交接", "复盘并沉淀机制"] },
+        ],
+        note: "交接点应明确输入、输出和责任人。",
+        variant: "role-phase",
+      },
+    },
+    roles: ["swimlane", "cross-functional-process", "handoff", "responsibility", "workflow"],
+    density: "high",
+    contentShape: ["swimlane", "role-phase-matrix", "activities"],
+    visualKinds: ["swimlane", "process"],
+    relationships: ["ordered", "handoff", "responsibility", "role-phase"],
+    directions: ["left-to-right", "top-down"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable role-phase matrix is the primary visual; skip generated media.",
+    }),
+    capabilities: ["editable", "pptx-safe", "matrix", "process"],
+    variants: ["role-phase"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(72, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      columns: arrayField(3, 5, textField(24, { role: "label" })),
+      lanes: arrayField(2, 4, {
+        role: textField(28, { role: "heading" }),
+        activities: arrayField(3, 5, textField(58, { role: "body" })),
+      }),
+      note: textField(120, { required: false, role: "caption" }),
+      variant: enumField(["role-phase"], "role-phase"),
+    },
+    defaultProps: { subtitle: "", note: "", variant: "role-phase" },
+    render: renderSwimlaneProcess,
+  },
+  {
+    id: "customer-journey-map-v1",
+    label: "Customer journey map with touchpoints, emotion, pain, and opportunity",
+    editor: {
+      label: "客户旅程图",
+      description: "按阶段对齐用户行为、触点、感受、痛点与机会",
+      controls: {
+        collections: {
+          stages: {
+            label: "旅程阶段",
+            itemDefault: {
+              stage: "新阶段",
+              action: "描述用户行为",
+              touchpoint: "描述关键触点",
+              emotion: "neutral",
+              emotion_note: "感受一般",
+              pain: "待识别痛点",
+              opportunity: "待识别机会",
+            },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "客户旅程",
+        title: "从触达到持续使用的体验机会",
+        subtitle: "在同一阶段内对齐行为、触点、感受、痛点与改进动作",
+        stages: [
+          { stage: "了解", action: "搜索并比较解决方案", touchpoint: "内容、官网、口碑", emotion: "neutral", emotion_note: "信息较分散", pain: "价值差异不清晰", opportunity: "用场景化证据建立认知" },
+          { stage: "评估", action: "体验产品并验证能力", touchpoint: "演示、试用、咨询", emotion: "positive", emotion_note: "开始形成信心", pain: "验证成本较高", opportunity: "提供可复用评估路径" },
+          { stage: "采用", action: "完成配置并进入使用", touchpoint: "实施、培训、支持", emotion: "negative", emotion_note: "交接容易中断", pain: "角色责任不明确", opportunity: "明确里程碑与责任边界" },
+          { stage: "持续", action: "复盘效果并扩大使用", touchpoint: "运营、数据、服务", emotion: "positive", emotion_note: "看到持续价值", pain: "价值证明不连续", opportunity: "建立指标闭环与复盘机制" },
+        ],
+        insight: "优先解决采用阶段的交接断点，能同时改善转化效率和后续留存。",
+        variant: "experience-curve",
+      },
+    },
+    roles: ["customer-journey", "user-journey", "service-design", "experience", "touchpoints"],
+    density: "high",
+    contentShape: ["journey-map", "stages", "experience-layers"],
+    visualKinds: ["customer-journey", "journey-map"],
+    relationships: ["ordered", "experience", "opportunity"],
+    directions: ["left-to-right"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable journey stages and experience rows are the primary visual; skip generated media.",
+    }),
+    capabilities: ["editable", "pptx-safe", "journey", "service-design"],
+    variants: ["experience-curve"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(72, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      stages: arrayField(3, 5, {
+        stage: textField(24, { role: "heading" }),
+        action: textField(68, { role: "body" }),
+        touchpoint: textField(52, { role: "body" }),
+        emotion: enumField(["positive", "neutral", "negative"], "neutral"),
+        emotion_note: textField(36, { required: false, role: "caption" }),
+        pain: textField(58, { required: false, role: "body" }),
+        opportunity: textField(64, { required: false, role: "body" }),
+      }),
+      insight: textField(140, { required: false, role: "lead" }),
+      variant: enumField(["experience-curve"], "experience-curve"),
+    },
+    defaultProps: { subtitle: "", insight: "", variant: "experience-curve" },
+    render: renderCustomerJourney,
+  },
+  {
+    id: "maturity-model-v1",
+    label: "Capability maturity ladder with current and target states",
+    editor: {
+      label: "成熟度模型",
+      description: "展示能力等级、每级标准以及当前与目标状态",
+      controls: {
+        collections: {
+          levels: {
+            label: "成熟度等级",
+            itemDefault: {
+              level: "L0",
+              title: "新等级",
+              criteria: "描述该等级的能力标准。",
+              state: "none",
+              status: "",
+            },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "成熟度模型",
+        title: "能力从局部实践走向持续优化",
+        subtitle: "每一级都定义可观察的标准，并标记当前状态与目标状态",
+        levels: [
+          { level: "L1", title: "初始", criteria: "依赖个人经验，流程与数据尚未统一。", state: "none", status: "" },
+          { level: "L2", title: "规范", criteria: "关键流程可重复，责任与标准开始明确。", state: "current", status: "当前" },
+          { level: "L3", title: "集成", criteria: "流程、系统和数据形成端到端协同。", state: "none", status: "" },
+          { level: "L4", title: "智能", criteria: "以指标和自动化驱动预测、决策与优化。", state: "target", status: "目标" },
+        ],
+        insight: "先补齐规范化与集成基础，再扩大智能化能力，避免自动化放大流程差异。",
+        variant: "ladder",
+      },
+    },
+    roles: ["maturity-model", "capability-maturity", "assessment", "transformation", "roadmap"],
+    density: "medium-high",
+    contentShape: ["maturity-levels", "ladder", "current-target-gap"],
+    visualKinds: ["maturity", "maturity-model", "ladder"],
+    relationships: ["ordered", "progression", "gap"],
+    directions: ["left-to-right", "bottom-up"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable maturity ladder is the primary visual; skip generated media.",
+    }),
+    capabilities: ["editable", "pptx-safe", "maturity", "assessment"],
+    variants: ["ladder"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(72, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      levels: arrayField(3, 5, {
+        level: textField(12, { role: "label" }),
+        title: textField(28, { role: "heading" }),
+        criteria: textField(90, { role: "body" }),
+        state: enumField(["none", "current", "target"], "none"),
+        status: textField(20, { required: false, role: "label" }),
+      }),
+      insight: textField(140, { required: false, role: "lead" }),
+      variant: enumField(["ladder"], "ladder"),
+    },
+    defaultProps: { subtitle: "", insight: "", variant: "ladder" },
+    render: renderMaturityModel,
+  },
+  {
+    id: "cause-tree-v1",
+    label: "Root-cause tree with categories and contributing factors",
+    editor: {
+      label: "根因树",
+      description: "从核心问题展开原因类别与可验证影响因素",
+      controls: {
+        collections: {
+          causes: {
+            label: "原因分支",
+            itemDefault: {
+              category: "新类别",
+              title: "新原因",
+              detail: "说明原因如何影响核心问题。",
+              factors: ["待验证因素"],
+            },
+          },
+        },
+      },
+      defaultProps: {
+        eyebrow: "根因分析",
+        title: "从现象回到可验证的原因链",
+        subtitle: "区分核心问题、原因类别与具体影响因素，避免把症状当成根因",
+        problem: { title: "核心问题", body: "用一句可观察、可衡量的话描述问题。" },
+        causes: [
+          { category: "流程", title: "流程缺少稳定闭环", detail: "关键交接依赖口头约定。", factors: ["输入标准不统一", "异常缺少升级路径"] },
+          { category: "角色", title: "责任边界不清晰", detail: "同一事项在多个团队间反复转交。", factors: ["决策人未明确", "责任与权限不匹配"] },
+          { category: "系统", title: "工具链信息割裂", detail: "状态无法在同一上下文持续追踪。", factors: ["数据口径分散", "系统间缺少同步"] },
+          { category: "度量", title: "指标不能解释过程", detail: "只看到结果，无法定位过程偏差。", factors: ["领先指标缺失", "复盘证据不完整"] },
+        ],
+        insight: "优先验证能同时解释多个症状的原因，再把行动绑定到责任人与观察指标。",
+        variant: "branches",
+      },
+    },
+    roles: ["root-cause", "cause-analysis", "problem-diagnosis", "retrospective", "quality"],
+    density: "high",
+    contentShape: ["cause-tree", "problem", "causes", "factors"],
+    visualKinds: ["cause-tree", "root-cause"],
+    relationships: ["one-to-many", "causal"],
+    directions: ["left-to-right"],
+    mediaSlots: mediaSlots(0, 0, [], {
+      backgroundMode: "rare",
+      textRegionNames: ["header", "content"],
+      decisionRule: "The editable problem and cause branches are the primary visual; skip generated media.",
+    }),
+    capabilities: ["editable", "pptx-safe", "cause-analysis", "hierarchy"],
+    variants: ["branches"],
+    fields: {
+      eyebrow: textField(32, { role: "label" }),
+      title: textField(72, { role: "heading" }),
+      subtitle: textField(120, { required: false, role: "caption" }),
+      problem: objectField({
+        title: textField(36, { role: "heading" }),
+        body: textField(100, { required: false, role: "body" }),
+      }),
+      causes: arrayField(3, 5, {
+        category: textField(20, { role: "label" }),
+        title: textField(34, { role: "heading" }),
+        detail: textField(80, { required: false, role: "body" }),
+        factors: arrayField(1, 3, textField(46, { role: "body" })),
+      }),
+      insight: textField(140, { required: false, role: "lead" }),
+      variant: enumField(["branches"], "branches"),
+    },
+    defaultProps: { subtitle: "", insight: "", variant: "branches" },
+    render: renderCauseTree,
   },
   {
     id: "factory-process-line-v1",
@@ -3400,12 +3829,19 @@ function contentUnit(value) {
   }
   if (!value || typeof value !== "object") return null;
   return {
-    label: firstText(value.kicker, value.label, value.phase, value.delta),
-    title: firstText(value.title, value.value, value.label),
+    label: firstText(value.kicker, value.label, value.phase, value.delta, value.category, value.level),
+    title: firstText(value.title, value.value, value.label, value.role, value.stage),
     body: firstText(
       value.body,
       value.detail,
+      value.criteria,
+      value.action,
+      value.touchpoint,
+      value.pain,
+      value.opportunity,
       value.flow,
+      Array.isArray(value.activities) ? value.activities.join(" · ") : "",
+      Array.isArray(value.factors) ? value.factors.join(" · ") : "",
       Array.isArray(value.modules) ? value.modules.join(" · ") : "",
       value.footer,
       value.note,
@@ -3441,6 +3877,9 @@ function contentSnapshot(sourceSlide) {
   addUnits(props.stations);
   addUnits(props.zones);
   addUnits(props.stages);
+  addUnits(props.lanes);
+  addUnits(props.levels);
+  addUnits(props.causes);
   if (Array.isArray(props.categories) && Array.isArray(props.series)) {
     const firstSeries = props.series.find(item => item && Array.isArray(item.values));
     props.categories.forEach((category, index) => {
@@ -3712,6 +4151,48 @@ function createEditorProps(layoutId, sourceSlide = null) {
       body: fitText(firstText(unit.body, unit.title, unit.value), 90, "说明这一阶段要完成什么。"),
     }));
     props.steps = fillFromDefaults(mapped, props.steps, 3);
+  } else if (layoutId === "swimlane-process-v1") {
+    if (Array.isArray(snapshot.props.columns) && Array.isArray(snapshot.props.lanes)) {
+      props.columns = snapshot.props.columns.slice(0, 5).map(value => fitText(value, 24, "新阶段"));
+      props.lanes = snapshot.props.lanes.slice(0, 4).map((lane, index) => ({
+        role: fitText(lane && lane.role, 28, `角色 ${index + 1}`),
+        activities: fillFromDefaults(
+          Array.isArray(lane && lane.activities)
+            ? lane.activities.slice(0, props.columns.length).map(value => fitText(value, 58, "待补充活动"))
+            : [],
+          ["待补充活动"],
+          props.columns.length
+        ).slice(0, props.columns.length),
+      }));
+    }
+  } else if (layoutId === "customer-journey-map-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 5).map((unit, index) => ({
+      stage: fitText(firstText(unit.title, unit.label), 24, `阶段 ${index + 1}`),
+      action: fitText(firstText(unit.body, unit.title), 68, "描述用户行为"),
+      touchpoint: "待补充触点",
+      emotion: "neutral",
+      emotion_note: "待确认感受",
+      pain: "待识别痛点",
+      opportunity: "待识别机会",
+    }));
+    props.stages = fillFromDefaults(mapped, props.stages, 3);
+  } else if (layoutId === "maturity-model-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 5).map((unit, index) => ({
+      level: fitText(unit.label, 12, `L${index + 1}`),
+      title: fitText(firstText(unit.title, unit.value), 28, `等级 ${index + 1}`),
+      criteria: fitText(firstText(unit.body, unit.title), 90, "描述该等级的能力标准。"),
+      state: "none",
+      status: "",
+    }));
+    props.levels = fillFromDefaults(mapped, props.levels, 3);
+  } else if (layoutId === "cause-tree-v1" && snapshot.units.length) {
+    const mapped = snapshot.units.slice(0, 5).map((unit, index) => ({
+      category: fitText(unit.label, 20, `类别 ${index + 1}`),
+      title: fitText(firstText(unit.title, unit.value), 34, `原因 ${index + 1}`),
+      detail: fitText(firstText(unit.body, unit.title), 80, "说明原因如何影响核心问题。"),
+      factors: ["待验证因素"],
+    }));
+    props.causes = fillFromDefaults(mapped, props.causes, 3);
   } else if (layoutId === "project-case-study-v1") {
     if (snapshot.subtitle) {
       props.positioning = fitText(snapshot.subtitle, 180, props.positioning);
@@ -3772,6 +4253,13 @@ const VISUAL_COLLECTION_CONTRACTS = Object.freeze({
     { dimension: "columns", path: "columns" },
   ],
   "timeline-horizontal-v1": [{ dimension: "steps", path: "steps", aliases: ["items", "milestones"] }],
+  "swimlane-process-v1": [
+    { dimension: "lanes", path: "lanes", aliases: ["rows", "roles"], primary: true },
+    { dimension: "phases", path: "columns", aliases: ["columns", "steps", "stages"] },
+  ],
+  "customer-journey-map-v1": [{ dimension: "stages", path: "stages", aliases: ["steps", "items", "phases"] }],
+  "maturity-model-v1": [{ dimension: "levels", path: "levels", aliases: ["layers", "steps", "items"] }],
+  "cause-tree-v1": [{ dimension: "causes", path: "causes", aliases: ["branches", "items", "categories"] }],
   "factory-process-line-v1": [{ dimension: "stations", path: "stations", aliases: ["steps", "items"] }],
   "legal-case-logic-v1": [{ dimension: "sections", path: "sections", aliases: ["steps", "items"] }],
   "property-factsheet-v1": [

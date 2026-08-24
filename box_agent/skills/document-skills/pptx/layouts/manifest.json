@@ -9409,8 +9409,9 @@
             "variant": {
               "label": "卡片样式",
               "options": {
-                "balanced": "卡片",
-                "numbered": "编号"
+                "balanced": "等权卡片",
+                "numbered": "编号清单",
+                "featured": "主次分区"
               }
             }
           },
@@ -9520,7 +9521,8 @@
       ],
       "variants": [
         "balanced",
-        "numbered"
+        "numbered",
+        "featured"
       ],
       "fields": {
         "eyebrow": {
@@ -9578,7 +9580,8 @@
           "type": "enum",
           "values": [
             "balanced",
-            "numbered"
+            "numbered",
+            "featured"
           ],
           "default": "balanced",
           "required": false,
@@ -9596,7 +9599,18 @@
       "editor": {
         "label": "优先级四象限",
         "description": "按横纵两个维度放置四类可编辑事项",
-        "controls": {},
+        "controls": {
+          "enums": {
+            "variant": {
+              "label": "矩阵构图",
+              "options": {
+                "impact-urgency": "影响 × 紧急",
+                "equal-cross": "等权十字",
+                "focus-high-high": "重点象限"
+              }
+            }
+          }
+        },
         "defaultProps": {
           "eyebrow": "决策矩阵",
           "title": "输入需要排序的问题",
@@ -9624,7 +9638,8 @@
               "title": "持续观察",
               "body": "保留跟踪并控制投入。"
             }
-          ]
+          ],
+          "variant": "impact-urgency"
         }
       },
       "roles": [
@@ -9695,7 +9710,9 @@
         "quadrant"
       ],
       "variants": [
-        "impact-urgency"
+        "impact-urgency",
+        "equal-cross",
+        "focus-high-high"
       ],
       "fields": {
         "eyebrow": {
@@ -9762,10 +9779,22 @@
               "role": "body"
             }
           }
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "impact-urgency",
+            "equal-cross",
+            "focus-high-high"
+          ],
+          "default": "impact-urgency",
+          "required": false,
+          "editor": true
         }
       },
       "defaultProps": {
-        "subtitle": ""
+        "subtitle": "",
+        "variant": "impact-urgency"
       }
     },
     {
@@ -10171,7 +10200,8 @@
               "label": "对比样式",
               "options": {
                 "contrast": "对比强调",
-                "symmetric": "左右对称"
+                "symmetric": "左右对称",
+                "stacked": "上下推演"
               }
             }
           },
@@ -10275,7 +10305,8 @@
       ],
       "variants": [
         "contrast",
-        "symmetric"
+        "symmetric",
+        "stacked"
       ],
       "fields": {
         "eyebrow": {
@@ -10380,7 +10411,8 @@
           "type": "enum",
           "values": [
             "contrast",
-            "symmetric"
+            "symmetric",
+            "stacked"
           ],
           "default": "contrast",
           "required": false,
@@ -10402,8 +10434,9 @@
             "variant": {
               "label": "数据样式",
               "options": {
-                "cards": "卡片",
-                "ledger": "账本"
+                "cards": "等权卡片",
+                "ledger": "账本",
+                "hero": "主指标"
               }
             }
           },
@@ -10504,7 +10537,8 @@
       ],
       "variants": [
         "cards",
-        "ledger"
+        "ledger",
+        "hero"
       ],
       "fields": {
         "eyebrow": {
@@ -10569,7 +10603,8 @@
           "type": "enum",
           "values": [
             "cards",
-            "ledger"
+            "ledger",
+            "hero"
           ],
           "default": "cards",
           "required": false,
@@ -12657,7 +12692,8 @@
               "label": "时间线样式",
               "options": {
                 "horizontal": "水平",
-                "staggered": "错落"
+                "staggered": "错落",
+                "phase-band": "阶段带"
               }
             }
           },
@@ -12765,7 +12801,8 @@
       ],
       "variants": [
         "horizontal",
-        "staggered"
+        "staggered",
+        "phase-band"
       ],
       "fields": {
         "eyebrow": {
@@ -12823,7 +12860,8 @@
           "type": "enum",
           "values": [
             "horizontal",
-            "staggered"
+            "staggered",
+            "phase-band"
           ],
           "default": "horizontal",
           "required": false,
@@ -12833,6 +12871,975 @@
       "defaultProps": {
         "subtitle": "",
         "variant": "horizontal"
+      }
+    },
+    {
+      "id": "swimlane-process-v1",
+      "label": "Role-by-phase swimlane process",
+      "editor": {
+        "label": "泳道流程",
+        "description": "按角色与阶段展示任务、交接和协作边界",
+        "controls": {
+          "collections": {
+            "columns": {
+              "label": "流程阶段",
+              "itemDefault": "新阶段"
+            },
+            "lanes": {
+              "label": "角色泳道",
+              "itemDefault": {
+                "role": "新角色",
+                "activities": [
+                  "输入活动",
+                  "输入活动",
+                  "输入活动",
+                  "输入活动"
+                ]
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "协作流程",
+          "title": "角色与阶段共同定义交付路径",
+          "subtitle": "每个单元格只描述该角色在对应阶段承担的主要活动",
+          "columns": [
+            "需求确认",
+            "方案设计",
+            "实施交付",
+            "验收运营"
+          ],
+          "lanes": [
+            {
+              "role": "业务团队",
+              "activities": [
+                "明确目标与范围",
+                "确认关键规则",
+                "参与业务验收",
+                "跟踪业务效果"
+              ]
+            },
+            {
+              "role": "产品与技术",
+              "activities": [
+                "评估约束条件",
+                "完成方案与接口",
+                "开发、联调与上线",
+                "监控并持续优化"
+              ]
+            },
+            {
+              "role": "项目管理",
+              "activities": [
+                "建立计划与责任",
+                "组织评审与决策",
+                "管理风险与交接",
+                "复盘并沉淀机制"
+              ]
+            }
+          ],
+          "note": "交接点应明确输入、输出和责任人。",
+          "variant": "role-phase"
+        }
+      },
+      "roles": [
+        "swimlane",
+        "cross-functional-process",
+        "handoff",
+        "responsibility",
+        "workflow"
+      ],
+      "density": "high",
+      "contentShape": [
+        "swimlane",
+        "role-phase-matrix",
+        "activities"
+      ],
+      "visualKinds": [
+        "swimlane",
+        "process"
+      ],
+      "relationships": [
+        "ordered",
+        "handoff",
+        "responsibility",
+        "role-phase"
+      ],
+      "directions": [
+        "left-to-right",
+        "top-down"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable role-phase matrix is the primary visual; skip generated media."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "matrix",
+        "process"
+      ],
+      "variants": [
+        "role-phase"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 72,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "columns": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 5,
+          "itemShape": {
+            "type": "text",
+            "maxChars": 24,
+            "required": true,
+            "editor": true,
+            "role": "label"
+          }
+        },
+        "lanes": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 2,
+          "maxItems": 4,
+          "itemShape": {
+            "role": {
+              "type": "text",
+              "maxChars": 28,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "activities": {
+              "type": "array",
+              "required": true,
+              "editor": true,
+              "minItems": 3,
+              "maxItems": 5,
+              "itemShape": {
+                "type": "text",
+                "maxChars": 58,
+                "required": true,
+                "editor": true,
+                "role": "body"
+              }
+            }
+          }
+        },
+        "note": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "role-phase"
+          ],
+          "default": "role-phase",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "note": "",
+        "variant": "role-phase"
+      },
+      "counts": {
+        "lanes": "lanes",
+        "phases": "columns"
+      }
+    },
+    {
+      "id": "customer-journey-map-v1",
+      "label": "Customer journey map with touchpoints, emotion, pain, and opportunity",
+      "editor": {
+        "label": "客户旅程图",
+        "description": "按阶段对齐用户行为、触点、感受、痛点与机会",
+        "controls": {
+          "collections": {
+            "stages": {
+              "label": "旅程阶段",
+              "itemDefault": {
+                "stage": "新阶段",
+                "action": "描述用户行为",
+                "touchpoint": "描述关键触点",
+                "emotion": "neutral",
+                "emotion_note": "感受一般",
+                "pain": "待识别痛点",
+                "opportunity": "待识别机会"
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "客户旅程",
+          "title": "从触达到持续使用的体验机会",
+          "subtitle": "在同一阶段内对齐行为、触点、感受、痛点与改进动作",
+          "stages": [
+            {
+              "stage": "了解",
+              "action": "搜索并比较解决方案",
+              "touchpoint": "内容、官网、口碑",
+              "emotion": "neutral",
+              "emotion_note": "信息较分散",
+              "pain": "价值差异不清晰",
+              "opportunity": "用场景化证据建立认知"
+            },
+            {
+              "stage": "评估",
+              "action": "体验产品并验证能力",
+              "touchpoint": "演示、试用、咨询",
+              "emotion": "positive",
+              "emotion_note": "开始形成信心",
+              "pain": "验证成本较高",
+              "opportunity": "提供可复用评估路径"
+            },
+            {
+              "stage": "采用",
+              "action": "完成配置并进入使用",
+              "touchpoint": "实施、培训、支持",
+              "emotion": "negative",
+              "emotion_note": "交接容易中断",
+              "pain": "角色责任不明确",
+              "opportunity": "明确里程碑与责任边界"
+            },
+            {
+              "stage": "持续",
+              "action": "复盘效果并扩大使用",
+              "touchpoint": "运营、数据、服务",
+              "emotion": "positive",
+              "emotion_note": "看到持续价值",
+              "pain": "价值证明不连续",
+              "opportunity": "建立指标闭环与复盘机制"
+            }
+          ],
+          "insight": "优先解决采用阶段的交接断点，能同时改善转化效率和后续留存。",
+          "variant": "experience-curve"
+        }
+      },
+      "roles": [
+        "customer-journey",
+        "user-journey",
+        "service-design",
+        "experience",
+        "touchpoints"
+      ],
+      "density": "high",
+      "contentShape": [
+        "journey-map",
+        "stages",
+        "experience-layers"
+      ],
+      "visualKinds": [
+        "customer-journey",
+        "journey-map"
+      ],
+      "relationships": [
+        "ordered",
+        "experience",
+        "opportunity"
+      ],
+      "directions": [
+        "left-to-right"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable journey stages and experience rows are the primary visual; skip generated media."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "journey",
+        "service-design"
+      ],
+      "variants": [
+        "experience-curve"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 72,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "stages": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 5,
+          "itemShape": {
+            "stage": {
+              "type": "text",
+              "maxChars": 24,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "action": {
+              "type": "text",
+              "maxChars": 68,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            },
+            "touchpoint": {
+              "type": "text",
+              "maxChars": 52,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            },
+            "emotion": {
+              "type": "enum",
+              "values": [
+                "positive",
+                "neutral",
+                "negative"
+              ],
+              "default": "neutral",
+              "required": false,
+              "editor": true
+            },
+            "emotion_note": {
+              "type": "text",
+              "maxChars": 36,
+              "required": false,
+              "editor": true,
+              "role": "caption"
+            },
+            "pain": {
+              "type": "text",
+              "maxChars": 58,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            },
+            "opportunity": {
+              "type": "text",
+              "maxChars": 64,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "insight": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "experience-curve"
+          ],
+          "default": "experience-curve",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "insight": "",
+        "variant": "experience-curve"
+      }
+    },
+    {
+      "id": "maturity-model-v1",
+      "label": "Capability maturity ladder with current and target states",
+      "editor": {
+        "label": "成熟度模型",
+        "description": "展示能力等级、每级标准以及当前与目标状态",
+        "controls": {
+          "collections": {
+            "levels": {
+              "label": "成熟度等级",
+              "itemDefault": {
+                "level": "L0",
+                "title": "新等级",
+                "criteria": "描述该等级的能力标准。",
+                "state": "none",
+                "status": ""
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "成熟度模型",
+          "title": "能力从局部实践走向持续优化",
+          "subtitle": "每一级都定义可观察的标准，并标记当前状态与目标状态",
+          "levels": [
+            {
+              "level": "L1",
+              "title": "初始",
+              "criteria": "依赖个人经验，流程与数据尚未统一。",
+              "state": "none",
+              "status": ""
+            },
+            {
+              "level": "L2",
+              "title": "规范",
+              "criteria": "关键流程可重复，责任与标准开始明确。",
+              "state": "current",
+              "status": "当前"
+            },
+            {
+              "level": "L3",
+              "title": "集成",
+              "criteria": "流程、系统和数据形成端到端协同。",
+              "state": "none",
+              "status": ""
+            },
+            {
+              "level": "L4",
+              "title": "智能",
+              "criteria": "以指标和自动化驱动预测、决策与优化。",
+              "state": "target",
+              "status": "目标"
+            }
+          ],
+          "insight": "先补齐规范化与集成基础，再扩大智能化能力，避免自动化放大流程差异。",
+          "variant": "ladder"
+        }
+      },
+      "roles": [
+        "maturity-model",
+        "capability-maturity",
+        "assessment",
+        "transformation",
+        "roadmap"
+      ],
+      "density": "medium-high",
+      "contentShape": [
+        "maturity-levels",
+        "ladder",
+        "current-target-gap"
+      ],
+      "visualKinds": [
+        "maturity",
+        "maturity-model",
+        "ladder"
+      ],
+      "relationships": [
+        "ordered",
+        "progression",
+        "gap"
+      ],
+      "directions": [
+        "left-to-right",
+        "bottom-up"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable maturity ladder is the primary visual; skip generated media."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "maturity",
+        "assessment"
+      ],
+      "variants": [
+        "ladder"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 72,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "levels": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 5,
+          "itemShape": {
+            "level": {
+              "type": "text",
+              "maxChars": 12,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 28,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "criteria": {
+              "type": "text",
+              "maxChars": 90,
+              "required": true,
+              "editor": true,
+              "role": "body"
+            },
+            "state": {
+              "type": "enum",
+              "values": [
+                "none",
+                "current",
+                "target"
+              ],
+              "default": "none",
+              "required": false,
+              "editor": true
+            },
+            "status": {
+              "type": "text",
+              "maxChars": 20,
+              "required": false,
+              "editor": true,
+              "role": "label"
+            }
+          }
+        },
+        "insight": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "ladder"
+          ],
+          "default": "ladder",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "insight": "",
+        "variant": "ladder"
+      }
+    },
+    {
+      "id": "cause-tree-v1",
+      "label": "Root-cause tree with categories and contributing factors",
+      "editor": {
+        "label": "根因树",
+        "description": "从核心问题展开原因类别与可验证影响因素",
+        "controls": {
+          "collections": {
+            "causes": {
+              "label": "原因分支",
+              "itemDefault": {
+                "category": "新类别",
+                "title": "新原因",
+                "detail": "说明原因如何影响核心问题。",
+                "factors": [
+                  "待验证因素"
+                ]
+              }
+            }
+          }
+        },
+        "defaultProps": {
+          "eyebrow": "根因分析",
+          "title": "从现象回到可验证的原因链",
+          "subtitle": "区分核心问题、原因类别与具体影响因素，避免把症状当成根因",
+          "problem": {
+            "title": "核心问题",
+            "body": "用一句可观察、可衡量的话描述问题。"
+          },
+          "causes": [
+            {
+              "category": "流程",
+              "title": "流程缺少稳定闭环",
+              "detail": "关键交接依赖口头约定。",
+              "factors": [
+                "输入标准不统一",
+                "异常缺少升级路径"
+              ]
+            },
+            {
+              "category": "角色",
+              "title": "责任边界不清晰",
+              "detail": "同一事项在多个团队间反复转交。",
+              "factors": [
+                "决策人未明确",
+                "责任与权限不匹配"
+              ]
+            },
+            {
+              "category": "系统",
+              "title": "工具链信息割裂",
+              "detail": "状态无法在同一上下文持续追踪。",
+              "factors": [
+                "数据口径分散",
+                "系统间缺少同步"
+              ]
+            },
+            {
+              "category": "度量",
+              "title": "指标不能解释过程",
+              "detail": "只看到结果，无法定位过程偏差。",
+              "factors": [
+                "领先指标缺失",
+                "复盘证据不完整"
+              ]
+            }
+          ],
+          "insight": "优先验证能同时解释多个症状的原因，再把行动绑定到责任人与观察指标。",
+          "variant": "branches"
+        }
+      },
+      "roles": [
+        "root-cause",
+        "cause-analysis",
+        "problem-diagnosis",
+        "retrospective",
+        "quality"
+      ],
+      "density": "high",
+      "contentShape": [
+        "cause-tree",
+        "problem",
+        "causes",
+        "factors"
+      ],
+      "visualKinds": [
+        "cause-tree",
+        "root-cause"
+      ],
+      "relationships": [
+        "one-to-many",
+        "causal"
+      ],
+      "directions": [
+        "left-to-right"
+      ],
+      "mediaSlots": {
+        "min": 0,
+        "max": 0,
+        "ratios": [],
+        "countIncludesBackground": false,
+        "decision": {
+          "mode": "auto",
+          "rule": "The editable problem and cause branches are the primary visual; skip generated media."
+        },
+        "slots": [],
+        "background": {
+          "supported": true,
+          "path": "background",
+          "strategies": [
+            "generate",
+            "use_existing",
+            "skip"
+          ],
+          "preferredRatio": "16:9",
+          "treatments": [
+            "wash-light",
+            "wash-dark",
+            "none"
+          ],
+          "requiresLayoutContract": true,
+          "textRegionNames": [
+            "header",
+            "content"
+          ],
+          "recommendation": "rare",
+          "useWhen": [
+            "faint-brand-texture"
+          ],
+          "avoidWhen": [
+            "data-legibility-risk",
+            "busy-scene",
+            "high-contrast-detail-behind-copy"
+          ]
+        }
+      },
+      "capabilities": [
+        "editable",
+        "pptx-safe",
+        "cause-analysis",
+        "hierarchy"
+      ],
+      "variants": [
+        "branches"
+      ],
+      "fields": {
+        "eyebrow": {
+          "type": "text",
+          "maxChars": 32,
+          "required": true,
+          "editor": true,
+          "role": "label"
+        },
+        "title": {
+          "type": "text",
+          "maxChars": 72,
+          "required": true,
+          "editor": true,
+          "role": "heading"
+        },
+        "subtitle": {
+          "type": "text",
+          "maxChars": 120,
+          "required": false,
+          "editor": true,
+          "role": "caption"
+        },
+        "problem": {
+          "type": "object",
+          "required": true,
+          "editor": true,
+          "shape": {
+            "title": {
+              "type": "text",
+              "maxChars": 36,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "body": {
+              "type": "text",
+              "maxChars": 100,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            }
+          }
+        },
+        "causes": {
+          "type": "array",
+          "required": true,
+          "editor": true,
+          "minItems": 3,
+          "maxItems": 5,
+          "itemShape": {
+            "category": {
+              "type": "text",
+              "maxChars": 20,
+              "required": true,
+              "editor": true,
+              "role": "label"
+            },
+            "title": {
+              "type": "text",
+              "maxChars": 34,
+              "required": true,
+              "editor": true,
+              "role": "heading"
+            },
+            "detail": {
+              "type": "text",
+              "maxChars": 80,
+              "required": false,
+              "editor": true,
+              "role": "body"
+            },
+            "factors": {
+              "type": "array",
+              "required": true,
+              "editor": true,
+              "minItems": 1,
+              "maxItems": 3,
+              "itemShape": {
+                "type": "text",
+                "maxChars": 46,
+                "required": true,
+                "editor": true,
+                "role": "body"
+              }
+            }
+          }
+        },
+        "insight": {
+          "type": "text",
+          "maxChars": 140,
+          "required": false,
+          "editor": true,
+          "role": "lead"
+        },
+        "variant": {
+          "type": "enum",
+          "values": [
+            "branches"
+          ],
+          "default": "branches",
+          "required": false,
+          "editor": true
+        }
+      },
+      "defaultProps": {
+        "subtitle": "",
+        "insight": "",
+        "variant": "branches"
       }
     },
     {

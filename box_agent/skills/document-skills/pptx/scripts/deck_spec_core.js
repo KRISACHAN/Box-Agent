@@ -52,6 +52,12 @@ const LAYOUT_ID_ALIASES = Object.freeze({
   "team-showcase-v1": "cards-grid-v1",
   "problem-solution-v1": "comparison-two-column-v1",
   "process-flow-v1": "timeline-horizontal-v1",
+  "swimlane-v1": "swimlane-process-v1",
+  "customer-journey-v1": "customer-journey-map-v1",
+  "journey-map-v1": "customer-journey-map-v1",
+  "maturity-ladder-v1": "maturity-model-v1",
+  "root-cause-v1": "cause-tree-v1",
+  "fishbone-analysis-v1": "cause-tree-v1",
   "business-model-v1": "cards-grid-v1",
   "comparison-matrix-v1": "table-data-v1",
   "funding-use-v1": "chart-data-v1",
@@ -66,6 +72,10 @@ const LAYOUT_ID_ALIASES = Object.freeze({
   "supply-chain-network-v1": "supply-network-v1",
 });
 const LAYOUT_ID_HINTS = Object.freeze([
+  { keywords: ["swimlane", "swim-lane", "cross-functional-process", "role-phase"], id: "swimlane-process-v1" },
+  { keywords: ["customer-journey", "user-journey", "journey-map"], id: "customer-journey-map-v1" },
+  { keywords: ["maturity-model", "maturity-ladder", "capability-maturity"], id: "maturity-model-v1" },
+  { keywords: ["cause-tree", "root-cause", "fishbone"], id: "cause-tree-v1" },
   { keywords: ["factory-process", "factory-line", "production-line", "shop-floor"], id: "factory-process-line-v1" },
   { keywords: ["legal-case", "legal-logic", "legal-irac", "irac"], id: "legal-case-logic-v1" },
   { keywords: ["property-facts", "property-factsheet", "site-facts", "real-estate"], id: "property-factsheet-v1" },
@@ -719,6 +729,21 @@ function validateTechnicalDiagramProps(props, fieldPath, issues) {
   });
 }
 
+function normalizeAndValidateSwimlaneProps(props, fieldPath, issues) {
+  const columns = Array.isArray(props && props.columns) ? props.columns : [];
+  const lanes = Array.isArray(props && props.lanes) ? props.lanes : [];
+  lanes.forEach((lane, laneIndex) => {
+    const activities = Array.isArray(lane && lane.activities) ? lane.activities : [];
+    while (activities.length < columns.length) activities.push("待补充活动");
+    if (activities.length > columns.length) {
+      issues.push(
+        `${fieldPath}.lanes.${laneIndex}.activities: expected ${columns.length} ` +
+        `activity cell(s) to match columns, got ${activities.length}`
+      );
+    }
+  });
+}
+
 function validateAndNormalizeDeck(spec) {
   const issues = [];
   const warnings = [];
@@ -843,6 +868,8 @@ function validateAndNormalizeDeck(spec) {
       validateChartDataProps(normalizedProps, `${slidePath}.props`, issues);
     } else if (slide.layout_id === "technical-diagram-v1") {
       validateTechnicalDiagramProps(normalizedProps, `${slidePath}.props`, issues);
+    } else if (slide.layout_id === "swimlane-process-v1") {
+      normalizeAndValidateSwimlaneProps(normalizedProps, `${slidePath}.props`, issues);
     }
     const normalizedDrafts = validateAndNormalizeLayoutDrafts(
       slide.layout_drafts,

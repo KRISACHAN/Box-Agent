@@ -238,6 +238,13 @@ items are placed against explicit horizontal and vertical axes; item order is
 high-high, high-low, low-high, low-low. Do not substitute `table-data-v1`,
 `heatmap-matrix-v1`, or a generic four-card grid when the outline explicitly
 asks for quadrants, impact-versus-urgency, or a 2×2 matrix.
+Use `swimlane-process-v1` when roles must be crossed with delivery phases and
+each handoff remains editable. Use `customer-journey-map-v1` when each stage
+needs behavior, touchpoint, emotion, pain, and opportunity fields rather than a
+simple ordered timeline. Use `maturity-model-v1` for level criteria plus current
+and target states. Use `cause-tree-v1` for one problem branching into cause
+categories and contributing factors; do not approximate these relationships
+with generic cards or `technical-diagram-v1`.
 Scatter, bubble, combo, sankey, map, and tables beyond these
 capacities still use the data-backed legacy HTML route until a controlled
 native-PPTX mapping is registered. Never flatten recoverable data into a
