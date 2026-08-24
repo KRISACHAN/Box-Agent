@@ -54,7 +54,6 @@ from .tools.mcp_tool_search import (
     MCPToolExposureManager,
     ToolSearchTool,
 )
-from .tools.model_tool_context import scoped_model_tool_context
 from .tools.skill_preload import build_active_skills_prompt
 from .tool_result_storage import ToolResultStorage
 from .utils import calculate_display_width
@@ -988,15 +987,6 @@ class Agent:
             context_resource_dedup_enabled=self.context_resource_dedup_enabled,
             tool_exposure_manager=self.mcp_tool_exposure,
             tool_result_storage=self.tool_result_storage,
-        )
-        events = scoped_model_tool_context(
-            events,
-            model=getattr(effective_options.llm, "model", ""),
-            max_output_tokens=getattr(
-                effective_options.llm,
-                "max_output_tokens",
-                0,
-            ),
         )
         async for event in events:
             # Track token usage on Agent instance for backward compat
