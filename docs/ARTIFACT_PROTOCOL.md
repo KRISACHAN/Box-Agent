@@ -126,6 +126,14 @@ created and uses `params.cwd` (or `config.agent.workspace_dir`) as the
 workspace root. If you want the artifact directory in a custom place,
 override the workspace itself — `output/` always lives under it.
 
+## Roadmap protocol handling
+
+Roadmap support is determined from the controlled HTML artifact and its
+metadata. Hosts compare the artifact, schema, geometry, and renderer protocol
+versions embedded in the HTML. A supported version may enable the trusted
+editor; a recognizable unsupported version should degrade to script-free
+read-only rendering; malformed or unsafe controlled HTML must be blocked.
+
 ## Non-goals
 
 - **No streaming chunks for artifact content.** The artifact payload is

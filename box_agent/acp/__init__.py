@@ -83,6 +83,10 @@ from box_agent.tools.setup import (
 )
 from box_agent.tools.bash_tool import BashTool
 from box_agent.tools.file_tools import WriteTool
+from box_agent.tools.skill_scratch import (
+    SkillScratchDirectory,
+    cleanup_skill_scratch_dir,
+)
 from box_agent.tools.browser_runtime_scope import (
     release_browser_runtime,
     reset_browser_runtime_owner,
@@ -258,6 +262,8 @@ def _artifact_envelope(
     }
     if output_dir:
         payload["output_dir"] = output_dir
+    if art.layout_id:
+        payload["layout_id"] = art.layout_id
     if session_id:
         payload["session_id"] = session_id
         payload["sessionId"] = session_id
@@ -866,6 +872,7 @@ class SessionState:
     summary_llm: SessionBoundLLM | None = None
     cancelled: bool = False
     output_dir: str | None = None  # ``{workspace}/output/`` — the canonical artifact root
+    skill_scratch_dir: SkillScratchDirectory | None = None
     artifact_mode: str = "output"
     session_mode: str | None = None  # e.g. "data_analysis" for /analysis pages
     llm_binding: dict[str, Any] | None = None  # host-owned model binding for this ACP session
@@ -1697,6 +1704,7 @@ class BoxACPAgent:
                 log.info("session/memory", session_id=session_id, message="Memory context injected")
 
         preloaded_skill_hashes: dict[str, str] = {}
+        skill_scratch_dir = None
         explicitly_allowed_skill_names: set[str] = set()
         blocked_skill_names = (
             FAST_OPTIONAL_SKILLS if execution_profile == "fast" else frozenset()
@@ -1741,7 +1749,7 @@ class BoxACPAgent:
                     message=message,
                 )
             # Enable sandbox mode and restrict to workspace for ACP sessions
-            add_workspace_tools(
+            skill_scratch_dir = add_workspace_tools(
                 tools,
                 self._config,
                 workspace,
@@ -1830,6 +1838,7 @@ class BoxACPAgent:
             summary_llm=summary_llm,
             trace_writer=trace_writer,
             output_dir=output_dir, session_mode=session_mode,
+            skill_scratch_dir=skill_scratch_dir,
             llm_binding=llm_binding,
             artifact_mode=artifact_mode,
             permission_engine=perm_engine, grant_store=grant_store,
@@ -3034,6 +3043,25 @@ class BoxACPAgent:
                 except Exception as cleanup_error:
                     log.error(
                         "write_file/session_cleanup_failed",
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        error=str(cleanup_error),
+                    )
+            if state.skill_scratch_dir is not None:
+                try:
+                    removed_scratch_paths = cleanup_skill_scratch_dir(
+                        state.skill_scratch_dir
+                    )
+                    if removed_scratch_paths:
+                        log.info(
+                            "skill_scratch/session_cleanup",
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            count=len(removed_scratch_paths),
+                        )
+                except Exception as cleanup_error:
+                    log.error(
+                        "skill_scratch/session_cleanup_failed",
                         session_id=session_id,
                         turn_id=turn_id,
                         error=str(cleanup_error),
