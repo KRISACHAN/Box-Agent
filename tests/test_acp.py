@@ -5569,6 +5569,34 @@ async def test_acp_prompt_response_marks_done_error_as_failure(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_prompt_converts_unexpected_cancelled_error_to_terminal_failure(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_todo=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, EmptyFinalAnswerLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    async def interrupt_turn(*_args, **_kwargs):
+        raise asyncio.CancelledError()
+
+    agent._run_turn = interrupt_turn  # type: ignore[method-assign]
+
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "continue"}])
+    )
+
+    assert response.stopReason == "end_turn"
+    assert response.field_meta["ok"] is False
+    assert response.field_meta["runStatus"] == "error"
+    assert response.field_meta["lastStopReason"] == "error"
+    assert response.field_meta["error"] == "Agent execution was interrupted unexpectedly."
+
+
+@pytest.mark.asyncio
 async def test_acp_token_meter_resets_between_turns(tmp_path):
     """Each turn reports only its own tokens, not a cumulative running sum."""
     config = Config(

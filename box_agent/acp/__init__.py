@@ -2970,6 +2970,21 @@ class BoxACPAgent:
                     ):
                         auto_no_progress_exhausted = True
                         break
+        except asyncio.CancelledError as exc:
+            if state.trace_writer is not None:
+                state.trace_writer.write(
+                    "turn.error",
+                    turn_id=turn_id,
+                    data={
+                        "message": str(exc),
+                        "error_type": type(exc).__name__,
+                        "unexpected": not state.cancelled,
+                    },
+                )
+            if state.cancelled:
+                raise
+            state.last_error = "Agent execution was interrupted unexpectedly."
+            stop_reason = StopReason.ERROR.value
         except BaseException as exc:
             if state.trace_writer is not None:
                 state.trace_writer.write(
