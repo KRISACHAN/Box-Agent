@@ -1,6 +1,14 @@
 from pathlib import Path
 
 
+def test_system_prompt_forbids_plaintext_user_credentials():
+    prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
+
+    assert "不得在回复、日志、命令参数或交付产物中明文显示用户提供的" in prompt
+    assert "API Key、Access Token、Secret、密码等敏感凭据" in prompt
+    assert "确需引用时仅显示脱敏片段" in prompt
+
+
 def test_system_prompt_leaves_ambiguous_path_resolution_to_the_model():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 
