@@ -20,7 +20,6 @@ from box_agent.tools.base import Tool, ToolResult
 
 
 _SUMMARY_THRESHOLD_CHARS = 5_000
-_SUMMARY_OUTPUT_CHARS = 5_000
 _FETCH_TIMEOUT_SECONDS = 60.0
 _SUMMARY_TIMEOUT_SECONDS = 180.0
 _BLOCKED_DOMAINS = ("youtube.com", "zhihu.com")
@@ -98,12 +97,25 @@ class WebExtractTool(Tool):
                         "current Box-Agent model."
                     ),
                 },
+                "max_output_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Optional output-token capability for the selected model. "
+                        "The Box-Agent host supplies this from the current session binding."
+                    ),
+                },
             },
             "required": ["url"],
             "additionalProperties": False,
         }
 
-    async def execute(self, url: str, model: str | None = None) -> ToolResult:
+    async def execute(
+        self,
+        url: str,
+        model: str | None = None,
+        max_output_tokens: int | None = None,
+    ) -> ToolResult:
         normalized_url, validation_error = _validate_public_url(url)
         if validation_error:
             return ToolResult(success=False, error=validation_error)
@@ -123,37 +135,41 @@ class WebExtractTool(Tool):
 
         content = result.content.strip()
         if not content:
-            return ToolResult(success=False, error="Fetched page contained no extractable text")
+            return ToolResult(
+                success=False,
+                error="Fetched page contained no extractable text",
+            )
 
         original_chars = len(content)
         effective_model = (model or "").strip() or _current_model_name(self.llm)
         summarized = False
-        summary_error: str | None = None
 
         if original_chars > _SUMMARY_THRESHOLD_CHARS:
             summary, summary_error = await self._summarize(
                 content,
                 normalized_url,
                 requested_model=(model or "").strip(),
+                requested_max_output_tokens=max_output_tokens,
             )
-            if summary:
-                content = _cap_summary(summary)
-                summarized = True
-            else:
-                content = _summary_fallback(content, summary_error)
+            if not summary:
+                return ToolResult(
+                    success=False,
+                    error=summary_error or "Summarization failed",
+                )
+            content = summary
+            summarized = True
 
         metadata = {
             "type": "web_extract",
             "url": normalized_url,
             "final_url": result.final_url,
             "summarized": summarized,
+            "content_truncated": False,
             "model": effective_model if summarized else None,
             "original_chars": original_chars,
             "returned_chars": len(content),
             "from_cache": result.from_cache,
         }
-        if summary_error:
-            metadata["summary_error"] = summary_error
 
         return ToolResult(
             success=True,
@@ -207,19 +223,29 @@ class WebExtractTool(Tool):
         url: str,
         *,
         requested_model: str,
+        requested_max_output_tokens: int | None,
     ) -> tuple[str | None, str | None]:
         if self.llm is None:
             return None, "No LLM is available for summarization"
 
         summary_llm = self.llm
-        if requested_model:
+        summary_model = requested_model or _current_model_name(self.llm)
+        summary_max_output_tokens = _positive_int(requested_max_output_tokens)
+        if summary_max_output_tokens is None:
+            summary_max_output_tokens = _positive_int(
+                getattr(self.llm, "max_output_tokens", None)
+            )
+        if summary_model:
             for_model = getattr(self.llm, "for_model", None)
             if not callable(for_model):
-                return None, f"The current LLM cannot switch to model '{requested_model}'"
+                return None, f"The current LLM cannot select model '{summary_model}'"
             try:
-                summary_llm = for_model(requested_model, max_output_tokens=4096)
+                summary_llm = for_model(
+                    summary_model,
+                    max_output_tokens=summary_max_output_tokens,
+                )
             except Exception as exc:
-                return None, f"Could not select model '{requested_model}': {exc}"
+                return None, f"Could not select model '{summary_model}': {exc}"
 
         messages = [
             Message(
@@ -439,20 +465,7 @@ def _current_model_name(llm: Any | None) -> str | None:
     return model or None
 
 
-def _cap_summary(summary: str) -> str:
-    if len(summary) <= _SUMMARY_OUTPUT_CHARS:
-        return summary
-    return (
-        summary[:_SUMMARY_OUTPUT_CHARS]
-        + "\n\n[Summary truncated to 5,000 characters for context management.]"
-    )
-
-
-def _summary_fallback(content: str, error: str | None) -> str:
-    fallback = content[:_SUMMARY_OUTPUT_CHARS]
-    detail = error or "unknown summarization error"
-    return (
-        fallback
-        + "\n\n[Content truncated to the first 5,000 characters because LLM "
-        + f"summarization was unavailable: {detail}]"
-    )
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value

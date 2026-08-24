@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import socket
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from box_agent.mcp_servers import web_extract
+
+
+class _SummaryLLM:
+    def __init__(self, model: str = "sn-sensenova-6-8-flash-lite") -> None:
+        self.model = model
+        self.selected: tuple[str, int] | None = None
+
+    def for_model(self, model: str, *, max_output_tokens: int):
+        self.selected = (model, max_output_tokens)
+        return self
+
+    async def generate(self, **kwargs):
+        return SimpleNamespace(content="Summary")
 
 
 def _address_info(address: str, port: int) -> tuple:
@@ -101,11 +115,83 @@ async def test_tool_returns_short_extracted_page_without_summarization(monkeypat
         "url": "https://example.com/start",
         "final_url": "https://example.com/final",
         "summarized": False,
+        "content_truncated": False,
         "model": None,
         "original_chars": 21,
         "returned_chars": 21,
         "from_cache": False,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_output_tokens", [63_999, 100_000])
+async def test_summary_uses_session_model_output_tokens(max_output_tokens: int) -> None:
+    llm = _SummaryLLM()
+    tool = web_extract.WebExtractTool(llm=llm)
+
+    summary, error = await tool._summarize(
+        "Long page content",
+        "https://example.com/page",
+        requested_model="",
+        requested_max_output_tokens=max_output_tokens,
+    )
+
+    assert error is None
+    assert summary == "Summary"
+    assert llm.selected == (
+        "sn-sensenova-6-8-flash-lite",
+        max_output_tokens,
+    )
+
+
+@pytest.mark.asyncio
+async def test_long_summary_is_returned_without_truncation(monkeypatch) -> None:
+    tool = web_extract.WebExtractTool(llm=_SummaryLLM())
+
+    async def fake_fetch(url: str):
+        return web_extract._FetchedPage(
+            content="p" * 5_001,
+            final_url=url,
+        )
+
+    async def fake_summarize(*args, **kwargs):
+        return "s" * 6_000, None
+
+    monkeypatch.setattr(tool, "_fetch", fake_fetch)
+    monkeypatch.setattr(tool, "_summarize", fake_summarize)
+
+    result = await tool.execute("https://example.com/long")
+
+    assert result.success is True
+    assert result.content.endswith("s" * 6_000)
+    assert "truncated" not in result.content.lower()
+    assert result.raw_output["summarized"] is True
+    assert result.raw_output["content_truncated"] is False
+    assert result.raw_output["returned_chars"] == 6_000
+
+
+@pytest.mark.asyncio
+async def test_summary_failure_returns_tool_error(monkeypatch) -> None:
+    tool = web_extract.WebExtractTool(llm=_SummaryLLM())
+
+    async def fake_fetch(url: str):
+        return web_extract._FetchedPage(
+            content="p" * 5_001,
+            final_url=url,
+        )
+
+    async def fake_summarize(*args, **kwargs):
+        return None, "provider rejected max_tokens"
+
+    monkeypatch.setattr(tool, "_fetch", fake_fetch)
+    monkeypatch.setattr(tool, "_summarize", fake_summarize)
+
+    result = await tool.execute("https://example.com/long")
+
+    assert result.success is False
+    assert result.content == ""
+    assert result.error == "provider rejected max_tokens"
+    assert result.raw_output is None
 
 
 @pytest.mark.asyncio

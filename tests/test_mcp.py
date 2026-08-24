@@ -33,6 +33,12 @@ from box_agent.tools.mcp_loader import (
     reconnect_auth_failed_mcp_servers_if_token_changed,
     set_mcp_timeout_config,
 )
+from box_agent.tools.model_tool_context import (
+    current_model_tool_context,
+    reset_model_tool_context,
+    scoped_model_tool_context,
+    set_model_tool_context,
+)
 from box_agent.tools.setup import merge_mcp_tools, register_mcp_tools
 from box_agent.tools.base import Tool, ToolResult
 
@@ -385,6 +391,77 @@ class TestMCPToolExecution:
 
         assert result.success is False
         assert result.error == "Query 不能为空。"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("model", "max_output_tokens"),
+        [
+            ("sn-sensenova-6-8-flash-lite", 63_999),
+            ("sn-glm-5-2", 100_000),
+        ],
+    )
+    async def test_web_extract_receives_current_model_capabilities(
+        self,
+        model: str,
+        max_output_tokens: int,
+    ):
+        class FakeSession:
+            arguments = None
+
+            async def call_tool(self, name, arguments):
+                assert name == "web_extract"
+                self.arguments = arguments
+                return SimpleNamespace(content=[], isError=False)
+
+        session = FakeSession()
+        tool = MCPTool(
+            name="web_extract",
+            description="extract",
+            parameters={"type": "object"},
+            session=session,
+            server_name="box-agent-web-extract",
+        )
+        token = set_model_tool_context(
+            model=model,
+            max_output_tokens=max_output_tokens,
+        )
+        try:
+            result = await tool.execute(
+                url="https://example.com",
+                model="model-supplied-wrong-value",
+                max_output_tokens=1,
+            )
+        finally:
+            reset_model_tool_context(token)
+
+        assert result.success is True
+        assert session.arguments == {
+            "url": "https://example.com",
+            "model": model,
+            "max_output_tokens": max_output_tokens,
+        }
+
+    @pytest.mark.asyncio
+    async def test_scoped_model_context_resets_before_yield_and_closes_cross_task(
+        self,
+    ):
+        async def source():
+            context = current_model_tool_context()
+            assert context is not None
+            assert context.model == "sn-glm-5-2"
+            yield "event"
+
+        events = scoped_model_tool_context(
+            source(),
+            model="sn-glm-5-2",
+            max_output_tokens=100_000,
+        )
+
+        assert await events.__anext__() == "event"
+        assert current_model_tool_context() is None
+        close = getattr(events, "aclose")
+        await asyncio.create_task(close())
+        assert current_model_tool_context() is None
 
     @pytest.mark.parametrize(
         "error_value",

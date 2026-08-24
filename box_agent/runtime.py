@@ -19,12 +19,13 @@ from .core import (
 from .events import AgentEvent
 from .loop_guards import CompletionGate
 from .tools.base import Tool, ToolResult
+from .tools.model_tool_context import scoped_model_tool_context
 from .workflows import create_workflow_policy
 
 
 @wraps(_run_agent_loop)
 def run_agent_loop(**kwargs: Any) -> AsyncIterator[AgentEvent]:
-    """Run the kernel with any completion-gate workflow policy composed in."""
+    """Run the kernel with shared workflow and model-tool context composed in."""
     if kwargs.get("workflow_policy") is None:
         completion_gate = kwargs.get("completion_gate")
         kwargs["workflow_policy"] = create_workflow_policy(
@@ -42,7 +43,13 @@ def run_agent_loop(**kwargs: Any) -> AsyncIterator[AgentEvent]:
             ),
             available_tool_names=frozenset(kwargs.get("tools", {})),
         )
-    return _run_agent_loop(**kwargs)
+    llm = kwargs.get("llm")
+    events = _run_agent_loop(**kwargs)
+    return scoped_model_tool_context(
+        events,
+        model=getattr(llm, "model", ""),
+        max_output_tokens=getattr(llm, "max_output_tokens", 0),
+    )
 
 
 async def invoke_tool_with_permissions(

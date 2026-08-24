@@ -64,6 +64,7 @@ from .browser_tool_names import (
     public_browser_tool_text,
 )
 from .mcp_tool_catalog import get_mcp_tool_catalog
+from .model_tool_context import current_model_tool_context
 
 
 def _warn(msg: str) -> None:
@@ -352,6 +353,10 @@ class MCPTool(Tool):
     async def execute(self, **kwargs) -> ToolResult:
         """Execute MCP tool via the session with timeout protection."""
         timeout = self._execute_timeout or _default_timeout_config.execute_timeout
+        is_web_extract = (
+            self._server_name == "box-agent-web-extract"
+            and self._remote_name == "web_extract"
+        )
         browser_runtime_acquired = False
         release_browser_runtime_after_call = False
         concurrency_slot_acquired = False
@@ -380,6 +385,13 @@ class MCPTool(Tool):
                     concurrency_slot_acquired = True
                     waiting_for_concurrency_slot = False
                 call_arguments = {**kwargs, **self._fixed_arguments}
+                if is_web_extract:
+                    model_context = current_model_tool_context()
+                    if model_context is not None:
+                        call_arguments["model"] = model_context.model
+                        call_arguments["max_output_tokens"] = (
+                            model_context.max_output_tokens
+                        )
                 result = await self._session.call_tool(
                     self._remote_name,
                     arguments=call_arguments,

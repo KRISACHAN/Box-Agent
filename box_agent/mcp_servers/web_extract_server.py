@@ -62,9 +62,17 @@ def _extractor() -> WebExtractTool:
         "the optional model supplied by the caller. JavaScript is not executed."
     ),
 )
-async def web_extract(url: str, model: str | None = None) -> str:
-    """Fetch one URL and return extracted text or a bounded LLM summary."""
-    result = await _extractor().execute(url=url, model=model)
+async def web_extract(
+    url: str,
+    model: str | None = None,
+    max_output_tokens: int | None = None,
+) -> str:
+    """Fetch one URL and return extracted text or an LLM summary."""
+    result = await _extractor().execute(
+        url=url,
+        model=model,
+        max_output_tokens=max_output_tokens,
+    )
     if not result.success:
         raise ValueError(result.error or "Web extraction failed")
     return result.content or ""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from time import perf_counter
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,6 +17,12 @@ from box_agent.schema import LLMResponse, Message, StreamEvent, TokenUsage
 from box_agent.agent import Agent
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.file_tools import ReadTool, WriteTool
+from box_agent.tools.mcp_loader import MCPTool
+from box_agent.tools.model_tool_context import (
+    current_model_tool_context,
+    reset_model_tool_context,
+    set_model_tool_context,
+)
 from box_agent.tools.permissions import CapabilityPolicy, GrantStore, PermissionEngine
 from box_agent.tools.skill_loader import SkillLoader
 from box_agent.tools.sub_agent_tool import SubAgentTool
@@ -1090,6 +1097,96 @@ async def test_sub_agent_forwards_web_search_reference_event():
     assert web_events[0].parent_tool_call_id == "parent-sub-agent"
     assert web_events[0].sub_agent_id.startswith("subagent-")
     assert web_events[0].event.payload["refs"][0]["url"] == "https://example.com"
+
+
+async def test_sub_agent_web_extract_uses_child_model_context(monkeypatch):
+    """Child web extraction must not inherit the surrounding parent model."""
+    from box_agent.schema import FunctionCall, ToolCall
+
+    class FakeSession:
+        arguments = None
+
+        async def call_tool(self, name, arguments):
+            assert name == "web_extract"
+            self.arguments = arguments
+            return SimpleNamespace(
+                content=[SimpleNamespace(text="page content")],
+                isError=False,
+            )
+
+    class ChildLLM:
+        model = "child-model"
+        max_output_tokens = 222
+
+        def __init__(self):
+            self.calls = 0
+
+        async def generate_stream(self, *, messages, tools, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield StreamEvent(
+                    type="finish",
+                    finish_reason="tool_use",
+                    tool_calls=[
+                        ToolCall(
+                            id="child-extract-1",
+                            type="function",
+                            function=FunctionCall(
+                                name="web_extract",
+                                arguments={"url": "https://example.com"},
+                            ),
+                        )
+                    ],
+                )
+                return
+            yield StreamEvent(type="text", delta="child summary")
+            yield StreamEvent(type="finish", finish_reason="stop", tool_calls=None)
+
+    session = FakeSession()
+    web_extract = MCPTool(
+        name="web_extract",
+        description="extract",
+        parameters={
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+        session=session,
+        server_name="box-agent-web-extract",
+    )
+    child_llm = ChildLLM()
+    tool = SubAgentTool(
+        llm=AsyncMock(),
+        parent_tools={"web_extract": web_extract},
+    )
+    monkeypatch.setattr(
+        tool,
+        "_resolve_task_llm",
+        lambda **kwargs: (child_llm, {"mode": "test"}),
+    )
+
+    parent_token = set_model_tool_context(
+        model="parent-model",
+        max_output_tokens=111,
+    )
+    try:
+        result = await tool.execute(
+            task="Extract and summarize the page",
+            required_tools=["web_extract"],
+        )
+        restored_context = current_model_tool_context()
+        assert restored_context is not None
+        assert restored_context.model == "parent-model"
+        assert restored_context.max_output_tokens == 111
+    finally:
+        reset_model_tool_context(parent_token)
+
+    assert result.success is True
+    assert session.arguments == {
+        "url": "https://example.com",
+        "model": "child-model",
+        "max_output_tokens": 222,
+    }
 
 
 async def test_empty_output_returns_error():

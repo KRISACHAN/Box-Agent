@@ -936,7 +936,7 @@ class Agent:
         if callable(set_child_negotiator):
             set_child_negotiator(effective_options.permission_negotiator)
 
-        async for event in run_agent_loop(
+        events = run_agent_loop(
             llm=effective_options.llm,
             summary_llm=effective_options.summary_llm,
             messages=self.messages,
@@ -987,7 +987,8 @@ class Agent:
             context_resource_dedup_enabled=self.context_resource_dedup_enabled,
             tool_exposure_manager=self.mcp_tool_exposure,
             tool_result_storage=self.tool_result_storage,
-        ):
+        )
+        async for event in events:
             # Track token usage on Agent instance for backward compat
             if isinstance(event, TokenUsageEvent):
                 self.api_total_tokens = event.total_tokens
