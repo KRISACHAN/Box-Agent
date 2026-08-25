@@ -353,6 +353,30 @@ class PointsInsufficientLLM:
         raise AssertionError("streaming path expected")
 
 
+class UnsupportedModelLLM:
+    provider = "anthropic"
+    model = "qwen3.7-plus1"
+
+    async def generate_stream(self, messages, tools=None, **kwargs):
+        if False:
+            yield StreamEvent(type="finish", finish_reason="stop")
+        error = RuntimeError("Error code: 400")
+        error.status_code = 400
+        error.body = {
+            "error": {
+                "code": "invalid_parameter_error",
+                "message": "model `qwen3.7-plus1` is not supported.",
+                "param": None,
+                "type": "invalid_request_error",
+            },
+            "request_id": "959710cc-09b9-995b-adee-dddb692b43cc",
+        }
+        raise error
+
+    async def generate(self, messages, tools=None, **kwargs):
+        raise AssertionError("streaming path expected")
+
+
 @pytest.mark.asyncio
 async def test_acp_exposes_loading_then_ready_capability_state(tmp_path):
     gate = asyncio.Event()
@@ -2011,6 +2035,47 @@ async def test_acp_prompt_exposes_structured_points_insufficient_error(tmp_path)
     assert response.field_meta["ok"] is False
     assert response.field_meta["errorCode"] == 1000007
     assert response.field_meta["errorCategory"] == "quota"
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_exposes_structured_unsupported_model_error(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    agent = BoxACPAgent(conn, config, UnsupportedModelLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    response = await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "hello"}])
+    )
+
+    assert response.stopReason == "end_turn"
+    assert response.field_meta["ok"] is False
+    assert response.field_meta["errorCode"] == "invalid_parameter_error"
+    assert response.field_meta["errorCategory"] == "model_configuration"
+    assert response.field_meta["errorDetails"] == {
+        "source": "llm_provider",
+        "category": "model_configuration",
+        "reason": "model_not_supported",
+        "code": "invalid_parameter_error",
+        "type": "invalid_request_error",
+        "httpStatus": 400,
+        "provider": "anthropic",
+        "model": "qwen3.7-plus1",
+        "message": response.field_meta["error"],
+        "retryable": False,
+        "requestId": "959710cc-09b9-995b-adee-dddb692b43cc",
+    }
+    assert "Error code" not in response.field_meta["error"]
+    assert not any(
+        "invalid_request_error" in str(update)
+        for update in conn.updates
+    )
 
 
 @pytest.mark.asyncio

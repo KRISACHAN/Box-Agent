@@ -1,9 +1,12 @@
 """Tests for box_agent.llm.error_messages.humanize_llm_error."""
 
+from types import SimpleNamespace
+
 from box_agent.llm.error_messages import (
     classify_llm_error,
     extract_llm_error_code,
     humanize_llm_error,
+    structured_llm_error,
 )
 from box_agent.retry import RetryExhaustedError, StreamInterrupted
 
@@ -98,6 +101,58 @@ def test_model_not_found_beats_endpoint_404():
     fe = classify_llm_error(exc)
     assert fe.category == "model_not_found"
     assert "model" in fe.message
+
+
+def test_unsupported_model_returns_structured_configuration_error():
+    exc = _FakeAPIError(
+        "Error code: 400 - {'error': {'code': 'invalid_parameter_error', "
+        "'message': 'model `qwen3.7-plus1` is not supported.', "
+        "'param': None, 'type': 'invalid_request_error'}, "
+        "'request_id': '959710cc-09b9-995b-adee-dddb692b43cc'}",
+        status_code=400,
+        body={
+            "error": {
+                "code": "invalid_parameter_error",
+                "message": "model `qwen3.7-plus1` is not supported.",
+                "param": None,
+                "type": "invalid_request_error",
+            },
+            "request_id": "959710cc-09b9-995b-adee-dddb692b43cc",
+        },
+    )
+
+    details = structured_llm_error(
+        exc,
+        provider="anthropic",
+        model="qwen3.7-plus1",
+    )
+
+    assert details == {
+        "source": "llm_provider",
+        "category": "model_configuration",
+        "reason": "model_not_supported",
+        "code": "invalid_parameter_error",
+        "type": "invalid_request_error",
+        "httpStatus": 400,
+        "provider": "anthropic",
+        "model": "qwen3.7-plus1",
+        "message": (
+            "当前配置的模型 `qwen3.7-plus1` 不受支持。"
+            "请检查 model 名称及其与当前 `anthropic` provider 的兼容性。"
+        ),
+        "retryable": False,
+        "requestId": "959710cc-09b9-995b-adee-dddb692b43cc",
+    }
+    assert "Error code" not in str(details["message"])
+
+
+def test_structured_error_extracts_request_id_from_response_headers():
+    exc = _FakeAPIError("Bad request", status_code=400)
+    exc.response = SimpleNamespace(headers={"x-request-id": "provider-request-1"})
+
+    details = structured_llm_error(exc)
+
+    assert details["requestId"] == "provider-request-1"
 
 
 def test_endpoint_404_suggests_provider_protocol_mismatch():
@@ -207,6 +262,12 @@ def test_humanize_never_raises_on_weird_input():
                   Exception(""), RuntimeError()):
         msg = humanize_llm_error(weird)
         assert isinstance(msg, str) and msg  # always non-empty string
+
+
+def test_structured_error_never_raises_on_weird_input():
+    details = structured_llm_error(_ExplodingAttr("x"))
+    assert details["source"] == "llm_provider"
+    assert isinstance(details["message"], str) and details["message"]
 
 
 def test_self_referential_last_exception_does_not_loop():

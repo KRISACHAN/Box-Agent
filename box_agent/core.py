@@ -4153,7 +4153,7 @@ async def run_agent_loop(
                 )
 
         except Exception as exc:
-            from .llm.error_messages import classify_llm_error, extract_llm_error_code
+            from .llm.error_messages import structured_llm_error
             from .retry import StreamInterrupted
 
             provider_request_id = None
@@ -4180,11 +4180,23 @@ async def run_agent_loop(
                 yield ErrorEvent(message=msg, is_fatal=False, exception=exc)
                 yield DoneEvent(stop_reason=StopReason.INTERRUPTED, final_content=partial_text)
                 return
-            # classify_llm_error unwraps RetryExhaustedError to inspect the
-            # underlying provider error.
-            friendly = classify_llm_error(exc)
-            msg = friendly.message
-            if friendly.is_soft:
+            # structured_llm_error unwraps RetryExhaustedError to inspect the
+            # underlying provider error while preserving a stable host contract.
+            try:
+                error_provider = getattr(llm, "provider", "")
+            except Exception:
+                error_provider = ""
+            try:
+                error_model = getattr(llm, "model", "")
+            except Exception:
+                error_model = ""
+            error_details = structured_llm_error(
+                exc,
+                provider=error_provider,
+                model=error_model,
+            )
+            msg = str(error_details["message"])
+            if error_details["category"] == "content_filter":
                 # Model refusal (e.g. content moderation): present as a normal
                 # assistant reply — the turn ended cleanly, it's not a crash.
                 # No "Error:" prefix, no red banner; persisted to history.
@@ -4201,8 +4213,9 @@ async def run_agent_loop(
                 message=msg,
                 is_fatal=True,
                 exception=exc,
-                error_code=extract_llm_error_code(exc),
-                error_category=friendly.category,
+                error_code=error_details["code"],
+                error_category=str(error_details["category"]),
+                error_details=error_details,
             )
             yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
             return

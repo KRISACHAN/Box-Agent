@@ -98,7 +98,7 @@ async def test_anthropic_request_no_thinking_by_default(monkeypatch):
 @pytest.mark.asyncio
 async def test_openai_request_sends_high_reasoning_effort_when_enabled(monkeypatch):
     """Generic OpenAI-compatible models receive high reasoning effort."""
-    client = OpenAIClient(api_key="k", api_base="https://x.example", model="qwen")
+    client = OpenAIClient(api_key="k", api_base="https://x.example", model="gpt-5")
 
     captured: dict = {}
 
@@ -122,8 +122,16 @@ async def test_openai_request_sends_high_reasoning_effort_when_enabled(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_sensenova_request_sends_chat_template_thinking_when_enabled(monkeypatch):
-    """SenseNova models receive their provider-specific thinking extension."""
+@pytest.mark.parametrize(
+    ("thinking_enabled", "expected_effort"),
+    [(True, "high"), (False, "none")],
+)
+async def test_sensenova_request_sends_top_level_reasoning_effort(
+    thinking_enabled,
+    expected_effort,
+    monkeypatch,
+):
+    """SenseNova models receive their documented top-level reasoning control."""
     client = OpenAIClient(
         api_key="k",
         api_base="https://token.sensenova.cn/v1",
@@ -143,22 +151,21 @@ async def test_sensenova_request_sends_chat_template_thinking_when_enabled(monke
     await client._make_api_request(
         api_messages=[{"role": "user", "content": "go"}],
         tools=None,
-        thinking_enabled=True,
+        thinking_enabled=thinking_enabled,
     )
 
-    assert captured["extra_body"] == {
-        "chat_template_kwargs": {
-            "thinking": True,
-            "reasoning_effort": "high",
-        }
-    }
-    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+    assert captured["reasoning_effort"] == expected_effort
 
 
 @pytest.mark.asyncio
 async def test_openai_request_no_extra_body_by_default(monkeypatch):
     """Default path sends no ``extra_body`` — especially no ``reasoning_split`` (deleted)."""
-    client = OpenAIClient(api_key="k", api_base="https://x.example", model="qwen")
+    client = OpenAIClient(
+        api_key="k",
+        api_base="https://x.example",
+        model="custom-chat-model",
+    )
 
     captured: dict = {}
 
@@ -182,18 +189,50 @@ async def test_openai_request_no_extra_body_by_default(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("model", "thinking_enabled", "expected_mapping"),
+    ("model", "thinking_enabled", "expected_extra_body", "expected_effort"),
     [
-        ("qwen", True, "reasoning_effort"),
-        ("SenseNova-Flash-Lite-test", False, "none"),
-        ("SenseNova-Flash-Lite-test", True, "sensenova"),
-        ("sn-sensenova-6-8-flash-lite", True, "sensenova"),
+        ("gpt-5", True, None, "high"),
+        ("custom-chat-model", False, None, None),
+        ("SenseNova-Flash-Lite-test", False, None, "none"),
+        ("SenseNova-Flash-Lite-test", True, None, "high"),
+        ("SN-SenseNova-6-8-Flash-Lite", True, None, "high"),
+        (
+            "SN-DeepSeek-V4-Pro",
+            True,
+            {"extra_body": {"thinking": {"type": "enabled"}}},
+            None,
+        ),
+        (
+            "deepseek-v4-flash",
+            False,
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+            None,
+        ),
+        ("QWEN3-235B", True, {"enable_thinking": True}, None),
+        ("vendor/qwen3-coder", False, {"enable_thinking": False}, None),
+        ("Gemini-2.5-Flash", False, None, "none"),
+        ("Gemini-2.5-Pro", False, None, None),
+        ("GEMINI-3.1-PRO-preview", False, None, None),
+        ("gemini-3-flash", True, None, "high"),
+        (
+            "Doubao-Seed",
+            True,
+            {"extra_body": {"thinking": {"type": "enabled"}}},
+            None,
+        ),
+        (
+            "ark/doubao-pro",
+            False,
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+            None,
+        ),
     ],
 )
 async def test_openai_stream_request_maps_thinking_to_provider_dialect(
     model,
     thinking_enabled,
-    expected_mapping,
+    expected_extra_body,
+    expected_effort,
     monkeypatch,
 ):
     """Streaming requests use the same model-specific mapping as completions."""
@@ -239,17 +278,12 @@ async def test_openai_stream_request_maps_thinking_to_provider_dialect(
     ]
 
     assert [event.delta for event in events if event.type == "text"] == ["ok"]
-    if expected_mapping == "sensenova":
-        assert captured["extra_body"] == {
-            "chat_template_kwargs": {
-                "thinking": True,
-                "reasoning_effort": "high",
-            }
-        }
-    else:
+    if expected_extra_body is None:
         assert "extra_body" not in captured
-    if expected_mapping == "reasoning_effort":
-        assert captured["reasoning_effort"] == "high"
+    else:
+        assert captured["extra_body"] == expected_extra_body
+    if expected_effort is not None:
+        assert captured["reasoning_effort"] == expected_effort
     else:
         assert "reasoning_effort" not in captured
 
@@ -584,8 +618,15 @@ async def test_generic_openai_stream_does_not_execute_tool_markup_from_thinking(
 
 
 @pytest.mark.asyncio
-async def test_sensenova_sdk_extra_body_merges_into_wire_body():
-    """The SDK sends ``chat_template_kwargs`` at the HTTP body top level."""
+@pytest.mark.parametrize(
+    ("thinking_enabled", "expected_effort"),
+    [(True, "high"), (False, "none")],
+)
+async def test_sensenova_sdk_sends_reasoning_effort_in_wire_body(
+    thinking_enabled,
+    expected_effort,
+):
+    """The SDK sends SenseNova reasoning control at the HTTP body top level."""
     captured: dict = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -630,17 +671,119 @@ async def test_sensenova_sdk_extra_body_merges_into_wire_body():
         await client._make_api_request(
             api_messages=[{"role": "user", "content": "go"}],
             tools=None,
-            thinking_enabled=True,
+            thinking_enabled=thinking_enabled,
         )
     finally:
         await client.client.close()
 
-    assert captured["chat_template_kwargs"] == {
-        "thinking": True,
-        "reasoning_effort": "high",
-    }
     assert "extra_body" not in captured
-    assert "reasoning_effort" not in captured
+    assert "chat_template_kwargs" not in captured
+    assert captured["reasoning_effort"] == expected_effort
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "thinking_enabled", "expected_control"),
+    [
+        ("raccoon-8c4485", True, {"reasoning_effort": "high"}),
+        ("raccoon-8c4485", False, {}),
+        ("raccoon-19b265", True, {"reasoning_effort": "high"}),
+        ("raccoon-19b265", False, {}),
+        ("raccoon-405a1c", True, {"reasoning_effort": "high"}),
+        ("raccoon-405a1c", False, {}),
+        ("sn-sensenova-6-8-flash-lite", True, {"reasoning_effort": "high"}),
+        ("sn-sensenova-6-8-flash-lite", False, {"reasoning_effort": "none"}),
+        ("sn-glm-5-2", True, {"reasoning_effort": "high"}),
+        ("sn-glm-5-2", False, {}),
+        (
+            "SN-DeepSeek-V4-Pro",
+            True,
+            {"extra_body": {"thinking": {"type": "enabled"}}},
+        ),
+        (
+            "sn-deepseek-v4-pro",
+            False,
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+        ),
+        ("QWEN3-235B", True, {"enable_thinking": True}),
+        ("vendor/qwen3-coder", False, {"enable_thinking": False}),
+        ("Gemini-2.5-Flash", True, {"reasoning_effort": "high"}),
+        ("Gemini-2.5-Flash", False, {"reasoning_effort": "none"}),
+        ("gemini-2.5-pro-preview", False, {}),
+        ("GEMINI-3.1-PRO", False, {}),
+        (
+            "Doubao-Seed",
+            True,
+            {"extra_body": {"thinking": {"type": "enabled"}}},
+        ),
+        (
+            "ark/doubao-pro",
+            False,
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+        ),
+    ],
+)
+async def test_model_family_thinking_control_wire_body(
+    model,
+    thinking_enabled,
+    expected_control,
+):
+    captured: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OpenAIClient(
+        api_key="k",
+        api_base="https://xiaohuanxiong.com/api/web/llm/v2",
+        model=model,
+    )
+    await client.client.close()
+    client.client = AsyncOpenAI(
+        api_key="k",
+        base_url="https://xiaohuanxiong.com/api/web/llm/v2",
+        http_client=http_client,
+    )
+
+    try:
+        await client._make_api_request(
+            api_messages=[{"role": "user", "content": "go"}],
+            tools=None,
+            thinking_enabled=thinking_enabled,
+        )
+    finally:
+        await client.client.close()
+
+    assert "chat_template_kwargs" not in captured
+    actual_control = {
+        key: captured[key]
+        for key in ("reasoning_effort", "extra_body", "enable_thinking")
+        if key in captured
+    }
+    assert actual_control == expected_control
 
 
 @pytest.mark.asyncio

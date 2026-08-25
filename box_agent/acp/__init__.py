@@ -907,6 +907,7 @@ class SessionState:
     last_error: str | None = None
     last_error_code: int | str | None = None
     last_error_category: str | None = None
+    last_error_details: dict[str, Any] | None = None
     last_checkpoint: dict[str, Any] | None = None
     mcp_fallback_tools: dict[str, Any] = field(default_factory=dict)
 
@@ -3228,6 +3229,8 @@ class BoxACPAgent:
             response_meta["errorCode"] = state.last_error_code
         if failed and state.last_error_category:
             response_meta["errorCategory"] = state.last_error_category
+        if failed and state.last_error_details:
+            response_meta["errorDetails"] = state.last_error_details
         # Per-turn token total (multi-step loop + summarization + in-turn
         # memory extraction) for host-side telemetry. Best-effort: fire-and-
         # forget memory extractions that finish after this point are not
@@ -4133,6 +4136,7 @@ class BoxACPAgent:
         state.last_error = None
         state.last_error_code = None
         state.last_error_category = None
+        state.last_error_details = None
         state.last_checkpoint = None
 
         # Clear prompt-level grants at the start of each prompt
@@ -4879,11 +4883,13 @@ class BoxACPAgent:
                         is_fatal=True,
                         error_code=error_code,
                         error_category=error_category,
+                        error_details=error_details,
                     ):
                         log.error("error", session_id=session_id, message=msg, is_fatal=True)
                         state.last_error = msg
                         state.last_error_code = error_code
                         state.last_error_category = error_category
+                        state.last_error_details = error_details
                         if state.trace_writer is not None:
                             state.trace_writer.write(
                                 "turn.error",
@@ -4892,6 +4898,7 @@ class BoxACPAgent:
                                     "message": msg,
                                     "error_code": error_code,
                                     "error_category": error_category,
+                                    "error_details": error_details,
                                 },
                             )
                         await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))

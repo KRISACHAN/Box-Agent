@@ -247,6 +247,7 @@ class ErrorEvent:
     exception: Exception | None = field(default=None, repr=False)
     error_code: int | str | None = None
     error_category: str | None = None
+    error_details: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

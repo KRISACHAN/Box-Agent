@@ -41,6 +41,7 @@ _DEEP_THINK_REASONING_EFFORT = "high"
 _DEFAULT_SENSENOVA_MODEL_PREFIXES = ("sensenova-", "sn-sensenova-")
 _SENSENOVA_MODEL_PREFIXES_ENV = "BOX_AGENT_SENSENOVA_MODEL_PREFIXES"
 _SENSENOVA_PREFIX_BOUNDARIES = frozenset("-_/:.")
+_GEMINI_NO_DISABLE_MARKERS = ("gemini-2.5-pro", "gemini-3.1-pro")
 _SENSENOVA_PSEUDO_TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*<function=([A-Za-z_][\w.-]*)>\s*(.*?)\s*</function>\s*</tool_call>",
     re.DOTALL,
@@ -50,6 +51,16 @@ _SENSENOVA_PSEUDO_PARAMETER_RE = re.compile(
     re.DOTALL,
 )
 _MAX_RECOVERED_SENSENOVA_TOOL_CALLS = 4
+
+
+def _litellm_extra_body(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep provider extensions nested under literal ``extra_body`` on the wire.
+
+    The OpenAI SDK merges its own ``extra_body`` argument into the HTTP body.
+    LiteLLM expects another provider-owned ``extra_body`` object inside that
+    body, so the SDK argument intentionally has two levels.
+    """
+    return {"extra_body": payload}
 
 
 def _sensenova_model_prefixes() -> tuple[str, ...]:
@@ -85,16 +96,6 @@ def _is_sensenova_model(model: str | None) -> bool:
     )
 
 
-def _sensenova_thinking_body() -> dict[str, Any]:
-    """Build the provider extension that enables SenseNova thinking."""
-    return {
-        "chat_template_kwargs": {
-            "thinking": True,
-            "reasoning_effort": "high",
-        }
-    }
-
-
 def _apply_thinking_params(
     params: dict[str, Any],
     *,
@@ -102,12 +103,26 @@ def _apply_thinking_params(
     thinking_enabled: bool,
 ) -> None:
     """Map the session deep-think flag to the provider request dialect."""
-    if not thinking_enabled:
+    normalized_model = (model or "").strip().casefold()
+    if "deepseek" in normalized_model or "doubao" in normalized_model:
+        params["extra_body"] = _litellm_extra_body(
+            {"thinking": {"type": "enabled" if thinking_enabled else "disabled"}}
+        )
+        return
+    if "qwen" in normalized_model:
+        params["extra_body"] = {"enable_thinking": thinking_enabled}
+        return
+    if "gemini" in normalized_model:
+        if thinking_enabled:
+            params["reasoning_effort"] = _DEEP_THINK_REASONING_EFFORT
+        elif not any(marker in normalized_model for marker in _GEMINI_NO_DISABLE_MARKERS):
+            params["reasoning_effort"] = "none"
+        return
+    if thinking_enabled:
+        params["reasoning_effort"] = _DEEP_THINK_REASONING_EFFORT
         return
     if _is_sensenova_model(model):
-        params["extra_body"] = _sensenova_thinking_body()
-        return
-    params["reasoning_effort"] = _DEEP_THINK_REASONING_EFFORT
+        params["reasoning_effort"] = "none"
 
 
 def _tool_parameter_types(

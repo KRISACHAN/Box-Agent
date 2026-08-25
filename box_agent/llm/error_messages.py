@@ -111,6 +111,10 @@ _RULES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ),
 )
 
+_MODEL_CONFIGURATION_MESSAGE = (
+    "当前配置的模型不受支持。请检查 model 名称及其与 provider 的兼容性。"
+)
+
 # Max length for the raw-string fallback so we never dump a huge blob.
 _RAW_FALLBACK_LIMIT = 300
 
@@ -142,6 +146,11 @@ def classify_llm_error(exc: BaseException) -> FriendlyError:
         haystack = ""
 
     try:
+        if _looks_like_unsupported_model(haystack):
+            return FriendlyError(
+                message=_MODEL_CONFIGURATION_MESSAGE,
+                category="model_configuration",
+            )
         for category, tokens, message in _RULES:
             if any(tok in haystack for tok in tokens):
                 return FriendlyError(
@@ -195,6 +204,69 @@ def extract_llm_error_code(exc: BaseException) -> int | str | None:
         return None
 
 
+def structured_llm_error(
+    exc: BaseException,
+    *,
+    provider: object = "",
+    model: object = "",
+) -> dict[str, object]:
+    """Return a stable, JSON-serializable provider error envelope."""
+    friendly = classify_llm_error(exc)
+    normalized_provider = _normalize_identity(provider)
+    normalized_model = _normalize_identity(model)
+    message = friendly.message
+    reason = friendly.category
+    if friendly.category == "model_configuration":
+        reason = "model_not_supported"
+        model_label = f" `{normalized_model}` " if normalized_model else ""
+        provider_label = (
+            f"当前 `{normalized_provider}` provider"
+            if normalized_provider
+            else "当前 provider"
+        )
+        message = (
+            f"当前配置的模型{model_label}不受支持。"
+            f"请检查 model 名称及其与{provider_label} 的兼容性。"
+        )
+
+    root = _safe_unwrap(exc)
+    body = _safe_attr(root, "body")
+    error_type = _normalize_error_code(_safe_attr(root, "type"))
+    if error_type is None:
+        error_type = _normalize_error_code(_field_from_body(body, "type"))
+    request_id = _normalize_text(_safe_attr(root, "request_id"), limit=256)
+    if request_id is None:
+        request_id = _normalize_text(_field_from_body(body, "request_id"), limit=256)
+    if request_id is None:
+        response = _safe_attr(root, "response")
+        headers = _safe_attr(response, "headers") if response is not None else None
+        try:
+            from .debug_logging import request_id_from_headers
+
+            request_id = _normalize_text(request_id_from_headers(headers), limit=256)
+        except Exception:
+            request_id = None
+
+    try:
+        retryable = is_retryable_llm_error(exc)
+    except Exception:
+        retryable = False
+
+    return {
+        "source": "llm_provider",
+        "category": friendly.category,
+        "reason": reason,
+        "code": extract_llm_error_code(exc),
+        "type": error_type,
+        "httpStatus": _safe_http_status_code(root),
+        "provider": normalized_provider or None,
+        "model": normalized_model or None,
+        "message": message,
+        "retryable": retryable,
+        "requestId": request_id,
+    }
+
+
 def _normalize_error_code(value: object) -> int | str | None:
     if isinstance(value, bool):
         return None
@@ -240,6 +312,7 @@ _NON_RETRYABLE_CATEGORIES: frozenset[str] = frozenset({
     "quota",
     "context_length",
     "model_not_found",
+    "model_configuration",
     "endpoint_not_found",
 })
 
@@ -264,6 +337,13 @@ def _http_status_code(exc: BaseException) -> int | None:
         if isinstance(val, int):
             return val
     return None
+
+
+def _safe_http_status_code(exc: BaseException) -> int | None:
+    try:
+        return _http_status_code(exc)
+    except Exception:
+        return None
 
 
 def is_retryable_llm_error(exc: BaseException) -> bool:
@@ -332,6 +412,61 @@ def _safe_str(obj: object) -> str:
             return repr(obj)
         except Exception:
             return ""
+
+
+def _safe_attr(obj: object, name: str) -> object | None:
+    try:
+        return getattr(obj, name, None)
+    except Exception:
+        return None
+
+
+def _safe_unwrap(exc: BaseException) -> BaseException:
+    try:
+        return _unwrap(exc)
+    except Exception:
+        return exc
+
+
+def _normalize_identity(value: object) -> str:
+    try:
+        enum_value = getattr(value, "value", value)
+    except Exception:
+        enum_value = value
+    return _normalize_text(enum_value, limit=256) or ""
+
+
+def _normalize_text(value: object, *, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or len(normalized) > limit:
+        return None
+    return normalized
+
+
+def _field_from_body(body: object, field: str) -> object | None:
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(body, dict):
+        return None
+    value = body.get(field)
+    if value is not None:
+        return value
+    nested = body.get("error")
+    if nested is body:
+        return None
+    return _field_from_body(nested, field)
+
+
+def _looks_like_unsupported_model(haystack: str) -> bool:
+    normalized = " ".join(haystack.split())
+    return "unsupported model" in normalized or (
+        "model " in normalized and " is not supported" in normalized
+    )
 
 
 def _unwrap(exc: BaseException) -> BaseException:
