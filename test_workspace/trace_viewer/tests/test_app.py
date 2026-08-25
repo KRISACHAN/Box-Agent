@@ -32,6 +32,52 @@ def test_case_overview_shows_complete_input_as_unicode(client, repo_root):
     assert r"\u7ed9\u6211\u751f\u6210" not in response.text
 
 
+def test_case_overview_shows_latest_turn_output_instead_of_accumulated_chunks(
+    client, repo_root
+):
+    attempt = (
+        repo_root
+        / "test_workspace/outputs/eval-one/cases/Q1/attempts/attempt-q1"
+    )
+    (attempt / "assistant.txt").write_text(
+        "intermediate streamed replylatest streamed reply",
+        encoding="utf-8",
+    )
+    trace = attempt / "agent/trace.jsonl"
+    trace.write_text(
+        "\n".join(
+            [
+                '{"event":"turn.output","timestamp":"2026-08-21T09:59:59+00:00","data":{"content":"earlier turn output"}}',
+                '{"event":"turn.output","timestamp":"2026-08-21T10:00:00+00:00","data":{"content":"authoritative final answer"}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = client.get("/runs/eval-one/cases/Q1")
+
+    assert response.status_code == 200
+    assert "authoritative final answer" in response.text
+    assert "earlier turn output" not in response.text
+    assert "intermediate streamed reply" not in response.text
+
+
+def test_case_overview_falls_back_to_assistant_text_without_turn_output(
+    client, repo_root
+):
+    attempt = (
+        repo_root
+        / "test_workspace/outputs/eval-one/cases/Q1/attempts/attempt-q1"
+    )
+    (attempt / "assistant.txt").write_text("legacy captured answer", encoding="utf-8")
+
+    response = client.get("/runs/eval-one/cases/Q1")
+
+    assert response.status_code == 200
+    assert "legacy captured answer" in response.text
+
+
 def test_case_search(client):
     response = client.get("/runs/eval-one?q=Q2")
     assert response.status_code == 200
@@ -147,6 +193,78 @@ def test_record_pages_show_elapsed_times_unicode_summary_and_collapsible_raw_dat
     assert response.text.count('class="raw-data"') == 3
     assert "Raw Data" in response.text
     assert 'src="/static/chevron.svg"' in response.text
+
+
+def test_record_header_and_timing_share_a_layout_row(client):
+    response = client.get("/runs/eval-one/cases/Q1/agent")
+
+    assert response.status_code == 200
+    row_start = response.text.index('<div class="record-meta-row">')
+    row_end = response.text.index("</div>", row_start)
+    row = response.text[row_start:row_end]
+    assert 'class="record-header"' in row
+    assert 'class="record-timing"' in row
+
+
+def test_record_header_and_timing_stay_in_a_flex_row_on_narrow_screens(client):
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    narrow_screen_rules = response.text.rsplit("@media(max-width:700px)", 1)[-1]
+    assert ".record-meta-row{display:flex" in narrow_screen_rules
+
+
+def test_agent_page_lists_each_tool_call_and_links_to_its_record(client, repo_root):
+    trace = repo_root / "test_workspace/outputs/eval-one/cases/Q1/attempts/attempt-q1/agent/trace.jsonl"
+    trace.write_text(
+        "\n".join(
+            [
+                '{"event":"turn.input","data":{"content":"start"}}',
+                '{"event":"tool.request","data":{"tool_name":"write_file","arguments":{}}}',
+                '{"event":"tool.response","data":{"tool_name":"write_file","success":true}}',
+                '{"event":"tool.request","data":{"tool_name":"read_file","arguments":{}}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = client.get("/runs/eval-one/cases/Q1/agent")
+
+    assert response.status_code == 200
+    assert 'class="tool-call-index"' in response.text
+    assert '<ul>' in response.text
+    assert '<a href="#record-agent-2"><span>#2</span> write_file</a>' in response.text
+    assert '<a href="#record-agent-4"><span>#4</span> read_file</a>' in response.text
+    assert response.text.index("write_file</a>") < response.text.index("read_file</a>")
+    assert 'id="record-agent-2"' in response.text
+    assert 'id="record-agent-4"' in response.text
+
+
+def test_agent_tool_call_index_links_to_records_on_later_pages(client, repo_root):
+    trace = repo_root / "test_workspace/outputs/eval-one/cases/Q1/attempts/attempt-q1/agent/trace.jsonl"
+    trace.write_text(
+        "".join(
+            [
+                '{"event":"turn.input","data":{"content":"record %d"}}\n' % index
+                for index in range(200)
+            ]
+        )
+        + '{"event":"tool.request","data":{"tool_name":"late_tool","arguments":{}}}\n',
+        encoding="utf-8",
+    )
+
+    response = client.get("/runs/eval-one/cases/Q1/agent")
+
+    assert response.status_code == 200
+    assert '<a href="?page=2#record-agent-201"><span>#201</span> late_tool</a>' in response.text
+
+
+def test_raw_data_summary_has_a_compact_label(client):
+    response = client.get("/runs/eval-one/cases/Q1/agent")
+
+    assert response.status_code == 200
+    assert '<span class="raw-data-label">Raw Data</span>' in response.text
 
 
 def test_each_timestamped_record_page_uses_the_same_elapsed_labels(client):

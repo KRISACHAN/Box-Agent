@@ -13,6 +13,7 @@ TIMESTAMP_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?| \d{2}:\d{2}:\d{2}(?:,\d+)?)"
 )
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+RECORDS_PER_PAGE = 200
 
 
 def _record(source: str, index: int, payload: Any, timestamp: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -136,7 +137,11 @@ def unified_timeline(attempt_dir: Path) -> list[dict[str, Any]]:
     return sorted(records, key=_sort_key)
 
 
-def page_records(records: Sequence[dict[str, Any]], page: int, per_page: int = 200) -> tuple[list[dict[str, Any]], int | None]:
+def page_records(
+    records: Sequence[dict[str, Any]],
+    page: int,
+    per_page: int = RECORDS_PER_PAGE,
+) -> tuple[list[dict[str, Any]], int | None]:
     page = max(1, page)
     start = (page - 1) * per_page
     stop = start + per_page

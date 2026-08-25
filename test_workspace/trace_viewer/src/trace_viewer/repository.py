@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from trace_viewer.timeline import source_records
+
 
 SCHEMA_VERSION = "box-agent-acp-eval/v1"
 
@@ -135,12 +137,28 @@ class EvaluationRepository:
         result.update(
             {
                 "input": self._json(case_path / "input.json", {}),
-                "assistant": self._text(attempt / "assistant.txt"),
+                "assistant": self._final_answer(attempt),
                 "completeness": self._json(attempt / "completeness.json", {}),
                 "case_path": case_path,
             }
         )
         return result
+
+    def _final_answer(self, attempt: Path) -> str:
+        latest = ""
+        for record in source_records(attempt, "agent"):
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("event") != "turn.output" and payload.get("type") != "turn.output":
+                continue
+            data = payload.get("data")
+            if not isinstance(data, dict):
+                continue
+            content = data.get("content") or data.get("output")
+            if isinstance(content, str) and content:
+                latest = content
+        return latest or self._text(attempt / "assistant.txt")
 
     def diagnosis_path(self, run_name: str, case_id: str) -> Path | None:
         case_path = self.get_case(run_name, case_id)["case_path"]

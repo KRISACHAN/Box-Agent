@@ -4,5 +4,11 @@
 <nav class="crumb"><a href="/">评测目录</a><span>/</span><a href="/runs/{{ run_name }}">{{ run_name }}</a><span>/</span><a href="/runs/{{ run_name }}/cases/{{ case.case_id }}">{{ case.case_id }}</a></nav>
 <section class="page-heading"><h1>{{ {"timeline":"统一时间线","agent":"Agent 轨迹","acp":"ACP 通信","process":"进程与 stderr"}[source] }}</h1><p>每条记录完整显示，按记录分页。</p></section>
 {% include "_tabs.html" %}
-<section id="records" class="records">{% include "_records.html" %}</section>
+<div class="source-layout{% if source == 'agent' and tool_calls %} source-layout-with-tool-index{% endif %}">
+  <section id="records" class="records">{% include "_records.html" %}</section>
+  {% if source == "agent" and tool_calls %}<aside class="tool-call-index" aria-label="工具调用索引">
+    <h2>工具调用</h2>
+    <ul>{% for tool_call in tool_calls %}<li><a href="{% if tool_call.page != page %}?page={{ tool_call.page }}{% endif %}#{{ tool_call.anchor }}"><span>#{{ tool_call.index }}</span> {{ tool_call.name }}</a></li>{% endfor %}</ul>
+  </aside>{% endif %}
+</div>
 {% endblock %}
