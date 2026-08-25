@@ -19,13 +19,21 @@ class SkillScratchDirectory:
     inode: int
 
 
-def prepare_skill_scratch_dir(workspace_dir: Path) -> SkillScratchDirectory:
+def prepare_skill_scratch_dir(
+    workspace_dir: Path,
+    *,
+    scratch_root_dir: str | Path | None = None,
+) -> SkillScratchDirectory:
     """Create the reserved Skill scratch root without accepting links."""
-    scratch_dir = workspace_dir.resolve() / SKILL_SCRATCH_DIR_NAME
+    scratch_dir = (
+        Path(scratch_root_dir).expanduser().resolve()
+        if scratch_root_dir is not None
+        else workspace_dir.resolve() / SKILL_SCRATCH_DIR_NAME
+    )
     try:
         stats = scratch_dir.lstat()
     except FileNotFoundError:
-        scratch_dir.mkdir(mode=0o700)
+        scratch_dir.mkdir(mode=0o700, parents=True)
         stats = scratch_dir.lstat()
     else:
         if stat.S_ISLNK(stats.st_mode) or not stat.S_ISDIR(stats.st_mode):

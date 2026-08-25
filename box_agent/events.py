@@ -203,6 +203,8 @@ class ArtifactEvent:
             cache/dedup key. Empty if the file could not be hashed.
         produced_at: ISO 8601 timestamp of detection (with tz offset).
         layout_id: Optional controlled artifact layout identifier.
+        edit_mode: ``"editable"`` for the current trusted runtime or
+            ``"read_only"`` for a recognizable Roadmap with another runtime.
     """
 
     tool_call_id: str
@@ -216,6 +218,7 @@ class ArtifactEvent:
     sha256: str = ""
     produced_at: str = ""
     layout_id: str = ""
+    edit_mode: str = ""
 
 
 # ── Summarization ───────────────────────────────────────────────

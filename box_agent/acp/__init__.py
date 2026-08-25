@@ -264,6 +264,8 @@ def _artifact_envelope(
         payload["output_dir"] = output_dir
     if art.layout_id:
         payload["layout_id"] = art.layout_id
+    if art.edit_mode:
+        payload["edit_mode"] = art.edit_mode
     if session_id:
         payload["session_id"] = session_id
         payload["sessionId"] = session_id
@@ -789,8 +791,8 @@ def _normalize_artifact_mode(meta: Any) -> str:
     return "output"
 
 
-def _artifact_root_from_meta(meta: Any, workspace: Path, artifact_mode: str) -> Path | None:
-    if artifact_mode == "project" or not isinstance(meta, dict):
+def _artifact_root_from_meta(meta: Any, workspace: Path) -> Path | None:
+    if not isinstance(meta, dict):
         return None
     layout = meta.get("workspace_layout") or meta.get("workspaceLayout")
     if not isinstance(layout, dict):
@@ -1511,16 +1513,17 @@ class BoxACPAgent:
             required_input_tokens=session_token_limit,
         )
 
-        # Canonical artifact directory is only part of output mode. Existing
-        # project workspaces are edited in place and must not get an implicit
-        # output/ directory. Hosts may supply a per-session artifact root so
-        # concurrent desktop tasks never share a visible output workspace.
+        # Project tools keep the repository root as cwd, but still receive a
+        # lazy artifact boundary for deliverable-producing Skills. The boundary
+        # is not created until a Skill writes an artifact, so ordinary code
+        # sessions do not gain an implicit output/ directory.
         output_dir: str | None = None
-        artifact_root_dir = _artifact_root_from_meta(meta, workspace, artifact_mode)
+        artifact_root_dir = _artifact_root_from_meta(meta, workspace)
+        output_path = artifact_root_dir or (workspace / "output").resolve()
         if artifact_mode != "project":
             output_path = artifact_root_dir or ensure_output_dir(workspace)
             output_path.mkdir(parents=True, exist_ok=True)
-            output_dir = str(output_path)
+        output_dir = str(output_path)
 
         log.info(
             "session/new",
@@ -1764,6 +1767,15 @@ class BoxACPAgent:
                 capability_state_provider=self._sub_agent_capability_state,
                 use_output_dir=artifact_mode != "project",
                 artifact_root_dir=output_dir,
+                create_artifact_root=artifact_mode != "project",
+                skill_scratch_root_dir=(
+                    workspace
+                    / ".box-agent"
+                    / "scratch"
+                    / session_id
+                    if artifact_mode == "project"
+                    else None
+                ),
                 env_context=env_context,
                 process_owner_id=session_id,
                 bypass_dangerous_command_approval=permission_mode == "full_access",
@@ -4606,7 +4618,7 @@ class BoxACPAgent:
                 execution_profile=state.execution_profile,
             ),
             completion_gate=completion_gate,
-            artifact_detection_enabled=state.artifact_mode != "project",
+            artifact_detection_enabled=state.output_dir is not None,
             artifact_root_dir=state.output_dir,
             cache_fingerprint_sink=lambda fingerprint: self._log_cache_fingerprint(
                 session_id,

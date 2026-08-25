@@ -36,6 +36,21 @@ def test_prepare_and_cleanup_skill_scratch_dir(tmp_path: Path) -> None:
     assert outside.read_text(encoding="utf-8") == "keep"
 
 
+def test_prepare_skill_scratch_dir_accepts_session_private_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    scratch_root = tmp_path / "runtime" / "session-a"
+
+    scratch = prepare_skill_scratch_dir(
+        workspace,
+        scratch_root_dir=scratch_root,
+    )
+
+    assert scratch.path == scratch_root.resolve()
+    assert scratch.path.is_dir()
+    assert not (workspace / SKILL_SCRATCH_DIR_NAME).exists()
+
+
 def test_prepare_skill_scratch_dir_rejects_reserved_path_symlink(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()

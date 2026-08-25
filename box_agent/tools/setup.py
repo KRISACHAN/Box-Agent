@@ -533,6 +533,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         skill_loader=None, capability_state_provider=None,
                         use_output_dir: bool = True,
                         artifact_root_dir: str | Path | None = None,
+                        create_artifact_root: bool = True,
+                        skill_scratch_root_dir: str | Path | None = None,
                         env_context=None,
                         process_owner_id: str | None = None,
                         bypass_dangerous_command_approval: bool = False):
@@ -556,6 +558,9 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         capability_state_provider: Read-only callable returning MCP loading/ready state
         use_output_dir: If True, execute_code chdirs into {workspace}/output.
         artifact_root_dir: Optional host-supplied output root for this session.
+        create_artifact_root: Create the artifact root during tool setup. Project
+            sessions can defer creation until an artifact-producing tool runs.
+        skill_scratch_root_dir: Optional session-private scratch root.
         process_owner_id: Optional ACP session identifier used to scope and
             reclaim background shell processes.
         bypass_dangerous_command_approval: Skip dangerous-command approval for
@@ -565,14 +570,15 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
     artifact_root = None
-    if use_output_dir:
+    if use_output_dir or artifact_root_dir is not None:
         artifact_root = (
             Path(artifact_root_dir).expanduser().resolve()
             if artifact_root_dir
             else (workspace_dir / "output").resolve()
         )
-        artifact_root.mkdir(parents=True, exist_ok=True)
-    relative_root = artifact_root or workspace_dir
+        if create_artifact_root:
+            artifact_root.mkdir(parents=True, exist_ok=True)
+    relative_root = artifact_root if use_output_dir and artifact_root else workspace_dir
 
     # Relative tool paths use the project root or the active artifact root.
     runtime_context = skill_runtime_context or build_skill_runtime_context(sandbox_mode=sandbox_mode)
@@ -585,7 +591,10 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         # this directory; exposing the same root keeps shell authoring on the
         # identical boundary.
         runtime_env["BOX_AGENT_OUTPUT_DIR"] = str(artifact_root)
-        skill_scratch_dir = prepare_skill_scratch_dir(workspace_dir)
+        skill_scratch_dir = prepare_skill_scratch_dir(
+            workspace_dir,
+            scratch_root_dir=skill_scratch_root_dir,
+        )
         runtime_env["BOX_AGENT_SCRATCH_DIR"] = str(skill_scratch_dir.path)
     if config.tools.enable_bash:
         sandbox_venv_path = None
@@ -774,7 +783,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             batch_synthesis_timeout_seconds=(
                 config.agent.sub_agent_batch_synthesis_timeout_seconds
             ),
-            artifact_detection_enabled=use_output_dir,
+            artifact_detection_enabled=artifact_root is not None,
             artifact_root_dir=str(artifact_root) if artifact_root else None,
             provider_stale_seconds=config.agent.provider_stale_seconds,
         )

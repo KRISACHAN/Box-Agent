@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Final
 
 from .events import ArtifactEvent
-from .roadmap_artifacts import roadmap_layout_id_for_html_artifact
+from .roadmap_artifacts import roadmap_metadata_for_html_artifact
 
 __all__ = [
     "OUTPUT_SUBDIR",
@@ -215,7 +215,7 @@ def make_artifact(
     except OSError:
         pass
 
-    layout_id = roadmap_layout_id_for_html_artifact(abs_resolved, size)
+    layout_id, edit_mode = roadmap_metadata_for_html_artifact(abs_resolved, size)
 
     return ArtifactEvent(
         tool_call_id=tool_call_id,
@@ -229,4 +229,5 @@ def make_artifact(
         sha256=digest,
         produced_at=datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         layout_id=layout_id,
+        edit_mode=edit_mode,
     )

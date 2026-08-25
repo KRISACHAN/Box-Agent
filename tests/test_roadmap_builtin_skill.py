@@ -131,3 +131,7 @@ def test_roadmap_skill_keeps_output_directory_deliverable_only() -> None:
     assert "after either success or failure" in skill.content
     assert "session runtime clears any residue" in skill.content
     assert "under `output/` is a versioned HTML" in skill.content
+    assert "`write_file` does not expand shell environment variables" in skill.content
+    assert "copy that returned path exactly into `write_file`" in skill.content
+    assert "Never guess a scratch path" in skill.content
+    assert "printf '%s\\n' \"$ROADMAP_DRAFT\"" in skill.content

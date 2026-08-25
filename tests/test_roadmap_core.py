@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from copy import deepcopy
@@ -514,9 +515,12 @@ def test_editor_uses_icon_actions_and_closes_from_the_backdrop() -> None:
         encoding="utf-8"
     )
 
-    assert 'icon: "close", iconOnly: true' in editor_source
-    assert 'icon: "plus", variant: "primary"' in editor_source
-    assert 'icon: "trash", iconOnly: true, variant: "danger"' in editor_source
+    assert re.search(r'icon:\s*"close",\s*iconOnly:\s*true', editor_source)
+    assert re.search(r'icon:\s*"plus",\s*variant:\s*"primary"', editor_source)
+    assert re.search(
+        r'icon:\s*"trash",\s*iconOnly:\s*true,\s*variant:\s*"danger"',
+        editor_source,
+    )
     assert 'editorBackdrop.addEventListener("click", () => setEditorOpen(false))' in editor_source
     assert 'node.dataset.progress = item.progress' in editor_source
     assert 'font-size: 12px;' in editor_css
@@ -1373,6 +1377,7 @@ def test_artifact_event_reads_roadmap_html_metadata(tmp_path) -> None:
     artifact = make_artifact("tool-1", output, tmp_path)
     assert artifact.mime == "text/html"
     assert artifact.layout_id == "roadmap-swimlane-v1"
+    assert artifact.edit_mode == "editable"
 
 
 @pytest.mark.parametrize(

@@ -19,10 +19,14 @@ function loadDefaultPalette() {
   const registryPath = path.join(SKILL_ROOT, "runtime", "registry.json");
   const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
   const palette = Array.isArray(registry.palettes)
-    ? registry.palettes.find(entry => entry?.id === registry.default_palette_id)
+    ? registry.palettes.find(
+        (entry) => entry?.id === registry.default_palette_id,
+      )
     : null;
   if (!palette || !Array.isArray(palette.colors) || palette.colors.length < 8) {
-    throw new Error("Roadmap runtime registry is missing a valid default palette");
+    throw new Error(
+      "Roadmap runtime registry is missing a valid default palette",
+    );
   }
   return Object.freeze({
     id: registry.default_palette_id,
@@ -73,11 +77,17 @@ function progressRatio(progress) {
 }
 
 function progressLabel(progress) {
-  return { planned: "计划中", doing: "进行中", done: "已完成", blocked: "受阻" }[progress] || progress;
+  return (
+    { planned: "计划中", doing: "进行中", done: "已完成", blocked: "受阻" }[
+      progress
+    ] || progress
+  );
 }
 
 function laneAccent(index) {
-  return ROADMAP_DEFAULT_PALETTE.colors[index % ROADMAP_DEFAULT_PALETTE.colors.length];
+  return ROADMAP_DEFAULT_PALETTE.colors[
+    index % ROADMAP_DEFAULT_PALETTE.colors.length
+  ];
 }
 
 function compactHeaderLabel(header) {
@@ -100,53 +110,70 @@ function buildDiagnostics(spec, geometry) {
       message: `当前包含 ${spec.items.length} 条任务，已启用可滚动的密集视图。`,
     });
   }
-  if (geometry.canvas.height > 900) {
-    diagnostics.push({
-      code: "layout.vertical-scroll",
-      severity: "warning",
-      message: `内容高度为 ${Math.round(geometry.canvas.height)}px，预览将使用纵向滚动。`,
-    });
-  }
   return diagnostics;
 }
 
 function renderGeometryMarkup(spec, geometry) {
-  const laneById = new Map(spec.lanes.map(lane => [lane.id, lane]));
-  const laneIndexById = new Map(spec.lanes.map((lane, index) => [lane.id, index]));
-  const itemById = new Map(spec.items.map(item => [item.id, item]));
-  const headers = geometry.headers.map(header => (
-    `<div class="roadmap-header" data-kind="${escapeHtml(header.kind)}" title="${escapeHtml(header.label)}" style="${styleBox(header)}">${escapeHtml(compactHeaderLabel(header))}</div>`
-  ));
-  const lanes = geometry.lanes.map((lane, index) => (
-    `<div class="roadmap-lane" data-lane-id="${escapeHtml(lane.id)}" style="${styleBox(lane)};--roadmap-lane-accent:${laneAccent(index)}"><div class="roadmap-lane-label" title="${escapeHtml(laneById.get(lane.id)?.label || lane.label)}"><span class="roadmap-lane-index">${String(index + 1).padStart(2, "0")}</span><span class="roadmap-lane-title">${escapeHtml(lane.label)}</span></div></div>`
-  ));
-  const bars = geometry.bars.map(bar => {
+  const laneById = new Map(spec.lanes.map((lane) => [lane.id, lane]));
+  const laneIndexById = new Map(
+    spec.lanes.map((lane, index) => [lane.id, index]),
+  );
+  const itemById = new Map(spec.items.map((item) => [item.id, item]));
+  const headers = geometry.headers.map(
+    (header) =>
+      `<div class="roadmap-header" data-kind="${escapeHtml(header.kind)}" title="${escapeHtml(header.label)}" style="${styleBox(header)}">${escapeHtml(compactHeaderLabel(header))}</div>`,
+  );
+  const lanes = geometry.lanes.map(
+    (lane, index) =>
+      `<div class="roadmap-lane" data-lane-id="${escapeHtml(lane.id)}" style="${styleBox(lane)};--roadmap-lane-accent:${laneAccent(index)}"><div class="roadmap-lane-label" title="${escapeHtml(laneById.get(lane.id)?.label || lane.label)}"><span class="roadmap-lane-index">${String(index + 1).padStart(2, "0")}</span><span class="roadmap-lane-title">${escapeHtml(lane.label)}</span></div></div>`,
+  );
+  const bars = geometry.bars.map((bar) => {
     const item = itemById.get(bar.id) || bar;
-    const color = cssColor(item.color, laneAccent(laneIndexById.get(bar.lane_id) || 0));
+    const color = cssColor(
+      item.color,
+      laneAccent(laneIndexById.get(bar.lane_id) || 0),
+    );
     return `<div class="roadmap-bar" data-item-id="${escapeHtml(bar.id)}" data-line-style="${escapeHtml(bar.line_style)}" data-progress="${escapeHtml(item.progress)}" title="${escapeHtml(`${bar.title} · ${bar.start} → ${bar.end} · ${progressLabel(item.progress)}`)}" style="${styleBox(bar)};--roadmap-item-accent:${color}"><div class="roadmap-bar-progress" style="width:${progressRatio(item.progress) * 100}%"></div></div>`;
   });
-  const milestones = geometry.milestones.map(marker => {
+  const milestones = geometry.milestones.map((marker) => {
     const item = itemById.get(marker.id) || marker;
-    const color = cssColor(item.color, laneAccent(laneIndexById.get(marker.lane_id) || 0));
+    const color = cssColor(
+      item.color,
+      laneAccent(laneIndexById.get(marker.lane_id) || 0),
+    );
     return `<div class="roadmap-milestone" data-item-id="${escapeHtml(marker.id)}" data-line-style="${escapeHtml(marker.line_style)}" title="${escapeHtml(`${marker.title} · ${marker.date}`)}" style="left:${px(marker.x - marker.size / 2)};top:${px(marker.y - marker.size / 2)};width:${px(marker.size)};height:${px(marker.size)};--roadmap-item-accent:${color}"></div>`;
   });
-  const labels = geometry.labels.map(label => (
-    `<div class="roadmap-label" data-item-id="${escapeHtml(label.item_id)}" data-placement="${escapeHtml(label.placement)}" title="${escapeHtml(label.text)}" style="${styleBox(label)}">${escapeHtml(label.text)}</div>`
-  ));
-  const continuations = geometry.continuations.map(marker => (
-    `<div class="roadmap-continuation" aria-label="${marker.direction === "before" ? "开始前仍在继续" : "结束后仍将继续"}" style="left:${px(marker.x - marker.size)};top:${px(marker.y - marker.size)}">${marker.direction === "before" ? "‹" : "›"}</div>`
-  ));
-  const halfMonthHeaders = geometry.headers.filter(header => header.kind === "half-month");
-  const gridLineXs = [...new Set([
-    ...halfMonthHeaders.map(header => header.x),
-    ...halfMonthHeaders.map(header => header.x + header.width),
-  ].map(round => Number(round.toFixed(3))))];
+  const labels = geometry.labels.map(
+    (label) =>
+      `<div class="roadmap-label" data-item-id="${escapeHtml(label.item_id)}" data-placement="${escapeHtml(label.placement)}" title="${escapeHtml(label.text)}" style="${styleBox(label)}">${escapeHtml(label.text)}</div>`,
+  );
+  const continuations = geometry.continuations.map(
+    (marker) =>
+      `<div class="roadmap-continuation" aria-label="${marker.direction === "before" ? "开始前仍在继续" : "结束后仍将继续"}" style="left:${px(marker.x - marker.size)};top:${px(marker.y - marker.size)}">${marker.direction === "before" ? "‹" : "›"}</div>`,
+  );
+  const halfMonthHeaders = geometry.headers.filter(
+    (header) => header.kind === "half-month",
+  );
+  const gridLineXs = [
+    ...new Set(
+      [
+        ...halfMonthHeaders.map((header) => header.x),
+        ...halfMonthHeaders.map((header) => header.x + header.width),
+      ].map((round) => Number(round.toFixed(3))),
+    ),
+  ];
   const laneTop = geometry.canvas.header_top + geometry.canvas.header_height;
-  const laneBottom = geometry.lanes.reduce((bottom, lane) => Math.max(bottom, lane.y + lane.height), laneTop);
-  const gridLines = gridLineXs.map(x => (
-    `<div class="roadmap-grid-line" style="left:${px(x)};top:${px(laneTop)};height:${px(laneBottom - laneTop)}"></div>`
-  ));
-  const legend = (spec.legend || []).map(entry => `<span>${escapeHtml(entry.label)}</span>`);
+  const laneBottom = geometry.lanes.reduce(
+    (bottom, lane) => Math.max(bottom, lane.y + lane.height),
+    laneTop,
+  );
+  const gridLines = gridLineXs.map(
+    (x) =>
+      `<div class="roadmap-grid-line" style="left:${px(x)};top:${px(laneTop)};height:${px(laneBottom - laneTop)}"></div>`,
+  );
+  const legend = (spec.legend || []).map(
+    (entry) => `<span>${escapeHtml(entry.label)}</span>`,
+  );
   return [
     `<div class="roadmap-axis-label" style="left:${px(geometry.lanes[0]?.x || 0)};top:${px(geometry.canvas.header_top)};width:${px(geometry.canvas.plot_left - (geometry.lanes[0]?.x || 0))};height:${px(geometry.canvas.header_height)}"><span>阶段</span><small>团队泳道</small></div>`,
     ...headers,
@@ -171,44 +198,64 @@ function runtimeModule(source, name, requireBody = "") {
 function renderRoadmapHtml(source, options = {}) {
   const result = validateAndNormalizeRoadmapSpec(source);
   if (!result.ok) {
-    const error = new Error(`Roadmap spec validation failed with ${result.issues.length} issue(s)`);
+    const error = new Error(
+      `Roadmap spec validation failed with ${result.issues.length} issue(s)`,
+    );
     error.issues = result.issues;
     throw error;
   }
   const spec = result.normalized;
   const questionResult = pendingQuestionsForRoadmapSpec(
     spec,
-    options.pendingQuestions || []
+    options.pendingQuestions || [],
   );
   if (!questionResult.ok) {
-    const error = new Error(`Roadmap pending question validation failed with ${questionResult.issues.length} issue(s)`);
+    const error = new Error(
+      `Roadmap pending question validation failed with ${questionResult.issues.length} issue(s)`,
+    );
     error.issues = questionResult.issues;
     throw error;
   }
   const pendingQuestions = questionResult.pending_questions;
   const viewport = options.viewport || { width: 1440, height: 900 };
-  const generationVersion = Number.isInteger(options.generationVersion) && options.generationVersion > 0
-    ? options.generationVersion
-    : null;
+  const generationVersion =
+    Number.isInteger(options.generationVersion) && options.generationVersion > 0
+      ? options.generationVersion
+      : null;
   const geometry = layoutRoadmap(spec, viewport);
-  const diagnostics = [...result.warnings.map(message => ({
-    code: "contract.warning",
-    severity: "warning",
-    message,
-  })), ...buildDiagnostics(spec, geometry)];
-  const runtimeCss = fs.readFileSync(path.join(SKILL_ROOT, "runtime", "roadmap.css"), "utf8");
-  const editorJs = fs.readFileSync(path.join(SKILL_ROOT, "runtime", "roadmap-editor.js"), "utf8");
-  const contractJs = fs.readFileSync(path.join(__dirname, "roadmap_contract_core.js"), "utf8");
-  const geometryJs = fs.readFileSync(path.join(__dirname, "roadmap_geometry_core.js"), "utf8");
+  const diagnostics = [
+    ...result.warnings.map((message) => ({
+      code: "contract.warning",
+      severity: "warning",
+      message,
+    })),
+    ...buildDiagnostics(spec, geometry),
+  ];
+  const runtimeCss = fs.readFileSync(
+    path.join(SKILL_ROOT, "runtime", "roadmap.css"),
+    "utf8",
+  );
+  const editorJs = fs.readFileSync(
+    path.join(SKILL_ROOT, "runtime", "roadmap-editor.js"),
+    "utf8",
+  );
+  const contractJs = fs.readFileSync(
+    path.join(__dirname, "roadmap_contract_core.js"),
+    "utf8",
+  );
+  const geometryJs = fs.readFileSync(
+    path.join(__dirname, "roadmap_geometry_core.js"),
+    "utf8",
+  );
   const contractModule = runtimeModule(
     contractJs,
     "__roadmapContractCore",
-    'const require=(request)=>{if(request==="crypto")return {createHash:()=>{throw new Error("crypto hashing is unavailable in the Roadmap editor runtime")}};throw new Error(`Unsupported runtime module: ${request}`);};'
+    'const require=(request)=>{if(request==="crypto")return {createHash:()=>{throw new Error("crypto hashing is unavailable in the Roadmap editor runtime")}};throw new Error(`Unsupported runtime module: ${request}`);};',
   );
   const geometryModule = runtimeModule(
     geometryJs,
     "__roadmapGeometryCore",
-    'const require=(request)=>{if(request==="./roadmap_contract_core.js")return window.__roadmapContractCore;throw new Error(`Unsupported runtime module: ${request}`);};'
+    'const require=(request)=>{if(request==="./roadmap_contract_core.js")return window.__roadmapContractCore;throw new Error(`Unsupported runtime module: ${request}`);};',
   );
   const html = [
     "<!doctype html>",
@@ -220,7 +267,9 @@ function renderRoadmapHtml(source, options = {}) {
     `  <meta name="box-agent-artifact-layout-id" content="${ROADMAP_LAYOUT_ID}" />`,
     `  <meta name="box-agent-artifact-version" content="${ROADMAP_RENDERER_VERSION}" />`,
     ...(generationVersion
-      ? [`  <meta name="box-agent-roadmap-generation-version" content="${generationVersion}" />`]
+      ? [
+          `  <meta name="box-agent-roadmap-generation-version" content="${generationVersion}" />`,
+        ]
       : []),
     `  <title>${escapeHtml(spec.title)} · 路线图</title>`,
     "  <style>",
@@ -236,7 +285,7 @@ function renderRoadmapHtml(source, options = {}) {
     '        <button class="roadmap-button" data-primary="true" type="button" data-action="save" disabled>保存</button>',
     "      </div>",
     "    </header>",
-    `    <aside class="roadmap-diagnostics" data-role="diagnostics"${diagnostics.length ? "" : " hidden"}>${diagnostics.map(entry => escapeHtml(entry.message)).join("；")}</aside>`,
+    `    <aside class="roadmap-diagnostics" data-role="diagnostics"${diagnostics.length ? "" : " hidden"}>${diagnostics.map((entry) => escapeHtml(entry.message)).join("；")}</aside>`,
     `    <div class="roadmap-stage-shell" data-role="stage-shell" style="height:${px(geometry.canvas.height)}">`,
     `      <div class="roadmap-stage" data-role="stage" style="width:${px(geometry.canvas.width)};height:${px(geometry.canvas.height)}">`,
     renderGeometryMarkup(spec, geometry),
@@ -262,7 +311,12 @@ function renderRoadmapHtml(source, options = {}) {
     safeJson(ROADMAP_DEFAULT_PALETTE),
     "  </script>",
     '  <script type="application/json" id="roadmap-editor-metadata">',
-    safeJson({ mode: "form-table", source_element_id: "deck-document", layout_id: ROADMAP_LAYOUT_ID, palette_id: ROADMAP_DEFAULT_PALETTE.id }),
+    safeJson({
+      mode: "form-table",
+      source_element_id: "deck-document",
+      layout_id: ROADMAP_LAYOUT_ID,
+      palette_id: ROADMAP_DEFAULT_PALETTE.id,
+    }),
     "  </script>",
     '  <script data-roadmap-runtime="contract-core">',
     contractModule,

@@ -58,9 +58,19 @@ task's files directly in the scratch root or reuse another task's directory.
 Before completing the task, verify that every file created by this Roadmap run
 under `output/` is a versioned HTML deliverable.
 
+`write_file` does not expand shell environment variables. Before writing the
+Draft, resolve its real absolute path with `bash`: create the task directory and
+print the Draft path, then copy that returned path exactly into `write_file`.
+Never guess a scratch path, substitute a home-directory path, or pass a literal
+`$BOX_AGENT_SCRATCH_DIR/...` string to a file tool. The builder must receive the
+same absolute path that `write_file` reported writing successfully.
+
 ```bash
 ROADMAP_SKILL_DIR="${BOX_AGENT_ROADMAP_SKILL_DIR:-{skill_dir}}"
 ROADMAP_DRAFT="$BOX_AGENT_SCRATCH_DIR/<task-id>/roadmap-draft.json"
+mkdir -p "$(dirname "$ROADMAP_DRAFT")"
+printf '%s\n' "$ROADMAP_DRAFT"
+# Use the printed absolute path with write_file, then run:
 ${BOX_AGENT_NODE:-node} "$ROADMAP_SKILL_DIR/scripts/build_roadmap_artifact.js" "$ROADMAP_DRAFT" --out roadmap.html --consume-input
 ```
 
@@ -129,8 +139,11 @@ Runtime resources:
 
 Schema, geometry, renderer, preview, and form/table editing are version 1.
 The generated HTML must carry the controlled Roadmap protocol markers and
-embedded `#deck-document` source. Hosts decide whether to enable editing or
-degrade to read-only rendering from those protocol versions directly.
+embedded `#deck-document` source. The runtime publishes `edit_mode=editable`
+when the safe structure and declared protocol versions are supported. Safe,
+recognizable artifacts with unsupported versions publish `edit_mode=read_only`.
+Runtime JS and CSS bytes are not compared. Hosts treat missing or unknown modes
+as read-only.
 
 The recommended limit is 6 months, 8 lanes, and 80 items. Structural contract
 violations block rendering. Dense but valid content stays available with

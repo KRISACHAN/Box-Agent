@@ -6267,6 +6267,7 @@ def test_roadmap_artifact_envelope_includes_controlled_metadata(tmp_path):
     env = _artifact_envelope(_make_artifact("tc-roadmap", html, tmp_path), str(output))
 
     assert env["layout_id"] == "roadmap-swimlane-v1"
+    assert env["edit_mode"] == "editable"
     assert "artifact_version" not in env
     assert "diagnostics" not in env
 
@@ -6279,10 +6280,31 @@ def test_roadmap_artifact_envelope_includes_controlled_metadata(tmp_path):
         ),
         encoding="utf-8",
     )
-    tampered = _artifact_envelope(
-        _make_artifact("tc-roadmap-tampered", html, tmp_path), str(output)
+    same_version = _artifact_envelope(
+        _make_artifact("tc-roadmap-same-version", html, tmp_path), str(output)
     )
-    assert "layout_id" not in tampered
+    assert same_version["layout_id"] == "roadmap-swimlane-v1"
+    assert same_version["edit_mode"] == "editable"
+
+    html.write_text(
+        trusted_html.replace(
+            "Box Agent Roadmap Artifact v1", "Box Agent Roadmap Artifact v2", 1
+        )
+        .replace(
+            'box-agent-artifact-version" content="1',
+            'box-agent-artifact-version" content="2',
+            1,
+        )
+        .replace('data-schema-version="1"', 'data-schema-version="2"', 1)
+        .replace('data-geometry-version="1"', 'data-geometry-version="2"', 1)
+        .replace('data-renderer-version="1"', 'data-renderer-version="2"', 1),
+        encoding="utf-8",
+    )
+    unsupported = _artifact_envelope(
+        _make_artifact("tc-roadmap-unsupported", html, tmp_path), str(output)
+    )
+    assert unsupported["layout_id"] == "roadmap-swimlane-v1"
+    assert unsupported["edit_mode"] == "read_only"
 
     html.write_text(
         trusted_html.replace("</main>", '<a href="https://example.test">link</a></main>'),
@@ -6292,6 +6314,7 @@ def test_roadmap_artifact_envelope_includes_controlled_metadata(tmp_path):
         _make_artifact("tc-roadmap-navigable", html, tmp_path), str(output)
     )
     assert "layout_id" not in navigable
+    assert "edit_mode" not in navigable
 
 
 def test_roadmap_artifact_layout_rejects_self_declared_metadata(tmp_path):
@@ -6324,6 +6347,7 @@ def test_roadmap_artifact_layout_rejects_self_declared_metadata(tmp_path):
     env = _artifact_envelope(_make_artifact("tc-roadmap", html, tmp_path), str(output))
 
     assert "layout_id" not in env
+    assert "edit_mode" not in env
 
 
 def test_roadmap_artifact_layout_rejects_spoofed_or_invalid_html(tmp_path):
@@ -6357,6 +6381,8 @@ def test_roadmap_artifact_layout_rejects_spoofed_or_invalid_html(tmp_path):
 
     assert "layout_id" not in spoofed_env
     assert "layout_id" not in invalid_env
+    assert "edit_mode" not in spoofed_env
+    assert "edit_mode" not in invalid_env
 
 
 # ── Summarization (_maybe_summarize / _create_summary) ───────
