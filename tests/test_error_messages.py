@@ -155,6 +155,41 @@ def test_structured_error_extracts_request_id_from_response_headers():
     assert details["requestId"] == "provider-request-1"
 
 
+def test_supported_model_names_mismatch_is_model_configuration_error():
+    exc = _FakeAPIError(
+        "Error code: 400",
+        status_code=400,
+        body={
+            "error": {
+                "message": (
+                    "The supported API model names are deepseek-v4-pro, "
+                    "deepseek-v4-flash, and deepseek-v4-flash-vision-exp, "
+                    "but you passed deepseek-v4-pro1."
+                ),
+                "type": "invalid_request_error",
+                "param": None,
+                "code": "invalid_request_error",
+            }
+        },
+    )
+
+    details = structured_llm_error(
+        exc,
+        provider="openai",
+        model="deepseek-v4-pro1",
+    )
+
+    assert details["category"] == "model_configuration"
+    assert details["reason"] == "model_not_supported"
+    assert details["code"] == "invalid_request_error"
+    assert details["type"] == "invalid_request_error"
+    assert details["retryable"] is False
+    assert details["message"] == (
+        "当前配置的模型 `deepseek-v4-pro1` 不受支持。"
+        "请检查 model 名称及其与当前 `openai` provider 的兼容性。"
+    )
+
+
 def test_endpoint_404_suggests_provider_protocol_mismatch():
     exc = _FakeAPIError("404 page not found", status_code=404)
     fe = classify_llm_error(exc)

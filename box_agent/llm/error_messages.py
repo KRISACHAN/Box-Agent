@@ -464,9 +464,17 @@ def _field_from_body(body: object, field: str) -> object | None:
 
 def _looks_like_unsupported_model(haystack: str) -> bool:
     normalized = " ".join(haystack.split())
-    return "unsupported model" in normalized or (
+    explicit_unsupported = "unsupported model" in normalized or (
         "model " in normalized and " is not supported" in normalized
     )
+    supported_names_mismatch = (
+        (
+            "supported api model names are" in normalized
+            or "supported model names are" in normalized
+        )
+        and "but you passed" in normalized
+    )
+    return explicit_unsupported or supported_names_mismatch
 
 
 def _unwrap(exc: BaseException) -> BaseException:
