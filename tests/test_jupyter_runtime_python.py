@@ -13,6 +13,8 @@ from box_agent.tools.jupyter_tool import (
     JupyterKernelSession,
     JupyterSandboxTool,
     SandboxEnvironment,
+    _communicate_sandbox_process,
+    _start_sandbox_kernel,
 )
 
 
@@ -34,6 +36,46 @@ def _clear_python_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "BOX_AGENT_BUNDLED_PYTHON",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_bootstrap_process_timeout_terminates_child() -> None:
+    proc = await jupyter_tool.asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+        stdout=jupyter_tool.asyncio.subprocess.PIPE,
+        stderr=jupyter_tool.asyncio.subprocess.PIPE,
+    )
+
+    with pytest.raises(RuntimeError, match="probe timed out"):
+        await _communicate_sandbox_process(
+            proc,
+            operation="Sandbox test probe",
+            timeout=0.01,
+        )
+
+    assert proc.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_kernel_startup_timeout_is_bounded() -> None:
+    class HangingKernelManager:
+        def __init__(self) -> None:
+            self.shutdown_called = False
+
+        async def _async_start_kernel(self) -> None:
+            await jupyter_tool.asyncio.Event().wait()
+
+        async def _async_shutdown_kernel(self, now: bool = False) -> None:
+            self.shutdown_called = now
+
+    manager = HangingKernelManager()
+
+    with pytest.raises(RuntimeError, match="kernel startup timed out"):
+        await _start_sandbox_kernel(manager, timeout=0.01)
+
+    assert manager.shutdown_called is True
 
 
 def test_sandbox_env_accepts_host_python_on_non_windows(
@@ -155,6 +197,32 @@ def test_required_modules_cover_officev3_provisioned_package_surface() -> None:
         assert required[module_name] == package_name
 
 
+def test_local_sandbox_prefers_uv_for_package_install(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    uv_path = tmp_path / "bin" / "uv"
+    monkeypatch.setattr(
+        jupyter_tool.shutil,
+        "which",
+        lambda *_args, **_kwargs: str(uv_path),
+    )
+    env = SandboxEnvironment(base_dir=tmp_path / "sandbox")
+
+    command = env._venv_install_command(["pandas", "numpy"])
+
+    assert command == [
+        str(uv_path),
+        "pip",
+        "install",
+        "--python",
+        str(env.python_path),
+        "--quiet",
+        "pandas",
+        "numpy",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_host_python_bootstraps_pip_before_installing_missing_packages(
     monkeypatch: pytest.MonkeyPatch,
@@ -199,6 +267,53 @@ exit 1
 
     assert (python_path.parent / "pip-ready").exists()
     assert (python_path.parent / "ipykernel-ready").exists()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_python_uses_uv_when_ensurepip_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    python_path = tmp_path / "sandbox" / "venv" / "bin" / "python"
+    _write_executable(
+        python_path,
+        """#!/bin/sh
+dir="$(dirname "$0")"
+if [ "$1" = "-c" ] && [ "$2" = "import pip" ]; then
+  [ -f "$dir/pip-ready" ] && exit 0 || exit 1
+fi
+if [ "$1" = "-m" ] && [ "$2" = "ensurepip" ]; then
+  echo "No module named ensurepip" >&2
+  exit 1
+fi
+exit 1
+""",
+    )
+    uv_path = tmp_path / "bin" / "uv"
+    _write_executable(
+        uv_path,
+        """#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--python" ]; then
+    shift
+    python_path="$1"
+    break
+  fi
+  shift
+done
+touch "$(dirname "$python_path")/pip-ready"
+""",
+    )
+    monkeypatch.setattr(
+        jupyter_tool.shutil,
+        "which",
+        lambda *_args, **_kwargs: str(uv_path),
+    )
+    env = SandboxEnvironment(base_dir=tmp_path / "sandbox")
+
+    await env._ensure_pip_available(None, None)
+
+    assert (python_path.parent / "pip-ready").exists()
 
 
 @pytest.mark.asyncio
