@@ -83,7 +83,7 @@ async def _communicate_sandbox_process(
     """Collect a sandbox bootstrap process without allowing an infinite wait."""
     try:
         return await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError as exc:
+    except asyncio.TimeoutError as exc:
         try:
             proc.kill()
         except ProcessLookupError:
@@ -109,7 +109,7 @@ async def _start_sandbox_kernel(
                 asyncio.to_thread(kernel_manager.start_kernel),
                 timeout=timeout,
             )
-    except TimeoutError as exc:
+    except asyncio.TimeoutError as exc:
         async_shutdown = getattr(kernel_manager, "_async_shutdown_kernel", None)
         if callable(async_shutdown):
             try:
