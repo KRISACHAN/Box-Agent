@@ -82,6 +82,12 @@ _CONTENT_PATCH_TOOL_ERROR = (
     "media paths. Do not inspect files again. Write deck.patch.json now with write_file "
     "(use ordered chunk_index/final calls if one model response cannot hold the body)."
 )
+_PENDING_WRITE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_WRITE_TRANSACTION_PENDING: an ordered write_file "
+    "transaction is already active for {path}. Continue only that path with "
+    "chunk_index={next_chunk_index}; do not restart at chunk_index=0, switch tools, "
+    "or target another file."
+)
 _CONTENT_PATCH_REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"read_file", "write_file", "append_file", "edit_file", "staged_file_write"}
 )
@@ -2110,6 +2116,9 @@ class ControlledPresentationPolicy:
     _last_checkpoint_text: str | None = None
     _resume_checkpoint: WorkflowPauseCheckpoint | None = None
     _last_step_failure_signature: str | None = None
+    _pending_write_path: str | None = None
+    _pending_write_next_chunk_index: int | None = None
+    _pending_write_size_bytes: int = 0
     _dispatched_deterministic_action_ids: set[str] = field(default_factory=set)
 
     _step_failure_streak: int = 0
@@ -2224,6 +2233,146 @@ class ControlledPresentationPolicy:
         """Identify one model decision whose sibling tool calls share a fuse count."""
         self._active_tool_decision_id = decision_id
 
+    def _pending_write_checkpoint(self) -> dict[str, int | str] | None:
+        if (
+            self._pending_write_path is None
+            or self._pending_write_next_chunk_index is None
+        ):
+            return None
+        return {
+            "path": self._pending_write_path,
+            "next_chunk_index": self._pending_write_next_chunk_index,
+            "size_bytes": self._pending_write_size_bytes,
+        }
+
+    def _expected_pending_write_path(self) -> str | None:
+        """Return the canonical target for a chunkable write in this stage."""
+        if self.stage == "outline":
+            return "outline.json"
+        if self.stage == "content_patch":
+            return "deck.patch.json"
+        repair_path = _repair_artifact_name(self.stage)
+        if repair_path is not None:
+            return repair_path
+        if self.stage == "apply_patch" and self.apply_patch_repair_allowed:
+            return "deck.patch.json"
+        return None
+
+    def _pending_write_tool_error(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str | None:
+        pending_path = self._pending_write_path
+        next_chunk_index = self._pending_write_next_chunk_index
+        if pending_path is None or next_chunk_index is None:
+            return None
+        valid_continuation = (
+            tool_name == "write_file"
+            and _is_canonical_artifact_target(
+                arguments.get("path"),
+                pending_path,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            )
+            and arguments.get("chunk_index") == next_chunk_index
+        )
+        if valid_continuation:
+            return None
+        return _PENDING_WRITE_TOOL_ERROR.format(
+            path=pending_path,
+            next_chunk_index=next_chunk_index,
+        )
+
+    def _clear_pending_write(self) -> None:
+        self._pending_write_path = None
+        self._pending_write_next_chunk_index = None
+        self._pending_write_size_bytes = 0
+
+    def _record_pending_write_result(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+    ) -> None:
+        if tool_name != "write_file":
+            return
+        raw_output = result.raw_output
+        if not isinstance(raw_output, dict):
+            return
+        output_type = raw_output.get("type")
+        transaction_state = raw_output.get("transaction_state")
+        if transaction_state is None:
+            if output_type == "write_file_transaction_discarded":
+                transaction_state = "discarded"
+            elif output_type == "artifact" and result.success:
+                transaction_state = "committed"
+            elif (
+                output_type == "write_file_chunk"
+                and result.success
+                and raw_output.get("final") is False
+            ):
+                transaction_state = "active"
+        if transaction_state in {"committed", "discarded", "none"}:
+            if (
+                self._pending_write_path is not None
+                and _is_canonical_artifact_target(
+                    raw_output.get("path"),
+                    self._pending_write_path,
+                    self.workspace_dir,
+                    self.artifact_root_dir,
+                )
+            ):
+                self._clear_pending_write()
+            return
+        if transaction_state != "active":
+            return
+        expected_path = self._expected_pending_write_path()
+        next_chunk_index = raw_output.get("next_chunk_index")
+        size_bytes = raw_output.get("size_bytes")
+        if (
+            expected_path is None
+            or not _is_canonical_artifact_target(
+                arguments.get("path"),
+                expected_path,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            )
+            or not _is_canonical_artifact_target(
+                raw_output.get("path"),
+                expected_path,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            )
+            or not isinstance(next_chunk_index, int)
+            or isinstance(next_chunk_index, bool)
+            or next_chunk_index <= 0
+            or not isinstance(size_bytes, int)
+            or isinstance(size_bytes, bool)
+            or size_bytes < 0
+        ):
+            return
+        self._pending_write_path = expected_path
+        self._pending_write_next_chunk_index = next_chunk_index
+        self._pending_write_size_bytes = size_bytes
+
+    def record_tool_cleanup(
+        self,
+        tool_name: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Synchronize policy state after runtime-owned tool cleanup."""
+        for raw_output in records:
+            self._record_pending_write_result(
+                tool_name,
+                {"path": raw_output.get("path")},
+                ToolResult(
+                    success=False,
+                    error="The runtime discarded an incomplete tool transaction.",
+                    raw_output=raw_output,
+                ),
+            )
+
     def build_checkpoint(self) -> str | None:
         """Derive the current presentation stage from persisted artifacts."""
         if self.image_auth_blocked:
@@ -2313,6 +2462,7 @@ class ControlledPresentationPolicy:
                 or "tool_search" in self.available_tool_names
                 or bool(self.available_tool_names & DIRECT_RESEARCH_READ_TOOLS)
             ),
+            pending_write=self._pending_write_checkpoint(),
         )
         research_input = (
             _checkpoint_json(checkpoint_text, "RESEARCH_INPUT")
@@ -2438,8 +2588,13 @@ class ControlledPresentationPolicy:
     ) -> WorkflowCheckpointUpdate:
         """Parse a fresh filesystem checkpoint and update policy state."""
         candidate_changed = checkpoint_text != self._last_checkpoint_text
+        candidate_stage = _stage(checkpoint_text)
         if self._successful_mutation_since_checkpoint:
-            if candidate_changed:
+            # A committed repair is meaningful progress only when it leaves the
+            # repair state machine. Comparing the full checkpoint text lets volatile
+            # details such as a JSON parse column reset the fuse while the artifact
+            # remains invalid or merely switches to another repair stage.
+            if candidate_stage not in _REPAIR_STAGES:
                 self._no_progress_mutation_streak = 0
             else:
                 self._no_progress_mutation_streak += 1
@@ -2451,7 +2606,6 @@ class ControlledPresentationPolicy:
                     "successful_mutations_without_progress=%d",
                     self._no_progress_mutation_streak,
                 )
-        candidate_stage = _stage(checkpoint_text)
         repair_input = _checkpoint_json(checkpoint_text, "REPAIR_INPUT")
         if candidate_changed and candidate_stage == "outline_repair":
             normalized_issues = tuple(
@@ -2938,6 +3092,9 @@ class ControlledPresentationPolicy:
             return outline_target_error
         if research_artifact_target_error is not None:
             return research_artifact_target_error
+        pending_write_error = self._pending_write_tool_error(tool_name, arguments)
+        if pending_write_error is not None:
+            return pending_write_error
         if handoff_error is not None:
             return handoff_error
         research_revalidation_error = self._research_revalidation_error(
@@ -3224,6 +3381,7 @@ class ControlledPresentationPolicy:
         self._policy_rejection_signature = None
         self._policy_rejection_streak = 0
         self._policy_rejection_decision_id = None
+        self._record_pending_write_result(tool_name, arguments, result)
         if self.stage == "outline" and tool_name == "staged_file_write":
             action = arguments.get("action")
             if action == "begin" and result.success:

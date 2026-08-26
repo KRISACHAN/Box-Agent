@@ -428,6 +428,108 @@ async def test_tool_budget_pauses_incomplete_recoverable_workflow(tmp_path) -> N
 
 
 @pytest.mark.asyncio
+async def test_durable_pause_discards_pending_write_before_checkpoint(tmp_path) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "Exact title",
+                        "message": "Exact message",
+                        "bullets": ["Exact bullet"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "id": "slide-01",
+                        "layout_id": "cover-hero-v1",
+                        "source_outline_page": 1,
+                        "props": {"title": "输入演示标题"},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    write_tool = WriteTool(
+        workspace_dir=str(tmp_path),
+        relative_root_dir=str(output),
+    )
+    llm = MockLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="partial-patch",
+                        type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={
+                                "path": "deck.patch.json",
+                                "content": '{"slides":',
+                                "chunk_index": 0,
+                                "final": False,
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool",
+            )
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=_msgs(),
+            tools={"write_file": write_tool},
+            max_steps=3,
+            completion_gate=CompletionGate(
+                required_changed_artifact_globs=("output/**/*.pptx",),
+                max_tool_calls=1,
+                workflow_checkpoint_kind="controlled_presentation",
+            ),
+            workspace_dir=str(tmp_path),
+        )
+    )
+
+    checkpoint = next(
+        event for event in events if isinstance(event, ContextCheckpointEvent)
+    )
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert done.stop_reason is StopReason.CHECKPOINT_PAUSED
+    assert checkpoint.artifact_count == 3
+    assert not list(output.glob("*.part"))
+    payload = json.loads(Path(checkpoint.path).read_text(encoding="utf-8"))
+    assert not any(
+        item["path"].endswith(".part") for item in payload["state"]["artifacts"]
+    )
+
+    restarted = await write_tool.execute(
+        path="deck.patch.json",
+        content='{"slides":{}}',
+        chunk_index=0,
+        final=True,
+    )
+    assert restarted.success is True
+
+
+@pytest.mark.asyncio
 async def test_tool_budget_pauses_external_skill_with_data_only_checkpoint(
     tmp_path,
 ) -> None:

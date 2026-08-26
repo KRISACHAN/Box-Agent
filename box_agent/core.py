@@ -2843,6 +2843,28 @@ def _cleanup_incomplete_messages(messages: list[Message]) -> int:
     return removed
 
 
+def _discard_ephemeral_writes_before_checkpoint(
+    tools: dict[str, Tool],
+    workflow_policy: WorkflowPolicy | None,
+) -> list[dict[str, Any]]:
+    """End non-durable writes before persisting a cross-turn checkpoint."""
+    write_tool = tools.get("write_file")
+    discard = getattr(write_tool, "discard_pending_writes", None)
+    if not callable(discard):
+        return []
+    records = discard(reason="durable_checkpoint")
+    if not records or workflow_policy is None:
+        return records
+    record_cleanup = getattr(workflow_policy, "record_tool_cleanup", None)
+    if callable(record_cleanup):
+        record_cleanup("write_file", records)
+    _log.info(
+        "workflow_checkpoint/discarded_ephemeral_writes count=%d",
+        len(records),
+    )
+    return records
+
+
 # ── Main loop ───────────────────────────────────────────────────
 
 
@@ -3769,6 +3791,10 @@ async def run_agent_loop(
             checkpoint_error: Exception | None = None
             if workflow_policy is not None:
                 try:
+                    _discard_ephemeral_writes_before_checkpoint(
+                        tools,
+                        workflow_policy,
+                    )
                     pause_checkpoint = await asyncio.to_thread(
                         save_workflow_checkpoint,
                         workflow_policy,
@@ -4893,6 +4919,10 @@ async def run_agent_loop(
                 pause_checkpoint = None
                 checkpoint_error: Exception | None = None
                 try:
+                    _discard_ephemeral_writes_before_checkpoint(
+                        tools,
+                        workflow_policy,
+                    )
                     pause_checkpoint = await asyncio.to_thread(
                         save_workflow_checkpoint,
                         workflow_policy,
@@ -6798,6 +6828,10 @@ async def run_agent_loop(
 
         if completed_pause_tool is not None and workflow_policy is not None:
             try:
+                _discard_ephemeral_writes_before_checkpoint(
+                    tools,
+                    workflow_policy,
+                )
                 pause_checkpoint = await asyncio.to_thread(
                     save_workflow_checkpoint,
                     workflow_policy,

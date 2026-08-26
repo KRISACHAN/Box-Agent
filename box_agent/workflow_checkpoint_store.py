@@ -26,6 +26,10 @@ _log = logging.getLogger(__name__)
 CHECKPOINT_SCHEMA_VERSION = 1
 CHECKPOINT_DIRECTORY = Path(".box-agent") / "checkpoints"
 _SAFE_KIND_RE = re.compile(r"[^a-z0-9._-]+")
+_WRITE_TRANSACTION_PART_RE = re.compile(
+    r"^\..+\.box-agent-[0-9a-f]{32}\.part$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +107,7 @@ def _artifact_manifest(root: Path | None) -> tuple[list[dict[str, Any]], str]:
         return [], hashlib.sha256(b"").hexdigest()
     files: list[dict[str, Any]] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
+        if not path.is_file() or _WRITE_TRANSACTION_PART_RE.fullmatch(path.name):
             continue
         try:
             relative_path = path.relative_to(root).as_posix()

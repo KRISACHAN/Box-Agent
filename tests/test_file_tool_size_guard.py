@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -75,8 +76,11 @@ async def test_write_file_chunks_enforce_order_and_idempotent_retries(tmp_path):
     assert first.success is True
     assert duplicate.success is True
     assert duplicate.raw_output["duplicate"] is True
+    assert duplicate.raw_output["transaction_state"] == "active"
     assert skipped.success is False
     assert skipped.error.startswith("WRITE_FILE_CHUNK_OUT_OF_ORDER")
+    assert skipped.raw_output["transaction_state"] == "active"
+    assert skipped.raw_output["next_chunk_index"] == 1
     assert not (tmp_path / "a.txt").exists()
 
 
@@ -115,6 +119,7 @@ async def test_write_file_rejects_conflicting_final_chunk_retry(tmp_path):
     assert committed.success is True
     assert conflict.success is False
     assert conflict.error.startswith("WRITE_FILE_FINAL_CHUNK_CONFLICT")
+    assert conflict.raw_output["transaction_state"] == "none"
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "first-last"
 
 
@@ -132,6 +137,7 @@ async def test_write_file_final_retry_rejects_changed_committed_target(tmp_path)
 
     assert retry.success is False
     assert retry.error.startswith("WRITE_FILE_COMMITTED_STATE_CHANGED")
+    assert retry.raw_output["transaction_state"] == "none"
     assert target.read_text(encoding="utf-8") == "changed elsewhere"
 
 
@@ -174,11 +180,235 @@ async def test_write_file_enforces_transaction_size_and_chunk_limits(
 
     assert accepted.success is True
     assert oversized.error.startswith("WRITE_FILE_TOTAL_SIZE_EXCEEDED")
+    assert oversized.raw_output["transaction_state"] == "active"
+    assert oversized.raw_output["next_chunk_index"] == 1
     assert too_many.error.startswith("WRITE_FILE_TOO_MANY_CHUNKS")
+    assert too_many.raw_output["transaction_state"] == "discarded"
+    assert too_many.raw_output["reason"] == "chunk_limit_reached"
     assert MAX_WRITE_FILE_BYTES == 10 * 1024 * 1024
     assert MAX_WRITE_FILE_CHUNKS == 2_048
     assert not (tmp_path / "size.txt").exists()
     assert not (tmp_path / "chunks.txt").exists()
+
+    restarted = await tool.execute(path="chunks.txt", content="new")
+
+    assert restarted.success is True
+    assert restarted.raw_output["transaction_state"] == "committed"
+    assert (tmp_path / "chunks.txt").read_text(encoding="utf-8") == "new"
+
+
+@pytest.mark.asyncio
+async def test_write_file_commit_failure_reports_authoritative_active_index(
+    tmp_path, monkeypatch
+):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    real_replace = os.replace
+
+    first = await tool.execute(
+        path="a.txt", content="first-", chunk_index=0, final=False
+    )
+
+    def fail_replace(source, target):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("box_agent.tools.file_tools.os.replace", fail_replace)
+    failed = await tool.execute(
+        path="a.txt", content="last", chunk_index=1, final=True
+    )
+
+    assert first.success is True
+    assert failed.success is False
+    assert failed.error == "WRITE_FILE_FAILED: simulated replace failure"
+    assert failed.raw_output["transaction_state"] == "active"
+    assert failed.raw_output["next_chunk_index"] == 2
+
+    monkeypatch.setattr("box_agent.tools.file_tools.os.replace", real_replace)
+    committed = await tool.execute(
+        path="a.txt", content="", chunk_index=2, final=True
+    )
+
+    assert committed.success is True
+    assert committed.raw_output["transaction_state"] == "committed"
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "first-last"
+
+
+@pytest.mark.asyncio
+async def test_write_file_partial_append_failure_rolls_back_before_retry(
+    tmp_path, monkeypatch
+):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    first = await tool.execute(
+        path="a.txt", content="abc", chunk_index=0, final=False
+    )
+    real_write = tool._write_bytes
+
+    def partial_then_fail(path, data, *, append):
+        with path.open("ab" if append else "wb") as stream:
+            stream.write(data[:1])
+            stream.flush()
+        raise OSError("simulated partial append")
+
+    monkeypatch.setattr(tool, "_write_bytes", partial_then_fail)
+    failed = await tool.execute(
+        path="a.txt", content="XYZ", chunk_index=1, final=False
+    )
+
+    assert first.success is True
+    assert failed.success is False
+    assert failed.error == "WRITE_FILE_FAILED: simulated partial append"
+    assert failed.raw_output["transaction_state"] == "active"
+    assert failed.raw_output["next_chunk_index"] == 1
+    temporary = next(tmp_path.glob(".a.txt.box-agent-*.part"))
+    assert temporary.read_bytes() == b"abc"
+
+    monkeypatch.setattr(tool, "_write_bytes", real_write)
+    retried = await tool.execute(
+        path="a.txt", content="XYZ", chunk_index=1, final=True
+    )
+
+    assert retried.success is True
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "abcXYZ"
+
+
+@pytest.mark.asyncio
+async def test_write_file_initial_partial_append_failure_discards_transaction(
+    tmp_path, monkeypatch
+):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    real_write = tool._write_bytes
+
+    def initial_partial_then_fail(path, data, *, append):
+        if not data:
+            return real_write(path, data, append=append)
+        with path.open("ab" if append else "wb") as stream:
+            stream.write(data[:1])
+            stream.flush()
+        raise OSError("simulated initial partial append")
+
+    monkeypatch.setattr(tool, "_write_bytes", initial_partial_then_fail)
+    failed = await tool.execute(path="a.txt", content="ABCDE")
+
+    assert failed.success is False
+    assert failed.raw_output["transaction_state"] == "discarded"
+    assert failed.raw_output["reason"] == "initial_chunk_rejected"
+    assert not list(tmp_path.glob(".a.txt.box-agent-*.part"))
+
+    monkeypatch.setattr(tool, "_write_bytes", real_write)
+    restarted = await tool.execute(path="a.txt", content="ABCDE")
+
+    assert restarted.success is True
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "ABCDE"
+
+
+@pytest.mark.asyncio
+async def test_write_file_failed_partial_append_discards_when_rollback_fails(
+    tmp_path, monkeypatch
+):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    await tool.execute(path="a.txt", content="abc", chunk_index=0, final=False)
+    real_write = tool._write_bytes
+
+    def partial_then_fail(path, data, *, append):
+        with path.open("ab" if append else "wb") as stream:
+            stream.write(data[:1])
+            stream.flush()
+        raise OSError("simulated partial append")
+
+    def fail_rollback(path, size):
+        raise OSError("simulated rollback failure")
+
+    monkeypatch.setattr(tool, "_write_bytes", partial_then_fail)
+    monkeypatch.setattr(tool, "_restore_temporary_size", fail_rollback)
+    failed = await tool.execute(
+        path="a.txt", content="XYZ", chunk_index=1, final=True
+    )
+
+    assert failed.success is False
+    assert failed.raw_output["transaction_state"] == "discarded"
+    assert failed.raw_output["reason"] == "chunk_write_rollback_failed"
+    assert not list(tmp_path.glob(".a.txt.box-agent-*.part"))
+
+    monkeypatch.setattr(tool, "_write_bytes", real_write)
+    restarted = await tool.execute(path="a.txt", content="fresh")
+
+    assert restarted.success is True
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_write_file_discards_changed_transaction_temporary_file(tmp_path):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    await tool.execute(path="a.txt", content="abc", chunk_index=0, final=False)
+    temporary = next(tmp_path.glob(".a.txt.box-agent-*.part"))
+    temporary.write_bytes(b"tampered")
+
+    failed = await tool.execute(
+        path="a.txt", content="XYZ", chunk_index=1, final=True
+    )
+
+    assert failed.success is False
+    assert failed.raw_output["transaction_state"] == "discarded"
+    assert failed.raw_output["reason"] == "transaction_size_mismatch"
+    assert not (tmp_path / "a.txt").exists()
+    assert not temporary.exists()
+
+    restarted = await tool.execute(path="a.txt", content="fresh")
+
+    assert restarted.success is True
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_write_file_discards_transaction_with_invalid_temporary_encoding(
+    tmp_path,
+):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    await tool.execute(path="a.txt", content="ab", chunk_index=0, final=False)
+    temporary = next(tmp_path.glob(".a.txt.box-agent-*.part"))
+    temporary.write_bytes(b"\xff\xfe")
+
+    failed = await tool.execute(
+        path="a.txt", content="", chunk_index=1, final=True
+    )
+
+    assert failed.success is False
+    assert failed.raw_output["transaction_state"] == "discarded"
+    assert failed.raw_output["reason"] == "transaction_content_invalid_utf8"
+    assert not (tmp_path / "a.txt").exists()
+    assert not temporary.exists()
+
+    restarted = await tool.execute(path="a.txt", content="fresh")
+
+    assert restarted.success is True
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_write_file_discard_ends_transaction_when_temp_cleanup_fails(
+    tmp_path, monkeypatch
+):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    await tool.execute(path="a.txt", content="abc", chunk_index=0, final=False)
+    temporary = next(tmp_path.glob(".a.txt.box-agent-*.part"))
+    real_unlink = Path.unlink
+
+    def fail_transaction_unlink(path, *args, **kwargs):
+        if path == temporary:
+            raise OSError("simulated cleanup failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_transaction_unlink)
+    records = tool.discard_pending_writes(reason="test_cleanup")
+
+    assert records[0]["transaction_state"] == "discarded"
+    assert records[0]["cleanup_error"] == "simulated cleanup failure"
+
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    restarted = await tool.execute(path="a.txt", content="fresh")
+
+    assert restarted.success is True
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "fresh"
+    temporary.unlink()
 
 
 @pytest.mark.asyncio
