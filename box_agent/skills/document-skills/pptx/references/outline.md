@@ -140,10 +140,13 @@ beside the future `deck.json`:
 
 In output mode, file-tool paths are already relative to the presentation
 artifact root. Use `write_file(path="outline.json", ...)`; do not pass the
-absolute session-workspace path and do not add another `output/` prefix. When
-the complete JSON cannot fit in one model response, use ordered `write_file`
-calls for `path="outline.json"`: start with `chunk_index=0, final=false`,
-increment the index for each chunk, and set `final=true` on the last chunk.
+absolute session-workspace path and do not add another `output/` prefix. Prefer
+one initial call without `chunk_index` or `final` whenever the complete JSON fits
+in the current model response. Start ordered chunks only after explicit
+output-length/tool-argument recovery. When the checkpoint contains
+`WRITE_PENDING`, continue its exact path and `next_chunk_index`; never restart
+chunk 0. If the accepted prefix is already complete JSON, send an empty next
+chunk with `final=true`.
 
 For `source_mode=user_provided`, user-stated solution requirements and proposed
 architecture scope are valid planning inputs; make unsupplied implementation

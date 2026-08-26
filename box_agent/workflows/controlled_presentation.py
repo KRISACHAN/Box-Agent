@@ -82,6 +82,12 @@ _CONTENT_PATCH_TOOL_ERROR = (
     "media paths. Do not inspect files again. Write deck.patch.json now with write_file "
     "(use ordered chunk_index/final calls if one model response cannot hold the body)."
 )
+_PENDING_WRITE_TOOL_ERROR = (
+    "CONTROLLED_PRESENTATION_WRITE_TRANSACTION_PENDING: an ordered write_file "
+    "transaction is already active for {path}. Continue only that path with "
+    "chunk_index={next_chunk_index}; do not restart at chunk_index=0, switch tools, "
+    "or target another file."
+)
 _CONTENT_PATCH_REPAIR_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset(
     {"read_file", "write_file", "append_file", "edit_file", "staged_file_write"}
 )
@@ -2110,6 +2116,9 @@ class ControlledPresentationPolicy:
     _last_checkpoint_text: str | None = None
     _resume_checkpoint: WorkflowPauseCheckpoint | None = None
     _last_step_failure_signature: str | None = None
+    _pending_write_path: str | None = None
+    _pending_write_next_chunk_index: int | None = None
+    _pending_write_size_bytes: int = 0
     _dispatched_deterministic_action_ids: set[str] = field(default_factory=set)
 
     _step_failure_streak: int = 0
@@ -2224,6 +2233,101 @@ class ControlledPresentationPolicy:
         """Identify one model decision whose sibling tool calls share a fuse count."""
         self._active_tool_decision_id = decision_id
 
+    def _pending_write_checkpoint(self) -> dict[str, int | str] | None:
+        if (
+            self._pending_write_path is None
+            or self._pending_write_next_chunk_index is None
+        ):
+            return None
+        return {
+            "path": self._pending_write_path,
+            "next_chunk_index": self._pending_write_next_chunk_index,
+            "size_bytes": self._pending_write_size_bytes,
+        }
+
+    def _pending_write_tool_error(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str | None:
+        pending_path = self._pending_write_path
+        next_chunk_index = self._pending_write_next_chunk_index
+        if pending_path is None or next_chunk_index is None:
+            return None
+        valid_continuation = (
+            tool_name == "write_file"
+            and _is_canonical_artifact_target(
+                arguments.get("path"),
+                pending_path,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            )
+            and arguments.get("chunk_index") == next_chunk_index
+        )
+        if valid_continuation:
+            return None
+        return _PENDING_WRITE_TOOL_ERROR.format(
+            path=pending_path,
+            next_chunk_index=next_chunk_index,
+        )
+
+    def _record_pending_write_result(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: ToolResult,
+    ) -> None:
+        if tool_name != "write_file" or not result.success:
+            return
+        raw_output = result.raw_output
+        if not isinstance(raw_output, dict):
+            return
+        output_type = raw_output.get("type")
+        if output_type == "artifact" and self._pending_write_path is not None:
+            if _is_canonical_artifact_target(
+                raw_output.get("path"),
+                self._pending_write_path,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            ):
+                self._pending_write_path = None
+                self._pending_write_next_chunk_index = None
+                self._pending_write_size_bytes = 0
+            return
+        if output_type != "write_file_chunk" or raw_output.get("final") is not False:
+            return
+        expected_path = {
+            "outline": "outline.json",
+            "content_patch": "deck.patch.json",
+        }.get(self.stage)
+        next_chunk_index = raw_output.get("next_chunk_index")
+        size_bytes = raw_output.get("size_bytes")
+        if (
+            expected_path is None
+            or not _is_canonical_artifact_target(
+                arguments.get("path"),
+                expected_path,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            )
+            or not _is_canonical_artifact_target(
+                raw_output.get("path"),
+                expected_path,
+                self.workspace_dir,
+                self.artifact_root_dir,
+            )
+            or not isinstance(next_chunk_index, int)
+            or isinstance(next_chunk_index, bool)
+            or next_chunk_index <= 0
+            or not isinstance(size_bytes, int)
+            or isinstance(size_bytes, bool)
+            or size_bytes < 0
+        ):
+            return
+        self._pending_write_path = expected_path
+        self._pending_write_next_chunk_index = next_chunk_index
+        self._pending_write_size_bytes = size_bytes
+
     def build_checkpoint(self) -> str | None:
         """Derive the current presentation stage from persisted artifacts."""
         if self.image_auth_blocked:
@@ -2313,6 +2417,7 @@ class ControlledPresentationPolicy:
                 or "tool_search" in self.available_tool_names
                 or bool(self.available_tool_names & DIRECT_RESEARCH_READ_TOOLS)
             ),
+            pending_write=self._pending_write_checkpoint(),
         )
         research_input = (
             _checkpoint_json(checkpoint_text, "RESEARCH_INPUT")
@@ -2938,6 +3043,9 @@ class ControlledPresentationPolicy:
             return outline_target_error
         if research_artifact_target_error is not None:
             return research_artifact_target_error
+        pending_write_error = self._pending_write_tool_error(tool_name, arguments)
+        if pending_write_error is not None:
+            return pending_write_error
         if handoff_error is not None:
             return handoff_error
         research_revalidation_error = self._research_revalidation_error(
@@ -3224,6 +3332,7 @@ class ControlledPresentationPolicy:
         self._policy_rejection_signature = None
         self._policy_rejection_streak = 0
         self._policy_rejection_decision_id = None
+        self._record_pending_write_result(tool_name, arguments, result)
         if self.stage == "outline" and tool_name == "staged_file_write":
             action = arguments.get("action")
             if action == "begin" and result.success:
