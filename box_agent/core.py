@@ -4015,7 +4015,10 @@ async def run_agent_loop(
                     if tool.name in pending_required_tools
                     or (
                         tool_exposure_manager is not None
-                        and tool.name == "tool_search"
+                        and (
+                            tool.name == "tool_search"
+                            or tool.name in offered_mcp_generations
+                        )
                     )
                 ]
         offered_tools_by_name = {tool.name: tool for tool in tool_list}

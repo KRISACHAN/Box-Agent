@@ -9239,6 +9239,101 @@ def test_build_auto_completion_gate_ignores_non_deliverable_prompt(tmp_path):
     assert gate is None
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        (
+            "https://platform.sensenova.cn/docs,你现在使用了商汤的模型，"
+            "麻烦你去阅读一下官方的文档，特别是关于SenseNova U1 Fast "
+            "基于SenseNovaU1的加速版本，专供信息图(Infographics)生成的"
+            "介绍部分，要求掌握如何利用这个模型生图。"
+        ),
+        "请阅读官方文档，了解如何利用这个模型生成图片。",
+        "介绍一下信息图生成能力，以及如何生图。",
+        "学习并掌握 SenseNova U1 Fast 的生图用法。",
+        "Read the documentation to learn how to create an image.",
+        "Read the documentation and saved Word document examples.",
+        "Read the documentation and finished Word document examples.",
+        "Read the documentation and builder HTML guide.",
+        "阅读报告，了解表格和文档是如何生成的。",
+        "生成图片的能力介绍。",
+        "了解后端生成一张图片的实现方式。",
+        "关于生成图片的文档在哪里？",
+    ],
+)
+def test_informational_artifact_prompt_does_not_create_gate(tmp_path, prompt):
+    assert build_auto_completion_gate(prompt, tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "先阅读官方文档，然后生成一张 PNG 信息图。",
+        "阅读官方文档后生成一张 PNG 信息图。",
+        "介绍完模型后，再帮我生成一张图片。",
+        "Read the documentation and then create an image.",
+        "Read the documentation and create an image.",
+    ],
+)
+def test_research_then_explicit_image_delivery_still_creates_gate(
+    tmp_path,
+    prompt,
+):
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is not None
+    assert gate.required_tools == frozenset({"generate_image"})
+    assert gate.restrict_tools_until_required_succeed is True
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "介绍如何生成 PPT，然后创建一个 Excel 表格。",
+        "创建一个 Excel 表格，并介绍如何生成 PPT。",
+    ],
+)
+def test_mixed_informational_presentation_routes_executable_spreadsheet(
+    tmp_path,
+    prompt,
+):
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind is None
+    assert gate.required_changed_artifact_globs == (
+        "output/**/*.xlsx",
+        "output/**/*.xls",
+    )
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "生成文档。",
+        "Word 文档，请创建一份。",
+        "请帮我create一个Word文档。",
+        "创建项目的文档。",
+        "生成客户的文档。",
+        "生成产品的文档。",
+    ],
+)
+def test_direct_document_delivery_preserves_document_context(tmp_path, prompt):
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is not None
+    assert gate.required_tools == frozenset()
+    assert gate.required_changed_artifact_globs == ("output/**/*.docx",)
+    assert gate.restrict_tools_until_required_succeed is False
+
+
+def test_format_after_comma_remains_in_delivery_clause(tmp_path):
+    gate = build_auto_completion_gate("生成一份报告，Word 格式。", tmp_path)
+
+    assert gate is not None
+    assert "output/**/*.docx" in gate.required_changed_artifact_globs
+
+
 def test_native_image_gate_requires_standard_tool_before_alternatives(tmp_path):
     gate = build_auto_completion_gate("生成一张 PNG 信息图", tmp_path)
 
