@@ -11,7 +11,7 @@ from markupsafe import Markup
 
 from trace_viewer.presentation import annotate_timing, json_text, present_record
 from trace_viewer.repository import EvaluationRepository, NotFoundError
-from trace_viewer.timeline import page_records, source_records, unified_timeline
+from trace_viewer.timeline import RECORDS_PER_PAGE, page_records, source_records, unified_timeline
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -60,9 +60,36 @@ def create_app(repo_root: Path) -> FastAPI:
             raise HTTPException(404, "任务不存在") from error
         records = unified_timeline(case["attempt_path"]) if source == "timeline" else source_records(case["attempt_path"], source)
         records = annotate_timing(records)
+        tool_calls = []
+        for position, record in enumerate(records, 1):
+            record["anchor"] = f"record-{source}-{position}"
+            payload = record.get("payload")
+            if source != "agent" or not isinstance(payload, dict):
+                continue
+            event = payload.get("event") or payload.get("type")
+            data = payload.get("data")
+            tool_name = data.get("tool_name") if isinstance(data, dict) else None
+            if event == "tool.request" and isinstance(tool_name, str) and tool_name:
+                tool_calls.append(
+                    {
+                        "anchor": record["anchor"],
+                        "index": record["index"],
+                        "name": tool_name,
+                        "page": (position - 1) // RECORDS_PER_PAGE + 1,
+                    }
+                )
         shown, next_page = page_records(records, page)
         shown = [present_record(record) for record in shown]
-        context = {"run_name": run_name, "case": case, "active": source, "source": source, "records": shown, "next_page": next_page}
+        context = {
+            "run_name": run_name,
+            "case": case,
+            "active": source,
+            "source": source,
+            "records": shown,
+            "next_page": next_page,
+            "page": max(1, page),
+            "tool_calls": tool_calls,
+        }
         if request.headers.get("HX-Request") == "true":
             return templates.TemplateResponse(request, "_records.html", context)
         return templates.TemplateResponse(request, "source.html", context)
