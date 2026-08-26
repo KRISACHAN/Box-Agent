@@ -10,7 +10,7 @@ from typing import Final
 from .artifacts import OUTPUT_SUBDIR
 from .config import ToolLimitsConfig
 from .delivery import (
-    has_deliverable_intent,
+    extract_deliverable_clauses,
     is_meta_prompt_rewrite_request,
     strip_negated_format_clauses,
 )
@@ -277,9 +277,10 @@ def build_auto_completion_gate(
             max_continuations=completion_limits.max_continuations,
             deadline_seconds=completion_limits.deadline_seconds,
         )
+    deliverable_clauses = extract_deliverable_clauses(user_text)
     if (
         not confirmed_presentation
-        and not has_deliverable_intent(user_text)
+        and not deliverable_clauses
         and not requires_host_receipt
     ):
         return None
@@ -307,7 +308,7 @@ def build_auto_completion_gate(
             execution_result_criteria_count=execution_result_criteria_count,
         )
 
-    text = user_text.strip().lower()
+    text = "\n".join(deliverable_clauses).strip().lower()
     positive_format_text = strip_negated_format_clauses(text)
     native_image_generation = _is_native_image_generation_request(
         text,

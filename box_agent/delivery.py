@@ -33,6 +33,59 @@ DELIVERABLE_INTENT_KEYWORDS: Final[tuple[str, ...]] = (
     "finish",
 )
 
+_DELIVERABLE_CLAUSE_RE: Final[re.Pattern[str]] = re.compile(r"[^。！？!?；;\n]+")
+_DELIVERABLE_ACTION_RE: Final[re.Pattern[str]] = re.compile(
+    "|".join(
+        re.escape(keyword)
+        for keyword in sorted(DELIVERABLE_INTENT_KEYWORDS, key=len, reverse=True)
+    ),
+    re.IGNORECASE,
+)
+_ACTION_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:然后|随后|接着|之后|再|并且|并|\b(?:and\s+then|then|afterwards)\b)",
+    re.IGNORECASE,
+)
+_INFORMATIONAL_ACTION_PREFIXES: Final[tuple[str, ...]] = (
+    "如何",
+    "怎么",
+    "怎样",
+    "介绍",
+    "文档",
+    "教程",
+    "能力",
+    "用法",
+    "阅读",
+    "了解",
+    "学习",
+    "掌握",
+    "研究",
+    "查阅",
+    "说明",
+    "how to",
+    "learn",
+    "read",
+    "understand",
+    "explain",
+    "documentation",
+    "guide",
+)
+_NEGATED_ACTION_PREFIXES: Final[tuple[str, ...]] = (
+    "不要",
+    "不用",
+    "无需",
+    "禁止",
+    "避免",
+    "do not",
+    "don't",
+    "without",
+    "avoid",
+    "never",
+)
+_INFORMATIONAL_ACTION_SUFFIX_RE: Final[re.Pattern[str]] = re.compile(
+    r"^\s*(?:的)?(?:模型)?(?:的)?(?:介绍|能力|文档|教程|用法|方法|说明)",
+    re.IGNORECASE,
+)
+
 NEGATED_FORMAT_CLAUSE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:不要|不用|禁止|避免|无需|不能|不可|别|"
     r"\b(?:do\s+not|don't|without|avoid|never|no)\b)"
@@ -90,11 +143,48 @@ _DIRECT_PRESENTATION_REMAKE_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 
+def _local_action_prefix(clause: str, action_start: int) -> str:
+    """Return text governing one action after its nearest local boundary."""
+
+    prefix = clause[:action_start]
+    boundary = max(prefix.rfind("，"), prefix.rfind(","))
+    for match in _ACTION_CONNECTOR_RE.finditer(prefix):
+        boundary = max(boundary, match.end() - 1)
+    return prefix[boundary + 1 :].strip().casefold()
+
+
+def _action_is_informational(clause: str, action: re.Match[str]) -> bool:
+    local_prefix = _local_action_prefix(clause, action.start())
+    if any(marker in local_prefix for marker in _NEGATED_ACTION_PREFIXES):
+        return True
+    if any(marker in local_prefix for marker in _INFORMATIONAL_ACTION_PREFIXES):
+        return True
+    return bool(_INFORMATIONAL_ACTION_SUFFIX_RE.match(clause[action.end() :]))
+
+
+def extract_deliverable_clauses(text: str) -> tuple[str, ...]:
+    """Extract clauses containing an executable artifact-delivery action.
+
+    Mentions such as ``如何生成图片`` or ``图片生成的介绍`` describe a
+    capability rather than requesting an artifact. A later coordinated action,
+    as in ``先阅读文档，然后生成一张图``, is evaluated independently.
+    """
+
+    clauses: list[str] = []
+    for clause_match in _DELIVERABLE_CLAUSE_RE.finditer(text):
+        clause = clause_match.group(0).strip()
+        if not clause:
+            continue
+        if any(
+            not _action_is_informational(clause, action)
+            for action in _DELIVERABLE_ACTION_RE.finditer(clause)
+        ):
+            clauses.append(clause)
+    return tuple(clauses)
+
+
 def has_deliverable_intent(text: str) -> bool:
-    normalized = text.strip().lower()
-    return bool(normalized) and any(
-        keyword in normalized for keyword in DELIVERABLE_INTENT_KEYWORDS
-    )
+    return bool(extract_deliverable_clauses(text))
 
 
 def strip_negated_format_clauses(text: str) -> str:

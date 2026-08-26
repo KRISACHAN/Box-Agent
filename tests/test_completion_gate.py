@@ -9239,6 +9239,45 @@ def test_build_auto_completion_gate_ignores_non_deliverable_prompt(tmp_path):
     assert gate is None
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        (
+            "https://platform.sensenova.cn/docs,你现在使用了商汤的模型，"
+            "麻烦你去阅读一下官方的文档，特别是关于SenseNova U1 Fast "
+            "基于SenseNovaU1的加速版本，专供信息图(Infographics)生成的"
+            "介绍部分，要求掌握如何利用这个模型生图。"
+        ),
+        "请阅读官方文档，了解如何利用这个模型生成图片。",
+        "介绍一下信息图生成能力，以及如何生图。",
+        "学习并掌握 SenseNova U1 Fast 的生图用法。",
+        "Read the documentation to learn how to create an image.",
+        "阅读报告，了解表格和文档是如何生成的。",
+    ],
+)
+def test_informational_artifact_prompt_does_not_create_gate(tmp_path, prompt):
+    assert build_auto_completion_gate(prompt, tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "先阅读官方文档，然后生成一张 PNG 信息图。",
+        "介绍完模型后，再帮我生成一张图片。",
+        "Read the documentation and then create an image.",
+    ],
+)
+def test_research_then_explicit_image_delivery_still_creates_gate(
+    tmp_path,
+    prompt,
+):
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is not None
+    assert gate.required_tools == frozenset({"generate_image"})
+    assert gate.restrict_tools_until_required_succeed is True
+
+
 def test_native_image_gate_requires_standard_tool_before_alternatives(tmp_path):
     gate = build_auto_completion_gate("生成一张 PNG 信息图", tmp_path)
 
