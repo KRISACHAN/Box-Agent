@@ -39,7 +39,7 @@ def test_prepare_and_cleanup_skill_scratch_dir(tmp_path: Path) -> None:
 def test_prepare_skill_scratch_dir_accepts_session_private_root(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    scratch_root = tmp_path / "runtime" / "session-a"
+    scratch_root = workspace / ".box-agent" / "scratch" / "session-a"
 
     scratch = prepare_skill_scratch_dir(
         workspace,
@@ -51,7 +51,65 @@ def test_prepare_skill_scratch_dir_accepts_session_private_root(tmp_path: Path) 
     assert not (workspace / SKILL_SCRATCH_DIR_NAME).exists()
 
 
-def test_prepare_skill_scratch_dir_rejects_reserved_path_symlink(tmp_path: Path) -> None:
+def test_prepare_skill_scratch_dir_rejects_root_outside_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    scratch_root = tmp_path / "runtime" / "session-a"
+
+    with pytest.raises(RuntimeError, match="must stay within the workspace"):
+        prepare_skill_scratch_dir(workspace, scratch_root_dir=scratch_root)
+
+    assert not scratch_root.exists()
+
+
+def test_prepare_skill_scratch_dir_rejects_parent_symlink(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    parent_link = workspace / ".box-agent"
+    try:
+        parent_link.symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError) as error:
+        pytest.skip(f"symlinks are unavailable in this environment: {error}")
+
+    with pytest.raises(RuntimeError, match="must contain only real directories"):
+        prepare_skill_scratch_dir(
+            workspace,
+            scratch_root_dir=workspace / ".box-agent" / "scratch" / "session-a",
+        )
+
+    assert not (outside / "scratch").exists()
+
+
+def test_prepare_skill_scratch_dir_rejects_nested_parent_symlink(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    scratch_parent = workspace / ".box-agent"
+    scratch_parent.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    nested_link = scratch_parent / "scratch"
+    try:
+        nested_link.symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError) as error:
+        pytest.skip(f"symlinks are unavailable in this environment: {error}")
+
+    with pytest.raises(RuntimeError, match="must contain only real directories"):
+        prepare_skill_scratch_dir(
+            workspace,
+            scratch_root_dir=nested_link / "session-a",
+        )
+
+    assert not (outside / "session-a").exists()
+
+
+def test_prepare_skill_scratch_dir_rejects_reserved_path_symlink(
+    tmp_path: Path,
+) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     scratch_dir = tmp_path / SKILL_SCRATCH_DIR_NAME
@@ -60,7 +118,7 @@ def test_prepare_skill_scratch_dir_rejects_reserved_path_symlink(tmp_path: Path)
     except (NotImplementedError, OSError) as error:
         pytest.skip(f"symlinks are unavailable in this environment: {error}")
 
-    with pytest.raises(RuntimeError, match="must be a real directory"):
+    with pytest.raises(RuntimeError, match="must contain only real directories"):
         prepare_skill_scratch_dir(tmp_path)
 
 

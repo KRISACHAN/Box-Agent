@@ -560,7 +560,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         artifact_root_dir: Optional host-supplied output root for this session.
         create_artifact_root: Create the artifact root during tool setup. Project
             sessions can defer creation until an artifact-producing tool runs.
-        skill_scratch_root_dir: Optional session-private scratch root.
+        skill_scratch_root_dir: Optional workspace-contained session-private
+            scratch root.
         process_owner_id: Optional ACP session identifier used to scope and
             reclaim background shell processes.
         bypass_dangerous_command_approval: Skip dangerous-command approval for

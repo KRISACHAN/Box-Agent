@@ -19,25 +19,63 @@ class SkillScratchDirectory:
     inode: int
 
 
+def _absolute_without_resolving(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(path.expanduser())))
+
+
+def _is_link_or_reparse_point(stats: os.stat_result) -> bool:
+    if stat.S_ISLNK(stats.st_mode):
+        return True
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return bool(getattr(stats, "st_file_attributes", 0) & reparse_flag)
+
+
+def _prepare_real_directory_chain(root: Path, relative_path: Path) -> os.stat_result:
+    current = root
+    stats = root.lstat()
+    if _is_link_or_reparse_point(stats) or not stat.S_ISDIR(stats.st_mode):
+        raise RuntimeError(f"Skill scratch workspace must be a real directory: {root}")
+    for part in relative_path.parts:
+        current /= part
+        try:
+            stats = current.lstat()
+        except FileNotFoundError:
+            try:
+                current.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            stats = current.lstat()
+        if _is_link_or_reparse_point(stats) or not stat.S_ISDIR(stats.st_mode):
+            raise RuntimeError(
+                f"Skill scratch path must contain only real directories: {current}"
+            )
+    return stats
+
+
 def prepare_skill_scratch_dir(
     workspace_dir: Path,
     *,
     scratch_root_dir: str | Path | None = None,
 ) -> SkillScratchDirectory:
-    """Create the reserved Skill scratch root without accepting links."""
-    scratch_dir = (
-        Path(scratch_root_dir).expanduser().resolve()
+    """Create a workspace-contained Skill scratch root without accepting links."""
+    workspace_path = _absolute_without_resolving(workspace_dir)
+    workspace_root = workspace_path.resolve(strict=True)
+    requested_path = (
+        _absolute_without_resolving(Path(scratch_root_dir))
         if scratch_root_dir is not None
-        else workspace_dir.resolve() / SKILL_SCRATCH_DIR_NAME
+        else workspace_path / SKILL_SCRATCH_DIR_NAME
     )
     try:
-        stats = scratch_dir.lstat()
-    except FileNotFoundError:
-        scratch_dir.mkdir(mode=0o700, parents=True)
-        stats = scratch_dir.lstat()
-    else:
-        if stat.S_ISLNK(stats.st_mode) or not stat.S_ISDIR(stats.st_mode):
-            raise RuntimeError(f"Skill scratch root must be a real directory: {scratch_dir}")
+        relative_path = requested_path.relative_to(workspace_path)
+    except ValueError as error:
+        raise RuntimeError(
+            f"Skill scratch root must stay within the workspace: {requested_path}"
+        ) from error
+    if not relative_path.parts:
+        raise RuntimeError("Skill scratch root must not be the workspace root")
+
+    scratch_dir = workspace_root / relative_path
+    stats = _prepare_real_directory_chain(workspace_root, relative_path)
     if os.name != "nt":
         scratch_dir.chmod(0o700)
     return SkillScratchDirectory(
