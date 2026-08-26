@@ -58,6 +58,30 @@ def test_checkpoint_save_is_atomic_versioned_and_loadable(tmp_path: Path) -> Non
     assert not Path(saved.path).exists()
 
 
+def test_checkpoint_manifest_excludes_write_transaction_parts(tmp_path: Path) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text('{"slides": []}\n', encoding="utf-8")
+    (output / ".presentation-meta").write_text("keep", encoding="utf-8")
+    part = output / (
+        ".deck.patch.json.box-agent-0123456789abcdef0123456789abcdef.part"
+    )
+    part.write_text("partial", encoding="utf-8")
+
+    saved = save_workflow_checkpoint(
+        _PresentationPolicy(),
+        workspace_dir=tmp_path,
+        artifact_root_dir=None,
+    )
+
+    assert saved is not None
+    assert saved.artifact_count == 2
+    payload = json.loads(Path(saved.path).read_text(encoding="utf-8"))
+    artifact_paths = [item["path"] for item in payload["state"]["artifacts"]]
+    assert artifact_paths == [".presentation-meta", "outline.json"]
+    assert part.is_file()
+
+
 def test_checkpoint_load_rejects_corruption_and_workspace_mismatch(tmp_path: Path) -> None:
     tmp_path.joinpath("output").mkdir()
     saved = save_workflow_checkpoint(

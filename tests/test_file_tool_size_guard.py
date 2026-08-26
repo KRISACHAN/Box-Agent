@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -75,8 +76,11 @@ async def test_write_file_chunks_enforce_order_and_idempotent_retries(tmp_path):
     assert first.success is True
     assert duplicate.success is True
     assert duplicate.raw_output["duplicate"] is True
+    assert duplicate.raw_output["transaction_state"] == "active"
     assert skipped.success is False
     assert skipped.error.startswith("WRITE_FILE_CHUNK_OUT_OF_ORDER")
+    assert skipped.raw_output["transaction_state"] == "active"
+    assert skipped.raw_output["next_chunk_index"] == 1
     assert not (tmp_path / "a.txt").exists()
 
 
@@ -115,6 +119,7 @@ async def test_write_file_rejects_conflicting_final_chunk_retry(tmp_path):
     assert committed.success is True
     assert conflict.success is False
     assert conflict.error.startswith("WRITE_FILE_FINAL_CHUNK_CONFLICT")
+    assert conflict.raw_output["transaction_state"] == "none"
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "first-last"
 
 
@@ -132,6 +137,7 @@ async def test_write_file_final_retry_rejects_changed_committed_target(tmp_path)
 
     assert retry.success is False
     assert retry.error.startswith("WRITE_FILE_COMMITTED_STATE_CHANGED")
+    assert retry.raw_output["transaction_state"] == "none"
     assert target.read_text(encoding="utf-8") == "changed elsewhere"
 
 
@@ -174,11 +180,56 @@ async def test_write_file_enforces_transaction_size_and_chunk_limits(
 
     assert accepted.success is True
     assert oversized.error.startswith("WRITE_FILE_TOTAL_SIZE_EXCEEDED")
+    assert oversized.raw_output["transaction_state"] == "active"
+    assert oversized.raw_output["next_chunk_index"] == 1
     assert too_many.error.startswith("WRITE_FILE_TOO_MANY_CHUNKS")
+    assert too_many.raw_output["transaction_state"] == "discarded"
+    assert too_many.raw_output["reason"] == "chunk_limit_reached"
     assert MAX_WRITE_FILE_BYTES == 10 * 1024 * 1024
     assert MAX_WRITE_FILE_CHUNKS == 2_048
     assert not (tmp_path / "size.txt").exists()
     assert not (tmp_path / "chunks.txt").exists()
+
+    restarted = await tool.execute(path="chunks.txt", content="new")
+
+    assert restarted.success is True
+    assert restarted.raw_output["transaction_state"] == "committed"
+    assert (tmp_path / "chunks.txt").read_text(encoding="utf-8") == "new"
+
+
+@pytest.mark.asyncio
+async def test_write_file_commit_failure_reports_authoritative_active_index(
+    tmp_path, monkeypatch
+):
+    tool = WriteTool(workspace_dir=str(tmp_path))
+    real_replace = os.replace
+
+    first = await tool.execute(
+        path="a.txt", content="first-", chunk_index=0, final=False
+    )
+
+    def fail_replace(source, target):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("box_agent.tools.file_tools.os.replace", fail_replace)
+    failed = await tool.execute(
+        path="a.txt", content="last", chunk_index=1, final=True
+    )
+
+    assert first.success is True
+    assert failed.success is False
+    assert failed.error == "WRITE_FILE_FAILED: simulated replace failure"
+    assert failed.raw_output["transaction_state"] == "active"
+    assert failed.raw_output["next_chunk_index"] == 2
+
+    monkeypatch.setattr("box_agent.tools.file_tools.os.replace", real_replace)
+    committed = await tool.execute(
+        path="a.txt", content="", chunk_index=2, final=True
+    )
+
+    assert committed.success is True
+    assert committed.raw_output["transaction_state"] == "committed"
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "first-last"
 
 
 @pytest.mark.asyncio

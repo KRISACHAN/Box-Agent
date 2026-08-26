@@ -2493,16 +2493,12 @@ def build_checkpoint_text(
     patch_label = str(patch_path.relative_to(Path(workspace_dir))) if patch_path.is_file() else "missing"
     html_label = str(html_path.relative_to(Path(workspace_dir))) if html_path else "missing"
     pending_write_payload: str | None = None
-    expected_pending_path = {
-        "outline": "outline.json",
-        "content_patch": "deck.patch.json",
-    }.get(stage)
-    if pending_write is not None and expected_pending_path is not None:
+    if pending_write is not None:
         pending_path = pending_write.get("path")
         next_chunk_index = pending_write.get("next_chunk_index")
         size_bytes = pending_write.get("size_bytes")
         if (
-            pending_path == expected_pending_path
+            pending_path in {"outline.json", "deck.patch.json", "deck.redesign.json"}
             and isinstance(next_chunk_index, int)
             and not isinstance(next_chunk_index, bool)
             and next_chunk_index > 0
@@ -2519,9 +2515,9 @@ def build_checkpoint_text(
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-            if stage == "outline":
+            if pending_path == "outline.json":
                 outline_label = "write_pending"
-            else:
+            elif pending_path == "deck.patch.json":
                 patch_label = "write_pending"
             next_action = (
                 "Continue the active atomic write transaction. Your very next tool "

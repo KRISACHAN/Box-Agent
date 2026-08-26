@@ -1128,6 +1128,8 @@ async def test_write_tool_rejects_model_history_placeholder():
 
         assert not result.success
         assert "model-history placeholder" in result.error
+        assert result.raw_output["transaction_state"] == "discarded"
+        assert result.raw_output["reason"] == "model_history_placeholder"
         assert not file_path.exists()
 
 

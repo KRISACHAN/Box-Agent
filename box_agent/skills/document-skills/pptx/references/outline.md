@@ -146,7 +146,9 @@ in the current model response. Start ordered chunks only after explicit
 output-length/tool-argument recovery. When the checkpoint contains
 `WRITE_PENDING`, continue its exact path and `next_chunk_index`; never restart
 chunk 0. If the accepted prefix is already complete JSON, send an empty next
-chunk with `final=true`.
+chunk with `final=true`. A durable cross-turn checkpoint discards an incomplete
+transaction; when its resumed checkpoint has no `WRITE_PENDING`, restart the
+canonical outline at chunk 0 rather than guessing the old next index.
 
 For `source_mode=user_provided`, user-stated solution requirements and proposed
 architecture scope are valid planning inputs; make unsupplied implementation

@@ -2245,6 +2245,19 @@ class ControlledPresentationPolicy:
             "size_bytes": self._pending_write_size_bytes,
         }
 
+    def _expected_pending_write_path(self) -> str | None:
+        """Return the canonical target for a chunkable write in this stage."""
+        if self.stage == "outline":
+            return "outline.json"
+        if self.stage == "content_patch":
+            return "deck.patch.json"
+        repair_path = _repair_artifact_name(self.stage)
+        if repair_path is not None:
+            return repair_path
+        if self.stage == "apply_patch" and self.apply_patch_repair_allowed:
+            return "deck.patch.json"
+        return None
+
     def _pending_write_tool_error(
         self,
         tool_name: str,
@@ -2271,35 +2284,50 @@ class ControlledPresentationPolicy:
             next_chunk_index=next_chunk_index,
         )
 
+    def _clear_pending_write(self) -> None:
+        self._pending_write_path = None
+        self._pending_write_next_chunk_index = None
+        self._pending_write_size_bytes = 0
+
     def _record_pending_write_result(
         self,
         tool_name: str,
         arguments: dict[str, Any],
         result: ToolResult,
     ) -> None:
-        if tool_name != "write_file" or not result.success:
+        if tool_name != "write_file":
             return
         raw_output = result.raw_output
         if not isinstance(raw_output, dict):
             return
         output_type = raw_output.get("type")
-        if output_type == "artifact" and self._pending_write_path is not None:
-            if _is_canonical_artifact_target(
-                raw_output.get("path"),
-                self._pending_write_path,
-                self.workspace_dir,
-                self.artifact_root_dir,
+        transaction_state = raw_output.get("transaction_state")
+        if transaction_state is None:
+            if output_type == "write_file_transaction_discarded":
+                transaction_state = "discarded"
+            elif output_type == "artifact" and result.success:
+                transaction_state = "committed"
+            elif (
+                output_type == "write_file_chunk"
+                and result.success
+                and raw_output.get("final") is False
             ):
-                self._pending_write_path = None
-                self._pending_write_next_chunk_index = None
-                self._pending_write_size_bytes = 0
+                transaction_state = "active"
+        if transaction_state in {"committed", "discarded", "none"}:
+            if (
+                self._pending_write_path is not None
+                and _is_canonical_artifact_target(
+                    raw_output.get("path"),
+                    self._pending_write_path,
+                    self.workspace_dir,
+                    self.artifact_root_dir,
+                )
+            ):
+                self._clear_pending_write()
             return
-        if output_type != "write_file_chunk" or raw_output.get("final") is not False:
+        if transaction_state != "active":
             return
-        expected_path = {
-            "outline": "outline.json",
-            "content_patch": "deck.patch.json",
-        }.get(self.stage)
+        expected_path = self._expected_pending_write_path()
         next_chunk_index = raw_output.get("next_chunk_index")
         size_bytes = raw_output.get("size_bytes")
         if (
@@ -2327,6 +2355,23 @@ class ControlledPresentationPolicy:
         self._pending_write_path = expected_path
         self._pending_write_next_chunk_index = next_chunk_index
         self._pending_write_size_bytes = size_bytes
+
+    def record_tool_cleanup(
+        self,
+        tool_name: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Synchronize policy state after runtime-owned tool cleanup."""
+        for raw_output in records:
+            self._record_pending_write_result(
+                tool_name,
+                {"path": raw_output.get("path")},
+                ToolResult(
+                    success=False,
+                    error="The runtime discarded an incomplete tool transaction.",
+                    raw_output=raw_output,
+                ),
+            )
 
     def build_checkpoint(self) -> str | None:
         """Derive the current presentation stage from persisted artifacts."""

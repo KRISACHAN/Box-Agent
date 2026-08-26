@@ -157,7 +157,9 @@ output-length/tool-argument recovery says the one-shot call did not execute.
 When the latest checkpoint contains `WRITE_PENDING`, continue its exact path
 and `next_chunk_index`; never restart chunk 0. If the accepted prefix is already
 the complete JSON document, finalize it with an empty next chunk and
-`final=true`. Then run
+`final=true`. Incomplete transactions are intentionally discarded at a durable
+cross-turn checkpoint; when the resumed checkpoint has no `WRITE_PENDING`,
+restart that canonical file at chunk 0 instead of guessing an older index. Then run
 `${BOX_AGENT_NODE:-node} scripts/apply_deck_patch.js deck.json deck.patch.json`.
 The patch may change only `props`, `background`, and explicitly authorized
 `truth_contract.assumptions`; it may not change ids, order, theme, layout,
