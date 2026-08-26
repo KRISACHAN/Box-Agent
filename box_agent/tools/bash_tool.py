@@ -243,6 +243,11 @@ def _detect_lark_user_mode_violation(command: str) -> str | None:
             continue
         lowered = part.lower()
         cli_args = part[cli_match.end() :].lstrip()
+        # A quoted absolute executable path leaves its closing quote immediately
+        # after the regex match, for example `"C:\\...\\lark-cli.cmd" auth login`.
+        # Normalize only that boundary so setup/OAuth commands are classified by
+        # their real first argument on Windows as well as POSIX hosts.
+        cli_args = cli_args.lstrip("'\"").lstrip()
 
         if _LARK_BOT_FLAG_RE.search(part):
             return "lark-cli bot identity is disabled in officev3 local-agent sessions; use `--as user`."
@@ -258,7 +263,7 @@ def _detect_lark_user_mode_violation(command: str) -> str | None:
         if (
             "--help" in lowered
             or re.search(r"\s(?:--version|-v)\b", lowered)
-            or re.search(r"\blark-cli(?:\.(?:cmd|exe))?\s+(?:auth|config|schema|doctor|update)\b", lowered)
+            or re.match(r"(?:auth|config|schema|doctor|update)\b", cli_args, re.IGNORECASE)
             or re.match(r"skills(?:\s+(?:list|read)\b|\s*$)", cli_args, re.IGNORECASE)
         ):
             continue

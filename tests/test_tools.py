@@ -1266,6 +1266,28 @@ def test_lark_user_mode_policy_does_not_exempt_other_skill_commands():
     assert "must pass `--as user`" in error
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "lark-cli auth login --recommend",
+        r'"D:\Soft\xiaohuanxiong-ai\raccoon-ai\resources\cli-bundle\node_modules\.bin\lark-cli.cmd" auth login',
+        r"'C:\Program Files\Raccoon\lark-cli.exe' auth login --no-wait --json",
+        "$BOX_AGENT_LARK_CLI auth status",
+    ],
+)
+def test_lark_user_mode_policy_allows_oauth_with_quoted_executable_paths(command):
+    assert _detect_lark_user_mode_violation(command) is None
+
+
+def test_lark_user_mode_policy_still_blocks_business_commands_with_quoted_executable_paths():
+    error = _detect_lark_user_mode_violation(
+        r'"D:\Soft\Raccoon\lark-cli.cmd" docs +fetch --doc abc'
+    )
+
+    assert error is not None
+    assert "must pass `--as user`" in error
+
+
 @pytest.mark.asyncio
 async def test_bash_tool_allows_setting_lark_cli_env_without_invoking_cli():
     tool = BashTool()
