@@ -9,7 +9,11 @@
 
 ### Artifacts (SHA256)
 
-Artifact hashes are recorded after the clean release build completes.
+| File | SHA256 |
+| --- | --- |
+| `box_agent-0.9.7-py3-none-any.whl` | `a80a628f492ba1ec7634ab4cd99aaf52c9755c41756cbc7ec1645dd7e81672a4` |
+| `box_agent-0.9.7.tar.gz` | `e666b1533f0dee5e08fec07e68a9a2943c6e29d9dbf3891c0e69f15f098b00ee` |
+| `box-agent-runtime-v0.9.7-darwin-arm64.tar.gz` | `3eb904be7e702291bb24f55ba52eb9258b76e2b730a6747e9a6a5a52c21b5f0e` |
 
 ### What shipped
 
@@ -27,8 +31,16 @@ Artifact hashes are recorded after the clean release build completes.
 
 ### Proof and known gaps
 
-- Release verification and final artifact digests are recorded after the clean
-  build, package checks, runtime probe, and publication steps complete.
+- The repository preflight passed with 3,266 tests, 17 skipped tests, and one
+  intentional deselection. One initial Jupyter sandbox import probe timed out;
+  that test passed alone and the complete warmed rerun passed.
+- The focused version, runtime-build, Skill-loader, transactional-write, and
+  controlled-presentation suite passed all 86 tests.
+- The wheel and sdist passed `twine check`; wheel, sdist, and runtime contained
+  no `.DS_Store`, `__pycache__`, `.pyc`, `.pyo`, or `.omx` entries.
+- The darwin-arm64 runtime advertised version `0.9.7`, returned a valid ACP
+  initialize response with agent version `0.9.7`, and kept protocol stdout clean.
+- PyPI and GitHub Release artifact SHA256 values match the clean tag build.
 - **Runtime target:** this release builds the host-native darwin-arm64 runtime.
   No darwin-x64, Linux, or Windows runtime is produced in this workflow.
 - The runtime is not installed into officev3, and no OfficeV3 restart or fresh
