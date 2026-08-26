@@ -917,6 +917,32 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
         ("assistant", "done"),
     ]
     assert state.agent.session_log.events[-1]["type"] == "session/end-seed"
+
+    await restarted_agent.prompt(
+        SimpleNamespace(
+            sessionId=restarted.sessionId,
+            prompt=[{"text": "continue after restart"}],
+            field_meta={
+                "session_continuation": {
+                    "schema_version": "officev3-session-continuation/v1",
+                    "product_session_id": "stable-restart-session",
+                    "reason": "acp_epoch_recreated",
+                    "messages": [
+                        {"role": "user", "content": "stale migration seed"},
+                    ],
+                    "truncated": False,
+                }
+            },
+        )
+    )
+
+    assert [message.content for message in state.agent.messages].count(
+        "stale migration seed"
+    ) == 0
+    assert [(message.role, message.content) for message in state.agent.messages[-2:]] == [
+        ("user", "continue after restart"),
+        ("assistant", "done"),
+    ]
     state.agent.session_log.close()
 
 
