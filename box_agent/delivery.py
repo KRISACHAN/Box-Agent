@@ -25,6 +25,7 @@ DELIVERABLE_INTENT_KEYWORDS: Final[tuple[str, ...]] = (
     "create",
     "generate",
     "make",
+    "remake",
     "build",
     "export",
     "save",
@@ -34,17 +35,24 @@ DELIVERABLE_INTENT_KEYWORDS: Final[tuple[str, ...]] = (
 )
 
 _DELIVERABLE_CLAUSE_RE: Final[re.Pattern[str]] = re.compile(r"[^。！？!?；;\n]+")
+_DELIVERABLE_ACTION_PATTERN: Final[str] = "|".join(
+    (
+        rf"(?<![A-Za-z0-9_]){re.escape(keyword)}(?![A-Za-z0-9_])"
+        if keyword.isascii()
+        else re.escape(keyword)
+    )
+    for keyword in sorted(DELIVERABLE_INTENT_KEYWORDS, key=len, reverse=True)
+)
 _DELIVERABLE_ACTION_RE: Final[re.Pattern[str]] = re.compile(
-    "|".join(
-        re.escape(keyword)
-        for keyword in sorted(DELIVERABLE_INTENT_KEYWORDS, key=len, reverse=True)
-    ),
+    _DELIVERABLE_ACTION_PATTERN,
     re.IGNORECASE,
 )
 _ACTION_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:然后|随后|接着|之后|再|并且|并|\b(?:and\s+then|then|afterwards)\b)",
+    r"(?:然后|随后|接着|之后|再|并且|并|"
+    r"\b(?:and(?:\s+then)?|then|afterwards)\b)",
     re.IGNORECASE,
 )
+_ACTION_AFTER_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(r"后\s*$")
 _INFORMATIONAL_ACTION_PREFIXES: Final[tuple[str, ...]] = (
     "如何",
     "怎么",
@@ -82,7 +90,14 @@ _NEGATED_ACTION_PREFIXES: Final[tuple[str, ...]] = (
     "never",
 )
 _INFORMATIONAL_ACTION_SUFFIX_RE: Final[re.Pattern[str]] = re.compile(
-    r"^\s*(?:的)?(?:模型)?(?:的)?(?:介绍|能力|文档|教程|用法|方法|说明)",
+    r"^\s*(?:"
+    r"(?:能力(?:介绍|说明)?|用法|方法)"
+    r"|(?:的(?:模型(?:的)?)?|模型(?:的)?)"
+    r"(?:介绍|能力(?:介绍|说明)?|文档|教程|用法|方法|说明)"
+    r"|[^，,。！？!?；;\n]{1,32}?的"
+    r"(?:介绍|能力(?:介绍|说明)?|教程|用法|方法|说明)"
+    r"(?:部分|一下)?\s*$"
+    r")",
     re.IGNORECASE,
 )
 
@@ -150,6 +165,9 @@ def _local_action_prefix(clause: str, action_start: int) -> str:
     boundary = max(prefix.rfind("，"), prefix.rfind(","))
     for match in _ACTION_CONNECTOR_RE.finditer(prefix):
         boundary = max(boundary, match.end() - 1)
+    after_match = _ACTION_AFTER_CONNECTOR_RE.search(prefix)
+    if after_match is not None:
+        boundary = max(boundary, after_match.start())
     return prefix[boundary + 1 :].strip().casefold()
 
 
