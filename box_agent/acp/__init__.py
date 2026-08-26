@@ -124,6 +124,7 @@ from box_agent.llm.model_routing import normalize_auto_routing, resolve_model_cl
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.runtime import invoke_tool_with_permissions
 from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
+from box_agent.session_log import SessionLog
 from box_agent.task_context import TaskContext, normalize_task_id
 from box_agent.session_continuation import parse_session_continuation
 from box_agent.task_registry import (
@@ -1784,6 +1785,36 @@ class BoxACPAgent:
                 f"{system_prompt.rstrip()}\n\n"
                 f"{build_image_generation_prompt(self._config)}"
             )
+        session_log: SessionLog | None = None
+        session_log_restored = False
+        if upstream_session_id:
+            for existing_handle, existing_state in list(self._sessions.items()):
+                if existing_state.upstream_session_id != upstream_session_id:
+                    continue
+                if existing_state.turn_active:
+                    raise ValueError(
+                        "cannot rebind a product Session while its turn is active"
+                    )
+                existing_log = existing_state.agent.session_log
+                if existing_log is not None:
+                    existing_log.close()
+                del self._sessions[existing_handle]
+            session_root = Path.home() / ".box-agent" / "sessions"
+            try:
+                session_log = SessionLog.open(
+                    session_root,
+                    session_id=upstream_session_id,
+                )
+            except FileNotFoundError:
+                session_log = SessionLog.create(
+                    session_root,
+                    session_id=upstream_session_id,
+                    cwd=workspace,
+                )
+            else:
+                session_log.prepare_resume()
+                session_log_restored = True
+
         agent = Agent(
             llm_client=session_llm,
             system_prompt=system_prompt,
@@ -1811,7 +1842,42 @@ class BoxACPAgent:
                 and self._config.tools.enable_mcp
                 and self._config.tools.mcp.deferred_loading_enabled
             ),
+            session_log=session_log,
         )
+
+        if agent.restored_skills:
+            try:
+                if session_skill_loader is None:
+                    raise ValueError(
+                        "persisted active Skills cannot be restored without a SkillLoader"
+                    )
+                restored_skill_prompts: list[tuple[str, str, str, int]] = []
+                for item in agent.restored_skills:
+                    name = item.get("name")
+                    prompt_hash = item.get("sha256")
+                    load_order = item.get("loadOrder")
+                    if (
+                        not isinstance(name, str)
+                        or not isinstance(prompt_hash, str)
+                        or not isinstance(load_order, int)
+                    ):
+                        raise ValueError("persisted active Skill metadata is invalid")
+                    skill = session_skill_loader.get_skill(
+                        name,
+                        include_disabled=expert_context is not None,
+                    )
+                    if skill is None:
+                        raise ValueError(
+                            f"persisted active Skill {name!r} is unavailable"
+                        )
+                    restored_skill_prompts.append(
+                        (name, skill.to_prompt(), prompt_hash, load_order)
+                    )
+                agent.restore_active_skill_instructions(restored_skill_prompts)
+            except Exception:
+                if session_log is not None:
+                    session_log.close()
+                raise
 
         if initial_goal_request is not None:
             goal_result = self._apply_goal_action(agent, initial_goal_request)
@@ -1870,6 +1936,7 @@ class BoxACPAgent:
             require_plan_approval=require_plan_approval,
             preloaded_skill_hashes=preloaded_skill_hashes,
             follow_up_suggestions_enabled=follow_up_suggestions_enabled,
+            continuation_applied=session_log_restored,
             mcp_fallback_tools=dict(self._base_mcp_fallback_tools),
         )
         trace_writer.write(

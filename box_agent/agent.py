@@ -47,6 +47,7 @@ from .logger import AgentLogger
 from .loop_guards import CompletionGate
 from .runtime import run_agent_loop
 from .schema import Message
+from .session_log import SessionLog
 from .tools.base import Tool, ToolResult, build_tool_name_index
 from .tools.mcp_tool_catalog import get_mcp_tool_catalog
 from .tools.mcp_tool_search import (
@@ -496,6 +497,7 @@ class Agent:
         context_resource_dedup_enabled: bool = True,
         tool_limits: ToolLimitsConfig | None = None,
         deferred_mcp_loading_enabled: bool = True,
+        session_log: SessionLog | None = None,
     ):
         self.llm = llm_client
         self.tools = {
@@ -592,6 +594,8 @@ class Agent:
             # a real MCP tool becomes inheritable without exposing tool_search.
             if hasattr(tool, "set_tool_provider"):
                 tool.set_tool_provider(self._inherited_tools)
+            if session_log is not None and hasattr(tool, "set_parent_session_log"):
+                tool.set_parent_session_log(session_log)
         self.messages: list[Message] = [Message(role="system", content=system_prompt)]
         self.logger = AgentLogger()
         self.api_total_tokens: int = 0
@@ -602,6 +606,65 @@ class Agent:
         self.goal: GoalState | None = None
         self.tools["goal_read"] = _GoalReadTool(self)
         self.tools["goal_write"] = _GoalWriteTool(self)
+        self.session_log = session_log
+        if self.session_log is not None:
+            projection = self.session_log.replay()
+            self.messages.extend(projection.messages)
+            self.restore_goal(projection.goal)
+            plan_tool = self.tools.get("plan_write")
+            configure_plan = getattr(plan_tool, "configure_session_persistence", None)
+            if callable(configure_plan):
+                configure_plan(self.session_log, projection.plan)
+            todo_tool = self.tools.get("todo_write")
+            configure_todos = getattr(todo_tool, "configure_session_persistence", None)
+            if callable(configure_todos):
+                configure_todos(self.session_log, projection.todos)
+            self.restored_skills = projection.skills
+        else:
+            self.restored_skills = []
+
+    def _persist_goal(self) -> None:
+        if self.session_log is None:
+            return
+        self.session_log.append("goal/change", {"goal": goal_payload(self.goal)})
+        self.session_log.flush()
+
+    def _next_session_turn(self) -> int:
+        if self.session_log is None:
+            raise RuntimeError("session log is not configured")
+        turns = [
+            event["data"].get("turn")
+            for event in self.session_log.events
+            if event["type"] == "turn/start"
+        ]
+        numeric_turns = [turn for turn in turns if isinstance(turn, int)]
+        return max(numeric_turns, default=0) + 1
+
+    def _persist_unlogged_messages(
+        self,
+        *,
+        turn: int,
+        step: int | None,
+        tool_result_metadata: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        if self.session_log is None:
+            return
+        self.session_log.append_unlogged_messages(
+            self.messages[1:],
+            turn=turn,
+            step=step,
+            tool_result_metadata=tool_result_metadata,
+        )
+
+    @staticmethod
+    def _session_turn_reason(stop_reason: StopReason) -> dict[str, Any]:
+        if stop_reason is StopReason.END_TURN:
+            return {"kind": "completed"}
+        if stop_reason is StopReason.CANCELLED:
+            return {"kind": "aborted", "message": "cancelled"}
+        if stop_reason is StopReason.ERROR:
+            return {"kind": "error"}
+        return {"kind": stop_reason.value}
 
     def _inherited_tools(self) -> dict[str, Tool]:
         if self.mcp_tool_exposure is None:
@@ -634,6 +697,7 @@ class Agent:
         self._active_skill_sequence += 1
         self._active_skill_load_order[normalized_name] = self._active_skill_sequence
         self.set_system_prompt(self.system_prompt)
+        self._persist_active_skills()
         diagnostics = self.active_skill_diagnostics()
         if diagnostics["budget_exceeded"]:
             _log.warning(
@@ -653,6 +717,7 @@ class Agent:
         self._active_skill_hashes.pop(normalized_name, None)
         self._active_skill_load_order.pop(normalized_name, None)
         self.set_system_prompt(self.system_prompt)
+        self._persist_active_skills()
         return True
 
     def clear_active_skill_instructions(self) -> None:
@@ -662,6 +727,57 @@ class Agent:
         self._active_skill_prompts.clear()
         self._active_skill_hashes.clear()
         self._active_skill_load_order.clear()
+        self.set_system_prompt(self.system_prompt)
+        self._persist_active_skills()
+
+    def _persist_active_skills(self) -> None:
+        if self.session_log is None:
+            return
+        ordered = sorted(
+            self._active_skill_prompts,
+            key=lambda name: self._active_skill_load_order[name],
+        )
+        self.session_log.append(
+            "skill/change",
+            {
+                "skills": [
+                    {
+                        "name": name,
+                        "sha256": self._active_skill_hashes[name],
+                        "loadOrder": self._active_skill_load_order[name],
+                    }
+                    for name in ordered
+                ]
+            },
+        )
+        self.session_log.flush()
+
+    def restore_active_skill_instructions(
+        self,
+        skills: list[tuple[str, str, str, int]],
+    ) -> None:
+        """Restore loader-verified active Skill prompts without writing new events."""
+
+        restored_prompts: dict[str, str] = {}
+        restored_hashes: dict[str, str] = {}
+        restored_order: dict[str, int] = {}
+        for name, prompt, prompt_hash, load_order in sorted(
+            skills,
+            key=lambda item: item[3],
+        ):
+            actual_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            if actual_hash != prompt_hash:
+                raise ValueError(f"active Skill {name!r} content hash changed")
+            restored_prompts[name] = prompt
+            restored_hashes[name] = prompt_hash
+            restored_order[name] = load_order
+        self._active_skill_prompts = restored_prompts
+        self._active_skill_hashes = restored_hashes
+        self._active_skill_load_order = restored_order
+        self._active_skill_sequence = max(
+            self._active_skill_load_order.values(),
+            default=0,
+        )
         self.set_system_prompt(self.system_prompt)
 
     def active_skill_diagnostics(self) -> dict[str, object]:
@@ -727,6 +843,7 @@ class Agent:
             blocked_reason=(blocked_reason or "").strip() or None,
             completed_by=(completed_by or "").strip() or None,
         )
+        self._persist_goal()
         return self.goal
 
     def pause_goal(self) -> GoalState | None:
@@ -735,6 +852,7 @@ class Agent:
             return None
         self.goal.status = "paused"
         self.goal.updated_at = datetime.now().isoformat()
+        self._persist_goal()
         return self.goal
 
     def resume_goal(self) -> GoalState | None:
@@ -744,6 +862,7 @@ class Agent:
         self.goal.status = "active"
         self.goal.blocked_reason = None
         self.goal.updated_at = datetime.now().isoformat()
+        self._persist_goal()
         return self.goal
 
     def complete_goal(
@@ -764,6 +883,7 @@ class Agent:
         if completed_by:
             self.goal.completed_by = completed_by
         self.goal.updated_at = datetime.now().isoformat()
+        self._persist_goal()
         return self.goal
 
     def update_goal_progress(
@@ -778,6 +898,7 @@ class Agent:
         _extend_goal_items(self.goal.progress, _coerce_goal_items(progress))
         _extend_goal_items(self.goal.evidence, _coerce_goal_items(evidence))
         self.goal.updated_at = datetime.now().isoformat()
+        self._persist_goal()
         return self.goal
 
     def block_goal(
@@ -798,12 +919,14 @@ class Agent:
         _extend_goal_items(self.goal.evidence, _coerce_goal_items(evidence))
         _extend_goal_items(self.goal.progress, _coerce_goal_items(progress))
         self.goal.updated_at = datetime.now().isoformat()
+        self._persist_goal()
         return self.goal
 
     def clear_goal(self) -> GoalState | None:
         """Clear the current goal and return the removed state."""
         old_goal = self.goal
         self.goal = None
+        self._persist_goal()
         return old_goal
 
     def restore_goal(self, payload: object) -> GoalState | None:
@@ -936,6 +1059,19 @@ class Agent:
         if callable(set_child_negotiator):
             set_child_negotiator(effective_options.permission_negotiator)
 
+        session_turn: int | None = None
+        session_step: int | None = None
+        session_turn_open = False
+        session_step_open = False
+        if self.session_log is not None:
+            session_turn = self._next_session_turn()
+            self.session_log.append(
+                "turn/start",
+                {"turn": session_turn},
+            )
+            session_turn_open = True
+            self._persist_unlogged_messages(turn=session_turn, step=None)
+
         events = run_agent_loop(
             llm=effective_options.llm,
             summary_llm=effective_options.summary_llm,
@@ -987,22 +1123,119 @@ class Agent:
             context_resource_dedup_enabled=self.context_resource_dedup_enabled,
             tool_exposure_manager=self.mcp_tool_exposure,
             tool_result_storage=self.tool_result_storage,
+            session_log=self.session_log,
+            session_turn=session_turn,
         )
-        async for event in events:
-            # Track token usage on Agent instance for backward compat
-            if isinstance(event, TokenUsageEvent):
-                self.api_total_tokens = event.total_tokens
-            if isinstance(event, DoneEvent):
-                write_tool = self.tools.get("write_file")
-                cleanup = getattr(write_tool, "cleanup_pending_writes", None)
-                if callable(cleanup):
-                    discarded = cleanup()
-                    if discarded:
-                        _log.info(
-                            "write_file discarded incomplete transactions: %s",
-                            discarded,
+        try:
+            async for event in events:
+                if self.session_log is not None and session_turn is not None:
+                    if isinstance(event, (ContentEvent, ThinkingEvent)):
+                        self.session_log.append(
+                            "assistant/chunk",
+                            {
+                                "turn": session_turn,
+                                "step": session_step,
+                                "kind": (
+                                    "thinking"
+                                    if isinstance(event, ThinkingEvent)
+                                    else "text"
+                                ),
+                                "content": event.content,
+                            },
                         )
-            yield event
+                    elif isinstance(event, StepStart):
+                        session_step = event.step
+                        self._persist_unlogged_messages(
+                            turn=session_turn,
+                            step=session_step,
+                        )
+                        self.session_log.append(
+                            "step/start",
+                            {"turn": session_turn, "step": session_step},
+                        )
+                        session_step_open = True
+                    elif isinstance(event, ToolCallResult):
+                        self._persist_unlogged_messages(
+                            turn=session_turn,
+                            step=session_step,
+                            tool_result_metadata={
+                                event.tool_call_id: {
+                                    "success": event.success,
+                                    "content": event.content,
+                                    "error": event.error,
+                                    "rawOutput": event.raw_output,
+                                    "policyDecision": event.policy_decision,
+                                }
+                            },
+                        )
+                    elif isinstance(event, StepEnd):
+                        self._persist_unlogged_messages(
+                            turn=session_turn,
+                            step=event.step,
+                        )
+                        if session_step_open:
+                            self.session_log.append(
+                                "step/end",
+                                {"turn": session_turn, "step": event.step},
+                            )
+                            self.session_log.flush()
+                            session_step_open = False
+                    elif isinstance(event, DoneEvent):
+                        self._persist_unlogged_messages(
+                            turn=session_turn,
+                            step=session_step,
+                        )
+                        if session_step_open:
+                            self.session_log.append(
+                                "step/end",
+                                {"turn": session_turn, "step": session_step},
+                            )
+                            session_step_open = False
+                        self.session_log.append(
+                            "turn/end",
+                            {
+                                "turn": session_turn,
+                                "reason": self._session_turn_reason(event.stop_reason),
+                            },
+                        )
+                        self.session_log.flush()
+                        session_turn_open = False
+
+                # Track token usage on Agent instance for backward compat
+                if isinstance(event, TokenUsageEvent):
+                    self.api_total_tokens = event.total_tokens
+                if isinstance(event, DoneEvent):
+                    write_tool = self.tools.get("write_file")
+                    cleanup = getattr(write_tool, "cleanup_pending_writes", None)
+                    if callable(cleanup):
+                        discarded = cleanup()
+                        if discarded:
+                            _log.info(
+                                "write_file discarded incomplete transactions: %s",
+                                discarded,
+                            )
+                yield event
+        finally:
+            if (
+                self.session_log is not None
+                and session_turn is not None
+                and session_turn_open
+                and not self.session_log.failed
+            ):
+                self._persist_unlogged_messages(
+                    turn=session_turn,
+                    step=session_step,
+                )
+                if session_step_open:
+                    self.session_log.append(
+                        "step/end",
+                        {"turn": session_turn, "step": session_step},
+                    )
+                self.session_log.append(
+                    "turn/end",
+                    {"turn": session_turn, "reason": {"kind": "interrupted"}},
+                )
+                self.session_log.flush()
 
     # ── Backward-compatible run() ───────────────────────────
 

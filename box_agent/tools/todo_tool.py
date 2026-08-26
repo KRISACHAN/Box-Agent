@@ -15,9 +15,12 @@ import json
 from datetime import datetime
 from itertools import count
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .base import Tool, ToolResult
+
+if TYPE_CHECKING:
+    from ..session_log import SessionLog
 
 
 _VALID_STATUSES = ("pending", "in_progress", "completed")
@@ -229,6 +232,7 @@ class TodoStore:
         self._items: dict[str, dict] = {}
         self._counter = count(1)
         self._persist_path = persist_path
+        self._change_sink: Callable[[list[dict]], None] | None = None
         if persist_path and persist_path.exists():
             self._load()
 
@@ -271,6 +275,21 @@ class TodoStore:
         _validate_todo_items(items)
         self._items = {str(item["id"]): dict(item) for item in items}
         self._save()
+        if self._change_sink is not None:
+            self._change_sink(self.list())
+
+    def restore(self, items: list[dict]) -> None:
+        candidate = [dict(item) for item in items]
+        _validate_todo_items(candidate)
+        self._items = {item["id"]: item for item in candidate}
+        max_id = max((int(item["id"]) for item in candidate), default=0)
+        self._counter = count(max_id + 1)
+
+    def set_change_sink(
+        self,
+        sink: Callable[[list[dict]], None] | None,
+    ) -> None:
+        self._change_sink = sink
 
     # -- public API --------------------------------------------------------
 
@@ -477,6 +496,19 @@ class TodoWriteTool(Tool):
 
     def __init__(self, store: TodoStore):
         self._store = store
+
+    def configure_session_persistence(
+        self,
+        session_log: SessionLog,
+        items: list[dict],
+    ) -> None:
+        self._store.restore(items)
+
+        def persist(current: list[dict]) -> None:
+            session_log.append("todo/write", {"todos": current})
+            session_log.flush()
+
+        self._store.set_change_sink(persist)
 
     def _result(
         self,

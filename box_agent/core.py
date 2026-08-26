@@ -78,6 +78,7 @@ from .llm.capabilities import image_input_support
 from .llm.debug_logging import reset_llm_debug_sink, set_llm_debug_sink
 from .model_history import is_model_history_placeholder
 from .session_trace import emit_session_trace
+from .session_log import SessionLog, SessionLogDurabilityError
 from .loop_guards import (
     EMPTY_ARGS_LIMIT,
     FINAL_SUMMARY_EXCLUDED_TOOLS,
@@ -1944,6 +1945,9 @@ async def _maybe_summarize(
     summary_llm: Any | None = None,
     workflow_checkpoint: str | None = None,
     allow_llm_summary: bool = True,
+    session_log: SessionLog | None = None,
+    session_turn: int | None = None,
+    session_step: int | None = None,
 ) -> CompactionOutcome:
     """Compact once when the complete next request exceeds its safe limit."""
     if skip_check:
@@ -2042,6 +2046,23 @@ async def _maybe_summarize(
         for index, message in enumerate(messages)
         if index > 0 and index not in retained_indices
     ]
+
+    if session_log is not None and session_turn is not None and session_step is not None:
+        session_log.append_unlogged_messages(
+            messages[1:],
+            turn=session_turn,
+            step=session_step,
+        )
+        session_log.append(
+            "compaction/start",
+            {
+                "turn": session_turn,
+                "step": session_step,
+                "estimatedBefore": estimated,
+                "tokenLimit": token_limit,
+            },
+        )
+        session_log.flush()
 
     summary_calls = 0
     error: str | None = None
@@ -2876,6 +2897,8 @@ async def run_agent_loop(
     context_resource_dedup_enabled: bool = True,
     tool_exposure_manager: Any | None = None,
     tool_result_storage: ToolResultStorage | None = None,
+    session_log: SessionLog | None = None,
+    session_turn: int | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Execute the agent loop, yielding structured events.
 
@@ -3633,6 +3656,9 @@ async def run_agent_loop(
             summary_llm=summary_llm,
             workflow_checkpoint=checkpoint_text,
             allow_llm_summary=summary_failure_cooldown_steps == 0,
+            session_log=session_log,
+            session_turn=session_turn,
+            session_step=step + 1,
         )
         if result.mode == "fallback" and result.summary_calls > 0 and result.error:
             summary_failure_cooldown_steps = (
@@ -3659,6 +3685,58 @@ async def run_agent_loop(
                         turn_id=memory_turn_id,
                     )
                 )
+            if session_log is not None and session_turn is not None:
+                if result.mode == "checkpoint":
+                    session_log.append(
+                        "compaction/prune",
+                        {
+                            "turn": session_turn,
+                            "step": step + 1,
+                            "mode": result.mode,
+                            "estimatedBefore": est_before,
+                            "estimatedAfter": result.estimated_after,
+                        },
+                    )
+                else:
+                    session_log.append(
+                        "compaction/summary",
+                        {
+                            "turn": session_turn,
+                            "step": step + 1,
+                            "mode": result.mode,
+                            "message": new_msgs[1].model_dump(
+                                mode="json",
+                                exclude_none=True,
+                            ),
+                            "estimatedBefore": est_before,
+                            "estimatedAfter": result.estimated_after,
+                            "error": result.error,
+                        },
+                    )
+                session_log.replace_surface(
+                    new_msgs[1:],
+                    turn=session_turn,
+                    step=step + 1,
+                )
+                if result.mode != "checkpoint":
+                    session_log.append(
+                        "compaction/end",
+                        {
+                            "turn": session_turn,
+                            "step": step + 1,
+                            "mode": result.mode,
+                            "error": result.error,
+                        },
+                    )
+                session_log.flush()
+            messages.clear()
+            messages.extend(new_msgs)
+            if resource_ledger is not None:
+                resource_ledger.rotate_epoch()
+                _log.info(
+                    "context_resource/epoch_rotated transform=summary epoch=%d",
+                    resource_ledger.epoch,
+                )
             yield SummarizationEvent(
                 estimated_tokens=est_before,
                 api_tokens=api_prompt_tokens,
@@ -3671,14 +3749,6 @@ async def run_agent_loop(
                 error_type=result.error_type,
                 trigger_source=result.trigger_source,
             )
-            messages.clear()
-            messages.extend(new_msgs)
-            if resource_ledger is not None:
-                resource_ledger.rotate_epoch()
-                _log.info(
-                    "context_resource/epoch_rotated transform=summary epoch=%d",
-                    resource_ledger.epoch,
-                )
         tool_budget_checkpoint_required = (
             workflow_policy is not None
             and completion_gate is not None
@@ -3729,6 +3799,39 @@ async def run_agent_loop(
                     pause_checkpoint.schema_version,
                     pause_checkpoint.artifact_count,
                 )
+                original_message_count = len(messages)
+                retained_messages = [
+                    message for message in messages if message.role == "system"
+                ]
+                retained_system_count = len(retained_messages)
+                retained_messages.append(
+                    Message(role="assistant", content=pause_message)
+                )
+                removed_message_count = original_message_count - retained_system_count
+                if session_log is not None and session_turn is not None:
+                    session_log.append_unlogged_messages(
+                        messages[1:],
+                        turn=session_turn,
+                        step=step + 1,
+                    )
+                    session_log.append(
+                        "compaction/prune",
+                        {
+                            "turn": session_turn,
+                            "step": step + 1,
+                            "mode": "workflow_checkpoint",
+                        },
+                    )
+                    session_log.replace_surface(
+                        retained_messages[1:],
+                        turn=session_turn,
+                        step=step + 1,
+                    )
+                    session_log.flush()
+                messages.clear()
+                messages.extend(retained_messages)
+                if resource_ledger is not None:
+                    resource_ledger.rotate_epoch()
                 yield ContextCheckpointEvent(
                     checkpoint_id=pause_checkpoint.checkpoint_id,
                     workflow_kind=pause_checkpoint.workflow_kind,
@@ -3740,19 +3843,6 @@ async def run_agent_loop(
                     artifact_count=pause_checkpoint.artifact_count,
                     artifact_set_sha256=pause_checkpoint.artifact_set_sha256,
                 )
-                original_message_count = len(messages)
-                retained_messages = [
-                    message for message in messages if message.role == "system"
-                ]
-                retained_system_count = len(retained_messages)
-                retained_messages.append(
-                    Message(role="assistant", content=pause_message)
-                )
-                removed_message_count = original_message_count - retained_system_count
-                messages.clear()
-                messages.extend(retained_messages)
-                if resource_ledger is not None:
-                    resource_ledger.rotate_epoch()
                 _log.info(
                     "workflow_checkpoint/history_reset checkpoint_id=%s "
                     "removed_messages=%d retained_messages=%d",
@@ -3918,6 +4008,49 @@ async def run_agent_loop(
                     workflow_action.tool_name,
                 )
                 workflow_action = None
+
+        if session_log is not None and session_turn is not None:
+            request_provider = getattr(llm, "provider", None)
+            if not isinstance(request_provider, str):
+                request_provider = None
+            request_model = getattr(llm, "model", None)
+            if not isinstance(request_model, str):
+                request_model = None
+            request_max_output = getattr(llm, "max_output_tokens", None)
+            if not isinstance(request_max_output, int):
+                request_max_output = None
+            session_log.append_unlogged_messages(
+                messages[1:],
+                turn=session_turn,
+                step=step + 1,
+            )
+            session_log.append(
+                "request/header",
+                {
+                    "turn": session_turn,
+                    "step": step + 1,
+                    "header": {
+                        "config": {
+                            "provider": request_provider,
+                            "model": request_model,
+                            "maxOutputTokens": request_max_output,
+                        },
+                        "system": messages[0].content,
+                        "tools": [tool.to_schema() for tool in tool_list],
+                    },
+                },
+            )
+            session_log.append(
+                "request/context",
+                {
+                    "turn": session_turn,
+                    "step": step + 1,
+                    "provider": request_provider,
+                    "model": request_model,
+                    "tokenLimit": token_limit,
+                },
+            )
+            session_log.flush()
 
         def _tool_target_identity(tool_name: str) -> tuple[str | None, str | None]:
             tool = offered_tools_by_name.get(tool_name)
@@ -4638,6 +4771,12 @@ async def run_agent_loop(
 
         # ── Append assistant message (non-truncated path) ───
         messages.append(assistant_msg)
+        if session_log is not None and session_turn is not None:
+            session_log.append_unlogged_messages(
+                messages[1:],
+                turn=session_turn,
+                step=step + 1,
+            )
 
         # Reset the retry counter now that a clean turn landed — a future
         # truncation on a later step should get its own fresh budget.
@@ -4780,6 +4919,38 @@ async def run_agent_loop(
                         pause_checkpoint.schema_version,
                         pause_checkpoint.artifact_count,
                     )
+                    original_message_count = len(messages)
+                    retained_messages = [
+                        message for message in messages if message.role == "system"
+                    ]
+                    retained_system_count = len(retained_messages)
+                    retained_messages.append(
+                        Message(role="assistant", content=pause_message)
+                    )
+                    if session_log is not None and session_turn is not None:
+                        session_log.append_unlogged_messages(
+                            messages[1:],
+                            turn=session_turn,
+                            step=step + 1,
+                        )
+                        session_log.append(
+                            "compaction/prune",
+                            {
+                                "turn": session_turn,
+                                "step": step + 1,
+                                "mode": "workflow_checkpoint",
+                            },
+                        )
+                        session_log.replace_surface(
+                            retained_messages[1:],
+                            turn=session_turn,
+                            step=step + 1,
+                        )
+                        session_log.flush()
+                    messages.clear()
+                    messages.extend(retained_messages)
+                    if resource_ledger is not None:
+                        resource_ledger.rotate_epoch()
                     yield ContextCheckpointEvent(
                         checkpoint_id=pause_checkpoint.checkpoint_id,
                         workflow_kind=pause_checkpoint.workflow_kind,
@@ -4791,18 +4962,6 @@ async def run_agent_loop(
                         artifact_count=pause_checkpoint.artifact_count,
                         artifact_set_sha256=pause_checkpoint.artifact_set_sha256,
                     )
-                    original_message_count = len(messages)
-                    retained_messages = [
-                        message for message in messages if message.role == "system"
-                    ]
-                    retained_system_count = len(retained_messages)
-                    retained_messages.append(
-                        Message(role="assistant", content=pause_message)
-                    )
-                    messages.clear()
-                    messages.extend(retained_messages)
-                    if resource_ledger is not None:
-                        resource_ledger.rotate_epoch()
                     _log.info(
                         "workflow_checkpoint/history_reset checkpoint_id=%s "
                         "removed_messages=%d retained_messages=%d",
@@ -5409,6 +5568,23 @@ async def run_agent_loop(
                 fn_args = await hook_mgr.fire_tool_start(
                     tool_call_id=tc_id, tool_name=fn_name, arguments=fn_args,
                 )
+            if (
+                session_log is not None
+                and session_turn is not None
+                and allowed_to_execute
+                and fn_name in offered_tools_by_name
+            ):
+                session_log.append(
+                    "tool/call",
+                    {
+                        "turn": session_turn,
+                        "step": step + 1,
+                        "callId": tc_id,
+                        "name": fn_name,
+                        "arguments": fn_args,
+                    },
+                )
+                session_log.flush()
             tool_started_at = perf_counter()
             emit_session_trace(
                 "tool.request",
@@ -5460,6 +5636,8 @@ async def run_agent_loop(
                                     parent_tool_call_id=tc_id,
                                 ),
                             )
+                        except SessionLogDurabilityError:
+                            raise
                         except Exception as exc:
                             detail = f"{type(exc).__name__}: {exc!s}"
                             trace = traceback.format_exc()
@@ -5543,6 +5721,8 @@ async def run_agent_loop(
                                 },
                             )
                     except asyncio.CancelledError:
+                        raise
+                    except SessionLogDurabilityError:
                         raise
                     except Exception as exc:
                         detail = f"{type(exc).__name__}: {exc!s}"
@@ -5872,6 +6052,7 @@ async def run_agent_loop(
             par_user_visible: dict[str, bool] = {}
             par_browser_snapshot_targets: dict[str, Path | None] = {}
             par_started_at: dict[str, float] = {}
+            durable_parallel_calls = False
             for tc in parallel_calls:
                 par_fn_args = tc.function.arguments
                 (
@@ -5959,6 +6140,23 @@ async def run_agent_loop(
                     )
                 par_args_map[tc.id] = par_fn_args
                 par_started_at[tc.id] = perf_counter()
+                if (
+                    session_log is not None
+                    and session_turn is not None
+                    and allowed_to_execute
+                    and tc.function.name in offered_tools_by_name
+                ):
+                    session_log.append(
+                        "tool/call",
+                        {
+                            "turn": session_turn,
+                            "step": step + 1,
+                            "callId": tc.id,
+                            "name": tc.function.name,
+                            "arguments": par_fn_args,
+                        },
+                    )
+                    durable_parallel_calls = True
                 emit_session_trace(
                     "tool.request",
                     turn_id=turn_id,
@@ -5976,6 +6174,9 @@ async def run_agent_loop(
                 )
                 if not allowed_to_execute:
                     par_budget_errors[tc.id] = internal_skip_error or ""
+
+            if durable_parallel_calls and session_log is not None:
+                session_log.flush()
 
             # Shared event queue for EventEmittingTool progress. Parent call ids
             # are passed per execution so parallel sub-agents do not race on
@@ -6023,6 +6224,8 @@ async def run_agent_loop(
                         else:
                             r = await _invoke_parallel_tool(tc)
                 except asyncio.CancelledError:
+                    raise
+                except SessionLogDurabilityError:
                     raise
                 except Exception as exc:
                     detail = f"{type(exc).__name__}: {exc!s}"

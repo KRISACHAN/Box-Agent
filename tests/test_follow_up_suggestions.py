@@ -197,7 +197,11 @@ async def test_acp_strips_model_metadata_across_activity_and_emits_suggestions(t
 
 
 @pytest.mark.asyncio
-async def test_acp_generates_suggestions_in_background_without_blocking_prompt(tmp_path) -> None:
+async def test_acp_generates_suggestions_in_background_without_blocking_prompt(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     conn = _RecordingConn()
     llm = _DedicatedFollowUpLLM()
     agent = BoxACPAgent(
@@ -263,7 +267,11 @@ async def test_acp_generates_suggestions_in_background_without_blocking_prompt(t
 
 
 @pytest.mark.asyncio
-async def test_acp_cancels_stale_background_suggestions_when_next_turn_starts(tmp_path) -> None:
+async def test_acp_cancels_stale_background_suggestions_when_next_turn_starts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     conn = _RecordingConn()
     llm = _DedicatedFollowUpLLM()
     agent = BoxACPAgent(
