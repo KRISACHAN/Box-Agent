@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional
 
@@ -56,6 +57,15 @@ from box_agent.tools.image_inspection_tool import ImageInspectionTool
 
 if TYPE_CHECKING:
     from box_agent.tools.permissions import PermissionEngine
+
+
+def render_system_prompt_template(
+    prompt: str,
+    *,
+    current_date: str | None = None,
+) -> str:
+    """Render the stable scalar placeholders in a system-prompt template."""
+    return prompt.replace("{{.CurrentDate}}", current_date or date.today().isoformat())
 
 
 def _image_capable_llm(llm: Any | None) -> Any | None:
@@ -154,11 +164,14 @@ def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
             "不要写到 `~/.box-agent/` 等内部目录。\n"
             "- **相对路径**：bash、文件工具、`generate_image` 和视觉检查的相对路径都已从当前 output 根开始；"
             "使用 `assets/generated/a.png`，不要再添加 `output/` 前缀。读取会话根的上传文件时使用 `../<name>`。\n"
-            "- **桌面交付**：完成后说明文件名即可。宿主会从结构化 ArtifactEvent 渲染可打开的文件卡。"
+            "- **命名**：新产物使用描述性小写名称和 `-` 分隔；除非用户要求，不加时间戳或 UUID。\n"
+            "- **桌面交付**：完成后说明文件名即可。宿主会从结构化 ArtifactEvent 渲染可打开的文件卡。\n"
+            "- **多文件交付**：用户需要单一下载包时才用 `zip -r bundle.zip 文件1 文件2` 将多文件打包为 ZIP。"
             + preview_guidance
         )
     return (
         "- **目录**：这是现有项目工作区。交付物可以在项目树中合适的位置；不要默认创建或使用 `output/`。\n"
+        "- **命名与覆盖**：遵循项目已有命名约定；仅在任务明确需要时覆盖目标文件，不重命名或覆盖无关文件。\n"
         "- **桌面交付**：完成后说明文件名和项目内相对位置即可。宿主会根据文件变更渲染可验证的文件入口。"
         + preview_guidance
     )

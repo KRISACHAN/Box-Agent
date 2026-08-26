@@ -66,6 +66,7 @@ from box_agent.tools.setup import (
     build_sandbox_info_prompt,
     initialize_base_tools,
     register_mcp_tools,
+    render_system_prompt_template,
 )
 from box_agent.tools.runtime import (
     DEFAULT_NODE_VERSION,
@@ -2093,7 +2094,9 @@ async def run_agent(
     # 5. Load System Prompt (with priority search)
     system_prompt_path = Config.find_config_file(config.agent.system_prompt_path)
     if system_prompt_path and system_prompt_path.exists():
-        system_prompt = system_prompt_path.read_text(encoding="utf-8")
+        system_prompt = render_system_prompt_template(
+            system_prompt_path.read_text(encoding="utf-8")
+        )
         print(f"{Colors.GREEN}✅ Loaded system prompt (from: {system_prompt_path}){Colors.RESET}")
     else:
         system_prompt = "You are Box-Agent, an intelligent assistant that can help users complete various tasks."

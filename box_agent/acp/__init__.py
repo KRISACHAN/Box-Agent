@@ -78,6 +78,7 @@ from box_agent.tools.setup import (
     build_image_generation_prompt,
     build_sandbox_info_prompt,
     initialize_base_tools,
+    render_system_prompt_template,
     sync_mcp_tool_list,
     sync_mcp_tools,
 )
@@ -5807,7 +5808,9 @@ async def run_acp_server(config: Config | None = None) -> None:
         )
         prompt_path = Config.find_config_file(config.agent.system_prompt_path)
         if prompt_path and prompt_path.exists():
-            system_prompt = prompt_path.read_text(encoding="utf-8")
+            system_prompt = render_system_prompt_template(
+                prompt_path.read_text(encoding="utf-8")
+            )
         else:
             system_prompt = "You are a helpful AI assistant."
 

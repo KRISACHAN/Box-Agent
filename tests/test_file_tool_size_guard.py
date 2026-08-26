@@ -225,13 +225,13 @@ def test_sandbox_prompt_describes_write_file_chunk_protocol():
     assert "禁止把文件正文、heredoc 或 base64 载荷塞进 `bash`" in SANDBOX_INFO_PROMPT
 
 
-def test_system_prompt_describes_write_file_chunk_protocol():
+def test_write_file_schema_owns_chunk_protocol_without_system_prompt_duplication():
     prompt = Path("box_agent/config/system_prompt.md").read_text(encoding="utf-8")
 
-    assert "`write_file(path, content)`" in prompt
-    assert "`chunk_index=0, final=false`" in prompt
-    assert "`staged_file_write`" not in prompt
-    assert "禁止把文件正文、heredoc 或 base64 载荷塞进 `bash`" in prompt
+    assert "chunk_index=0" in WriteTool().description
+    assert "final=false" in WriteTool().description
+    assert "chunk_index=0" not in prompt
+    assert "final=false" not in prompt
 
 
 @pytest.mark.asyncio

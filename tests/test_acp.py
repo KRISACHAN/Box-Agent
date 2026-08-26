@@ -527,6 +527,19 @@ def test_file_delivery_prompt_uses_dynamic_loopback_preview_and_reclaims_it():
     assert "任务结束时 runtime 会兜底回收" in prompt
 
 
+def test_file_delivery_prompt_uses_mode_specific_naming_and_overwrite_policy():
+    output_prompt = build_file_delivery_prompt(use_output_dir=True)
+    project_prompt = build_file_delivery_prompt(use_output_dir=False)
+
+    assert "新产物使用描述性小写名称" in output_prompt
+    assert "\n- **多文件交付**" in output_prompt
+    assert "用户需要单一下载包时才用" in output_prompt
+    assert "zip -r bundle.zip" in output_prompt
+    assert "遵循项目已有命名约定" in project_prompt
+    assert "不重命名或覆盖无关文件" in project_prompt
+    assert "新产物使用描述性小写名称" not in project_prompt
+
+
 def test_acp_plan_approval_text_accepts_short_confirmations():
     assert _looks_like_plan_approval_text("好的")
     assert _looks_like_plan_approval_text("可以")
