@@ -1,5 +1,39 @@
 # Release State
 
+## v0.9.7 (2026-08-27)
+
+- **Commit:** release commit tagged `v0.9.7`
+- **PyPI:** https://pypi.org/project/box-agent/0.9.7/
+- **GitHub release:** https://github.com/Raccoon-Office/Box-Agent/releases/tag/v0.9.7
+- **Compare:** https://github.com/Raccoon-Office/Box-Agent/compare/v0.9.6...v0.9.7
+
+### Artifacts (SHA256)
+
+Artifact hashes are recorded after the clean release build completes.
+
+### What shipped
+
+- Durable session continuation and filesystem-backed workflow checkpoints for
+  recoverable long-running tasks.
+- Transactional `write_file` chunk lifecycle, atomic retry behavior, and
+  controlled-presentation recovery across validation failures and context
+  boundaries.
+- Bounded semantic repair progress so changing parse locations cannot disguise
+  repeated invalid presentation artifacts as successful progress.
+- Deferred MCP tool activation preserved through restrictive completion gates,
+  with tighter informational-versus-deliverable intent routing.
+- Updated configurable limits, prompt contracts, production guidance, and
+  focused regression coverage for the shared runtime boundaries above.
+
+### Proof and known gaps
+
+- Release verification and final artifact digests are recorded after the clean
+  build, package checks, runtime probe, and publication steps complete.
+- **Runtime target:** this release builds the host-native darwin-arm64 runtime.
+  No darwin-x64, Linux, or Windows runtime is produced in this workflow.
+- The runtime is not installed into officev3, and no OfficeV3 restart or fresh
+  packaged-host live task is included in this release.
+
 ## v0.9.6 (2026-08-23)
 
 - **Commit:** release commit tagged `v0.9.6`

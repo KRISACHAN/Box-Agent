@@ -114,7 +114,7 @@ def test_bundled_stable_runtime_components_empty_for_external_python_mode() -> N
 
 def test_runtime_manifest_advertises_bundled_web_extract_mcp() -> None:
     manifest = build_runtime.build_runtime_manifest(
-        version="0.9.6",
+        version="0.9.7",
         plat="darwin",
         arch="arm64",
         entry_path="bin/box-agent-acp",

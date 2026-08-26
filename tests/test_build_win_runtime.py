@@ -57,7 +57,7 @@ def test_windows_manifest_advertises_bundled_web_extract_mcp(
     runtime_dir = tmp_path / "box-agent-runtime"
     runtime_dir.mkdir()
 
-    build_win_runtime._write_manifest(runtime_dir, "0.9.6")
+    build_win_runtime._write_manifest(runtime_dir, "0.9.7")
 
     manifest = json.loads(
         (runtime_dir / "manifest.json").read_text(encoding="utf-8")
@@ -79,4 +79,4 @@ def test_windows_manifest_advertises_bundled_web_extract_mcp(
             "transport": "stdio",
         }
     }
-    assert (runtime_dir / "VERSION").read_text(encoding="utf-8") == "0.9.6\n"
+    assert (runtime_dir / "VERSION").read_text(encoding="utf-8") == "0.9.7\n"
