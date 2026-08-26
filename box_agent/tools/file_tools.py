@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 import os
 import re
@@ -25,6 +26,9 @@ from .safety import backup_file, validate_path_in_workspace
 
 if TYPE_CHECKING:
     from .permissions import PermissionEngine
+
+
+_log = logging.getLogger(__name__)
 
 
 MAX_FILE_TOOL_CONTENT_CHARS = MAX_GENERATED_BODY_CHARS
@@ -803,7 +807,19 @@ class WriteTool(Tool):
     @staticmethod
     def _write_bytes(path: Path, data: bytes, *, append: bool) -> None:
         with path.open("ab" if append else "wb") as stream:
-            stream.write(data)
+            written = stream.write(data)
+            if written != len(data):
+                raise OSError(
+                    f"short write: expected {len(data)} bytes, wrote {written}"
+                )
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    @staticmethod
+    def _restore_temporary_size(path: Path, size: int) -> None:
+        """Roll a failed append back to the last accepted byte boundary."""
+        with path.open("r+b") as stream:
+            stream.truncate(size)
             stream.flush()
             os.fsync(stream.fileno())
 
@@ -828,9 +844,21 @@ class WriteTool(Tool):
         self._pending[target] = state
         return state
 
-    def _discard(self, state: _PendingTextWrite) -> None:
-        state.temporary.unlink(missing_ok=True)
-        self._pending.pop(state.target, None)
+    def _discard(self, state: _PendingTextWrite) -> str | None:
+        """End a transaction even when its internal temp file cannot be removed."""
+        cleanup_error: str | None = None
+        try:
+            state.temporary.unlink(missing_ok=True)
+        except OSError as exc:
+            cleanup_error = str(exc)
+            _log.warning(
+                "write_file/transaction_temp_cleanup_failed path=%s error=%s",
+                state.temporary,
+                exc,
+            )
+        finally:
+            self._pending.pop(state.target, None)
+        return cleanup_error
 
     @staticmethod
     def _active_transaction_output(
@@ -887,7 +915,9 @@ class WriteTool(Tool):
             "chunks": state.next_index,
             "final": final,
         }
-        self._discard(state)
+        cleanup_error = self._discard(state)
+        if cleanup_error is not None:
+            raw_output["cleanup_error"] = cleanup_error
         return ToolResult(
             success=False,
             error=error,
@@ -902,6 +932,25 @@ class WriteTool(Tool):
         *,
         final: bool,
     ) -> ToolResult | None:
+        try:
+            temporary_size = state.temporary.stat().st_size
+        except OSError as exc:
+            return self._discarded_result(
+                state,
+                f"WRITE_FILE_TRANSACTION_TEMPORARY_UNAVAILABLE: {exc}",
+                reason="transaction_temporary_unavailable",
+                final=final,
+            )
+        if temporary_size != state.size_bytes:
+            return self._discarded_result(
+                state,
+                (
+                    "WRITE_FILE_TRANSACTION_SIZE_MISMATCH: expected "
+                    f"{state.size_bytes} bytes, found {temporary_size}."
+                ),
+                reason="transaction_size_mismatch",
+                final=final,
+            )
         digest = hashlib.sha256(data).hexdigest()
         if chunk_index < state.next_index:
             if state.chunk_hashes.get(chunk_index) == digest:
@@ -964,7 +1013,25 @@ class WriteTool(Tool):
                     ),
                 ),
             )
-        self._write_bytes(state.temporary, data, append=True)
+        try:
+            self._write_bytes(state.temporary, data, append=True)
+        except OSError as exc:
+            try:
+                self._restore_temporary_size(state.temporary, state.size_bytes)
+            except OSError as rollback_exc:
+                return self._discarded_result(
+                    state,
+                    (
+                        f"WRITE_FILE_FAILED: {exc}; transaction rollback failed: "
+                        f"{rollback_exc}"
+                    ),
+                    reason="chunk_write_rollback_failed",
+                    final=final,
+                )
+            return self._active_result(
+                state,
+                ToolResult(success=False, error=f"WRITE_FILE_FAILED: {exc}"),
+            )
         state.chunk_hashes[chunk_index] = digest
         state.next_index += 1
         state.size_bytes += len(data)
@@ -973,7 +1040,14 @@ class WriteTool(Tool):
     def _commit(self, state: _PendingTextWrite) -> ToolResult:
         if error := self._permission_error(state.target):
             return self._active_result(state, error)
-        assembled_content = state.temporary.read_text(encoding="utf-8")
+        try:
+            assembled_content = state.temporary.read_text(encoding="utf-8")
+        except UnicodeError as exc:
+            return self._discarded_result(
+                state,
+                f"WRITE_FILE_TRANSACTION_INVALID_UTF8: {exc}",
+                reason="transaction_content_invalid_utf8",
+            )
         placeholder_error = _model_history_placeholder_error(assembled_content)
         if placeholder_error:
             return self._discarded_result(
@@ -1174,7 +1248,9 @@ class WriteTool(Tool):
                 "chunks": state.next_index,
                 "final": False,
             }
-            self._discard(state)
+            cleanup_error = self._discard(state)
+            if cleanup_error is not None:
+                raw_output["cleanup_error"] = cleanup_error
             discarded.append(raw_output)
         return discarded
 

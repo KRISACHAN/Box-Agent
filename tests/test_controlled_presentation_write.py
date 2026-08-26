@@ -483,6 +483,63 @@ async def test_controlled_durable_cleanup_allows_chunk_zero_restart(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_controlled_initial_partial_append_failure_does_not_split_state(
+    tmp_path, monkeypatch
+):
+    output = tmp_path / "output"
+    output.mkdir()
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+    )
+    initial = policy.build_checkpoint()
+    assert initial is not None
+    policy.update_checkpoint(initial)
+    assert policy.stage == "outline"
+    tool = WriteTool(
+        workspace_dir=str(tmp_path),
+        relative_root_dir=str(output),
+    )
+    real_write = tool._write_bytes
+
+    def initial_partial_then_fail(path, data, *, append):
+        if not data:
+            return real_write(path, data, append=append)
+        with path.open("ab" if append else "wb") as stream:
+            stream.write(data[:1])
+            stream.flush()
+        raise OSError("simulated initial partial append")
+
+    failed_arguments = {
+        "path": "outline.json",
+        "content": '{"slides": []}',
+        "chunk_index": 0,
+        "final": True,
+    }
+    monkeypatch.setattr(tool, "_write_bytes", initial_partial_then_fail)
+    failed = await tool.execute(**failed_arguments)
+    policy.record_tool_result("write_file", failed_arguments, failed)
+
+    assert failed.raw_output["transaction_state"] == "discarded"
+    assert "WRITE_PENDING=" not in policy.build_checkpoint()
+    assert not list(output.glob(".outline.json.box-agent-*.part"))
+
+    monkeypatch.setattr(tool, "_write_bytes", real_write)
+    assert (
+        policy.tool_call_error(
+            "write_file",
+            failed_arguments,
+            verified_evidence_urls=set(),
+        )
+        is None
+    )
+    restarted = await tool.execute(**failed_arguments)
+
+    assert restarted.success is True
+    assert (output / "outline.json").is_file()
+
+
+@pytest.mark.asyncio
 async def test_controlled_commit_failure_synchronizes_the_next_chunk_index(
     tmp_path,
     monkeypatch,
