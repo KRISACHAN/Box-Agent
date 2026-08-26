@@ -211,15 +211,30 @@ def _build_python_runtime(
             notes=("Frozen runtime has no separate shell Python executable; use execute_code for Python code execution.",),
         )
 
+    shell_path = (
+        str(shell_python_path)
+        if shell_python_path is not None
+        and _is_executable_file(str(shell_python_path))
+        else None
+    )
     env = sandbox_env or SandboxEnvironment()
     python_path = Path(env.python_path)
     if python_path.is_file() and os.access(python_path, os.X_OK):
         sandbox_path = str(python_path)
-        shell_path = (
-            str(shell_python_path)
-            if shell_python_path is not None and _is_executable_file(str(shell_python_path))
-            else sandbox_path
+        effective_shell_path = shell_path or sandbox_path
+        return SkillRuntime(
+            kind="python",
+            status="available",
+            provider="box_agent",
+            executable_path=effective_shell_path,
+            env_vars={
+                "BOX_AGENT_PYTHON": effective_shell_path,
+                "BOX_AGENT_PYTHON3": effective_shell_path,
+                "BOX_AGENT_SANDBOX_PYTHON": sandbox_path,
+            },
         )
+
+    if shell_path is not None:
         return SkillRuntime(
             kind="python",
             status="available",
@@ -228,8 +243,11 @@ def _build_python_runtime(
             env_vars={
                 "BOX_AGENT_PYTHON": shell_path,
                 "BOX_AGENT_PYTHON3": shell_path,
-                "BOX_AGENT_SANDBOX_PYTHON": sandbox_path,
             },
+            notes=(
+                "Shell Python is available; execute_code will initialize its "
+                "isolated sandbox on first use.",
+            ),
         )
 
     return SkillRuntime(

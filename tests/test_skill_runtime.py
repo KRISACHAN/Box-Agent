@@ -105,6 +105,25 @@ def test_cli_shell_python_is_separate_from_execute_code_sandbox(tmp_path: Path) 
     assert ctx.env()["BOX_AGENT_SANDBOX_PYTHON"] == str(sandbox.python_path)
 
 
+def test_cli_shell_python_is_available_before_sandbox_creation(tmp_path: Path) -> None:
+    sandbox = SandboxEnvironment(base_dir=tmp_path / "sandbox")
+    shell_python = tmp_path / "python-runtime" / "bin" / "python3"
+    _make_executable(shell_python)
+
+    ctx = build_skill_runtime_context(
+        sandbox_mode=True,
+        sandbox_env=sandbox,
+        shell_python_path=shell_python,
+        node_runtime_root=tmp_path / "missing-node",
+    )
+
+    assert not sandbox.python_path.exists()
+    assert ctx.get("python").status == "available"
+    assert ctx.env()["BOX_AGENT_PYTHON"] == str(shell_python)
+    assert ctx.env()["BOX_AGENT_PYTHON3"] == str(shell_python)
+    assert "BOX_AGENT_SANDBOX_PYTHON" not in ctx.env()
+
+
 def test_frozen_python_runtime_does_not_inject_fake_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("box_agent.tools.runtime.sys.frozen", True, raising=False)
 

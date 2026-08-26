@@ -11,6 +11,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,12 @@ IS_FROZEN = getattr(sys, "frozen", False)
 # timeout: it discards the (now busy, un-reusable) session so a fresh kernel is
 # built next time, instead of silently returning success with partial/no output.
 KERNEL_EXEC_TIMEOUT = "KERNEL_EXEC_TIMEOUT"
+
+# Environment bootstrap runs before a tool call can return anything to the
+# model or TUI, so every child process needs a hard upper bound. Pip also gets
+# short network retries below; this outer timeout covers resolver/build hangs.
+_SANDBOX_PROBE_TIMEOUT_SECONDS = 30
+_SANDBOX_INSTALL_TIMEOUT_SECONDS = 120
 
 # Default packages installed in the sandbox venv on first startup
 SANDBOX_DEFAULT_PACKAGES = [
@@ -65,6 +72,55 @@ MAX_EXECUTE_CODE_CHARS_DISPLAY = f"{MAX_EXECUTE_CODE_CHARS:,}"
 # User-level directory for packages installed at runtime in frozen mode.
 # Survives across sessions; kept separate from the frozen binary itself.
 RUNTIME_PACKAGES_DIR = Path.home() / ".box-agent" / "runtime-packages"
+
+
+async def _communicate_sandbox_process(
+    proc: asyncio.subprocess.Process,
+    *,
+    operation: str,
+    timeout: float,
+) -> tuple[bytes, bytes]:
+    """Collect a sandbox bootstrap process without allowing an infinite wait."""
+    try:
+        return await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.communicate()
+        raise RuntimeError(
+            f"{operation} timed out after {timeout:g} seconds"
+        ) from exc
+
+
+async def _start_sandbox_kernel(
+    kernel_manager: Any,
+    *,
+    timeout: float = 30,
+) -> None:
+    """Start a Jupyter kernel without blocking the host event loop forever."""
+    async_start = getattr(kernel_manager, "_async_start_kernel", None)
+    try:
+        if callable(async_start):
+            await asyncio.wait_for(async_start(), timeout=timeout)
+        else:
+            await asyncio.wait_for(
+                asyncio.to_thread(kernel_manager.start_kernel),
+                timeout=timeout,
+            )
+    except asyncio.TimeoutError as exc:
+        async_shutdown = getattr(kernel_manager, "_async_shutdown_kernel", None)
+        if callable(async_shutdown):
+            try:
+                await asyncio.wait_for(async_shutdown(now=True), timeout=5)
+            except Exception:
+                pass
+        raise RuntimeError(
+            f"Sandbox kernel startup timed out after {timeout:g} seconds"
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(f"Sandbox kernel startup failed: {exc}") from exc
 
 
 def _kernel_write_guard_setup_code(workspace: Path) -> str:
@@ -310,37 +366,50 @@ class SandboxEnvironment:
         self.venv_dir.parent.mkdir(parents=True, exist_ok=True)
 
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "venv", str(self.venv_dir),
+            sys.executable,
+            "-m",
+            "venv",
+            "--without-pip",
+            str(self.venv_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await _communicate_sandbox_process(
+            proc,
+            operation="Sandbox venv creation",
+            timeout=_SANDBOX_INSTALL_TIMEOUT_SECONDS,
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"Failed to create sandbox venv: {stderr.decode()}")
 
-        # Ensure pip is available (some systems skip it)
-        proc = await asyncio.create_subprocess_exec(
-            str(self.python_path), "-m", "ensurepip", "--upgrade",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
+        # ``uv`` project interpreters may not ship ensurepip. Create the venv
+        # independently, then bootstrap pip through ensurepip or uv.
+        await self._ensure_pip_available(on_progress, None)
 
         if on_progress:
             on_progress("Sandbox environment created.")
 
     async def _install_defaults(self, on_progress: Any = None) -> None:
         """Install default packages into the sandbox venv."""
+        await self._ensure_pip_available(on_progress, None)
         if on_progress:
             on_progress(f"Installing default packages: {', '.join(SANDBOX_DEFAULT_PACKAGES)}...")
 
         proc = await asyncio.create_subprocess_exec(
-            str(self.python_path), "-m", "pip", "install",
-            "--quiet", *SANDBOX_DEFAULT_PACKAGES,
+            *self._venv_install_command(SANDBOX_DEFAULT_PACKAGES),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await _communicate_sandbox_process(
+                proc,
+                operation="Sandbox default package installation",
+                timeout=_SANDBOX_INSTALL_TIMEOUT_SECONDS,
+            )
+        except RuntimeError as exc:
+            if on_progress:
+                on_progress(f"Warning: {exc}")
+            return
         if proc.returncode != 0:
             # Non-fatal: some packages may fail on some platforms
             if on_progress:
@@ -357,20 +426,29 @@ class SandboxEnvironment:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await proc.communicate()
+        await _communicate_sandbox_process(
+            proc,
+            operation="Sandbox ipykernel probe",
+            timeout=_SANDBOX_PROBE_TIMEOUT_SECONDS,
+        )
         if proc.returncode == 0:
             return
 
         if on_progress:
             on_progress("Installing ipykernel in sandbox...")
 
+        await self._ensure_pip_available(on_progress, None)
+
         proc = await asyncio.create_subprocess_exec(
-            str(self.python_path), "-m", "pip", "install",
-            "--quiet", "ipykernel",
+            *self._venv_install_command(["ipykernel"]),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await _communicate_sandbox_process(
+            proc,
+            operation="Sandbox ipykernel installation",
+            timeout=_SANDBOX_INSTALL_TIMEOUT_SECONDS,
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"Failed to install ipykernel in sandbox: {stderr.decode()}")
 
@@ -431,19 +509,49 @@ class SandboxEnvironment:
 
         # In bundled-override mode the bundled python may live in a read-only
         # location, so install to RUNTIME_PACKAGES_DIR via --target instead.
-        pip_args = ["-m", "pip", "install", "--quiet", "--disable-pip-version-check"]
         if self._bundled_override:
+            install_command = [
+                str(self.python_path),
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "--disable-pip-version-check",
+                "--timeout",
+                "15",
+                "--retries",
+                "1",
+            ]
             RUNTIME_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
-            pip_args += ["--target", str(RUNTIME_PACKAGES_DIR), "--no-warn-script-location"]
-        pip_args += missing
+            install_command += [
+                "--target",
+                str(RUNTIME_PACKAGES_DIR),
+                "--no-warn-script-location",
+                *missing,
+            ]
+        else:
+            install_command = self._venv_install_command(missing)
 
         proc = await asyncio.create_subprocess_exec(
-            str(self.python_path), *pip_args,
+            *install_command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await _communicate_sandbox_process(
+                proc,
+                operation="Sandbox missing package installation",
+                timeout=_SANDBOX_INSTALL_TIMEOUT_SECONDS,
+            )
+        except RuntimeError:
+            if self._bundled_override:
+                raise
+            if on_progress:
+                on_progress(
+                    "Warning: sandbox missing package installation timed out"
+                )
+            return
         if proc.returncode != 0:
             if self._bundled_override:
                 raise RuntimeError(
@@ -464,6 +572,33 @@ class SandboxEnvironment:
         if on_progress:
             on_progress(f"Re-installed: {', '.join(missing)}")
 
+    def _venv_install_command(self, packages: list[str]) -> list[str]:
+        """Prefer uv for fast local-venv installs, with pip as a fallback."""
+        uv_path = shutil.which("uv")
+        if uv_path is not None:
+            return [
+                uv_path,
+                "pip",
+                "install",
+                "--python",
+                str(self.python_path),
+                "--quiet",
+                *packages,
+            ]
+        return [
+            str(self.python_path),
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
+            "--disable-pip-version-check",
+            "--timeout",
+            "15",
+            "--retries",
+            "1",
+            *packages,
+        ]
+
     async def _missing_required_packages(self, env: dict[str, str] | None) -> list[str]:
         missing = []
         for module_name, pip_name in self._REQUIRED_MODULES.items():
@@ -473,7 +608,11 @@ class SandboxEnvironment:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-            await proc.communicate()
+            await _communicate_sandbox_process(
+                proc,
+                operation=f"Sandbox import probe for {module_name}",
+                timeout=_SANDBOX_PROBE_TIMEOUT_SECONDS,
+            )
             if proc.returncode != 0:
                 missing.append(pip_name)
         return missing
@@ -483,20 +622,68 @@ class SandboxEnvironment:
         on_progress: Any,
         env: dict[str, str] | None,
     ) -> None:
+        proc = await asyncio.create_subprocess_exec(
+            str(self.python_path),
+            "-c",
+            "import pip",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        await _communicate_sandbox_process(
+            proc,
+            operation="Sandbox pip probe",
+            timeout=_SANDBOX_PROBE_TIMEOUT_SECONDS,
+        )
+        if proc.returncode == 0:
+            return
+
         if on_progress:
-            on_progress("Host python: bootstrapping pip...")
+            on_progress("Sandbox Python: bootstrapping pip...")
         proc = await asyncio.create_subprocess_exec(
             str(self.python_path), "-m", "ensurepip", "--upgrade",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await _communicate_sandbox_process(
+            proc,
+            operation="Sandbox ensurepip bootstrap",
+            timeout=_SANDBOX_INSTALL_TIMEOUT_SECONDS,
+        )
+        ensurepip_error = stderr.decode(errors="replace")[:500]
+
         if proc.returncode != 0:
-            raise RuntimeError(
-                "Failed to bootstrap pip for host python sandbox: "
-                f"{stderr.decode(errors='replace')[:500]}"
+            uv_path = shutil.which("uv", path=(env or os.environ).get("PATH"))
+            if uv_path is None:
+                raise RuntimeError(
+                    "Failed to bootstrap pip for sandbox Python with ensurepip, "
+                    "and uv is unavailable: "
+                    f"{ensurepip_error}"
+                )
+            proc = await asyncio.create_subprocess_exec(
+                uv_path,
+                "pip",
+                "install",
+                "--python",
+                str(self.python_path),
+                "pip",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
+            _, uv_stderr = await _communicate_sandbox_process(
+                proc,
+                operation="Sandbox uv pip bootstrap",
+                timeout=_SANDBOX_INSTALL_TIMEOUT_SECONDS,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    "Failed to bootstrap pip for sandbox Python with ensurepip "
+                    "or uv: "
+                    f"ensurepip={ensurepip_error}; "
+                    f"uv={uv_stderr.decode(errors='replace')[:500]}"
+                )
 
         proc = await asyncio.create_subprocess_exec(
             str(self.python_path), "-c", "import pip",
@@ -504,10 +691,14 @@ class SandboxEnvironment:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await _communicate_sandbox_process(
+            proc,
+            operation="Sandbox pip verification",
+            timeout=_SANDBOX_PROBE_TIMEOUT_SECONDS,
+        )
         if proc.returncode != 0:
             raise RuntimeError(
-                "pip is still unavailable after ensurepip: "
+                "pip is still unavailable after bootstrap: "
                 f"{stderr.decode(errors='replace')[:500]}"
             )
 
@@ -748,7 +939,7 @@ class JupyterKernelSession:
         # Create KernelManager with our custom spec
         km = jupyter_client.KernelManager()
         km._kernel_spec = kernel_spec  # Override the kernel spec
-        km.start_kernel()
+        await _start_sandbox_kernel(km)
         self._km = km
         # Register the kernel subprocess PID with the Windows kill-on-close Job
         # Object (no-op off-Windows). jupyter_client 8.x exposes the PID via
