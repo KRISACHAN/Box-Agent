@@ -9,9 +9,12 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from itertools import count
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .base import Tool, ToolResult
+
+if TYPE_CHECKING:
+    from ..session_log import SessionLog
 
 
 _VALID_PLAN_STATUSES = ("draft", "active", "revised", "complete")
@@ -135,12 +138,36 @@ class PlanStore:
     def get(self) -> dict[str, Any] | None:
         return self._plan
 
+    def restore(self, plan: dict[str, Any] | None) -> None:
+        self._plan = dict(plan) if plan is not None else None
+        plan_id = self._plan.get("id") if self._plan else None
+        next_id = int(plan_id) + 1 if isinstance(plan_id, str) and plan_id.isdigit() else 1
+        self._counter = count(next_id)
+
 
 class PlanWriteTool(Tool):
     """Create, replace, or clear the current user-visible plan."""
 
     def __init__(self, store: PlanStore):
         self._store = store
+        self._session_log: SessionLog | None = None
+
+    def configure_session_persistence(
+        self,
+        session_log: SessionLog,
+        plan: dict[str, Any] | None,
+    ) -> None:
+        self._session_log = session_log
+        self._store.restore(plan)
+
+    def _persist(self) -> None:
+        if self._session_log is None:
+            return
+        self._session_log.append(
+            "plan/write",
+            {"plan": self._store.get()},
+        )
+        self._session_log.flush()
 
     @property
     def name(self) -> str:
@@ -242,6 +269,7 @@ class PlanWriteTool(Tool):
 
         if normalized_action == "clear":
             self._store.clear()
+            self._persist()
             return ToolResult(
                 success=True,
                 content="Cleared the current plan.",
@@ -270,6 +298,7 @@ class PlanWriteTool(Tool):
             risks=risks,
             assumptions=assumptions,
         )
+        self._persist()
         return ToolResult(
             success=True,
             content=f"Set plan #{plan['id']}: {plan['title']}",

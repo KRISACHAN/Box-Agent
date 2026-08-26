@@ -463,7 +463,10 @@ async def test_core_records_tool_request_and_response_without_changing_events(tm
 
 
 @pytest.mark.asyncio
-async def test_acp_uses_upstream_session_id_without_changing_generated_acp_id(tmp_path, monkeypatch):
+async def test_acp_uses_upstream_session_id_without_changing_generated_acp_id(
+    tmp_path,
+    monkeypatch,
+):
     class DummyConn:
         async def sessionUpdate(self, payload):
             return None
@@ -477,6 +480,7 @@ async def test_acp_uses_upstream_session_id_without_changing_generated_acp_id(tm
                 usage=TokenUsage(prompt_tokens=4, completion_tokens=1, total_tokens=5),
             )
 
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_ENABLED", "1")
     monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_DIR", str(tmp_path / "traces"))
     config = Config(

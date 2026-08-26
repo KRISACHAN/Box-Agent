@@ -19,18 +19,22 @@ from uuid import uuid4
 from ..config import AgentConfig, ToolLimitsConfig
 from ..events import (
     ArtifactEvent,
+    ContentEvent,
     DoneEvent,
     ErrorEvent,
     LLMOutputEvent,
     ProgressEvent,
+    StepEnd,
     StepStart,
     SubAgentEvent,
     ToolCallResult,
     ToolCallStart,
+    ThinkingEvent,
     WebSearchEvent,
 )
 from ..llm.model_routing import resolve_model_client
 from ..schema import Message
+from ..session_log import SessionLog
 from .base import EventEmittingTool, Tool, ToolResult
 from .schema_validation import ToolArgumentIssue
 from .safety import detect_dangerous_command
@@ -294,6 +298,42 @@ class SubAgentTool(EventEmittingTool):
         # Inherit the parent's provider-stale cutoff so slow-model configs also
         # apply to child agents. None lets run_agent_loop resolve env/default.
         self._provider_stale_seconds = provider_stale_seconds
+        self._parent_session_log: SessionLog | None = None
+
+    def set_parent_session_log(self, session_log: SessionLog) -> None:
+        """Attach the parent's canonical log so children can persist lineage."""
+
+        self._parent_session_log = session_log
+
+    def _create_child_session_log(
+        self,
+        *,
+        child_session_id: str,
+        title: str,
+        messages: list[Message],
+    ) -> SessionLog | None:
+        parent = self._parent_session_log
+        if parent is None:
+            return None
+        child = SessionLog.create(
+            parent.path.parent.parent,
+            session_id=child_session_id,
+            cwd=self._workspace_dir or parent.header["cwd"],
+            parent_session=parent.header["id"],
+            origin="subagent",
+            delegation_depth=int(parent.header.get("delegationDepth", 0)) + 1,
+        )
+        child.append("turn/start", {"turn": 1})
+        child.append_unlogged_messages(messages[1:], turn=1, step=None)
+        descriptor = {
+            "version": 1,
+            "mode": "one-shot",
+            "provider": "local",
+        }
+        if title:
+            descriptor["label"] = title
+        child.append("subagent/descriptor", descriptor)
+        return child
 
     def set_parent_system_prompt(self, system_prompt: str) -> None:
         """Attach parent constraints without advertising parent-only MCP search."""
@@ -709,6 +749,7 @@ class SubAgentTool(EventEmittingTool):
         task_preview: str,
         sub_agent_id: str,
         title: str,
+        session_log: SessionLog | None = None,
     ) -> ToolResult:
         # Import lazily because the runtime facade initializes the core, which
         # imports tool contracts while this module may still be loading.
@@ -719,6 +760,9 @@ class SubAgentTool(EventEmittingTool):
         model_calls = 0
         tool_calls = 0
         usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        step_open = False
+        current_step: int | None = None
+        turn_open = session_log is not None
         try:
             async for event in run_agent_loop(
                 llm=llm,
@@ -739,7 +783,87 @@ class SubAgentTool(EventEmittingTool):
                     "resolved_skills": diagnostic.get("resolved_skills", []),
                 },
                 call_kind="subagent_step",
+                session_log=session_log,
+                session_turn=1 if session_log is not None else None,
             ):
+                if session_log is not None:
+                    if isinstance(event, (ContentEvent, ThinkingEvent)):
+                        session_log.append(
+                            "assistant/chunk",
+                            {
+                                "turn": 1,
+                                "step": current_step,
+                                "kind": (
+                                    "thinking"
+                                    if isinstance(event, ThinkingEvent)
+                                    else "text"
+                                ),
+                                "content": event.content,
+                            },
+                        )
+                    elif isinstance(event, StepStart):
+                        current_step = event.step
+                        session_log.append(
+                            "step/start",
+                            {"turn": 1, "step": event.step},
+                        )
+                        step_open = True
+                    elif isinstance(event, StepEnd):
+                        session_log.append_unlogged_messages(
+                            messages[1:],
+                            turn=1,
+                            step=event.step,
+                        )
+                        if step_open:
+                            session_log.append(
+                                "step/end",
+                                {"turn": 1, "step": event.step},
+                            )
+                            session_log.flush()
+                            step_open = False
+                    elif isinstance(event, ToolCallResult):
+                        session_log.append_unlogged_messages(
+                            messages[1:],
+                            turn=1,
+                            step=current_step,
+                            tool_result_metadata={
+                                event.tool_call_id: {
+                                    "success": event.success,
+                                    "content": event.content,
+                                    "error": event.error,
+                                    "rawOutput": event.raw_output,
+                                    "policyDecision": event.policy_decision,
+                                }
+                            },
+                        )
+                    elif isinstance(event, DoneEvent):
+                        session_log.append_unlogged_messages(
+                            messages[1:],
+                            turn=1,
+                            step=current_step,
+                        )
+                        if step_open:
+                            session_log.append(
+                                "step/end",
+                                {"turn": 1, "step": current_step},
+                            )
+                            step_open = False
+                        session_log.append(
+                            "turn/end",
+                            {
+                                "turn": 1,
+                                "reason": {
+                                    "kind": (
+                                        "completed"
+                                        if event.stop_reason.value == "end_turn"
+                                        else event.stop_reason.value
+                                    )
+                                },
+                            },
+                        )
+                        session_log.flush()
+                        turn_open = False
+
                 if isinstance(event, ToolCallStart):
                     pending_child_tc[event.tool_call_id] = event.tool_name
                     if event.user_visible:
@@ -791,6 +915,12 @@ class SubAgentTool(EventEmittingTool):
                     "usage": usage,
                 },
             )
+        finally:
+            if session_log is not None:
+                if turn_open:
+                    session_log.repair_interrupted_turn()
+                    session_log.flush()
+                session_log.close()
 
         raw_output = {
             **diagnostic,
@@ -819,9 +949,32 @@ class SubAgentTool(EventEmittingTool):
         task_preview: str,
         sub_agent_id: str,
         title: str,
+        session_log: SessionLog | None = None,
     ) -> ToolResult:
         files = list(bundle.spec.files)
         read_tool = bundle.tools["read_file"]
+        if session_log is not None:
+            session_log.append("step/start", {"turn": 1, "step": 1})
+
+        def finish(result: ToolResult) -> ToolResult:
+            if session_log is None:
+                return result
+            if result.success and result.content:
+                messages.append(Message(role="assistant", content=result.content))
+                session_log.append_unlogged_messages(messages[1:], turn=1, step=1)
+            session_log.append("step/end", {"turn": 1, "step": 1})
+            session_log.append(
+                "turn/end",
+                {
+                    "turn": 1,
+                    "reason": {
+                        "kind": "completed" if result.success else "error",
+                    },
+                },
+            )
+            session_log.flush()
+            session_log.close()
+            return result
 
         async def read_one(path: str) -> tuple[str, ToolResult | Exception]:
             try:
@@ -941,12 +1094,12 @@ class SubAgentTool(EventEmittingTool):
                 "tool_calls": len(files),
                 "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
             }
-            return ToolResult(
+            return finish(ToolResult(
                 success=False,
                 content="",
                 error=json.dumps(payload, ensure_ascii=False, sort_keys=True),
                 raw_output=payload,
-            )
+            ))
 
         blocks = [
             "## Untrusted local file contents",
@@ -964,6 +1117,36 @@ class SubAgentTool(EventEmittingTool):
                 ]
             )
         messages[-1].content = f"{messages[-1].content}\n\n" + "\n".join(blocks)
+
+        if session_log is not None:
+            session_log.replace_surface(messages[1:], turn=1, step=1)
+            provider = getattr(llm, "provider", None)
+            model = getattr(llm, "model", None)
+            session_log.append(
+                "request/header",
+                {
+                    "turn": 1,
+                    "step": 1,
+                    "header": {
+                        "config": {
+                            "provider": provider if isinstance(provider, str) else None,
+                            "model": model if isinstance(model, str) else None,
+                        },
+                        "system": messages[0].content,
+                        "tools": [],
+                    },
+                },
+            )
+            session_log.append(
+                "request/context",
+                {
+                    "turn": 1,
+                    "step": 1,
+                    "provider": provider if isinstance(provider, str) else None,
+                    "model": model if isinstance(model, str) else None,
+                },
+            )
+            session_log.flush()
 
         self._put_sub_event(
             queue,
@@ -1002,14 +1185,14 @@ class SubAgentTool(EventEmittingTool):
                 "tool_calls": len(files),
                 "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
             }
-            return ToolResult(
+            return finish(ToolResult(
                 success=False,
                 content="",
                 error=json.dumps(payload, ensure_ascii=False, sort_keys=True),
                 raw_output=payload,
-            )
+            ))
         except Exception as exc:
-            return ToolResult(
+            return finish(ToolResult(
                 success=False,
                 content="",
                 error=f"Sub-agent batch synthesis failed: {type(exc).__name__}: {exc}",
@@ -1019,7 +1202,7 @@ class SubAgentTool(EventEmittingTool):
                     "tool_calls": len(files),
                     "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
                 },
-            )
+            ))
 
         content = getattr(response, "content", "") or ""
         usage = self._usage_payload(getattr(response, "usage", None))
@@ -1050,13 +1233,13 @@ class SubAgentTool(EventEmittingTool):
             "aggregate_chars": aggregate_chars,
         }
         if not content.strip():
-            return ToolResult(
+            return finish(ToolResult(
                 success=False,
                 content="",
                 error="Sub-agent batch synthesis produced no output.",
                 raw_output=raw_output,
-            )
-        return ToolResult(success=True, content=content, raw_output=raw_output)
+            ))
+        return finish(ToolResult(success=True, content=content, raw_output=raw_output))
 
     def _resolve_task_llm(
         self,
@@ -1179,6 +1362,13 @@ class SubAgentTool(EventEmittingTool):
         )
         diagnostic["model_routing"] = model_routing
         messages = self._explicit_messages(parsed, resolved)
+        child_session_log = self._create_child_session_log(
+            child_session_id=sub_agent_id,
+            title=sub_title,
+            messages=messages,
+        )
+        if child_session_log is not None:
+            diagnostic["child_session_id"] = sub_agent_id
         if parsed.strategy == "batch_files":
             return await self._run_batch_files(
                 llm=child_llm,
@@ -1190,6 +1380,7 @@ class SubAgentTool(EventEmittingTool):
                 task_preview=task_preview,
                 sub_agent_id=sub_agent_id,
                 title=sub_title,
+                session_log=child_session_log,
             )
 
         return await self._run_general_loop(
@@ -1204,4 +1395,5 @@ class SubAgentTool(EventEmittingTool):
             task_preview=task_preview,
             sub_agent_id=sub_agent_id,
             title=sub_title,
+            session_log=child_session_log,
         )

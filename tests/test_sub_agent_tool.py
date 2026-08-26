@@ -15,6 +15,7 @@ from box_agent.events import DoneEvent, StopReason, SubAgentEvent, WebSearchEven
 from box_agent.context_resources import ResourceDescriptor
 from box_agent.schema import LLMResponse, Message, StreamEvent, TokenUsage
 from box_agent.agent import Agent
+from box_agent.session_log import SessionLog
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.file_tools import ReadTool, WriteTool
 from box_agent.tools.mcp_loader import MCPTool
@@ -330,6 +331,41 @@ async def test_basic_execution():
     result = await tool.execute(task="Analyze revenue data")
     assert result.success is True
     assert "revenue up 20%" in result.content
+
+
+async def test_one_shot_child_has_independent_replayable_session_log(tmp_path):
+    root = tmp_path / "sessions"
+    parent_log = SessionLog.create(
+        root,
+        session_id="parent-session",
+        cwd=tmp_path,
+    )
+    llm = _make_llm(text="child durable result")
+    tool = SubAgentTool(llm=llm, parent_tools={}, workspace_dir=str(tmp_path))
+    Agent(
+        llm_client=llm,
+        system_prompt="parent system",
+        tools=[tool],
+        workspace_dir=str(tmp_path),
+        deferred_mcp_loading_enabled=False,
+        session_log=parent_log,
+    )
+
+    result = await tool.execute(task="Inspect isolated evidence", title="Evidence")
+
+    child_id = result.raw_output["child_session_id"]
+    child = SessionLog.open(root, session_id=child_id)
+    assert child.header["parentSession"] == "parent-session"
+    assert child.header["origin"] == "subagent"
+    assert child.header["delegationDepth"] == 1
+    assert any(event["type"] == "subagent/descriptor" for event in child.events)
+    assert [message.role for message in child.replay().messages] == [
+        "user",
+        "assistant",
+    ]
+    assert child.events[-1]["type"] == "turn/end"
+    child.close()
+    parent_log.close()
 
 
 async def test_forwarded_events_carry_short_title():

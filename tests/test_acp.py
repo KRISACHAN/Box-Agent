@@ -882,6 +882,45 @@ class DoneLLM:
 
 
 @pytest.mark.asyncio
+async def test_acp_restarts_with_same_product_session_from_jsonl(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    request = SimpleNamespace(
+        cwd=str(tmp_path),
+        field_meta={"session_id": "stable-restart-session"},
+    )
+    first_agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    first = await first_agent.newSession(request)
+    await first_agent.prompt(
+        SimpleNamespace(
+            sessionId=first.sessionId,
+            prompt=[{"text": "remember this"}],
+            field_meta={},
+        )
+    )
+    first_agent._sessions[first.sessionId].agent.session_log.close()
+
+    restarted_agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    restarted = await restarted_agent.newSession(request)
+    state = restarted_agent._sessions[restarted.sessionId]
+
+    assert restarted.sessionId != first.sessionId
+    assert [(message.role, message.content) for message in state.agent.messages[1:]] == [
+        ("user", "remember this"),
+        ("assistant", "done"),
+    ]
+    assert state.agent.session_log.events[-1]["type"] == "session/end-seed"
+    state.agent.session_log.close()
+
+
+@pytest.mark.asyncio
 async def test_prompt_clears_prompt_grants_once_before_attachment_processing(
     tmp_path, monkeypatch
 ):
@@ -1670,7 +1709,12 @@ async def test_acp_prompt_checks_for_mcp_auth_refresh(acp_agent, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_acp_seeds_negotiated_session_continuation_once(acp_agent):
+async def test_acp_seeds_negotiated_session_continuation_once(
+    acp_agent,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     agent, _ = acp_agent
     session = await agent.newSession(
         SimpleNamespace(
@@ -2218,7 +2262,11 @@ async def test_acp_emits_skills_usage_raw_output(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_skill_invocations_are_idempotent_and_keep_context(tmp_path):
+async def test_acp_skill_invocations_are_idempotent_and_keep_context(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     skills_dir = tmp_path / "skills"
     skill_dir = skills_dir / "paid-skill"
     skill_dir.mkdir(parents=True)
@@ -2303,7 +2351,8 @@ async def test_acp_skill_invocations_are_idempotent_and_keep_context(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_emits_turn_usage_for_tools_mcp_and_tokens(tmp_path):
+async def test_acp_emits_turn_usage_for_tools_mcp_and_tokens(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=3, workspace_dir=str(tmp_path)),
@@ -2363,7 +2412,8 @@ async def test_acp_emits_turn_usage_for_tools_mcp_and_tokens(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_threads_session_turn_and_title_to_llm(tmp_path):
+async def test_acp_threads_session_turn_and_title_to_llm(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(
@@ -2886,7 +2936,8 @@ async def test_acp_injects_standard_box_agent_image_generation_policy(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path):
+async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
@@ -3742,6 +3793,7 @@ async def test_acp_external_skill_owner_survives_new_acp_session(
     tmp_path,
     monkeypatch,
 ):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("BOX_AGENT_WORKFLOW_OWNER_DIR", str(tmp_path / "owners"))
     skills_dir = tmp_path / "skills"
     skill_dir = skills_dir / "ppt-master"
