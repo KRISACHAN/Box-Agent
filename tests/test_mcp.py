@@ -930,8 +930,8 @@ class TestMCPTimeoutConfig:
         """Test default timeout configuration values."""
         config = MCPTimeoutConfig()
         assert config.connect_timeout == 60.0
-        assert config.execute_timeout == 60.0
-        assert config.sse_read_timeout == 120.0
+        assert config.execute_timeout == 120.0
+        assert config.sse_read_timeout == 180.0
 
     def test_custom_timeout_config(self):
         """Test custom timeout configuration values."""

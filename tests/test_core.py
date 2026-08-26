@@ -4453,7 +4453,7 @@ async def test_web_search_fanout_is_batched_with_hidden_deferrals():
             type="function",
             function=FunctionCall(name="web_search", arguments={"query": f"q{i}"}),
         )
-        for i in range(8)
+        for i in range(10)
     ]
     llm = MockLLM(
         [
@@ -4472,9 +4472,9 @@ async def test_web_search_fanout_is_batched_with_hidden_deferrals():
         )
     )
 
-    assert web_search.calls == 6
+    assert web_search.calls == 8
     starts = [e for e in events if isinstance(e, ToolCallStart) and e.tool_name == "web_search"]
-    assert len([e for e in starts if e.user_visible]) == 6
+    assert len([e for e in starts if e.user_visible]) == 8
     assert len([e for e in starts if not e.user_visible]) == 2
     hidden_errors = [
         e

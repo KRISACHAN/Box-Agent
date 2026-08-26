@@ -363,17 +363,35 @@ async def test_timeout_validation():
     """Test timeout parameter validation."""
     print("\n=== Testing Timeout Validation ===")
 
-    bash_tool = BashTool()
+    bash_tool = BashTool(default_timeout_seconds=300, max_timeout_seconds=1200)
 
-    # Test with timeout > 600 (should be capped to 600)
-    result = await bash_tool.execute(command="echo 'test'", timeout=1000)
+    # Test with timeout above the configured maximum (should be capped).
+    result = await bash_tool.execute(command="echo 'test'", timeout=5000)
     assert result.success
-    print("Timeout > 600 handled correctly")
+    print("Timeout above configured maximum handled correctly")
 
-    # Test with timeout < 1 (should be set to 120)
+    # Test with timeout < 1 (should use the configured default).
     result = await bash_tool.execute(command="echo 'test'", timeout=0)
     assert result.success
     print("Timeout < 1 handled correctly")
+
+
+def test_timeout_schema_uses_configured_bounds():
+    bash_tool = BashTool(default_timeout_seconds=450, max_timeout_seconds=1800)
+
+    timeout_schema = bash_tool.parameters["properties"]["timeout"]
+    assert timeout_schema["default"] == 450
+    assert timeout_schema["minimum"] == 1
+    assert timeout_schema["maximum"] == 1800
+    assert "default: 450, max: 1800" in bash_tool.description
+
+
+def test_timeout_constructor_rejects_inverted_bounds():
+    with pytest.raises(
+        ValueError,
+        match="max_timeout_seconds cannot be lower than default_timeout_seconds",
+    ):
+        BashTool(default_timeout_seconds=600, max_timeout_seconds=300)
 
 
 @pytest.mark.asyncio

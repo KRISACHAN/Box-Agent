@@ -611,6 +611,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             runtime_env=runtime_env,
             process_owner_id=process_owner_id,
             bypass_dangerous_command_approval=bypass_dangerous_command_approval,
+            default_timeout_seconds=config.tools.bash_default_timeout_seconds,
+            max_timeout_seconds=config.tools.bash_max_timeout_seconds,
         )
         tools.append(bash_tool)
         if process_owner_id is not None:

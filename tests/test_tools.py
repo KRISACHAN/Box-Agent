@@ -926,6 +926,39 @@ def test_workspace_tools_register_search_files(tmp_path):
     assert "report_execution_result" in tool_names
 
 
+def test_add_workspace_tools_applies_configured_bash_timeouts(tmp_path):
+    config = Config(
+        llm=LLMConfig(api_key="test"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(
+            enable_bash=True,
+            bash_default_timeout_seconds=450,
+            bash_max_timeout_seconds=1800,
+            enable_file_tools=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_skills=False,
+            enable_mcp=False,
+        ),
+    )
+    tools = []
+
+    add_workspace_tools(
+        tools,
+        config,
+        tmp_path,
+        allow_full_access=False,
+        output=lambda *_: None,
+        use_output_dir=False,
+    )
+
+    bash_tool = next(tool for tool in tools if tool.name == "bash")
+    timeout_schema = bash_tool.parameters["properties"]["timeout"]
+    assert timeout_schema["default"] == 450
+    assert timeout_schema["maximum"] == 1800
+
+
 @pytest.mark.asyncio
 async def test_initialize_base_tools_can_gate_mcp_until_protocol_ready(
     tmp_path,
@@ -1441,7 +1474,7 @@ async def test_bash_tool_allows_obsidian_diagnostics():
         "obsidian help",
         "obsidian version",
     ]:
-        result = await tool.execute(command=command)
+        result = await tool.execute(command=command, timeout=1)
         # The command may fail when Obsidian CLI is not installed; the point is
         # that BashTool itself must not block diagnostics with the native-tool policy.
         assert "Blocked:" not in (result.error or "")

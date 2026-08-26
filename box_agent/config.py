@@ -142,17 +142,17 @@ class ToolLimitsModel(BaseModel):
 class GeneralToolLimitsConfig(ToolLimitsModel):
     """Limits shared by ordinary top-level agent turns."""
 
-    final_summary_after_calls: int = Field(default=150, ge=1, le=512)
+    final_summary_after_calls: int = Field(default=200, ge=1, le=512)
     wrapup_remaining_steps: int = Field(default=10, ge=0, le=50)
 
 
 class WebSearchLimitsConfig(ToolLimitsModel):
     """Per-turn web-search batching and total-call budgets."""
 
-    batch_size: int = Field(default=6, ge=1, le=32)
+    batch_size: int = Field(default=8, ge=1, le=32)
     concurrency: int = Field(default=2, ge=1, le=32)
-    total_calls: int = Field(default=50, ge=0, le=512)
-    deep_research_total_calls: int = Field(default=100, ge=0, le=512)
+    total_calls: int = Field(default=80, ge=0, le=512)
+    deep_research_total_calls: int = Field(default=150, ge=0, le=512)
 
     @model_validator(mode="after")
     def validate_concurrency(self) -> "WebSearchLimitsConfig":
@@ -164,13 +164,20 @@ class WebSearchLimitsConfig(ToolLimitsModel):
 class SearchFilesLimitsConfig(ToolLimitsModel):
     """Circuit-breaker limits for repeated local file searches."""
 
-    consecutive_empty_limit: int = Field(default=6, ge=1, le=50)
+    consecutive_empty_limit: int = Field(default=8, ge=1, le=50)
+
+
+class CompletionGateLimitsConfig(ToolLimitsModel):
+    """Continuation budget shared by verifiable deliverable workflows."""
+
+    max_continuations: int = Field(default=5, ge=0, le=20)
+    deadline_seconds: float = Field(default=1800.0, gt=0, le=14400.0)
 
 
 class WorkflowToolLimitsConfig(ToolLimitsModel):
     """Total-call and completion-reserve limits for artifact workflows."""
 
-    max_tool_calls: int = Field(default=128, ge=1, le=512)
+    max_tool_calls: int = Field(default=160, ge=1, le=512)
     max_delegated_tool_calls: int = Field(default=512, ge=1, le=4096)
     completion_reserve_calls: int = Field(default=10, ge=0, le=128)
 
@@ -184,8 +191,8 @@ class WorkflowToolLimitsConfig(ToolLimitsModel):
 class PresentationToolLimitsConfig(WorkflowToolLimitsConfig):
     """Controlled-presentation budgets, including deep research."""
 
-    deep_research_max_tool_calls: int = Field(default=200, ge=1, le=512)
-    research_rounds: int = Field(default=3, ge=1, le=20)
+    deep_research_max_tool_calls: int = Field(default=240, ge=1, le=512)
+    research_rounds: int = Field(default=5, ge=1, le=20)
 
     @model_validator(mode="after")
     def validate_deep_research_reserve(self) -> "PresentationToolLimitsConfig":
@@ -199,17 +206,20 @@ class PresentationToolLimitsConfig(WorkflowToolLimitsConfig):
 class SubAgentToolLimitsConfig(ToolLimitsModel):
     """Sub-agent loop and stall-detection limits."""
 
-    general_max_steps: int = Field(default=60, ge=1, le=256)
-    general_max_tool_calls: int = Field(default=32, ge=1, le=256)
+    general_max_steps: int = Field(default=80, ge=1, le=256)
+    general_max_tool_calls: int = Field(default=48, ge=1, le=256)
     # Parsed for existing configs but no longer selects a separate legacy loop.
     legacy_max_steps: int = Field(default=60, ge=1, le=256)
-    no_progress_steps: int = Field(default=6, ge=1, le=50)
+    no_progress_steps: int = Field(default=8, ge=1, le=50)
 
 
 class ToolLimitsConfig(ToolLimitsModel):
     """Single typed source for user-tunable tool execution limits."""
 
     general: GeneralToolLimitsConfig = Field(default_factory=GeneralToolLimitsConfig)
+    completion: CompletionGateLimitsConfig = Field(
+        default_factory=CompletionGateLimitsConfig
+    )
     web_search: WebSearchLimitsConfig = Field(default_factory=WebSearchLimitsConfig)
     search_files: SearchFilesLimitsConfig = Field(default_factory=SearchFilesLimitsConfig)
     external_skill: WorkflowToolLimitsConfig = Field(default_factory=WorkflowToolLimitsConfig)
@@ -236,10 +246,10 @@ class AgentConfig(BaseModel):
     parallel_tool_timeout_seconds: float = 900.0
     # Seconds a streaming response may go without a new provider chunk before
     # the loop treats it as stale and triggers bounded recovery. The default
-    # matches the historical hardcoded baseline; raise it for slow/deep-thinking
+    # matches the shared runtime fallback; raise it for slow/deep-thinking
     # models whose single step can legitimately exceed it, or lower it to fail
     # faster. The ``BOX_AGENT_PROVIDER_STALE_SECONDS`` env var overrides this.
-    provider_stale_seconds: float = 180.0
+    provider_stale_seconds: float = 300.0
     # Per-call token budget for sub-agent child contexts before they summarize.
     # The child runs in an isolated context, so this is independent of the main
     # loop's context_token_limit. Single source of truth for the value that was
@@ -306,8 +316,8 @@ class MCPConfig(BaseModel):
 
     deferred_loading_enabled: bool = True
     connect_timeout: float = 60.0  # Connection timeout (seconds)
-    execute_timeout: float = 60.0  # Tool execution timeout (seconds)
-    sse_read_timeout: float = 120.0  # SSE read timeout (seconds)
+    execute_timeout: float = 120.0  # Tool execution timeout (seconds)
+    sse_read_timeout: float = 180.0  # SSE read timeout (seconds)
 
 
 class ToolsConfig(BaseModel):
@@ -319,6 +329,8 @@ class ToolsConfig(BaseModel):
     enable_todo: bool = True  # Task tracking for multi-step workflows
     enable_plan: bool = True  # Structured user-visible planning snapshots
     enable_sub_agent: bool = True  # Sub-agent for isolated context execution
+    bash_default_timeout_seconds: int = Field(default=300, ge=1, le=3600)
+    bash_max_timeout_seconds: int = Field(default=1200, ge=1, le=7200)
 
     # Safety
     allow_full_access: bool = False  # When False, tools are restricted to workspace
@@ -331,6 +343,14 @@ class ToolsConfig(BaseModel):
     enable_mcp: bool = True
     mcp_config_path: str = "mcp.json"
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+
+    @model_validator(mode="after")
+    def validate_bash_timeouts(self) -> "ToolsConfig":
+        if self.bash_default_timeout_seconds > self.bash_max_timeout_seconds:
+            raise ValueError(
+                "bash_default_timeout_seconds cannot exceed bash_max_timeout_seconds"
+            )
+        return self
 
 
 class FilesystemPermissions(BaseModel):
@@ -570,23 +590,19 @@ class Config(BaseModel):
         # Parse MCP configuration
         mcp_data = tools_data.get("mcp", {})
         mcp_config = MCPConfig(
-            deferred_loading_enabled=mcp_data.get("deferred_loading_enabled", True),
-            connect_timeout=mcp_data.get("connect_timeout", 60.0),
-            execute_timeout=mcp_data.get("execute_timeout", 60.0),
-            sse_read_timeout=mcp_data.get("sse_read_timeout", 120.0),
+            **{
+                field_name: mcp_data[field_name]
+                for field_name in MCPConfig.model_fields
+                if field_name in mcp_data
+            }
         )
 
         tools_config = ToolsConfig(
-            enable_file_tools=tools_data.get("enable_file_tools", True),
-            enable_bash=tools_data.get("enable_bash", True),
-            enable_todo=tools_data.get("enable_todo", True),
-            enable_plan=tools_data.get("enable_plan", True),
-            enable_sub_agent=tools_data.get("enable_sub_agent", True),
-            allow_full_access=tools_data.get("allow_full_access", False),
-            enable_skills=tools_data.get("enable_skills", True),
-            skills_dir=tools_data.get("skills_dir", "./skills"),
-            enable_mcp=tools_data.get("enable_mcp", True),
-            mcp_config_path=tools_data.get("mcp_config_path", "mcp.json"),
+            **{
+                field_name: tools_data[field_name]
+                for field_name in ToolsConfig.model_fields
+                if field_name != "mcp" and field_name in tools_data
+            },
             mcp=mcp_config,
         )
 

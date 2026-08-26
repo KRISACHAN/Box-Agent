@@ -135,9 +135,9 @@ The general-loop defaults and caps come from `tool_limits.sub_agent`:
 ```yaml
 tool_limits:
   sub_agent:
-    general_max_steps: 60
-    general_max_tool_calls: 32
-    no_progress_steps: 6
+    general_max_steps: 80
+    general_max_tool_calls: 48
+    no_progress_steps: 8
 ```
 
 Callers may request smaller `budget.max_steps` and `budget.max_tool_calls`.

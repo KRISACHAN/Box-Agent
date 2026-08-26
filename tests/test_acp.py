@@ -4133,7 +4133,7 @@ async def test_acp_host_config_uses_matched_legacy_presentation_skill(tmp_path):
     assert isinstance(gate, CompletionGate)
     assert gate.workflow_checkpoint_kind == EXTERNAL_SKILL_WORKFLOW_KIND
     assert gate.workflow_options["skill_name"] == "legacy-slides"
-    assert gate.max_tool_calls == 128
+    assert gate.max_tool_calls == 160
     assert gate.completion_reserve_tool_calls == 0
     assert gate.required_changed_artifact_globs == ()
     assert agent._sessions[session.sessionId].preloaded_skill_names == [

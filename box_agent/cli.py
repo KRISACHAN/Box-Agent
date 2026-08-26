@@ -43,7 +43,7 @@ from box_agent.agent import (
     goal_state_from_payload,
     should_continue_goal_autopilot,
 )
-from box_agent.config import Config
+from box_agent.config import AgentConfig, Config
 from box_agent.completion import build_auto_completion_gate
 from box_agent.events import StopReason
 from box_agent.schema import LLMProvider, Message
@@ -232,37 +232,7 @@ MAIN_LLM_KEYS = {
     "timeout",
 }
 
-AGENT_KEYS = {
-    "max_steps",
-    "workspace_dir",
-    "max_parallel_tools",
-    "goal_autopilot_enabled",
-    "goal_autopilot_max_turns",
-    "goal_autopilot_max_seconds",
-    "goal_autopilot_no_progress_turns",
-    "system_prompt_path",
-    "analysis_prompt_path",
-    "code_prompt_path",
-    "enable_memory",
-    "memory_dir",
-    "enable_memory_extraction",
-    "memory_extraction_cooldown",
-    "memory_extraction_step_interval",
-    "memory_maintainer_enabled",
-    "memory_maintainer_interval_hours",
-    "memory_decay_days",
-    "memory_archive_days",
-    "memory_dedup_jaccard",
-    "memory_compaction_enabled",
-    "memory_context_max_entries",
-    "memory_context_max_tokens",
-    "memory_conflict_resolution_enabled",
-    "memory_conflict_cluster_threshold",
-    "memory_conflict_max_clusters_per_run",
-    "memory_promotion_proposal_enabled",
-    "memory_promotion_hit_threshold",
-    "memory_promotion_cooldown_days",
-}
+AGENT_KEYS = frozenset(AgentConfig.model_fields)
 
 SECRET_KEY_NAMES = {"api_key"}
 
@@ -419,6 +389,8 @@ def _config_summary(config: Config, config_path: Path, show_secrets: bool = Fals
             "enable_todo": config.tools.enable_todo,
             "enable_plan": config.tools.enable_plan,
             "enable_sub_agent": config.tools.enable_sub_agent,
+            "bash_default_timeout_seconds": config.tools.bash_default_timeout_seconds,
+            "bash_max_timeout_seconds": config.tools.bash_max_timeout_seconds,
             "allow_full_access": config.tools.allow_full_access,
             "enable_skills": config.tools.enable_skills,
             "skills_dir": config.tools.skills_dir,
@@ -460,6 +432,7 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
     print(f"  max_steps         : {agent['max_steps']}")
     print(f"  max_parallel_tools: {agent['max_parallel_tools']}")
     print(f"  parallel_timeout  : {agent['parallel_tool_timeout_seconds']}s")
+    print(f"  provider_stale    : {agent['provider_stale_seconds']}s")
     print(f"  batch_synth_timeout: {agent['sub_agent_batch_synthesis_timeout_seconds']}s")
     print(f"  goal_autopilot    : {agent['goal_autopilot_enabled']} ({agent['goal_autopilot_max_turns']} turns, {agent['goal_autopilot_max_seconds']}s, no-progress {agent['goal_autopilot_no_progress_turns']})")
     print(f"  context_resources : {agent['context_resource_dedup_enabled']}")
@@ -484,11 +457,20 @@ def _print_config_summary(summary: dict[str, Any]) -> None:
         f"{tool_limits['presentation']['max_delegated_tool_calls']} delegated, "
         f"sub-agent {tool_limits['sub_agent']['general_max_tool_calls']}"
     )
+    print(
+        "  completion gate   : "
+        f"{tool_limits['completion']['max_continuations']} continuations / "
+        f"{tool_limits['completion']['deadline_seconds']}s"
+    )
 
     tools = summary["tools"]
     print(f"\n{Colors.BOLD}Tools{Colors.RESET}")
     print(f"  file_tools        : {tools['enable_file_tools']}")
-    print(f"  bash              : {tools['enable_bash']}")
+    print(
+        f"  bash              : {tools['enable_bash']} "
+        f"({tools['bash_default_timeout_seconds']}s default / "
+        f"{tools['bash_max_timeout_seconds']}s max)"
+    )
     print(f"  todo              : {tools['enable_todo']}")
     print(f"  plan              : {tools['enable_plan']}")
     print(f"  sub_agent         : {tools['enable_sub_agent']}")

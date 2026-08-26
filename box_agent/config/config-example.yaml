@@ -75,7 +75,7 @@ retry:
 # max_steps: 300 # Maximum execution steps
 max_parallel_tools: 8 # Hard cap on concurrent parallel_safe tool calls (sub_agent, generate_image) per step
 parallel_tool_timeout_seconds: 900 # Per-step wall-clock cap for one parallel_safe tool batch
-# provider_stale_seconds: 180 # Seconds without a new provider chunk before a stream is treated as stale.
+# provider_stale_seconds: 300 # Seconds without a new provider chunk before a stream is treated as stale.
 #                             # Raise for slow/deep-thinking models; env BOX_AGENT_PROVIDER_STALE_SECONDS overrides.
 # sub_agent_token_limit: 50000 # Per-call child context budget
 # sub_agent_batch_synthesis_timeout_seconds: 600 # files batch synthesis call; 0 disables this extra cap
@@ -99,7 +99,10 @@ max_truncation_continuations: 1 # Max continuations per turn (loop guard)
 # tool_limits:
 #   general:
 #     final_summary_after_calls: 200 # 1..512; request a final summary after this many visible tool calls
-#     wrapup_remaining_steps: 15 # 0..50; start wrapping up this many steps before max_steps
+#     wrapup_remaining_steps: 10 # 0..50; start wrapping up this many steps before max_steps
+#   completion:
+#     max_continuations: 5 # 0..20; forced continuations for incomplete deliverables
+#     deadline_seconds: 1800 # 1..14400; continuation deadline, not a tool kill timeout
 #   web_search:
 #     batch_size: 8 # 1..32; web searches allowed in one agent step
 #     concurrency: 2 # 1..batch_size; parallel searches in a search-only agent step
@@ -110,11 +113,11 @@ max_truncation_continuations: 1 # Max continuations per turn (loop guard)
 #   external_skill:
 #     max_tool_calls: 160 # 1..512; total tool-call budget
 #     max_delegated_tool_calls: 512 # 1..4096; separate aggregate child-tool budget
-#     completion_reserve_calls: 20 # 0..128 and <= max_tool_calls
+#     completion_reserve_calls: 10 # 0..128 and <= max_tool_calls
 #   presentation:
 #     max_tool_calls: 160 # 1..512; normal presentation budget
 #     max_delegated_tool_calls: 512 # 1..4096; separate aggregate child-tool budget
-#     completion_reserve_calls: 20 # 0..128 and <= both presentation call budgets
+#     completion_reserve_calls: 10 # 0..128 and <= both presentation call budgets
 #     deep_research_max_tool_calls: 240 # 1..512; deep-research presentation budget
 #     research_rounds: 5 # 1..20; research rounds before requiring artifact handoff
 #   sub_agent:
@@ -140,6 +143,8 @@ tools:
   # Basic tool switches
   enable_file_tools: true # File read/write/append/edit tools (ReadTool, WriteTool, AppendTool, EditTool)
   enable_bash: true # Bash command execution tool
+  bash_default_timeout_seconds: 300 # Foreground command timeout when omitted
+  bash_max_timeout_seconds: 1200 # Maximum foreground command timeout
   enable_todo: true # Task tracking tool (TodoWriteTool, TodoReadTool)
   enable_plan: true # Structured planning tool (PlanWriteTool, PlanReadTool)
 
@@ -157,8 +162,8 @@ tools:
     # Hide ordinary MCP schemas until tool_search activates them for a session.
     deferred_loading_enabled: true
     connect_timeout: 60.0 # Connection timeout in seconds (default: 60)
-    execute_timeout: 60.0 # Tool execution timeout in seconds (default: 60)
-    sse_read_timeout: 120.0 # SSE read timeout in seconds (default: 120)
+    execute_timeout: 120.0 # Tool execution timeout in seconds (default: 120)
+    sse_read_timeout: 180.0 # SSE read timeout in seconds (default: 180)
 
 # ===== Image Generation Service =====
 # The built-in generate_image tool reads this block the same way LLM requests

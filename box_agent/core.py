@@ -118,10 +118,12 @@ _DEFAULT_AGENT_CONFIG = AgentConfig()
 PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
 LLM_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
 TOOL_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
-# Long tool arguments can legitimately take more than two minutes before the
-# provider emits another SSE chunk.  Match the conservative baseline used by
-# mature long-running agents while retaining bounded recovery below.
-LLM_PROVIDER_STALE_SECONDS: Final[float] = 180.0
+# Slow deep-thinking models can legitimately spend several minutes before the
+# provider emits another SSE chunk. Keep a bounded recovery cutoff without
+# treating a three-minute reasoning pause as a stale stream.
+LLM_PROVIDER_STALE_SECONDS: Final[float] = (
+    _DEFAULT_AGENT_CONFIG.provider_stale_seconds
+)
 TRANSIENT_FOLLOWUP_CONTEXT_RATIO: Final[float] = 0.30
 TRANSIENT_IMAGE_DEFAULT_TOKENS: Final[int] = 4_096
 TRANSIENT_IMAGE_MAX_TOKENS: Final[int] = 4_096

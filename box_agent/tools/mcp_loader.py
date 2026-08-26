@@ -50,6 +50,7 @@ except ImportError:
     create_mcp_http_client = None
 
 from box_agent.auth import request_auth_headers, resolve_auth_token, should_attach_auth_header
+from box_agent.config import MCPConfig
 
 from .base import Tool, ToolResult
 from .browser_runtime_scope import (
@@ -200,15 +201,16 @@ ConnectionType = Literal["stdio", "sse", "http", "streamable_http"]
 # this internal: per-turn fan-out may be tuned, but concurrent Agent sessions
 # must not multiply load beyond the shared MCP connection's capacity.
 WEB_SEARCH_MCP_MAX_CONCURRENCY = 5
+_DEFAULT_MCP_CONFIG = MCPConfig()
 
 
 @dataclass
 class MCPTimeoutConfig:
     """MCP timeout configuration."""
 
-    connect_timeout: float = 60.0  # Connection timeout (seconds)
-    execute_timeout: float = 60.0  # Tool execution timeout (seconds)
-    sse_read_timeout: float = 120.0  # SSE read timeout (seconds)
+    connect_timeout: float = _DEFAULT_MCP_CONFIG.connect_timeout
+    execute_timeout: float = _DEFAULT_MCP_CONFIG.execute_timeout
+    sse_read_timeout: float = _DEFAULT_MCP_CONFIG.sse_read_timeout
 
 
 # Global default timeout config

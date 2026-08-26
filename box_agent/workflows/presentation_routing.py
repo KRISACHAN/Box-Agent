@@ -216,6 +216,8 @@ def build_presentation_completion_gate(
         return None
     text = user_text.strip().lower()
     positive_format_text = strip_negated_format_clauses(text)
+    effective_tool_limits = tool_limits or ToolLimitsConfig()
+    completion_limits = effective_tool_limits.completion
 
     explicit_pptx = _explicit_pptx_delivery_requested(positive_format_text)
     patterns = (
@@ -231,12 +233,11 @@ def build_presentation_completion_gate(
                 patterns,
                 workspace,
             ),
-            max_continuations=3,
-            deadline_seconds=900.0,
+            max_continuations=completion_limits.max_continuations,
+            deadline_seconds=completion_limits.deadline_seconds,
         )
 
     research_mode = _research_mode(user_text, execution_profile=execution_profile)
-    effective_tool_limits = tool_limits or ToolLimitsConfig()
     limits = effective_tool_limits.presentation
     return CompletionGate(
         required_changed_artifact_globs=patterns,
@@ -250,8 +251,8 @@ def build_presentation_completion_gate(
             _SUCCESS_REPORT_GLOBS,
             workspace,
         ),
-        max_continuations=3,
-        deadline_seconds=900.0,
+        max_continuations=completion_limits.max_continuations,
+        deadline_seconds=completion_limits.deadline_seconds,
         max_tool_calls=(
             limits.deep_research_max_tool_calls
             if research_mode == "deep"

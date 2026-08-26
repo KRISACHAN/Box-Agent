@@ -78,6 +78,27 @@ def test_cmd_config_set_updates_nested_tool_limit(tmp_path: Path, monkeypatch) -
     )
 
 
+def test_cmd_config_set_updates_relaxed_timeout_controls(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path)
+    monkeypatch.setattr(cli.Config, "find_config_file", lambda _name: config_path)
+
+    assert (
+        cli.cmd_config(set_pair=("agent.provider_stale_seconds", "450")) == 0
+    )
+    assert (
+        cli.cmd_config(set_pair=("tools.bash_default_timeout_seconds", "600"))
+        == 0
+    )
+
+    config = cli.Config.from_yaml(config_path)
+    assert config.agent.provider_stale_seconds == 450.0
+    assert config.tools.bash_default_timeout_seconds == 600
+
+
 def test_cmd_config_set_rolls_back_invalid_values(
     tmp_path: Path,
     monkeypatch,
@@ -133,6 +154,7 @@ def test_config_sub_agent_token_limit_defaults_and_overrides(tmp_path: Path) -> 
     _write_config(default_path)
     defaults = cli.Config.from_yaml(default_path).agent
     assert defaults.max_steps == 300
+    assert defaults.provider_stale_seconds == 300.0
     assert defaults.sub_agent_token_limit == 50_000
 
     # Overridable for advanced/host scenarios; config-example.yaml documents it
@@ -169,18 +191,25 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
     _write_config(default_path)
     defaults = cli.Config.from_yaml(default_path).tool_limits
     assert defaults.web_search.concurrency == 2
-    assert defaults.web_search.total_calls == 50
-    assert defaults.external_skill.max_tool_calls == 128
+    assert defaults.web_search.total_calls == 80
+    assert defaults.completion.max_continuations == 5
+    assert defaults.completion.deadline_seconds == 1800.0
+    assert defaults.external_skill.max_tool_calls == 160
     assert defaults.external_skill.max_delegated_tool_calls == 512
     assert defaults.presentation.max_delegated_tool_calls == 512
-    assert defaults.presentation.deep_research_max_tool_calls == 200
-    assert defaults.sub_agent.general_max_tool_calls == 32
+    assert defaults.presentation.deep_research_max_tool_calls == 240
+    assert defaults.sub_agent.general_max_steps == 80
+    assert defaults.sub_agent.general_max_tool_calls == 48
+    assert defaults.sub_agent.no_progress_steps == 8
 
     override_path = tmp_path / "override.yaml"
     _write_config(override_path)
     with override_path.open("a", encoding="utf-8") as f:
         f.write(
             "tool_limits:\n"
+            "  completion:\n"
+            "    max_continuations: 7\n"
+            "    deadline_seconds: 2400\n"
             "  web_search:\n"
             "    batch_size: 4\n"
             "    concurrency: 3\n"
@@ -199,7 +228,9 @@ def test_config_tool_limits_defaults_and_nested_overrides(tmp_path: Path) -> Non
     assert limits.web_search.batch_size == 4
     assert limits.web_search.concurrency == 3
     assert limits.web_search.total_calls == 40
-    assert limits.web_search.deep_research_total_calls == 100
+    assert limits.web_search.deep_research_total_calls == 150
+    assert limits.completion.max_continuations == 7
+    assert limits.completion.deadline_seconds == 2400.0
     assert limits.external_skill.max_tool_calls == 96
     assert limits.external_skill.max_delegated_tool_calls == 333
     assert limits.external_skill.completion_reserve_calls == 10
@@ -249,6 +280,8 @@ def test_config_rejects_web_search_concurrency_above_batch_size() -> None:
     [
         (("general", "final_summary_after_calls"), 512),
         (("general", "wrapup_remaining_steps"), 50),
+        (("completion", "max_continuations"), 20),
+        (("completion", "deadline_seconds"), 14400),
         (("web_search", "batch_size"), 32),
         (("web_search", "concurrency"), 32),
         (("web_search", "total_calls"), 512),
@@ -304,7 +337,10 @@ def test_cmd_config_set_rolls_back_tool_limit_above_maximum(
 def test_config_mcp_connect_timeout_defaults_and_overrides(tmp_path: Path) -> None:
     default_path = tmp_path / "default.yaml"
     _write_config(default_path)
-    assert cli.Config.from_yaml(default_path).tools.mcp.connect_timeout == 60.0
+    defaults = cli.Config.from_yaml(default_path).tools.mcp
+    assert defaults.connect_timeout == 60.0
+    assert defaults.execute_timeout == 120.0
+    assert defaults.sse_read_timeout == 180.0
 
     override_path = tmp_path / "override.yaml"
     _write_config(override_path)
@@ -313,6 +349,40 @@ def test_config_mcp_connect_timeout_defaults_and_overrides(tmp_path: Path) -> No
         f.write("  mcp:\n")
         f.write("    connect_timeout: 15\n")
     assert cli.Config.from_yaml(override_path).tools.mcp.connect_timeout == 15.0
+
+
+def test_config_bash_timeouts_default_override_and_validate(tmp_path: Path) -> None:
+    default_path = tmp_path / "default.yaml"
+    _write_config(default_path)
+    defaults = cli.Config.from_yaml(default_path).tools
+    assert defaults.bash_default_timeout_seconds == 300
+    assert defaults.bash_max_timeout_seconds == 1200
+
+    override_path = tmp_path / "override.yaml"
+    _write_config(override_path)
+    with override_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "tools:\n"
+            "  bash_default_timeout_seconds: 450\n"
+            "  bash_max_timeout_seconds: 1800\n"
+        )
+    overridden = cli.Config.from_yaml(override_path).tools
+    assert overridden.bash_default_timeout_seconds == 450
+    assert overridden.bash_max_timeout_seconds == 1800
+
+    invalid_path = tmp_path / "invalid.yaml"
+    _write_config(invalid_path)
+    with invalid_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "tools:\n"
+            "  bash_default_timeout_seconds: 1200\n"
+            "  bash_max_timeout_seconds: 300\n"
+        )
+    with pytest.raises(
+        ValueError,
+        match="bash_default_timeout_seconds cannot exceed bash_max_timeout_seconds",
+    ):
+        cli.Config.from_yaml(invalid_path)
 
 
 def test_config_mcp_deferred_loading_defaults_on_and_can_be_disabled(

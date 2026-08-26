@@ -263,6 +263,8 @@ def build_auto_completion_gate(
     execution_profile: ExecutionProfile = "standard",
 ) -> CompletionGate | None:
     """Create an evidence-backed gate for a recognized deliverable request."""
+    effective_tool_limits = tool_limits or ToolLimitsConfig()
+    completion_limits = effective_tool_limits.completion
     requires_host_receipt, execution_result_criteria_count = (
         _host_execution_contract(user_text)
     )
@@ -272,8 +274,8 @@ def build_auto_completion_gate(
         return CompletionGate(
             required_tools=frozenset({"report_execution_result"}),
             execution_result_criteria_count=execution_result_criteria_count,
-            max_continuations=3,
-            deadline_seconds=900.0,
+            max_continuations=completion_limits.max_continuations,
+            deadline_seconds=completion_limits.deadline_seconds,
         )
     if (
         not confirmed_presentation
@@ -287,7 +289,7 @@ def build_auto_completion_gate(
             user_text,
             workspace_dir,
             confirmed_presentation=confirmed_presentation,
-            tool_limits=tool_limits,
+            tool_limits=effective_tool_limits,
             execution_profile=execution_profile,
         )
         if allow_controlled_presentation
@@ -329,8 +331,8 @@ def build_auto_completion_gate(
         return CompletionGate(
             required_tools=required_tools,
             execution_result_criteria_count=execution_result_criteria_count,
-            max_continuations=3,
-            deadline_seconds=900.0,
+            max_continuations=completion_limits.max_continuations,
+            deadline_seconds=completion_limits.deadline_seconds,
         )
 
     deduped_patterns = tuple(dict.fromkeys(patterns))
@@ -351,6 +353,6 @@ def build_auto_completion_gate(
             deduped_patterns,
             workspace,
         ),
-        max_continuations=3,
-        deadline_seconds=900.0,
+        max_continuations=completion_limits.max_continuations,
+        deadline_seconds=completion_limits.deadline_seconds,
     )

@@ -664,8 +664,9 @@ def test_build_auto_completion_gate_detects_deliverable_ppt_request(tmp_path):
         "output/**/qa/html_self_check.json",
         "output/**/qa/runtime_probe.json",
     )
-    assert gate.max_continuations == 3
-    assert gate.max_tool_calls == 128
+    assert gate.max_continuations == 5
+    assert gate.deadline_seconds == 1800.0
+    assert gate.max_tool_calls == 160
     assert gate.max_delegated_tool_calls == 512
     assert gate.web_search_total_limit is None
     assert gate.workflow_options["research_mode"] == "auto"
@@ -906,8 +907,22 @@ def test_build_auto_completion_gate_requires_host_execution_receipt(tmp_path):
     assert gate is not None
     assert "report_execution_result" in gate.required_tools
     assert gate.execution_result_criteria_count == 2
-    assert gate.max_continuations == 3
-    assert gate.deadline_seconds == 900.0
+    assert gate.max_continuations == 5
+    assert gate.deadline_seconds == 1800.0
+
+
+def test_build_auto_completion_gate_uses_configured_continuation_limits(tmp_path):
+    gate = build_auto_completion_gate(
+        "生成一份 HTML 报告",
+        tmp_path,
+        tool_limits=ToolLimitsConfig(
+            completion={"max_continuations": 8, "deadline_seconds": 3600}
+        ),
+    )
+
+    assert gate is not None
+    assert gate.max_continuations == 8
+    assert gate.deadline_seconds == 3600.0
 
 
 def test_host_execution_gate_uses_the_final_host_contract(tmp_path):
@@ -1011,8 +1026,8 @@ def test_short_factual_presentation_routes_through_research_synthesis(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "deep"
-    assert gate.max_tool_calls == 200
-    assert gate.web_search_total_limit == 100
+    assert gate.max_tool_calls == 240
+    assert gate.web_search_total_limit == 150
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
@@ -1400,8 +1415,8 @@ def test_explicit_research_action_overrides_large_reference_content(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "deep"
-    assert gate.max_tool_calls == 200
-    assert gate.web_search_total_limit == 100
+    assert gate.max_tool_calls == 240
+    assert gate.web_search_total_limit == 150
     assert document_preload_skill_names((), gate) == [
         "pptx",
         "research-synthesis",
@@ -1482,9 +1497,10 @@ def test_deep_research_checkpoint_falls_back_after_bounded_failed_searches(
     assert '"fallback":true' in checkpoint
     assert '"fallback_reason":"research_sources_unavailable"' in checkpoint
     assert (
-        '"attempt_summary":{"rounds":3,"calls":3,"successful":0,'
-        '"failed":3,"empty":0,"direct_reads":0,"verified_pages":0,'
-        '"consecutive_unproductive_reads":0}'
+        f'"attempt_summary":{{"rounds":{RESEARCH_ROUND_LIMIT},'
+        f'"calls":{RESEARCH_ROUND_LIMIT},"successful":0,'
+        f'"failed":{RESEARCH_ROUND_LIMIT},"empty":0,"direct_reads":0,'
+        '"verified_pages":0,"consecutive_unproductive_reads":0}'
     ) in checkpoint
     assert '"files":[]' in checkpoint
     assert "outline.json so HTML delivery can continue" in checkpoint
@@ -4459,7 +4475,7 @@ def test_short_solution_design_brief_skips_research_synthesis(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "content_ready"
-    assert gate.max_tool_calls == 128
+    assert gate.max_tool_calls == 160
 
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
@@ -4498,7 +4514,7 @@ def test_source_first_presentation_does_not_force_public_research(tmp_path):
 
     assert gate is not None
     assert gate.workflow_options["research_mode"] == "source_first"
-    assert gate.max_tool_calls == 128
+    assert gate.max_tool_calls == 160
     checkpoint = completion_gate_progress_text(gate, str(tmp_path))
     assert checkpoint is not None
     assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}outline" in checkpoint

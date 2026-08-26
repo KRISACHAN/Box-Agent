@@ -266,6 +266,7 @@ provider: "anthropic" # "anthropic" or "openai"
 max_steps: 300
 max_parallel_tools: 8
 parallel_tool_timeout_seconds: 900
+provider_stale_seconds: 300
 sub_agent_token_limit: 50000
 sub_agent_batch_synthesis_timeout_seconds: 600 # 0 disables the extra batch synthesis cap
 goal_autopilot_enabled: true
@@ -286,6 +287,8 @@ box-agent config --set max_steps 300
 box-agent config --set goal_autopilot_max_turns 5
 box-agent config --set tool_limits.external_skill.max_tool_calls 160
 box-agent config --set tool_limits.external_skill.max_delegated_tool_calls 512
+box-agent config --set tool_limits.completion.deadline_seconds 1800
+box-agent config --set tools.bash_default_timeout_seconds 300
 box-agent config --json             # machine-readable config summary
 box-agent config --edit             # open in editor
 box-agent doctor                    # check environment & API connectivity

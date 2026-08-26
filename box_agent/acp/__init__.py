@@ -2775,8 +2775,8 @@ class BoxACPAgent:
                 execution_result_criteria_count=(
                     detected_completion_gate.execution_result_criteria_count
                 ),
-                max_continuations=3,
-                deadline_seconds=900.0,
+                max_continuations=detected_completion_gate.max_continuations,
+                deadline_seconds=detected_completion_gate.deadline_seconds,
             )
         else:
             fresh_completion_gate = (

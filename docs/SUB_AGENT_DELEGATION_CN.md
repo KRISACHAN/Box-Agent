@@ -116,9 +116,9 @@ Agent Loop，同时仍把这些文件路径传给子 Agent：
 ```yaml
 tool_limits:
   sub_agent:
-    general_max_steps: 60
-    general_max_tool_calls: 32
-    no_progress_steps: 6
+    general_max_steps: 80
+    general_max_tool_calls: 48
+    no_progress_steps: 8
 ```
 
 调用方可以通过 `budget.max_steps` 和 `budget.max_tool_calls` 请求更小预算，超过配置
