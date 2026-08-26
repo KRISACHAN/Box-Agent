@@ -9258,6 +9258,7 @@ def test_build_auto_completion_gate_ignores_non_deliverable_prompt(tmp_path):
         "阅读报告，了解表格和文档是如何生成的。",
         "生成图片的能力介绍。",
         "了解后端生成一张图片的实现方式。",
+        "关于生成图片的文档在哪里？",
     ],
 )
 def test_informational_artifact_prompt_does_not_create_gate(tmp_path, prompt):
@@ -9283,6 +9284,27 @@ def test_research_then_explicit_image_delivery_still_creates_gate(
     assert gate is not None
     assert gate.required_tools == frozenset({"generate_image"})
     assert gate.restrict_tools_until_required_succeed is True
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "介绍如何生成 PPT，然后创建一个 Excel 表格。",
+        "创建一个 Excel 表格，并介绍如何生成 PPT。",
+    ],
+)
+def test_mixed_informational_presentation_routes_executable_spreadsheet(
+    tmp_path,
+    prompt,
+):
+    gate = build_auto_completion_gate(prompt, tmp_path)
+
+    assert gate is not None
+    assert gate.workflow_checkpoint_kind is None
+    assert gate.required_changed_artifact_globs == (
+        "output/**/*.xlsx",
+        "output/**/*.xls",
+    )
 
 
 @pytest.mark.parametrize(

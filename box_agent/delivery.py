@@ -54,6 +54,7 @@ _ACTION_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(
 )
 _ACTION_AFTER_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(r"后\s*$")
 _INFORMATIONAL_ACTION_PREFIXES: Final[tuple[str, ...]] = (
+    "关于",
     "如何",
     "怎么",
     "怎样",
@@ -158,17 +159,48 @@ _DIRECT_PRESENTATION_REMAKE_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 
-def _local_action_prefix(clause: str, action_start: int) -> str:
-    """Return text governing one action after its nearest local boundary."""
-
+def _local_action_start(
+    clause: str,
+    action_start: int,
+    *,
+    comma_is_boundary: bool,
+) -> int:
+    """Return the start governed by connectors and optional comma locality."""
     prefix = clause[:action_start]
-    boundary = max(prefix.rfind("，"), prefix.rfind(","))
+    boundary = (
+        max(prefix.rfind("，"), prefix.rfind(","))
+        if comma_is_boundary
+        else -1
+    )
     for match in _ACTION_CONNECTOR_RE.finditer(prefix):
         boundary = max(boundary, match.end() - 1)
     after_match = _ACTION_AFTER_CONNECTOR_RE.search(prefix)
     if after_match is not None:
         boundary = max(boundary, after_match.start())
-    return prefix[boundary + 1 :].strip().casefold()
+    return boundary + 1
+
+
+def _local_action_bounds(clause: str, action_start: int) -> tuple[int, int]:
+    """Return the connector-delimited delivery segment for one action."""
+    following_connector = next(
+        _ACTION_CONNECTOR_RE.finditer(clause, action_start),
+        None,
+    )
+    end = (
+        following_connector.start()
+        if following_connector is not None
+        else len(clause)
+    )
+    return (
+        _local_action_start(clause, action_start, comma_is_boundary=False),
+        end,
+    )
+
+
+def _local_action_prefix(clause: str, action_start: int) -> str:
+    """Return text governing one action after its nearest local boundary."""
+    start = _local_action_start(clause, action_start, comma_is_boundary=True)
+    return clause[start:action_start].strip().casefold()
 
 
 def _action_is_informational(clause: str, action: re.Match[str]) -> bool:
@@ -181,7 +213,7 @@ def _action_is_informational(clause: str, action: re.Match[str]) -> bool:
 
 
 def extract_deliverable_clauses(text: str) -> tuple[str, ...]:
-    """Extract clauses containing an executable artifact-delivery action.
+    """Extract local segments containing an executable artifact-delivery action.
 
     Mentions such as ``如何生成图片`` or ``图片生成的介绍`` describe a
     capability rather than requesting an artifact. A later coordinated action,
@@ -193,11 +225,13 @@ def extract_deliverable_clauses(text: str) -> tuple[str, ...]:
         clause = clause_match.group(0).strip()
         if not clause:
             continue
-        if any(
-            not _action_is_informational(clause, action)
-            for action in _DELIVERABLE_ACTION_RE.finditer(clause)
-        ):
-            clauses.append(clause)
+        for action in _DELIVERABLE_ACTION_RE.finditer(clause):
+            if _action_is_informational(clause, action):
+                continue
+            start, end = _local_action_bounds(clause, action.start())
+            segment = clause[start:end].strip(" ，,")
+            if segment and segment not in clauses:
+                clauses.append(segment)
     return tuple(clauses)
 
 

@@ -285,6 +285,7 @@ def build_auto_completion_gate(
     ):
         return None
 
+    deliverable_text = "\n".join(deliverable_clauses).strip()
     presentation_gate = (
         build_presentation_completion_gate(
             user_text,
@@ -292,6 +293,9 @@ def build_auto_completion_gate(
             confirmed_presentation=confirmed_presentation,
             tool_limits=effective_tool_limits,
             execution_profile=execution_profile,
+            routing_text=(
+                user_text if confirmed_presentation else deliverable_text
+            ),
         )
         if allow_controlled_presentation
         else None
@@ -308,7 +312,7 @@ def build_auto_completion_gate(
             execution_result_criteria_count=execution_result_criteria_count,
         )
 
-    text = "\n".join(deliverable_clauses).strip().lower()
+    text = deliverable_text.lower()
     positive_format_text = strip_negated_format_clauses(text)
     native_image_generation = _is_native_image_generation_request(
         text,
