@@ -2588,8 +2588,13 @@ class ControlledPresentationPolicy:
     ) -> WorkflowCheckpointUpdate:
         """Parse a fresh filesystem checkpoint and update policy state."""
         candidate_changed = checkpoint_text != self._last_checkpoint_text
+        candidate_stage = _stage(checkpoint_text)
         if self._successful_mutation_since_checkpoint:
-            if candidate_changed:
+            # A committed repair is meaningful progress only when it leaves the
+            # repair state machine. Comparing the full checkpoint text lets volatile
+            # details such as a JSON parse column reset the fuse while the artifact
+            # remains invalid or merely switches to another repair stage.
+            if candidate_stage not in _REPAIR_STAGES:
                 self._no_progress_mutation_streak = 0
             else:
                 self._no_progress_mutation_streak += 1
@@ -2601,7 +2606,6 @@ class ControlledPresentationPolicy:
                     "successful_mutations_without_progress=%d",
                     self._no_progress_mutation_streak,
                 )
-        candidate_stage = _stage(checkpoint_text)
         repair_input = _checkpoint_json(checkpoint_text, "REPAIR_INPUT")
         if candidate_changed and candidate_stage == "outline_repair":
             normalized_issues = tuple(

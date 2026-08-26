@@ -257,6 +257,97 @@ async def test_controlled_patch_can_restart_after_final_chunk_validation_failure
 
 
 @pytest.mark.asyncio
+async def test_controlled_patch_repair_stalls_after_different_invalid_rewrites(
+    tmp_path,
+):
+    """Changing parse-error details must not disguise semantic non-progress."""
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "outline.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "page": 1,
+                        "title": "Exact title",
+                        "message": "Exact message",
+                        "bullets": ["Exact bullet"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    qa = output / "qa"
+    qa.mkdir()
+    (qa / "outline_check.json").write_text('{"ok": true}', encoding="utf-8")
+    (output / "deck.json").write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "id": "slide-01",
+                        "layout_id": "cover-hero-v1",
+                        "source_outline_page": 1,
+                        "props": {"title": "输入演示标题"},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    policy = ControlledPresentationPolicy(
+        workspace_dir=str(tmp_path),
+        artifact_root_dir=None,
+    )
+    initial = policy.build_checkpoint()
+    assert initial is not None
+    policy.update_checkpoint(initial)
+    assert policy.stage == "content_patch"
+    tool = WriteTool(
+        workspace_dir=str(tmp_path),
+        relative_root_dir=str(output),
+    )
+
+    invalid_documents = (
+        '{"slides":',
+        '{"slides":{"slide-01":',
+        '{"slides":{"slide-01":{"props":',
+    )
+    for attempt, content in enumerate(invalid_documents):
+        arguments = {
+            "path": "deck.patch.json",
+            "content": content,
+            "chunk_index": 0,
+            "final": True,
+        }
+        assert (
+            policy.tool_call_error(
+                "write_file",
+                arguments,
+                verified_evidence_urls=set(),
+            )
+            is None
+        )
+        result = await tool.execute(**arguments)
+        assert result.success is True
+        assert result.raw_output["transaction_state"] == "committed"
+        policy.record_tool_result("write_file", arguments, result)
+
+        checkpoint = policy.build_checkpoint()
+        assert checkpoint is not None
+        update = policy.update_checkpoint(checkpoint)
+        if attempt < 2:
+            assert policy.stage == "content_patch_repair"
+            assert policy.repair_stalled is False
+
+    assert policy.repair_stalled is True
+    assert policy.stage == "repair_stalled"
+    assert f"{CONTROLLED_PRESENTATION_CHECKPOINT_MARKER}repair_stalled" in update.text
+
+
+@pytest.mark.asyncio
 async def test_controlled_patch_repair_locks_an_active_chunk_transaction(tmp_path):
     """Repair rewrites must not switch tools or restart while a chunk is pending."""
     output = tmp_path / "output"
