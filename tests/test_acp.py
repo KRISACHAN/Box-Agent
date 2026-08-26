@@ -211,7 +211,17 @@ async def test_acp_uses_saved_code_type_when_host_omits_session_mode(tmp_path, m
 
     assert state.session_mode == "code_agent"
     assert state.artifact_mode == "project"
-    assert state.output_dir is None
+    assert state.output_dir == str(workspace / "output")
+    assert not (workspace / "output").exists()
+    bash_tool = state.agent.tools["bash"]
+    assert Path(bash_tool.workspace_dir) == workspace.resolve()
+    assert bash_tool._subprocess_env["BOX_AGENT_OUTPUT_DIR"] == str(
+        (workspace / "output").resolve()
+    )
+    scratch_dir = Path(bash_tool._subprocess_env["BOX_AGENT_SCRATCH_DIR"])
+    assert scratch_dir.is_dir()
+    assert scratch_dir.is_relative_to(workspace / ".box-agent" / "scratch")
+    assert not (workspace / ".box-agent-scratch").exists()
     assert "Software Engineering Mode (code_agent)" in state.agent.system_prompt
     assert "Project Workspace Mode" in state.agent.system_prompt
 
@@ -261,6 +271,58 @@ class DummyLLM:
         else:
             yield StreamEvent(type="text", delta="done")
             yield StreamEvent(type="finish", finish_reason="stop")
+
+
+class ProjectArtifactLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def generate_stream(self, messages, tools, **_):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamEvent(
+                type="finish",
+                finish_reason="tool",
+                tool_calls=[
+                    ToolCall(
+                        id="project-roadmap",
+                        type="function",
+                        function=FunctionCall(
+                            name="emit_project_artifact",
+                            arguments={},
+                        ),
+                    )
+                ],
+            )
+        else:
+            yield StreamEvent(type="text", delta="done")
+            yield StreamEvent(type="finish", finish_reason="stop")
+
+    async def generate(self, messages, tools=None, **_):
+        return LLMResponse(content="done", finish_reason="stop")
+
+
+class EmitProjectArtifactTool(Tool):
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+
+    @property
+    def name(self):
+        return "emit_project_artifact"
+
+    @property
+    def description(self):
+        return "Emit a project-session HTML artifact"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {}}
+
+    async def execute(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        artifact = self.output_dir / "roadmap-v1.html"
+        artifact.write_text("<html><body>roadmap</body></html>", encoding="utf-8")
+        return ToolResult(success=True, content="Saved [roadmap-v1.html]")
 
 
 class CorrelationCaptureLLM:
@@ -2655,12 +2717,80 @@ async def test_acp_project_artifact_mode_does_not_create_output(tmp_path):
     state = agent._sessions[session.sessionId]
 
     assert not (tmp_path / "output").exists()
-    assert state.output_dir is None
+    assert state.output_dir == str(tmp_path / "output")
     assert state.artifact_mode == "project"
+    bash_tool = state.agent.tools["bash"]
+    assert Path(bash_tool.workspace_dir) == tmp_path.resolve()
+    assert bash_tool._subprocess_env["BOX_AGENT_OUTPUT_DIR"] == str(
+        (tmp_path / "output").resolve()
+    )
+    scratch_dir = Path(bash_tool._subprocess_env["BOX_AGENT_SCRATCH_DIR"])
+    assert scratch_dir.is_dir()
+    assert scratch_dir.is_relative_to(tmp_path / ".box-agent" / "scratch")
+    assert not (tmp_path / ".box-agent-scratch").exists()
     assert "Do not create or use an `output/` folder" in state.agent.system_prompt
     assert "当前工作区/代码项目根目录" in state.agent.system_prompt
     assert "{SANDBOX_INFO}" not in state.agent.system_prompt
     assert session.field_meta["artifact_mode"] == "project"
+
+
+@pytest.mark.asyncio
+async def test_acp_project_artifact_mode_publishes_generated_artifact(tmp_path):
+    output_dir = tmp_path / "output"
+    skills_dir = tmp_path / "skills"
+    roadmap_dir = skills_dir / "roadmap"
+    roadmap_dir.mkdir(parents=True)
+    (roadmap_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: roadmap\n"
+        "description: Create project roadmap artifacts.\n"
+        "keywords: [roadmap, 路线图, 排期, 泳道, 月份刻度]\n"
+        "---\n"
+        "# Roadmap\nUse the standard artifact contract.\n",
+        encoding="utf-8",
+    )
+    skill_loader = SkillLoader(skills_dir)
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    conn = DummyConn()
+    agent = BoxACPAgent(
+        conn,
+        config,
+        ProjectArtifactLLM(),
+        [EmitProjectArtifactTool(output_dir)],
+        f"system\n\n{SKILL_SLOT_SENTINEL}",
+        skill_loader=skill_loader,
+    )
+    session = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"artifact_mode": "project"})
+    )
+
+    assert not output_dir.exists()
+    response = await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "生成未来三个月路线图，按团队分泳道"}],
+        )
+    )
+
+    artifact_outputs = [
+        update.update.rawOutput
+        for update in conn.updates
+        if getattr(update.update, "rawOutput", None)
+        and isinstance(update.update.rawOutput, dict)
+        and update.update.rawOutput.get("type") == "artifact"
+    ]
+    assert response.stopReason == "end_turn"
+    assert agent._sessions[session.sessionId].preloaded_skill_names == ["roadmap"]
+    assert (output_dir / "roadmap-v1.html").is_file()
+    assert len(artifact_outputs) == 1
+    assert artifact_outputs[0]["filename"] == "roadmap-v1.html"
+    assert artifact_outputs[0]["rel_path"] == "output/roadmap-v1.html"
+    assert artifact_outputs[0]["output_dir"] == str(output_dir)
 
 
 @pytest.mark.asyncio
@@ -4980,6 +5110,12 @@ async def test_acp_host_env_context_feeds_bash_and_execute_code_runtime_env(tmp_
     assert bash_env["BOX_AGENT_NODE"] == str(node_path)
     assert bash_env["BOX_AGENT_NPM"] == str(npm_path)
     assert bash_env["BOX_AGENT_NPX"] == str(npx_path)
+    assert bash_env["BOX_AGENT_SCRATCH_DIR"] == str(
+        workspace / ".box-agent-scratch"
+    )
+    assert execute_code_env["BOX_AGENT_SCRATCH_DIR"] == str(
+        workspace / ".box-agent-scratch"
+    )
     assert bash_env["NODE_PATH"].split(os.pathsep)[-1] == str(node_modules)
     assert bash_env["NPM_CONFIG_PREFIX"] == str(
         Path.home() / ".box-agent" / "skill-tools"

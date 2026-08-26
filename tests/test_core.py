@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+import os
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 from time import monotonic
@@ -6232,6 +6235,154 @@ def test_artifact_envelope_shape(tmp_path):
     assert "mime_type" not in env
     assert "size_bytes" not in env
     assert "sandbox_workspace" not in env
+
+
+def test_roadmap_artifact_envelope_includes_controlled_metadata(tmp_path):
+    from box_agent.acp import _artifact_envelope
+    from box_agent.core import _make_artifact
+
+    output = tmp_path / "output"
+    output.mkdir()
+    html = output / "roadmap.html"
+    skill_root = (
+        Path(__file__).resolve().parents[1] / "box_agent" / "skills" / "roadmap"
+    )
+    node = os.environ.get("BOX_AGENT_NODE") or shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to render a trusted Roadmap artifact")
+    rendered = subprocess.run(
+        [
+            node,
+            str(skill_root / "scripts" / "render_roadmap_html.js"),
+            str(skill_root / "examples" / "roadmap-spec-v1.json"),
+            "--out",
+            str(html),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+
+    env = _artifact_envelope(_make_artifact("tc-roadmap", html, tmp_path), str(output))
+
+    assert env["layout_id"] == "roadmap-swimlane-v1"
+    assert env["edit_mode"] == "editable"
+    assert "artifact_version" not in env
+    assert "diagnostics" not in env
+
+    trusted_html = html.read_text(encoding="utf-8")
+    html.write_text(
+        trusted_html.replace(
+            'data-roadmap-runtime="editor">',
+            'data-roadmap-runtime="editor">window.tampered=true;',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    same_version = _artifact_envelope(
+        _make_artifact("tc-roadmap-same-version", html, tmp_path), str(output)
+    )
+    assert same_version["layout_id"] == "roadmap-swimlane-v1"
+    assert same_version["edit_mode"] == "editable"
+
+    html.write_text(
+        trusted_html.replace(
+            "Box Agent Roadmap Artifact v1", "Box Agent Roadmap Artifact v2", 1
+        )
+        .replace(
+            'box-agent-artifact-version" content="1',
+            'box-agent-artifact-version" content="2',
+            1,
+        )
+        .replace('data-schema-version="1"', 'data-schema-version="2"', 1)
+        .replace('data-geometry-version="1"', 'data-geometry-version="2"', 1)
+        .replace('data-renderer-version="1"', 'data-renderer-version="2"', 1),
+        encoding="utf-8",
+    )
+    unsupported = _artifact_envelope(
+        _make_artifact("tc-roadmap-unsupported", html, tmp_path), str(output)
+    )
+    assert unsupported["layout_id"] == "roadmap-swimlane-v1"
+    assert unsupported["edit_mode"] == "read_only"
+
+    html.write_text(
+        trusted_html.replace("</main>", '<a href="https://example.test">link</a></main>'),
+        encoding="utf-8",
+    )
+    navigable = _artifact_envelope(
+        _make_artifact("tc-roadmap-navigable", html, tmp_path), str(output)
+    )
+    assert "layout_id" not in navigable
+    assert "edit_mode" not in navigable
+
+
+def test_roadmap_artifact_layout_rejects_self_declared_metadata(tmp_path):
+    from box_agent.acp import _artifact_envelope
+    from box_agent.core import _make_artifact
+
+    output = tmp_path / "output"
+    output.mkdir()
+    html = output / "roadmap.html"
+    spec = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "box_agent"
+            / "skills"
+            / "roadmap"
+            / "examples"
+            / "roadmap-spec-v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    html.write_text(
+        "<!doctype html>\n"
+        '<meta name="generator" content="Box Agent Roadmap Artifact v1">\n'
+        '<meta name="box-agent-artifact-layout-id" content="roadmap-swimlane-v1">\n'
+        '<script id="deck-document" type="application/json">\n'
+        f"{json.dumps(spec)}\n"
+        "</script>\n",
+        encoding="utf-8",
+    )
+
+    env = _artifact_envelope(_make_artifact("tc-roadmap", html, tmp_path), str(output))
+
+    assert "layout_id" not in env
+    assert "edit_mode" not in env
+
+
+def test_roadmap_artifact_layout_rejects_spoofed_or_invalid_html(tmp_path):
+    from box_agent.acp import _artifact_envelope
+    from box_agent.core import _make_artifact
+
+    output = tmp_path / "output"
+    output.mkdir()
+    spoofed = output / "spoofed.html"
+    spoofed.write_text(
+        "<!doctype html>\n"
+        '<meta name="box-agent-artifact-layout-id" content="roadmap-swimlane-v1">\n'
+        "<script>alert(1)</script>\n",
+        encoding="utf-8",
+    )
+    invalid = output / "invalid.html"
+    invalid.write_text(
+        "<!doctype html>\n"
+        '<meta name="generator" content="Box Agent Roadmap Artifact v1">\n'
+        '<meta name="box-agent-artifact-layout-id" content="roadmap-swimlane-v1">\n'
+        '<script id="deck-document" type="application/json">{}</script>\n',
+        encoding="utf-8",
+    )
+
+    spoofed_env = _artifact_envelope(
+        _make_artifact("tc-spoofed", spoofed, tmp_path), str(output)
+    )
+    invalid_env = _artifact_envelope(
+        _make_artifact("tc-invalid", invalid, tmp_path), str(output)
+    )
+
+    assert "layout_id" not in spoofed_env
+    assert "layout_id" not in invalid_env
+    assert "edit_mode" not in spoofed_env
+    assert "edit_mode" not in invalid_env
 
 
 # ── Summarization (_maybe_summarize / _create_summary) ───────

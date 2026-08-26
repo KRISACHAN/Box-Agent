@@ -72,6 +72,10 @@
       "path": "research-to-deck-outline/SKILL.md"
     },
     {
+      "name": "roadmap",
+      "path": "roadmap/SKILL.md"
+    },
+    {
       "name": "scheduled-task",
       "path": "scheduled-task/SKILL.md"
     },

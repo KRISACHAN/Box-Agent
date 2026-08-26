@@ -49,6 +49,8 @@ do not parse them as the source of truth for files.
 | `produced_at`  | string (ISO-8601) | Timezone-aware timestamp of detection. |
 | `tool_call_id` | string         | Tool call that produced the artifact. The same id appears on the `tool_call_update`, so the host already knows which call to attach this to. |
 | `output_dir`   | string         | Absolute path of `{workspace}/output/` for this session. Useful when listing all artifacts in a panel. |
+| `layout_id`    | string, optional | Controlled layout identifier. Present only for recognized artifacts such as `roadmap-swimlane-v1`. |
+| `edit_mode`    | enum, optional | `editable` means the host may enable the trusted editor after its own artifact-identity checks. `read_only` means the host must keep editing and persistence disabled. Missing is read-only. |
 
 ### Kinds → suggested renderers
 
@@ -125,6 +127,22 @@ Box-Agent creates `{workspace}/output/` automatically when the session is
 created and uses `params.cwd` (or `config.agent.workspace_dir`) as the
 workspace root. If you want the artifact directory in a custom place,
 override the workspace itself — `output/` always lives under it.
+
+## Roadmap protocol handling
+
+Box-Agent validates the controlled Roadmap HTML and publishes a simple host
+contract. A recognized artifact receives `layout_id=roadmap-swimlane-v1` and
+`edit_mode=editable` when its safe structure and generator, artifact, schema,
+geometry, and renderer versions are supported. A safe, recognizable artifact
+with unsupported protocol versions receives `edit_mode=read_only`. Runtime JS
+and CSS bytes are not compared, so formatting, comments, and compatible
+same-version runtime changes do not disable editing. Hosts may run
+a recognized renderer in an isolated sandbox to preserve responsive layout,
+but must hide editing controls and reject persistence unless the mode is
+`editable` and their own artifact identity, path, hash, and revision checks
+pass. Missing/unknown modes are read-only. Unsupported protocol versions use
+a script-free fallback. Malformed or unsafe controlled HTML receives no
+`layout_id` and must be blocked by the host.
 
 ## Non-goals
 

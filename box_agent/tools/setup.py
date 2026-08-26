@@ -46,6 +46,7 @@ from box_agent.tools.request_user_decision_tool import RequestUserDecisionTool
 from box_agent.tools.request_user_input_tool import RequestUserInputTool
 from box_agent.tools.runtime import SkillRuntimeContext, build_skill_runtime_context
 from box_agent.tools.skill_execution_env import build_skill_execution_env
+from box_agent.tools.skill_scratch import prepare_skill_scratch_dir
 from box_agent.tools.mcp_config_tool import McpConfigTool
 from box_agent.tools.schedule_tool import CreateScheduledTaskTool
 from box_agent.tools.skill_tool import create_skill_tools
@@ -316,7 +317,8 @@ async def initialize_base_tools(
             user_skills_dir = Path.home() / ".box-agent" / "skills"
             user_skills_dir.mkdir(parents=True, exist_ok=True)
 
-            # User skills take priority over builtin on name conflict
+            # User skills take priority on ordinary name conflicts. Runtime-
+            # contract skills such as roadmap remain canonical builtin entries.
             sources = [
                 (user_skills_dir, "user"),
                 (builtin_dir, "builtin"),
@@ -531,6 +533,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         skill_loader=None, capability_state_provider=None,
                         use_output_dir: bool = True,
                         artifact_root_dir: str | Path | None = None,
+                        create_artifact_root: bool = True,
+                        skill_scratch_root_dir: str | Path | None = None,
                         env_context=None,
                         process_owner_id: str | None = None,
                         bypass_dangerous_command_approval: bool = False):
@@ -554,6 +558,10 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         capability_state_provider: Read-only callable returning MCP loading/ready state
         use_output_dir: If True, execute_code chdirs into {workspace}/output.
         artifact_root_dir: Optional host-supplied output root for this session.
+        create_artifact_root: Create the artifact root during tool setup. Project
+            sessions can defer creation until an artifact-producing tool runs.
+        skill_scratch_root_dir: Optional workspace-contained session-private
+            scratch root.
         process_owner_id: Optional ACP session identifier used to scope and
             reclaim background shell processes.
         bypass_dangerous_command_approval: Skip dangerous-command approval for
@@ -563,18 +571,20 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
     artifact_root = None
-    if use_output_dir:
+    if use_output_dir or artifact_root_dir is not None:
         artifact_root = (
             Path(artifact_root_dir).expanduser().resolve()
             if artifact_root_dir
             else (workspace_dir / "output").resolve()
         )
-        artifact_root.mkdir(parents=True, exist_ok=True)
-    relative_root = artifact_root or workspace_dir
+        if create_artifact_root:
+            artifact_root.mkdir(parents=True, exist_ok=True)
+    relative_root = artifact_root if use_output_dir and artifact_root else workspace_dir
 
     # Relative tool paths use the project root or the active artifact root.
     runtime_context = skill_runtime_context or build_skill_runtime_context(sandbox_mode=sandbox_mode)
     runtime_env = build_skill_execution_env(runtime_context)
+    skill_scratch_dir = None
     if artifact_root is not None:
         # Make the canonical delivery root available to subprocess-backed
         # skills even when a generated command unnecessarily changes cwd.
@@ -582,6 +592,11 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         # this directory; exposing the same root keeps shell authoring on the
         # identical boundary.
         runtime_env["BOX_AGENT_OUTPUT_DIR"] = str(artifact_root)
+        skill_scratch_dir = prepare_skill_scratch_dir(
+            workspace_dir,
+            scratch_root_dir=skill_scratch_root_dir,
+        )
+        runtime_env["BOX_AGENT_SCRATCH_DIR"] = str(skill_scratch_dir.path)
     if config.tools.enable_bash:
         sandbox_venv_path = None
         if sandbox_mode and not getattr(sys, "frozen", False):
@@ -684,9 +699,13 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
 
     # Jupyter sandbox tool - Python code execution environment
     if sandbox_mode:
+        sandbox_runtime_env = runtime_context.env()
+        if artifact_root is not None and skill_scratch_dir is not None:
+            sandbox_runtime_env["BOX_AGENT_OUTPUT_DIR"] = str(artifact_root)
+            sandbox_runtime_env["BOX_AGENT_SCRATCH_DIR"] = str(skill_scratch_dir.path)
         sandbox_tool = JupyterSandboxTool(
             workspace_dir=str(workspace_dir),
-            runtime_env=runtime_context.env(),
+            runtime_env=sandbox_runtime_env,
             use_output_dir=use_output_dir,
             output_dir=str(artifact_root) if artifact_root else None,
             process_owner_id=process_owner_id,
@@ -765,7 +784,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             batch_synthesis_timeout_seconds=(
                 config.agent.sub_agent_batch_synthesis_timeout_seconds
             ),
-            artifact_detection_enabled=use_output_dir,
+            artifact_detection_enabled=artifact_root is not None,
             artifact_root_dir=str(artifact_root) if artifact_root else None,
             provider_stale_seconds=config.agent.provider_stale_seconds,
         )
@@ -775,3 +794,5 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             sub_agent_tool.set_capability_state_provider(capability_state_provider)
         tools.append(sub_agent_tool)
         _out(f"{Colors.GREEN}✅ Loaded sub-agent tool (sub_agent){Colors.RESET}")
+
+    return skill_scratch_dir
