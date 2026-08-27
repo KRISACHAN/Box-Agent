@@ -926,6 +926,7 @@ class SessionState:
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
 _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 4_096
 _TITLE_MAX_OUTPUT_TOKENS = 8_000
+_PRESENTATION_PREFLIGHT_MAX_OUTPUT_TOKENS = 4_096
 
 
 def _bind_user_source_text(state: SessionState, user_request: str) -> None:
@@ -3874,6 +3875,7 @@ class BoxACPAgent:
         elif "presentation" in normalized_purpose:
             routing_tags = ("presentation", "analysis")
             routing_ability = 1
+            max_output_tokens_cap = _PRESENTATION_PREFLIGHT_MAX_OUTPUT_TOKENS
         elif "summary" in normalized_purpose:
             routing_tags = ("summary", "fast")
             routing_ability = 1
