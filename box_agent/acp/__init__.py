@@ -3874,14 +3874,14 @@ class BoxACPAgent:
             max_output_tokens_cap = _TITLE_MAX_OUTPUT_TOKENS
         elif "presentation" in normalized_purpose:
             routing_tags = ("presentation", "analysis")
-            routing_ability = 1
+            routing_ability = 2
             max_output_tokens_cap = _PRESENTATION_PREFLIGHT_MAX_OUTPUT_TOKENS
         elif "summary" in normalized_purpose:
             routing_tags = ("summary", "fast")
             routing_ability = 1
         elif "expert" in normalized_purpose:
             routing_tags = ("analysis", "reasoning")
-            routing_ability = 2
+            routing_ability = 3
         else:
             routing_tags = None
             routing_ability = None
