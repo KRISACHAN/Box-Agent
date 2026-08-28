@@ -7490,8 +7490,11 @@ body.deck-thumbnails-visible .deck-thumbnails {
   bottom: 24px;
   z-index: 1000;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  width: max-content;
   max-width: calc(100vw - 32px);
   overflow: visible;
   padding: 11px 12px;

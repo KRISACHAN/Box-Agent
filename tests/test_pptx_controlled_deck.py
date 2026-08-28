@@ -10180,7 +10180,15 @@ def test_example_validates_and_renders_deterministically(tmp_path: Path) -> None
     assert "outline: 1px solid #A8A8A2" in html
 
 
-def test_toolbar_groups_fit_embedded_editor_viewport(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("viewport_width", "expect_thumbnails"),
+    [(520, False), (1100, True)],
+)
+def test_toolbar_groups_fit_embedded_editor_viewport(
+    tmp_path: Path,
+    viewport_width: int,
+    expect_thumbnails: bool,
+) -> None:
     html_path = tmp_path / "toolbar.html"
     render = _run("render_deck_html.js", str(EXAMPLE), "--out", str(html_path))
     assert render.returncode == 0, render.stderr
@@ -10189,7 +10197,7 @@ def test_toolbar_groups_fit_embedded_editor_viewport(tmp_path: Path) -> None:
         "probe_deck_runtime.js",
         str(html_path),
         "--viewport",
-        "1100x800",
+        f"{viewport_width}x800",
     )
     if probe.returncode != 0 and (
         "Cannot find module 'playwright'" in probe.stderr
@@ -10200,10 +10208,10 @@ def test_toolbar_groups_fit_embedded_editor_viewport(tmp_path: Path) -> None:
     assert probe.returncode == 0, probe.stderr or probe.stdout
     runtime = json.loads(probe.stdout)
     assert runtime["ok"] is True
-    assert runtime["editor"]["thumbnailsVisible"] is True
+    assert runtime["editor"]["thumbnailsVisible"] is expect_thumbnails
     assert runtime["editor"]["toolbar"]["hasOverflow"] is False
     assert runtime["editor"]["toolbar"]["left"] >= 0
-    assert runtime["editor"]["toolbar"]["right"] <= 1100
+    assert runtime["editor"]["toolbar"]["right"] <= viewport_width
     assert runtime["editor"]["toolbarMenus"] == {
         "design": {"available": True, "open": True, "expanded": True},
         "page": {"available": True, "open": True, "expanded": True},
