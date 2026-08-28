@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "box_agent_version": "0.9.7",
-  "generated_at": "2026-08-26T17:36:00Z",
+  "generated_at": "2026-08-27T11:48:56Z",
   "skills": [
     {
       "name": "artifacts-builder",
@@ -58,6 +58,26 @@
     {
       "name": "memory-guide",
       "path": "memory-guide/SKILL.md"
+    },
+    {
+      "name": "midu-pinyin",
+      "path": "midu-pinyin/SKILL.md"
+    },
+    {
+      "name": "midu-proofread",
+      "path": "midu-proofread/SKILL.md"
+    },
+    {
+      "name": "midu-proofread-pinyin",
+      "path": "midu-proofread-pinyin/SKILL.md"
+    },
+    {
+      "name": "midu-st-convert",
+      "path": "midu-st-convert/SKILL.md"
+    },
+    {
+      "name": "midu-writing",
+      "path": "midu-writing/SKILL.md"
     },
     {
       "name": "obsidian",
