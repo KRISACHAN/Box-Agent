@@ -122,6 +122,7 @@ from box_agent.events import (
 from box_agent.client_info import ClientInfo, scoped_client_info
 from box_agent.llm import LLMClient, SessionBoundLLM
 from box_agent.llm.model_routing import normalize_auto_routing, resolve_model_client
+from box_agent.llm.model_profiles import client_for_model_profile
 from box_agent.llm.token_meter import get_token_meter, reset_token_meter, start_token_meter
 from box_agent.runtime import invoke_tool_with_permissions
 from box_agent.session_trace import SessionTraceWriter, scoped_session_trace
@@ -473,8 +474,11 @@ def _normalize_llm_binding(meta: Any) -> dict[str, Any] | None:
 
     source = str(raw.get("source") or "").strip()
     model = str(raw.get("model") or "").strip()
-    if source != "builtin":
+    binding_version = raw.get("version", 1)
+    if source not in {"builtin", "profile"}:
         raise ValueError(f"unsupported llm_binding source: {source or '<empty>'}")
+    if source == "profile" and binding_version != 2:
+        raise ValueError("llm_binding.version is invalid")
     if not model or len(model) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in model):
         raise ValueError("llm_binding.model is invalid")
     raw_max_tokens = raw.get("maxTokens", raw.get("max_tokens"))
@@ -498,6 +502,26 @@ def _normalize_llm_binding(meta: Any) -> dict[str, Any] | None:
     ):
         raise ValueError("llm_binding.maxTokens must be smaller than contextWindow")
     binding: dict[str, Any] = {"source": source, "model": model}
+    if source == "profile":
+        profile_id = str(raw.get("profileId", raw.get("profile_id")) or "").strip()
+        profile_revision = str(
+            raw.get("profileRevision", raw.get("profile_revision")) or ""
+        ).strip()
+        routing_mode = str(raw.get("routingMode", raw.get("routing_mode")) or "").strip()
+        if (
+            not profile_id
+            or not profile_revision
+            or routing_mode not in {"auto", "manual"}
+        ):
+            raise ValueError("llm_binding model profile is invalid")
+        binding.update(
+            {
+                "version": 2,
+                "profileId": profile_id,
+                "profileRevision": profile_revision,
+                "routingMode": routing_mode,
+            }
+        )
     if raw_context_window is not None:
         binding["contextWindow"] = raw_context_window
     if raw_max_tokens is not None:
@@ -1000,6 +1024,8 @@ class BoxACPAgent:
     def _llm_for_binding(self, binding: dict[str, Any] | None) -> LLMClient:
         if binding is None:
             return self._llm
+        if binding.get("source") == "profile":
+            return client_for_model_profile(binding, fallback_client=self._llm)
         clone_for_model = getattr(self._llm, "for_model", None)
         if not callable(clone_for_model):
             raise ValueError("configured LLM client does not support session model binding")

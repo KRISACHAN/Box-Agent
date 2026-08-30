@@ -1,5 +1,6 @@
 """Lite LLM routing: fallback when unconfigured, separate client when present."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -313,6 +314,87 @@ async def test_conversation_sessions_bind_models_without_mutating_each_other(tmp
     assert second_state.agent.llm.max_output_tokens == 16000
     assert first_state.agent.token_limit == 104400
     assert second_state.agent.token_limit == 100800
+
+
+@pytest.mark.asyncio
+async def test_profile_bound_sessions_keep_distinct_endpoints(tmp_path, monkeypatch):
+    registry = tmp_path / "model-profiles.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    "revision-a": {
+                        "profileId": "profile-a",
+                        "profileRevision": "revision-a",
+                        "provider": "openai",
+                        "apiBase": "https://profile-a.example/v1",
+                        "apiKey": "key-a",
+                        "authFile": "",
+                        "defaultModel": "model-a",
+                        "contextWindow": 180000,
+                        "maxTokens": 16000,
+                    },
+                    "revision-b": {
+                        "profileId": "profile-b",
+                        "profileRevision": "revision-b",
+                        "provider": "openai",
+                        "apiBase": "https://profile-b.example/v1",
+                        "apiKey": "key-b",
+                        "authFile": "",
+                        "defaultModel": "model-b",
+                        "contextWindow": 180000,
+                        "maxTokens": 16000,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BOX_AGENT_MODEL_PROFILES_FILE", str(registry))
+    agent, _main, _lite = _make_agent(tmp_path, lite=True)
+
+    first = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {
+                    "source": "profile",
+                    "version": 2,
+                    "profileId": "profile-a",
+                    "profileRevision": "revision-a",
+                    "routingMode": "manual",
+                    "model": "model-a-selected",
+                }
+            },
+        )
+    )
+    second = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "llm_binding": {
+                    "source": "profile",
+                    "version": 2,
+                    "profileId": "profile-b",
+                    "profileRevision": "revision-b",
+                    "routingMode": "manual",
+                    "model": "model-b-selected",
+                }
+            },
+        )
+    )
+
+    first_llm = agent._sessions[first.sessionId].session_llm
+    second_llm = agent._sessions[second.sessionId].session_llm
+    assert (first_llm.api_base, first_llm.model) == (
+        "https://profile-a.example/v1",
+        "model-a-selected",
+    )
+    assert (second_llm.api_base, second_llm.model) == (
+        "https://profile-b.example/v1",
+        "model-b-selected",
+    )
 
 
 @pytest.mark.asyncio
