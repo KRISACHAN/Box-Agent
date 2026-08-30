@@ -557,7 +557,7 @@ class OpenAIClient(LLMClientBase):
             thinking_enabled=thinking_enabled,
         )
 
-        auth_headers = self._auth_headers(
+        auth_headers = await self._auth_headers(
             self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
@@ -936,7 +936,7 @@ class OpenAIClient(LLMClientBase):
             request_params["tools"] and _is_sensenova_model(self.model)
         )
 
-        auth_headers = self._auth_headers(
+        auth_headers = await self._auth_headers(
             self._request_headers(session_id, turn_id, title, call_kind)
         )
         if auth_headers:
