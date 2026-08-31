@@ -303,10 +303,11 @@ CLI `--task` 模式和 ACP 会话会对持久 goal 启用有边界的自动续�
 内置 skills 已提交在 `box_agent/skills/` 下，并通过 `box_agent/skills/_manifest.json` 加载。
 正常开发不需要执行 git submodule 初始化。
 
-当前 manifest 只列出 11 个核心内置 skills：
+当前 manifest 只列出 12 个核心内置 skills：
 
 - **系统基础**：`memory-guide`、`browser-use`、`mcp-config`、`scheduled-task`
 - **Office 核心**：`docx`、`pdf`、`xlsx`、`pptx`
+- **核心产物**：`data-dashboard`
 - **工作流契约**：`roadmap`、`research-synthesis`
 - **内部依赖**：`html-templates`
 
@@ -337,6 +338,31 @@ uv run python scripts/generate_skills_manifest.py
 
 市场迁移期间，已有推荐/专家安装链路依赖的技能目录暂时继续随 runtime 打包。
 从 `_manifest.json` 排除只负责隔离内置加载，不代表市场包已经从 ACP 物理移除。
+
+#### 对话式 SkillHub 安装
+
+ACP 宿主可以分别声明只读推荐和确认后对话安装能力：
+
+```json
+{
+  "host_capabilities": {
+    "skillhub_search": 1,
+    "skillhub_install": 1
+  }
+}
+```
+
+`search_skillhub` 只在当前会话中保留宿主真实返回的候选项。
+`install_skillhub_skill` 只接受其中一个精确 `skill_id`，先发起一次性 ACP
+权限确认，得到同意后才调用 `session/skillhub_install`。宿主负责带认证下载、
+完整性校验、冲突处理以及安装到 `~/.box-agent/skills/`。反向请求包含
+`sessionId`、`skillId`、`slug`、`displayName`、`publisherDisplayName` 和推荐
+`version`。成功响应为
+`{"status":"installed","skill":{"name":"<skill-slug>"}}`，已安装则返回
+`status: "already_installed"`；失败可返回 `status: "failed"` 和受限长度的
+`error`，宿主不可用时返回 `status: "unavailable"`。成功后 Box-Agent 刷新
+当前 `SkillLoader`，通过 `get_skill` 加载新 Skill，并继续原任务。模型生成的
+名称、slug、URL 或普通文本选项都不能单独决定安装目标。
 
 **更多信息：**
 

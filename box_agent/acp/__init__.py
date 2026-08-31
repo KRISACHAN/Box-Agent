@@ -88,6 +88,18 @@ from box_agent.tools.skill_scratch import (
     SkillScratchDirectory,
     cleanup_skill_scratch_dir,
 )
+from box_agent.tools.skillhub_search_tool import (
+    HARD_CAPABILITY_GAP_PROMPT,
+    SKILLHUB_SEARCH_CAPABILITY_VERSION,
+    SKILLHUB_SEARCH_METHOD,
+    SkillHubSearchTool,
+    capability_snapshot,
+)
+from box_agent.tools.skillhub_install_tool import (
+    SKILLHUB_INSTALL_CAPABILITY_VERSION,
+    SKILLHUB_INSTALL_METHOD,
+    SkillHubInstallTool,
+)
 from box_agent.tools.browser_runtime_scope import (
     release_browser_runtime,
     reset_browser_runtime_owner,
@@ -1459,6 +1471,8 @@ class BoxACPAgent:
         artifact_mode = "output"
         initial_goal_request: dict[str, Any] | None = None
         follow_up_suggestions_enabled = False
+        skillhub_search_enabled = False
+        skillhub_install_enabled = False
         # Lightweight one-shot utility session (e.g. host-side title/tag
         # generation). When set, the session carries no tools, skips memory
         # recall injection, and skips auto memory-extraction — it is a pure
@@ -1487,6 +1501,29 @@ class BoxACPAgent:
                 "follow_up_suggestions",
                 "followUpSuggestions",
             )
+            host_capabilities = meta.get("host_capabilities") or meta.get(
+                "hostCapabilities"
+            )
+            if isinstance(host_capabilities, dict):
+                raw_skillhub_search = host_capabilities.get(
+                    "skillhub_search",
+                    host_capabilities.get("skillhubSearch"),
+                )
+                if isinstance(raw_skillhub_search, dict):
+                    raw_skillhub_search = raw_skillhub_search.get("version")
+                skillhub_search_enabled = (
+                    raw_skillhub_search == SKILLHUB_SEARCH_CAPABILITY_VERSION
+                )
+                raw_skillhub_install = host_capabilities.get(
+                    "skillhub_install",
+                    host_capabilities.get("skillhubInstall"),
+                )
+                if isinstance(raw_skillhub_install, dict):
+                    raw_skillhub_install = raw_skillhub_install.get("version")
+                skillhub_install_enabled = (
+                    skillhub_search_enabled
+                    and raw_skillhub_install == SKILLHUB_INSTALL_CAPABILITY_VERSION
+                )
             env_context = EnvContext.from_meta(meta.get("env_context"))
             expert_context = ExpertSessionContext.from_meta(meta)
             # Caller-owned correlation metadata forwarded to the LLM gateway.
@@ -1813,6 +1850,33 @@ class BoxACPAgent:
                 f"{system_prompt.rstrip()}\n\n"
                 f"{build_image_generation_prompt(self._config)}"
             )
+
+        skillhub_search_tool: SkillHubSearchTool | None = None
+        if skillhub_search_enabled and not utility:
+
+            async def _search_skillhub(payload: dict[str, Any]) -> dict[str, Any]:
+                return await self._request_skillhub_search(session_id, payload)
+
+            skillhub_search_tool = SkillHubSearchTool(
+                _search_skillhub,
+                installation_available=skillhub_install_enabled,
+            )
+            tools.append(skillhub_search_tool)
+            if skillhub_install_enabled:
+
+                async def _install_skillhub(payload: dict[str, Any]) -> dict[str, Any]:
+                    return await self._request_skillhub_install(session_id, payload)
+
+                tools.append(
+                    SkillHubInstallTool(
+                        _install_skillhub,
+                        candidate_provider=skillhub_search_tool.candidate,
+                        skill_loader=session_skill_loader,
+                    )
+                )
+            system_prompt = (
+                f"{system_prompt.rstrip()}\n\n{HARD_CAPABILITY_GAP_PROMPT.strip()}"
+            )
         session_log: SessionLog | None = None
         session_log_restored = False
         if upstream_session_id:
@@ -1872,6 +1936,11 @@ class BoxACPAgent:
             ),
             session_log=session_log,
         )
+
+        if skillhub_search_tool is not None:
+            skillhub_search_tool.set_snapshot_provider(
+                lambda: capability_snapshot(agent, session_skill_loader)
+            )
 
         if agent.restored_skills:
             try:
@@ -2011,6 +2080,14 @@ class BoxACPAgent:
             "session_continuation_versions": [1],
             "managed_mcp_config_versions": [1],
         }
+        if skillhub_search_enabled:
+            response_meta["capabilities"]["skillhub_search_versions"] = [
+                SKILLHUB_SEARCH_CAPABILITY_VERSION
+            ]
+        if skillhub_install_enabled:
+            response_meta["capabilities"]["skillhub_install_versions"] = [
+                SKILLHUB_INSTALL_CAPABILITY_VERSION
+            ]
         skills = (
             session_skill_loader.list_skills_metadata()
             if session_skill_loader is not None
@@ -3004,6 +3081,9 @@ class BoxACPAgent:
             log.warn("session/inject_stale", session_id=session_id, text=_inject_item_text(stale)[:80])
         # Reset per-turn inject dedup — IDs are only meaningful within a turn.
         state.seen_injection_ids.clear()
+        skillhub_search_tool = state.agent.tools.get("search_skillhub")
+        if isinstance(skillhub_search_tool, SkillHubSearchTool):
+            skillhub_search_tool.reset_turn()
 
         state.turn_active = True
         meter_token = start_token_meter()
@@ -5282,6 +5362,68 @@ class BoxACPAgent:
             raise TimeoutError(
                 f"ACP session update timed out after {self._SESSION_UPDATE_TIMEOUT_SECONDS:g}s"
             ) from exc
+
+    async def _request_skillhub_search(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Search through a host-owned SkillHub without exposing host credentials."""
+
+        send_ext = getattr(self._conn, "ext_method", None) or getattr(
+            self._conn, "extMethod", None
+        )
+        if send_ext is None:
+            return {"status": "unavailable"}
+        request = {
+            "sessionId": session_id,
+            "query": payload.get("query"),
+            "gapType": payload.get("gapType"),
+            "limit": payload.get("limit", 3),
+        }
+        try:
+            response = await send_ext(SKILLHUB_SEARCH_METHOD, request)
+        except Exception as exc:
+            log.warn(
+                "skillhub/search_error",
+                session_id=session_id,
+                error=type(exc).__name__,
+                message="Host SkillHub search failed",
+            )
+            return {"status": "unavailable"}
+        return response if isinstance(response, dict) else {"status": "unavailable"}
+
+    async def _request_skillhub_install(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Ask the authenticated host to install one confirmed market candidate."""
+
+        send_ext = getattr(self._conn, "ext_method", None) or getattr(
+            self._conn, "extMethod", None
+        )
+        if send_ext is None:
+            return {"status": "unavailable"}
+        request = {
+            "sessionId": session_id,
+            "skillId": payload.get("skillId"),
+            "slug": payload.get("slug"),
+            "displayName": payload.get("name"),
+            "publisherDisplayName": payload.get("publisherDisplayName"),
+            "version": payload.get("version"),
+        }
+        try:
+            response = await send_ext(SKILLHUB_INSTALL_METHOD, request)
+        except Exception as exc:
+            log.warn(
+                "skillhub/install_error",
+                session_id=session_id,
+                error=type(exc).__name__,
+                message="Host SkillHub installation failed",
+            )
+            return {"status": "unavailable"}
+        return response if isinstance(response, dict) else {"status": "unavailable"}
 
 
 class _PermissionNegotiator:

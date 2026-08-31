@@ -325,10 +325,11 @@ Edit `mcp.json` to add a new MCP Server:
 Built-in skills are committed under `box_agent/skills/` and loaded through `box_agent/skills/_manifest.json`.
 No git submodule setup is required for normal development.
 
-The current manifest lists only 11 core built-in skills:
+The current manifest lists only 12 core built-in skills:
 
 - **System foundations**: `memory-guide`, `browser-use`, `mcp-config`, `scheduled-task`
 - **Office core**: `docx`, `pdf`, `xlsx`, `pptx`
+- **Core artifacts**: `data-dashboard`
 - **Workflow contracts**: `roadmap`, `research-synthesis`
 - **Internal dependency**: `html-templates`
 
@@ -369,6 +370,35 @@ During migration, directories required by existing recommended/expert install
 flows remain physically bundled in the runtime. Manifest exclusion controls
 built-in discovery only; it does not mean the marketplace package has already
 been removed from the ACP artifact.
+
+#### Conversational SkillHub installation
+
+An ACP host may enable read-only recommendation and confirmed conversational
+installation independently:
+
+```json
+{
+  "host_capabilities": {
+    "skillhub_search": 1,
+    "skillhub_install": 1
+  }
+}
+```
+
+`search_skillhub` retains only candidates returned by the host for that session.
+`install_skillhub_skill` accepts one exact retained `skill_id`, emits a one-shot
+ACP permission request, and calls `session/skillhub_install` only after approval.
+The host owns authenticated download, integrity checks, conflict handling, and
+installation into `~/.box-agent/skills/`. The reverse request contains
+`sessionId`, `skillId`, `slug`, `displayName`, `publisherDisplayName`, and the
+recommended `version`. It returns
+`{"status":"installed","skill":{"name":"<skill-slug>"}}` or
+`{"status":"already_installed",...}`. Failures return `status: "failed"` with
+an optional bounded `error`; an unavailable host returns `status: "unavailable"`.
+After success Box-Agent refreshes the live `SkillLoader`, loads the installed
+Skill through `get_skill`, and continues the original task. A model-provided
+name, slug, URL, or prose choice is never sufficient authority to select an
+installation target.
 
 **More information:**
 
