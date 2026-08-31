@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
@@ -14,6 +15,7 @@ SKILLHUB_INSTALL_METHOD = "session/skillhub_install"
 SKILLHUB_INSTALL_CAPABILITY_VERSION = 1
 
 CandidateProvider = Callable[[str], Mapping[str, Any] | None]
+CandidateListProvider = Callable[[], list[Mapping[str, Any]]]
 SkillHubInstaller = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -32,11 +34,13 @@ class SkillHubInstallTool(Tool):
         installer: SkillHubInstaller,
         *,
         candidate_provider: CandidateProvider,
+        candidate_list_provider: CandidateListProvider | None = None,
         skill_loader: SkillLoader | None = None,
         timeout_seconds: float = 60.0,
     ) -> None:
         self._installer = installer
         self._candidate_provider = candidate_provider
+        self._candidate_list_provider = candidate_list_provider or (lambda: [])
         self._skill_loader = skill_loader
         self._timeout_seconds = timeout_seconds
         self._approved_skill_ids: set[str] = set()
@@ -88,9 +92,29 @@ class SkillHubInstallTool(Tool):
         normalized_id = skill_id.strip()
         candidate = self._candidate_provider(normalized_id)
         if candidate is None:
+            known_candidates = self._candidate_list_provider()
+            candidate_hint = ""
+            if known_candidates:
+                rendered = []
+                for item in known_candidates[:3]:
+                    candidate_id = _text(item.get("id"), limit=80)
+                    slug = _text(item.get("slug"), limit=80)
+                    name = _text(item.get("name"), limit=160)
+                    if candidate_id:
+                        rendered.append(
+                            f"skill_id={candidate_id!r}, slug={slug!r}, name={name!r}"
+                        )
+                if rendered:
+                    candidate_hint = (
+                        " Available candidates: "
+                        + "; ".join(rendered)
+                        + ". Use an exact skill_id; do not guess or bypass SkillHub with "
+                        "another installer or online service."
+                    )
             return self._error(
                 "SEARCH_REQUIRED",
-                "Search SkillHub first and use the exact ID of a candidate returned in this session.",
+                "Search SkillHub first and use the exact ID of a candidate returned in this "
+                f"session.{candidate_hint}",
                 skill_id=normalized_id,
             )
 
@@ -108,6 +132,17 @@ class SkillHubInstallTool(Tool):
                 "INVALID_CANDIDATE",
                 "The selected SkillHub candidate is incomplete and cannot be installed.",
                 skill_id=normalized_id,
+            )
+
+        installed_name = self._installed_skill_name(
+            normalized_id,
+            normalized_candidate["slug"],
+        )
+        if installed_name:
+            return self._successful_result(
+                normalized_candidate,
+                status="already_installed",
+                visible_name=installed_name,
             )
 
         if normalized_id not in self._approved_skill_ids:
@@ -180,22 +215,61 @@ class SkillHubInstallTool(Tool):
             installed_name = normalized_candidate["slug"]
 
         visible_name = self._refresh_skill(installed_name, normalized_candidate["slug"])
+        return self._successful_result(
+            normalized_candidate,
+            status=status,
+            visible_name=visible_name,
+            installed_name=installed_name,
+        )
+
+    def _installed_skill_name(self, skill_id: str, slug: str) -> str:
+        if self._skill_loader is None:
+            return ""
+        try:
+            self._skill_loader.discover_skills()
+            skill = self._skill_loader.get_skill(slug)
+            if skill is None or skill.source != "user" or skill.skill_path is None:
+                return ""
+            marker = json.loads(
+                (skill.skill_path.parent / ".skill-installation.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (OSError, ValueError, TypeError):
+            return ""
+        if not isinstance(marker, dict):
+            return ""
+        if marker.get("source") == "hub" and marker.get("skillId") == skill_id:
+            return slug
+        return ""
+
+    @staticmethod
+    def _successful_result(
+        candidate: dict[str, str],
+        *,
+        status: str,
+        visible_name: str,
+        installed_name: str = "",
+    ) -> ToolResult:
         visible = bool(visible_name)
         normalized_status = status if visible else "installed_not_visible"
         if visible:
             verb = "was already installed" if status == "already_installed" else "was installed"
             content = (
-                f"SkillHub Skill '{normalized_candidate['name']}' {verb} successfully and "
-                f"is available as Skill '{visible_name}'. Call get_skill with skill_name="
-                f"{visible_name!r}, follow its instructions, and continue the user's original task."
+                f"SkillHub Skill '{candidate['name']}' {verb} successfully and is available "
+                f"as Skill '{visible_name}'. Call get_skill with skill_name={visible_name!r}, "
+                "follow its instructions, and continue the user's original task with the minimum "
+                "necessary actions. After creating the requested artifact, use only direct, "
+                "non-dynamic validation commands; do not construct executable paths from "
+                "environment variables or request another permission solely for optional "
+                "metadata validation."
             )
         else:
             content = (
-                f"SkillHub Skill '{normalized_candidate['name']}' was installed by the host, "
-                "but the live Skill catalog could not see it yet. Do not claim the original "
-                "task is complete; ask the user to start a fresh turn or restart the host."
+                f"SkillHub Skill '{candidate['name']}' was installed by the host, but the live "
+                "Skill catalog could not see it yet. Do not claim the original task is complete; "
+                "ask the user to start a fresh turn or restart the host."
             )
-
         return ToolResult(
             success=True,
             content=content,
@@ -203,9 +277,9 @@ class SkillHubInstallTool(Tool):
             raw_output={
                 "type": SKILLHUB_INSTALLATION_TYPE,
                 "status": normalized_status,
-                "candidate": normalized_candidate,
+                "candidate": candidate,
                 "skillName": visible_name or installed_name,
-                "items": [normalized_candidate],
+                "items": [candidate],
             },
         )
 

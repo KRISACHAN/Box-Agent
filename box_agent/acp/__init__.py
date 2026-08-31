@@ -1871,6 +1871,7 @@ class BoxACPAgent:
                     SkillHubInstallTool(
                         _install_skillhub,
                         candidate_provider=skillhub_search_tool.candidate,
+                        candidate_list_provider=skillhub_search_tool.candidates,
                         skill_loader=session_skill_loader,
                     )
                 )

@@ -160,6 +160,9 @@ class SkillHubSearchTool(Tool):
         candidate = self._candidates_by_id.get(skill_id.strip())
         return dict(candidate) if candidate is not None else None
 
+    def candidates(self) -> list[dict[str, Any]]:
+        return [dict(candidate) for candidate in self._candidates_by_id.values()]
+
     @property
     def name(self) -> str:
         return "search_skillhub"
@@ -357,8 +360,9 @@ class SkillHubSearchTool(Tool):
             }
             names = ", ".join(candidate["name"] for candidate in candidates)
             installation_guidance = (
-                "Call install_skillhub_skill with the selected candidate's exact skill_id. "
-                "That tool will obtain mandatory user confirmation; do not call get_skill "
+                "Immediately call install_skillhub_skill with the selected candidate's exact "
+                "skill_id. Do not ask for confirmation in prose and do not end the turn first: "
+                "that tool owns the single mandatory host confirmation. Do not call get_skill "
                 "before installation succeeds and do not present prose-only letter choices."
                 if self._installation_available
                 else (
@@ -370,6 +374,16 @@ class SkillHubSearchTool(Tool):
                 f"SkillHub found {len(candidates)} candidate Skill(s): {names}. "
                 f"They are not installed. {installation_guidance} You may also provide "
                 "bounded interim help without claiming the missing capability is available."
+            )
+            candidate_context = "\n".join(
+                f"- skill_id={candidate['id']!r}; slug={candidate['slug']!r}; "
+                f"name={candidate['name']!r}"
+                for candidate in candidates
+            )
+            model_context = (
+                f"{content}\n\nExact SkillHub candidates returned for this session:\n"
+                f"{candidate_context}\nUse the exact skill_id value above; never substitute "
+                "the name, slug, translated text, or a guessed identifier."
             )
             normalized_status = "found"
         elif not unavailable:
@@ -383,6 +397,7 @@ class SkillHubSearchTool(Tool):
             )
             normalized_status = "empty"
             candidates = []
+            model_context = content
         else:
             self._candidates_by_id = {}
             content = (
@@ -393,10 +408,12 @@ class SkillHubSearchTool(Tool):
             )
             normalized_status = "unavailable"
             candidates = []
+            model_context = content
 
         return ToolResult(
             success=True,
             content=content,
+            model_context=model_context,
             raw_output={
                 "type": SKILLHUB_RECOMMENDATIONS_TYPE,
                 "status": normalized_status,

@@ -40,6 +40,25 @@ async def test_install_requires_a_candidate_returned_in_this_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unknown_id_reports_exact_known_candidate_instead_of_inviting_guesses() -> None:
+    async def installer(_payload):
+        raise AssertionError("installer must not run")
+
+    tool = SkillHubInstallTool(
+        installer,
+        candidate_provider=_candidate_provider,
+        candidate_list_provider=lambda: [CANDIDATE],
+    )
+
+    result = await tool.execute("文字转语音")
+
+    assert not result.success
+    assert f"skill_id='{CANDIDATE['id']}'" in result.error
+    assert "slug='edge-tts'" in result.error
+    assert "do not guess or bypass SkillHub" in result.error
+
+
+@pytest.mark.asyncio
 async def test_install_requires_one_shot_confirmation_before_host_call() -> None:
     calls = []
 
@@ -112,6 +131,78 @@ async def test_confirmed_install_refreshes_catalog_and_exposes_skill(tmp_path: P
     assert result.raw_output["skillName"] == "edge-tts"
     assert loader.get_skill("edge-tts") is not None
     assert "Call get_skill" in result.content
+    assert "do not construct executable paths from environment variables" in result.content
+
+
+@pytest.mark.asyncio
+async def test_exact_manual_market_install_skips_redundant_confirmation(tmp_path: Path) -> None:
+    user_skills = tmp_path / "skills"
+    skill_dir = user_skills / "edge-tts"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: edge-tts\ndescription: Generate speech audio.\n---\n",
+        encoding="utf-8",
+    )
+    (skill_dir / ".skill-installation.json").write_text(
+        '{"source":"hub","skillId":"'
+        + CANDIDATE["id"]
+        + '"}',
+        encoding="utf-8",
+    )
+    loader = SkillLoader(sources=[(user_skills, "user")])
+    loader.discover_skills()
+    calls = []
+
+    async def installer(payload):
+        calls.append(payload)
+        return {"status": "installed"}
+
+    tool = SkillHubInstallTool(
+        installer,
+        candidate_provider=_candidate_provider,
+        skill_loader=loader,
+    )
+
+    result = await tool.execute(CANDIDATE["id"])
+
+    assert result.success
+    assert result.permission_request is None
+    assert result.raw_output["status"] == "already_installed"
+    assert result.raw_output["skillName"] == "edge-tts"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_same_slug_without_matching_market_marker_still_requires_confirmation(
+    tmp_path: Path,
+) -> None:
+    user_skills = tmp_path / "skills"
+    skill_dir = user_skills / "edge-tts"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: edge-tts\ndescription: Unrelated local skill.\n---\n",
+        encoding="utf-8",
+    )
+    (skill_dir / ".skill-installation.json").write_text(
+        '{"source":"hub","skillId":"another-market-id"}',
+        encoding="utf-8",
+    )
+    loader = SkillLoader(sources=[(user_skills, "user")])
+    loader.discover_skills()
+
+    async def installer(_payload):
+        raise AssertionError("installer must wait for confirmation")
+
+    tool = SkillHubInstallTool(
+        installer,
+        candidate_provider=_candidate_provider,
+        skill_loader=loader,
+    )
+
+    result = await tool.execute(CANDIDATE["id"])
+
+    assert not result.success
+    assert result.permission_request is not None
 
 
 @pytest.mark.asyncio

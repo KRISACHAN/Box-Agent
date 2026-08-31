@@ -88,6 +88,8 @@ async def test_skillhub_search_normalizes_found_candidates_and_never_installs() 
 
     assert result.success
     assert "not installed" in result.content
+    assert "skill_id='skill-1'" in result.model_context
+    assert "slug='landscape-review'" in result.model_context
     assert result.raw_output == {
         "type": "skillhub_recommendations",
         "status": "found",
@@ -229,9 +231,11 @@ async def test_install_capable_search_retains_exact_candidate_for_follow_up() ->
     )
 
     assert result.success
-    assert "Call install_skillhub_skill" in result.content
+    assert "Immediately call install_skillhub_skill" in result.content
+    assert "Do not ask for confirmation in prose" in result.content
     assert "do not present prose-only letter choices" in result.content
     assert tool.candidate("skill-tts")["slug"] == "edge-tts"
+    assert tool.candidates() == [result.raw_output["items"][0]]
 
 
 @pytest.mark.asyncio
