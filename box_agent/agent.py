@@ -457,6 +457,7 @@ class Agent:
         max_truncated_tool_call_retries: int = 3,
         truncated_tool_call_boost_cap: int = 32768,
         context_resource_dedup_enabled: bool = True,
+        allowed_connector_ids_provider: Callable[[], frozenset[str]] | None = None,
         tool_limits: ToolLimitsConfig | None = None,
         deferred_mcp_loading_enabled: bool = True,
         session_log: SessionLog | None = None,
@@ -498,6 +499,7 @@ class Agent:
                 activated_local_tools=self.activated_local_tools,
                 deferred_local_names_provider=self.local_tool_exposure.deferred_names,
                 deferred_mcp=deferred_mcp_loading_enabled,
+                allowed_connector_ids_provider=allowed_connector_ids_provider,
             )
             self.tools["tool_search"] = ToolSearchTool(
                 catalog,
@@ -510,6 +512,7 @@ class Agent:
                 ),
                 local_tools_provider=self.local_tool_exposure.candidate_tools,
                 activated_local_tools=self.activated_local_tools,
+                allowed_connector_ids_provider=allowed_connector_ids_provider,
             )
         self.tool_result_storage = ToolResultStorage(
             state_path('sessions')
@@ -559,7 +562,10 @@ class Agent:
                 "configuration; do not claim the server is connected until an internal "
                 "MCP runtime update confirms registration. If that confirmation arrives "
                 "during the turn, use `tool_search` to discover the newly registered "
-                "capability instead of expecting all schemas to appear at once."
+                "capability instead of expecting all schemas to appear at once. "
+                "The latest <connector-status> in each user message is authoritative: "
+                "only its connected entries may be searched or called. If an entry is "
+                "disabled or disappears, do not call a previously activated tool from it."
             )
 
         self.system_prompt = system_prompt

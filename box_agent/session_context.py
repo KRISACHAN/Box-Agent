@@ -59,6 +59,8 @@ class HostBindings:
     base_tools_factory: Callable[..., Any] | None = None
     workspace_tools_factory: Callable[..., Any] | None = None
     capability_state_provider: Callable[[], str] | None = None
+    skill_access_filter: Callable[[Any], bool] | None = None
+    skill_catalog_filter: Callable[[Any], bool] | None = None
     extra_tools: list[Any] = field(default_factory=list)
     prompt_suffix: str | None = None
     diagnostics: Callable[[str, dict[str, Any]], Any] | None = None

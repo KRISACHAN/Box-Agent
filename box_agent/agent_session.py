@@ -110,6 +110,7 @@ class AgentSession:
         hooks: list[Any] | None = None,
         session_log: SessionLog | None = None,
         utility: bool = False,
+        allowed_connector_ids_provider: Callable[[], frozenset[str]] | None = None,
         agent_factory: AgentFactory = Agent,
         **state: Any,
     ) -> AgentSession:
@@ -145,6 +146,7 @@ class AgentSession:
             max_truncated_tool_call_retries=settings.max_truncated_tool_call_retries,
             truncated_tool_call_boost_cap=settings.truncated_tool_call_boost_cap,
             context_resource_dedup_enabled=settings.context_resource_dedup_enabled,
+            allowed_connector_ids_provider=allowed_connector_ids_provider,
             deferred_mcp_loading_enabled=(
                 not utility
                 and config.tools.enable_mcp

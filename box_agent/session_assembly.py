@@ -7,6 +7,7 @@ run outside the Host activation lock, within the runtime initialization lease.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -187,6 +188,7 @@ async def prepare_tools(resources: SessionResources) -> None:
             GetSkillTool(
                 resources.skill_loader, preloaded_skill_hashes=hashes,
                 include_disabled=expert is not None,
+                skill_access_filter=host.skill_access_filter,
                 blocked_skill_names=(FAST_OPTIONAL_SKILLS if resources.state.get("execution_profile") == "fast" else frozenset()),
                 explicitly_allowed_skill_names=resources.state.setdefault("explicitly_allowed_skill_names", set()),
             )
@@ -200,6 +202,7 @@ async def prepare_tools(resources: SessionResources) -> None:
         non_interactive=options.non_interactive, output=host.output,
         llm=resources.llm_client, permission_engine=permission_engine,
         skill_runtime_context=runtime_context, skill_loader=resources.skill_loader,
+        skill_access_filter=host.skill_access_filter,
         env_context=resources.state.get("env_context"),
         capability_state_provider=host.capability_state_provider or (lambda: (
             "loading" if resources.mcp_task is not None and not resources.mcp_task.done()
@@ -349,6 +352,9 @@ async def finish_session(session: Any, resources: SessionResources) -> None:
             )
             if skill is None:
                 continue
+            grants = resources.state.get("connector_skill_grants")
+            if grants is not None and getattr(skill, "source", None) == "connector":
+                grants.add(skill.name)
             restored_skill_prompts.append(
                 (name, skill.to_prompt(), prompt_hash, load_order)
             )
@@ -362,6 +368,7 @@ async def finish_session(session: Any, resources: SessionResources) -> None:
         selector = SkillSelector(
             session_skill_loader,
             include_disabled=expert_context is not None,
+            skill_filter=resources.context.host.skill_catalog_filter,
         )
         selector.bind(agent.messages[0].content)
         if expert_context:
@@ -488,7 +495,12 @@ def _build_action_hints_prompt(config, memory, env_context: EnvContext | None = 
     memory_scarce = is_memory_scarce(memory.read_core() if memory else None)
 
     try:
-        _user_mcp = state_path('config/mcp.json')
+        _host_mcp = os.environ.get("BOX_AGENT_MCP_CONFIG_PATH", "").strip()
+        _user_mcp = (
+            state_path("config/mcp.json", Path(_host_mcp).expanduser())
+            if _host_mcp
+            else state_path("config/mcp.json")
+        )
         mcp_path = _user_mcp if _user_mcp.exists() else Config.find_config_file(config.tools.mcp_config_path)
     except Exception:
         mcp_path = None

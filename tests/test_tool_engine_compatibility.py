@@ -1,7 +1,7 @@
 """C1 characterization of the pre-Engine setup and Agent tool contract.
 
-The fixed C1 fixture remains intact. Only the enumerated C5 changes and the
-declared session-cwd description migration are applied before exact comparisons.
+The fixed C1/C5 fixtures remain intact. Enumerated C5 changes, session-cwd
+description changes and the connector search extension are applied before exact comparisons.
 Network/runtime discovery is isolated; setup, tools, stores and Agent are real.
 """
 
@@ -54,6 +54,11 @@ _C5_SCHEMA_CHANGES = json.loads(
 )
 _CWD_SCHEMA_CHANGES = json.loads(
     (Path(__file__).parent / "fixtures/tool_engine/session_cwd_schema_changes.json").read_text()
+)
+_CONNECTOR_SEARCH_SCHEMA = json.loads(
+    (Path(__file__).parent / "fixtures/tool_engine/connector_search_schema.json").read_text(
+        encoding="utf-8"
+    )
 )
 _C5_DISCOVERABLE = {
     "append_file", "query_jsonl", "bash_output", "bash_kill", "sandbox_status",
@@ -227,6 +232,8 @@ def _assert_schema_contract(tools, profile, *, child_read_tools=()):
                 target = target[key]
             assert target[field] == change["before"], (tool.name, change["path"])
             target[field] = change["after"]
+        if tool.name == "tool_search":
+            entry["schema"] = _CONNECTOR_SEARCH_SCHEMA
         if tool.name == "sub_agent":
             # This default is the one capability-dependent schema field. The
             # caller supplies the independently expected read set, never a set

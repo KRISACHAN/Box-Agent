@@ -8,6 +8,7 @@ interactive-CLI surface.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -339,10 +340,19 @@ async def initialize_base_tools(
             user_skills_dir = state_path('skills')
             user_skills_dir.mkdir(parents=True, exist_ok=True)
 
-            # User skills take priority on ordinary name conflicts. Runtime-
-            # contract skills such as roadmap remain canonical builtin entries.
+            # Connector companion skills are owned by the Connector lifecycle,
+            # not by the user-facing SkillHub. Keeping them in a separate source
+            # lets the host hide them from manual Skill management while the
+            # model can still discover and load their workflow guidance.
+            connector_skills_dir = state_path("connectors/skills")
+            connector_skills_dir.mkdir(parents=True, exist_ok=True)
+
+            # Preserve the existing user-over-builtin precedence. Connector
+            # companion skills are an additional middle source, so adding the
+            # source cannot replace an already installed user Skill.
             sources = [
                 (user_skills_dir, "user"),
+                (connector_skills_dir, "connector"),
                 (builtin_dir, "builtin"),
             ]
 
@@ -373,7 +383,8 @@ async def initialize_base_tools(
                         return 0
                     _out(
                         f"{Colors.GREEN}✅ Loaded Skill tool (get_skill) — "
-                        f"user: {user_skills_dir}, builtin: {builtin_dir} "
+                        f"connector: {connector_skills_dir}, user: {user_skills_dir}, "
+                        f"builtin: {builtin_dir} "
                         f"({len(skills)} skills){Colors.RESET}"
                     )
                     return len(skills)
@@ -385,7 +396,8 @@ async def initialize_base_tools(
                     tools.extend(skill_tools)
                     _out(
                         f"{Colors.GREEN}✅ Loaded Skill tool (get_skill) — "
-                        f"user: {user_skills_dir}, builtin: {builtin_dir}{Colors.RESET}"
+                        f"connector: {connector_skills_dir}, user: {user_skills_dir}, "
+                        f"builtin: {builtin_dir}{Colors.RESET}"
                     )
                 else:
                     _out(f"{Colors.YELLOW}⚠️  No available Skills found{Colors.RESET}")
@@ -404,22 +416,45 @@ async def initialize_base_tools(
         # Keep CLI and ACP on the same user-owned configuration. Reconcile the
         # hosted search endpoint and any MCP servers advertised by the frozen
         # runtime before background discovery starts.
-        configured_mcp = Path(config.tools.mcp_config_path).expanduser()
+        host_mcp_config = os.environ.get("BOX_AGENT_MCP_CONFIG_PATH", "").strip()
+        configured_mcp = Path(host_mcp_config or config.tools.mcp_config_path).expanduser()
         bootstrap_target = (
             configured_mcp
             if configured_mcp.is_absolute()
             else state_path('config/mcp.json')
         )
-        if configured_box_agent_home() is not None:
-            bootstrap_target = state_path("config/mcp.json", bootstrap_target)
-        bootstrap = bootstrap_managed_mcp_config(bootstrap_target)
-        if bootstrap.warning:
-            _out(f"{Colors.YELLOW}⚠️  {bootstrap.warning}{Colors.RESET}")
-        mcp_config_path = (
-            bootstrap.path
-            if bootstrap.path.exists()
-            else Config.find_config_file(config.tools.mcp_config_path)
-        )
+        if host_mcp_config:
+            if configured_box_agent_home() is not None:
+                bootstrap_target = state_path("config/mcp.json", bootstrap_target)
+            isolated_source_paths = [
+                (
+                    state_path("config/mcp.json", Path(value).expanduser())
+                    if configured_box_agent_home() is not None
+                    else Path(value).expanduser()
+                )
+                for value in (
+                    os.environ.get("BOX_AGENT_USER_MCP_CONFIG_PATH", "").strip(),
+                    os.environ.get("BOX_AGENT_SYSTEM_MCP_CONFIG_PATH", "").strip(),
+                    os.environ.get("BOX_AGENT_CONNECTOR_MCP_CONFIG_PATH", "").strip(),
+                )
+                if value
+            ]
+            mcp_config_path = (
+                bootstrap_target
+                if bootstrap_target.exists() or any(path.exists() for path in isolated_source_paths)
+                else None
+            )
+        else:
+            if configured_box_agent_home() is not None:
+                bootstrap_target = state_path("config/mcp.json", bootstrap_target)
+            bootstrap = bootstrap_managed_mcp_config(bootstrap_target)
+            if bootstrap.warning:
+                _out(f"{Colors.YELLOW}⚠️  {bootstrap.warning}{Colors.RESET}")
+            mcp_config_path = (
+                bootstrap.path
+                if bootstrap.path.exists()
+                else Config.find_config_file(config.tools.mcp_config_path)
+            )
         if mcp_config_path:
             get_mcp_tool_catalog().mark_loading()
             _out(f"{Colors.BRIGHT_CYAN}Loading MCP tools in background (from: {mcp_config_path})...{Colors.RESET}")
@@ -555,6 +590,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         llm=None, permission_engine: PermissionEngine | None = None,
                         skill_runtime_context: SkillRuntimeContext | None = None,
                         skill_loader=None, capability_state_provider=None,
+                        skill_access_filter=None,
                         env_context=None,
                         process_owner_id: str | None = None,
                         bypass_dangerous_command_approval: bool = False):
@@ -576,6 +612,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         skill_runtime_context: Runtime env to expose to subprocess-backed tools
         skill_loader: Current live SkillLoader for explicit child Skill selection
         capability_state_provider: Read-only callable returning MCP loading/ready state
+        skill_access_filter: Conversation-specific gate for child Skill selection
         process_owner_id: Optional ACP session identifier used to scope and
             reclaim background shell processes.
         bypass_dangerous_command_approval: Skip dangerous-command approval for
@@ -787,6 +824,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         )
         if skill_loader is not None:
             sub_agent_tool.set_skill_provider(lambda: skill_loader)
+        if skill_access_filter is not None:
+            sub_agent_tool.set_skill_access_filter(skill_access_filter)
         if capability_state_provider is not None:
             sub_agent_tool.set_capability_state_provider(capability_state_provider)
         tools.append(sub_agent_tool)

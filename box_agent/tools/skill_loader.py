@@ -17,13 +17,13 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 import yaml
 
 from box_agent.user_paths import state_path
 
-SkillSource = Literal["builtin", "user"]
+SkillSource = Literal["builtin", "connector", "user"]
 
 MANIFEST_FILENAME = "_manifest.json"
 RESERVED_BUILTIN_SKILL_NAMES = frozenset({"roadmap"})
@@ -118,6 +118,8 @@ class Skill:
     description: str
     content: str
     source: SkillSource = "builtin"
+    owner_id: Optional[str] = None
+    disabled: bool = False
     license: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -172,6 +174,8 @@ All files and references in this skill are relative to this directory.
             "name": self.name,
             "description": self.description,
             "source": self.source,
+            "ownerId": self.owner_id,
+            "disabled": self.disabled,
             "path": str(self.skill_path) if self.skill_path else None,
             "allowed_tools": self.allowed_tools or [],
             "required_skills": self.required_skills or [],
@@ -450,11 +454,26 @@ class SkillLoader:
                     ),
                 )
             )
+            owner_id = None
+            if source == "connector":
+                connector_dir = next(
+                    (
+                        parent.name
+                        for parent in skill_path.parents
+                        if parent.name.startswith("connector-")
+                    ),
+                    None,
+                )
+                if connector_dir:
+                    owner_id = connector_dir.removeprefix("connector-")
+
             return Skill(
                 name=frontmatter["name"],
                 description=frontmatter["description"],
                 content=processed_content,
                 source=source,
+                owner_id=owner_id,
+                disabled=source == "connector" and frontmatter.get("disable") is True,
                 license=frontmatter.get("license"),
                 allowed_tools=allowed_tools,
                 metadata=metadata,
@@ -563,7 +582,7 @@ class SkillLoader:
 
                 self._all_skills[skill.name] = skill
 
-                if skill.name in disabled_skill_names:
+                if skill.disabled or skill.name in disabled_skill_names:
                     self.loaded_skills.pop(skill.name, None)
                     continue
 
@@ -818,7 +837,12 @@ class SkillLoader:
         """List all loaded skill names."""
         return list(self._skill_pool(include_disabled=include_disabled).keys())
 
-    def list_skills_metadata(self, *, include_disabled: bool = False) -> List[Dict[str, object]]:
+    def list_skills_metadata(
+        self,
+        *,
+        include_disabled: bool = False,
+        include_connector: bool = True,
+    ) -> List[Dict[str, object]]:
         """Return structured metadata for every loaded skill.
 
         Intended for officev3 / ACP `_meta.skills` payloads.
@@ -826,6 +850,7 @@ class SkillLoader:
         return [
             skill.to_metadata_dict()
             for skill in self._skill_pool(include_disabled=include_disabled).values()
+            if include_connector or skill.source != "connector"
         ]
 
     def filter_by_query(
@@ -835,6 +860,7 @@ class SkillLoader:
         always_on: frozenset[str] = frozenset({"memory-guide"}),
         max_skills: int = 16,
         include_disabled: bool = False,
+        skill_filter: Callable[[Skill], bool] | None = None,
     ) -> List[Skill]:
         """Return skills relevant to ``query`` plus the always_on set.
 
@@ -849,7 +875,11 @@ class SkillLoader:
         This is intentional: greetings like "hi" / "你好" should NOT trigger
         the full skill catalog injection.
         """
-        skill_pool = self._skill_pool(include_disabled=include_disabled)
+        skill_pool = {
+            name: skill
+            for name, skill in self._skill_pool(include_disabled=include_disabled).items()
+            if skill_filter is None or skill_filter(skill)
+        }
         always_skills = [s for s in skill_pool.values() if s.name in always_on]
 
         if not query or not query.strip():
@@ -916,6 +946,7 @@ class SkillLoader:
         query: Optional[str] = None,
         *,
         include_disabled: bool = False,
+        skill_filter: Callable[[Skill], bool] | None = None,
     ) -> str:
         """Generate a metadata-only prompt for Progressive Disclosure Level 1.
 
@@ -924,7 +955,11 @@ class SkillLoader:
         ``None``, all loaded skills are listed (legacy behavior — kept so
         callers that have not adopted filtering still work).
         """
-        skill_pool = self._skill_pool(include_disabled=include_disabled)
+        skill_pool = {
+            name: skill
+            for name, skill in self._skill_pool(include_disabled=include_disabled).items()
+            if skill_filter is None or skill_filter(skill)
+        }
         if not skill_pool:
             return ""
 
@@ -934,6 +969,7 @@ class SkillLoader:
             skills_to_render = self.filter_by_query(
                 query,
                 include_disabled=include_disabled,
+                skill_filter=skill_filter,
             )
 
         prompt_parts = ["## Available Skills\n"]
@@ -1019,14 +1055,22 @@ class SkillSelector:
 
     SLOT = SKILL_SLOT_SENTINEL
 
-    def __init__(self, skill_loader: "SkillLoader", *, include_disabled: bool = False) -> None:
+    def __init__(
+        self,
+        skill_loader: "SkillLoader",
+        *,
+        include_disabled: bool = False,
+        skill_filter: Callable[[Skill], bool] | None = None,
+    ) -> None:
         self._loader = skill_loader
         self._include_disabled = include_disabled
+        self._skill_filter = skill_filter
         self._prefix: Optional[str] = None
         self._suffix: Optional[str] = None
         self._cumulative: List[str] = []
         self._last_sig: Tuple[str, ...] = ()
         self._last_matched_names: Tuple[str, ...] = ()
+        self._sticky_skill_names: Set[str] = set()
 
     @property
     def bound(self) -> bool:
@@ -1079,16 +1123,24 @@ class SkillSelector:
             sig: Tuple[str, ...] = ()
             matched_names: Tuple[str, ...] = ()
         else:
+            def visible(skill: Skill) -> bool:
+                return skill.name in self._sticky_skill_names or (
+                    self._skill_filter is None or self._skill_filter(skill)
+                )
+
             skills = self._loader.filter_by_query(
                 query,
                 include_disabled=self._include_disabled,
+                skill_filter=visible,
             )
             matched_names = tuple(s.name for s in skills)
+            self._sticky_skill_names.update(matched_names)
             sig = tuple(sorted(matched_names))
             if skills:
                 skills_md = self._loader.get_skills_metadata_prompt(
                     query=query,
                     include_disabled=self._include_disabled,
+                    skill_filter=visible,
                 )
             else:
                 skills_md = ""

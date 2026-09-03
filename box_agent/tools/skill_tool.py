@@ -6,12 +6,12 @@ Implements Progressive Disclosure (Level 2): Load full skill content when needed
 
 from pathlib import Path
 from hashlib import sha256
-from typing import Any, Dict, List, Literal, Mapping, MutableSet, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Mapping, MutableSet, Optional, Tuple
 
 from .base import Tool, ToolResult
 from .skill_loader import SkillLoader
 
-SkillSource = Literal["builtin", "user"]
+SkillSource = Literal["builtin", "connector", "user"]
 
 
 class GetSkillTool(Tool):
@@ -28,12 +28,14 @@ class GetSkillTool(Tool):
         preloaded_skill_hashes: Mapping[str, str] | None = None,
         blocked_skill_names: set[str] | frozenset[str] | None = None,
         explicitly_allowed_skill_names: MutableSet[str] | None = None,
+        skill_access_filter: Callable[[Any], bool] | None = None,
     ):
         self.skill_loader = skill_loader
         self.include_disabled = include_disabled
         self.preloaded_skill_hashes = preloaded_skill_hashes
         self.blocked_skill_names = blocked_skill_names or frozenset()
         self.explicitly_allowed_skill_names = explicitly_allowed_skill_names
+        self.skill_access_filter = skill_access_filter
 
     @property
     def name(self) -> str:
@@ -98,6 +100,16 @@ class GetSkillTool(Tool):
                 error=f"Skill '{skill_name}' does not exist. Available skills: {available}",
             )
 
+        if self.skill_access_filter is not None and not self.skill_access_filter(skill):
+            return ToolResult(
+                success=False,
+                content="",
+                error=(
+                    f"Skill '{skill.name}' is not enabled for this conversation. "
+                    "Connector Skills can only be enabled through the conversation connector picker."
+                ),
+            )
+
         # A broken skill (SKILL.md present but unparseable) returns a
         # diagnostic prompt so the model doesn't invent guidance from a
         # directory name it can't verify. Success is True — this is a real
@@ -137,7 +149,7 @@ def create_skill_tools(
     Args:
         skills_dir: Legacy single-directory entry (treated as builtin).
         sources: Ordered list of (directory, source_label) tuples. Earlier entries
-            win on name conflicts (e.g. user → builtin).
+            win on name conflicts (e.g. user → connector → builtin).
         defer_discovery: If True, skip the inline ``discover_skills()`` call
             and let the caller schedule discovery on a background task. The
             returned ``GetSkillTool`` still binds to the loader — once the
