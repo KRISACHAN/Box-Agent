@@ -98,6 +98,7 @@ def build_agent(
     session_log: Any = _UNSET,
     enable_builtin_tools: bool | object = _UNSET,
     skill_runtime: Any = _UNSET,
+    session_id: str | None = None,
     agent_factory: AgentFactory = Agent,
 ) -> Agent:
     """Construct an Agent while keeping adapter-specific state outside it.
@@ -141,6 +142,8 @@ def build_agent(
         kwargs["enable_builtin_tools"] = enable_builtin_tools
     if skill_runtime is not _UNSET:
         kwargs["skill_runtime"] = skill_runtime
+    if session_id is not None:
+        kwargs["session_id"] = session_id
     return agent_factory(**kwargs)
 
 

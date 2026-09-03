@@ -32,6 +32,27 @@ def test_session_log_rejects_second_writer_until_owner_closes(tmp_path):
     successor.close()
 
 
+def test_open_or_create_reports_new_then_resumed_session(tmp_path):
+    first = SessionLog.open_or_create(
+        tmp_path,
+        session_id="open-or-create",
+        cwd=tmp_path,
+        origin="cli",
+    )
+    assert first.resumed is False
+    first.log.close()
+
+    second = SessionLog.open_or_create(
+        tmp_path,
+        session_id="open-or-create",
+        cwd=tmp_path,
+        origin="acp",
+    )
+    assert second.resumed is True
+    assert second.log.header["origin"] == "cli"
+    second.log.close()
+
+
 def test_session_log_writer_ownership_is_released_when_process_exits(tmp_path):
     created = SessionLog.create(
         tmp_path,
@@ -371,6 +392,33 @@ def test_surface_replacement_restores_compacted_context_without_deleting_history
     assert [event["type"] for event in restored.events] == [
         "user/message",
         "assistant/message",
+        "user/message",
+    ]
+    restored.close()
+
+
+def test_surface_reset_clears_replayed_surface_without_deleting_audit_history(tmp_path):
+    log = SessionLog.create(tmp_path, session_id="reset", cwd=tmp_path)
+    log.append(
+        "user/message",
+        Message(role="user", content="before reset").model_dump(mode="json"),
+        surface_op="append",
+    )
+    log.reset_surface(reason="cli_clear")
+    log.append(
+        "user/message",
+        Message(role="user", content="after reset").model_dump(mode="json"),
+        surface_op="append",
+    )
+    log.close()
+
+    restored = SessionLog.open(tmp_path, session_id="reset", cwd=tmp_path)
+    assert restored.replay().messages == [
+        Message(role="user", content="after reset")
+    ]
+    assert [event["type"] for event in restored.events] == [
+        "user/message",
+        "surface/reset",
         "user/message",
     ]
     restored.close()

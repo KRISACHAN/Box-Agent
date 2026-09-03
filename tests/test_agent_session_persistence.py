@@ -109,6 +109,38 @@ async def test_agent_persists_request_before_provider_and_restores_messages(tmp_
     restored.close()
 
 
+def test_agent_clear_history_persists_surface_reset(tmp_path):
+    sessions = tmp_path / "sessions"
+    log = SessionLog.create(sessions, session_id="clear-session", cwd=tmp_path)
+    agent = Agent(
+        llm_client=_CheckpointInspectingLLM(log.path),
+        system_prompt="system",
+        tools=[],
+        workspace_dir=str(tmp_path),
+        deferred_mcp_loading_enabled=False,
+        session_log=log,
+    )
+    agent.add_user_message("remove me")
+    assert agent.clear_history() == 1
+    log.append(
+        "user/message",
+        Message(role="user", content="keep me").model_dump(mode="json"),
+        surface_op="append",
+    )
+    log.flush()
+    log.close()
+
+    restored_log = SessionLog.open(
+        sessions,
+        session_id="clear-session",
+        cwd=tmp_path,
+    )
+    assert [message.content for message in restored_log.replay().messages] == [
+        "keep me"
+    ]
+    restored_log.close()
+
+
 class _ToolCallingLLM:
     model = "test-model"
     max_output_tokens = 1024

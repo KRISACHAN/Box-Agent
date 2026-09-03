@@ -23,6 +23,7 @@ from box_agent.tools.setup import add_workspace_tools
 from box_agent.tools.skill_tool import GetSkillTool
 from box_agent.workspace_registry import WorkspaceRegistry
 from tests.architecture_imports import forbidden_adapter_layer_imports
+from box_agent.session_log import SessionLog
 
 
 def _make_executable(path: Path) -> None:
@@ -230,6 +231,88 @@ class _CaptureStreamLLM:
         self.system_prompts.append(messages[0].content)
         yield StreamEvent(type="text", delta="done.")
         yield StreamEvent(type="finish", finish_reason="stop")
+
+
+def test_cli_resumes_messages_from_session_log(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_key: test\n", encoding="utf-8")
+    system_prompt_path = tmp_path / "system_prompt.md"
+    system_prompt_path.write_text("base system", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=2,
+            workspace_dir=str(workspace),
+            enable_memory=False,
+            enable_memory_extraction=False,
+            memory_maintainer_enabled=False,
+            memory_promotion_proposal_enabled=False,
+            system_prompt_path=str(system_prompt_path),
+        ),
+        tools=ToolsConfig(
+            enable_file_tools=False,
+            enable_bash=False,
+            enable_todo=False,
+            enable_plan=False,
+            enable_sub_agent=False,
+            enable_mcp=False,
+            enable_skills=False,
+            allow_full_access=True,
+        ),
+    )
+
+    async def fake_initialize_base_tools(*args, **kwargs):
+        return [], None, None, None
+
+    monkeypatch.setattr(
+        cli.Config,
+        "get_default_config_path",
+        staticmethod(lambda: config_path),
+    )
+    monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
+    monkeypatch.setattr(
+        cli.Config,
+        "find_config_file",
+        staticmethod(
+            lambda name: Path(name) if name == str(system_prompt_path) else None
+        ),
+    )
+    monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
+    monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
+    monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
+    _CaptureStreamLLM.instances.clear()
+
+    for prompt in ("first request", "second request"):
+        assert (
+            asyncio.run(
+                cli.run_agent(
+                    workspace,
+                    task=prompt,
+                    session_id="cli-resume",
+                    sandbox_mode=False,
+                    verify_api=False,
+                    goal_autopilot_enabled=False,
+                )
+            )
+            == 0
+        )
+
+    restored = SessionLog.open(
+        tmp_path / "home" / ".box-agent" / "sessions",
+        session_id="cli-resume",
+        cwd=workspace,
+    )
+    assert [
+        (message.role, message.content) for message in restored.replay().messages
+    ] == [
+        ("user", "first request"),
+        ("assistant", "done."),
+        ("user", "second request"),
+        ("assistant", "done."),
+    ]
+    restored.close()
 
 
 class _PreloadedSkillThenGetSkillLLM(_CaptureStreamLLM):
