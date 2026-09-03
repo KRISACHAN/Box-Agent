@@ -329,13 +329,24 @@ box-agent install-node      # install managed Node.js runtime for skills (macOS)
 
 Run `box-agent trace-viewer` to open the packaged, offline developer viewer. Open `~/.box-agent/log/sessions/` for a newest-first overview of every trace, then select one run to inspect per-turn metrics, LLM/tool waterfalls, raw events, and the complete system → user → assistant/tool → final-response chain. You can still open one `.jsonl` file directly.
 
+Choose **Compare sources** to compare equivalent runs from any number of sources. The selected root uses source directories directly, without an extra data-directory level:
+
+```text
+comparison-traces/
+  baseline/*.jsonl
+  current/*.jsonl
+  candidate-x/*.jsonl
+```
+
+The viewer groups traces by normalized `turn.input` first and may use a compatible normalized filename when input is missing or non-conflicting. It keeps repeated runs per source selectable, shows each source side by side, and calculates duration, call, token, and error deltas against the selected reference source.
+
 If an embedded browser does not expose the native file picker, run the loopback-only service and enter the trace directory path in the page:
 
 ```bash
 uv run python -m box_agent.trace_viewer.server --port 8766
 ```
 
-The offline page reads files in the browser. Service mode reads only top-level `.jsonl` files from the directory you enter, checks their metadata once per second, and refreshes the ledger when files are added or changed; trace bodies are transferred over `127.0.0.1` only when that metadata changes. The service rejects requests whose `Host` or `Origin` is not its exact loopback authority, preventing a rebinding site from reading local traces. Neither mode makes external network requests. Chromium and Edge can keep following appended records after you grant a file handle; drag/drop and ordinary file inputs load a snapshot. Session traces may contain prompts, tool arguments, outputs, and business data—handle them as sensitive diagnostic artifacts.
+The offline page reads files in the browser. In ledger mode, the service reads only top-level `.jsonl` files from the directory you enter. In comparison mode, it reads top-level `.jsonl` files from each immediate non-symlink source directory and goes no deeper. It checks metadata once per second and refreshes the active view when files are added or changed; trace bodies are transferred over `127.0.0.1` only when that metadata changes. The service rejects requests whose `Host` or `Origin` is not its exact loopback authority, preventing a rebinding site from reading local traces. Neither mode makes external network requests. Chromium and Edge can keep following appended records after you grant a file handle; drag/drop and ordinary file inputs load a snapshot. Session traces may contain prompts, tool arguments, outputs, and business data—handle them as sensitive diagnostic artifacts.
 
 ### Browser automation (optional)
 

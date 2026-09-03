@@ -99,6 +99,22 @@ def test_viewer_document_exposes_directory_overview_and_dismissible_inspector() 
     } <= document.ids
 
 
+def test_viewer_document_exposes_multi_source_comparison_navigation() -> None:
+    """Removing the comparison entry point or result grid must break the UI contract."""
+
+    document = _viewer_document()
+
+    assert {
+        "compare-sources",
+        "comparison-view",
+        "comparison-grid",
+        "comparison-empty",
+        "comparison-source-count",
+        "comparison-input-count",
+        "reference-source",
+    } <= document.ids
+
+
 def test_viewer_document_loads_only_local_assets_and_connects_only_to_its_service() -> None:
     """Adding a remote asset or connection target must fail the local-only boundary."""
 

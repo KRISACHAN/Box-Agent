@@ -1,7 +1,7 @@
 # Agent Trace Viewer Design
 
 Date: 2026-08-20
-Status: Implemented on `syy/agent-trace-viewer`; pending review
+Status: Implemented; multi-source comparison extended on 2026-09-04
 
 ## Goal
 
@@ -27,6 +27,10 @@ The viewer is a local diagnostic tool, not an end-user execution UI.
   best-effort live following on browsers that implement the File System Access
   API. Loopback service mode refreshes a selected directory when trace metadata
   changes.
+- It supports N-way trace comparison from a source root whose immediate child
+  directories are sources. Equivalent runs are matched by normalized input
+  first, with compatible filenames as a fallback, and repeated runs stay
+  selectable per source.
 - Waterfall and conversation-chain views coexist. The conversation chain is
   ordered vertically as system/context, user, assistant response, nested tool
   calls/results, subsequent assistant responses, and final response.
@@ -65,6 +69,9 @@ graph was generated from an older baseline.
   `.jsonl` trace with aggregate duration, turn, call, token, and error metrics.
 - In loopback service mode, accept an explicit local directory path and refresh
   the ledger when files are added or changed.
+- Open an explicit comparison root organized as `root / source / trace.jsonl`,
+  group equal normalized first-turn inputs across any number of sources, and
+  show duration, call, token, and error deltas against a selected reference.
 - Parse records incrementally by line, preserve file order, and report invalid
   lines without discarding valid records.
 - Select a turn and show summary metrics: status, duration, LLM/tool counts,
@@ -88,7 +95,8 @@ graph was generated from an older baseline.
 
 - Automatic discovery or implicit selection of `~/.box-agent/log/sessions`;
   users must explicitly choose or enter a directory.
-- Recursive directory traversal or aggregation across unrelated directories.
+- Unbounded recursive traversal or aggregation outside the explicitly selected
+  root. Comparison mode reads exactly one source-directory level.
 - Multi-user access, authentication, shared links, or cloud persistence.
 - Editing, replaying, or resuming an agent run.
 - OpenTelemetry export or compatibility with arbitrary third-party traces.
@@ -129,9 +137,11 @@ uv run python -m box_agent.trace_viewer.server --port 8766
 ```
 
 The service binds only to `127.0.0.1`/`localhost`. It accepts a directory path
-from the local page, reads only non-symlink top-level `.jsonl` files, limits an
-individual trace to 50 MiB and a directory response to 200 MiB, and never
-writes to the selected directory.
+from the local page. Ledger mode reads only non-symlink top-level `.jsonl`
+files; comparison mode reads top-level `.jsonl` files from immediate
+non-symlink source directories and goes no deeper. Both modes limit an
+individual trace to 50 MiB and a root response to 200 MiB, and never write to
+the selected directory.
 
 The assets are added to setuptools package data. Frozen-runtime inclusion and
 host installation remain a separate deployment boundary and must be verified
@@ -160,7 +170,28 @@ TraceCatalog
     file metadata
     TraceSession
     aggregate summary
+
+TraceComparison
+  sources[]
+  groups[]                    normalized input or compatible filename identity
+    source -> runs[]          newest first; one selected per source
+    reference source
+    summary deltas            duration, calls, tokens, errors
 ```
+
+### Comparison matching
+
+- The first `turn.input` is normalized for line endings and surrounding
+  whitespace and is the primary identity. Structured input is serialized with
+  stable key order.
+- A normalized filename may group runs when input is absent or compatible.
+  Source-name tokens and common UUID, hex, and run suffixes are ignored.
+- A filename never overrides conflicting non-empty inputs. Such traces remain
+  separate groups.
+- Multiple runs from one source remain in the group, sorted newest-first, and
+  the UI lets the user select the run used for that source lane.
+- The number of source lanes is dynamic. Deltas are recalculated whenever the
+  reference source or selected run changes.
 
 ### Parsing rules
 
@@ -263,10 +294,12 @@ The ordinary `<input type="file">` and drag/drop paths load immutable browser
 snapshots. The UI labels these as `snapshot`; it does not promise live updates.
 Polling stops when the page is hidden and resumes when visible.
 
-In loopback service mode, the page polls top-level file name, size, and modified
-time once per second. It requests full trace bodies only when that metadata
-revision changes, then rebuilds the ledger. This is directory-level live
-refresh, distinct from byte-offset following of an individual file handle.
+In loopback service mode, the page polls file identity, size, and modified time
+once per second. Flat mode uses the top-level filename; comparison mode includes
+the source-relative path so same-named files remain distinct. It requests full
+trace bodies only when that metadata revision changes, then rebuilds the active
+ledger or comparison. This is directory-level live refresh, distinct from
+byte-offset following of an individual file handle.
 
 ## Security and privacy
 
@@ -284,8 +317,9 @@ refresh, distinct from byte-offset following of an individual file handle.
   outputs may still contain sensitive business data.
 - The service rejects non-loopback bind addresses and requests whose `Host` or
   `Origin` does not match its exact loopback authority. It ignores symlinks and
-  nested files, applies request/file/directory size bounds, and exposes no
-  write, replay, delete, or arbitrary-file endpoint.
+  files deeper than the selected mode's bounded depth, applies
+  request/file/root size bounds, and exposes no write, replay, delete, or
+  arbitrary-file endpoint.
 
 ## Error handling
 
@@ -311,10 +345,13 @@ refresh, distinct from byte-offset following of an individual file handle.
   - duration and token aggregation;
   - conversation ordering and final-response deduplication;
   - nested tool association;
+  - N-way input matching, compatible filename fallback, input-conflict
+    isolation, repeated-run ordering, and comparison deltas;
   - HTML-like payloads retained as plain strings.
 - Pytest checks for CLI parsing/dispatch, config-independent launch, package
   data presence, the no-external-resource/CSP contract, loopback binding,
-  directory filtering and limits, malformed requests, and metadata-only live
+  directory filtering and limits, bounded comparison-source scanning,
+  same-name source identity, malformed requests, and metadata-only live
   refresh.
 - Existing focused session-trace and CLI tests remain green.
 
@@ -328,6 +365,9 @@ behavior check.
 - Open a representative trace in Chromium/Edge.
 - Open a representative directory and verify newest-first aggregate rows,
   drill-down, inspector dismissal, and automatic discovery of an added trace.
+- Open a comparison root with at least two sources, verify same-input grouping,
+  repeated-run selection, reference-source deltas, N-way horizontal layout,
+  detail drill-down, and return-state preservation.
 - Verify waterfall, conversation ordering, filters, inspector, and raw JSON.
 - Append complete and partial JSONL lines while follow mode is enabled.
 - Verify a malicious-looking payload such as `<img onerror=...>` is displayed
@@ -351,6 +391,15 @@ and the default trace location:
 ~/.box-agent/log/sessions/*.jsonl
 ```
 
+Comparison roots use source directories directly:
+
+```text
+comparison-traces/
+  baseline/*.jsonl
+  current/*.jsonl
+  candidate-x/*.jsonl
+```
+
 The feature is additive. It reads `box-agent-session-trace/v1` without changing
 the writer contract. Unknown future fields are preserved. The loopback service
 adds a local developer entry point but no ACP or provider protocol. Any later
@@ -359,9 +408,9 @@ design and producer/consumer tests.
 
 ## Implementation boundary
 
-Expected implementation changes are limited to the new viewer assets, a thin
-CLI launch path, the optional loopback directory service, package-data
-configuration, focused tests, and user-facing documentation. The agent loop,
-trace writer, providers, ACP translation, and stable kernel remain unchanged
-unless implementation discovers a demonstrated v1 data gap that blocks an
-approved MVP requirement.
+Expected implementation changes are limited to the viewer assets, pure
+comparison-model helpers, a thin CLI launch path, the optional loopback
+directory service, package-data configuration, focused tests, and user-facing
+documentation. The agent loop, trace writer, providers, ACP translation, and
+stable kernel remain unchanged unless implementation discovers a demonstrated
+v1 data gap that blocks an approved requirement.

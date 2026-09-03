@@ -215,6 +215,110 @@ test("directoryEntriesRevision changes only when directory metadata changes", ()
   );
 });
 
+test("indexComparisonEntries groups equal inputs across any number of sources", async () => {
+  function trace(name, sourceName, content, lastModified) {
+    const text = [
+      '{"timestamp":"2026-08-20T10:00:00Z","event":"session.start","session_id":"s"}',
+      JSON.stringify({
+        timestamp: "2026-08-20T10:00:01Z",
+        event: "turn.input",
+        session_id: "s",
+        turn_id: "t",
+        data: { content },
+      }),
+      '{"timestamp":"2026-08-20T10:00:02Z","event":"turn.output","session_id":"s","turn_id":"t","data":{"content":"done","stop_reason":"end_turn"}}',
+      '{"timestamp":"2026-08-20T10:00:03Z","event":"turn.end","session_id":"s","turn_id":"t","data":{"duration_ms":2000,"stop_reason":"end_turn","usage":{"total_tokens":10}}}',
+    ].join("\n");
+    return {
+      sourceName,
+      relativePath: `${sourceName}/${name}`,
+      file: {
+        name,
+        size: Buffer.byteLength(text),
+        lastModified,
+        text: async () => text,
+      },
+    };
+  }
+
+  const indexed = await model.indexComparisonEntries([
+    trace("baseline-run.jsonl", "baseline", "  same prompt\r\n", 1000),
+    trace("current-run.jsonl", "current", "same prompt", 2000),
+    trace("candidate-run.jsonl", "candidate", "same prompt", 3000),
+  ], 1024 * 1024);
+
+  assert.equal(indexed.skipped.length, 0);
+  assert.deepEqual(indexed.sources, ["baseline", "candidate", "current"]);
+  assert.equal(indexed.groups.length, 1);
+  assert.equal(indexed.groups[0].inputPreview, "same prompt");
+  assert.deepEqual(Object.keys(indexed.groups[0].sources), [
+    "baseline",
+    "candidate",
+    "current",
+  ]);
+});
+
+test("comparison matching uses logical file names only when inputs do not conflict", () => {
+  const summaries = [
+    {
+      sourceName: "baseline", fileName: "e2e-baseline-Q64-aaaaaaaa.jsonl",
+      inputKey: "", inputPreview: "", lastModified: 1000,
+    },
+    {
+      sourceName: "current", fileName: "e2e-current-Q64-bbbbbbbb.jsonl",
+      inputKey: "prompt-a", inputPreview: "prompt-a", lastModified: 3000,
+    },
+    {
+      sourceName: "candidate", fileName: "e2e-candidate-Q64-cccccccc.jsonl",
+      inputKey: "prompt-b", inputPreview: "prompt-b", lastModified: 2000,
+    },
+  ];
+
+  const groups = model.groupComparisonSummaries(summaries);
+
+  assert.equal(groups.length, 2);
+  assert.deepEqual(Object.keys(groups[0].sources), ["baseline", "current"]);
+  assert.deepEqual(Object.keys(groups[1].sources), ["candidate"]);
+});
+
+test("comparison groups retain repeat runs newest first and calculate deltas", () => {
+  const groups = model.groupComparisonSummaries([
+    {
+      sourceName: "baseline", fileName: "case.jsonl", inputKey: "same",
+      inputPreview: "same", lastModified: 1000, durationMs: 5000,
+      llmCalls: 4, toolCalls: 3, totalTokens: 100, errorCount: 2,
+    },
+    {
+      sourceName: "current", fileName: "case-old.jsonl", inputKey: "same",
+      inputPreview: "same", lastModified: 2000, durationMs: 4500,
+      llmCalls: 4, toolCalls: 2, totalTokens: 90, errorCount: 1,
+    },
+    {
+      sourceName: "current", fileName: "case-new.jsonl", inputKey: "same",
+      inputPreview: "same", lastModified: 3000, durationMs: 3000,
+      llmCalls: 3, toolCalls: 2, totalTokens: 80, errorCount: 0,
+    },
+  ]);
+
+  assert.deepEqual(
+    groups[0].sources.current.map((trace) => trace.fileName),
+    ["case-new.jsonl", "case-old.jsonl"],
+  );
+  assert.deepEqual(
+    model.compareTraceSummaries(
+      groups[0].sources.baseline[0],
+      groups[0].sources.current[0],
+    ),
+    {
+      durationMs: -2000,
+      llmCalls: -1,
+      toolCalls: -1,
+      totalTokens: -20,
+      errorCount: -2,
+    },
+  );
+});
+
 test("createDirectoryPoller refreshes immediately and on interval ticks", async () => {
   const refreshes = [];
   const scheduled = [];
