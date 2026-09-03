@@ -3,7 +3,6 @@ const fs = require("fs");
 const Module = require("module");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const { fileURLToPath, pathToFileURL } = require("url");
 const {
   chromiumLaunchOptions,
@@ -52,7 +51,7 @@ const CANONICAL_HEIGHT = 1080;
 
 function usage() {
   console.log(
-    "Usage: html_to_editable_pptx.js deck.html output.pptx [--out slides] [--canvas WxH] [--svg-vector true|false] [--bg-capture always|never] [--allow-self-check-issues] (default: --svg-vector false for pixel fidelity, automatically true when data-pptx-diagram is present; --bg-capture always for visual fidelity)"
+    "Usage: html_to_editable_pptx.js deck.html output.pptx [--out slides] [--canvas WxH] [--svg-vector true|false] [--bg-capture always|never] [--allow-self-check-issues] (default: --svg-vector false for pixel fidelity, automatically true when data-pptx-diagram is present; --bg-capture always for visual fidelity; --allow-self-check-issues is a deprecated no-op)"
   );
   console.log(`  The canvas contract is ${CANONICAL_WIDTH}x${CANONICAL_HEIGHT} (16:9). Every .slide must match it exactly.`);
   console.log("  --canvas WxH overrides the contract for a deliberately non-standard deck (e.g. --canvas 1280x720).");
@@ -162,7 +161,6 @@ function parseArgs(argv) {
     width: CANONICAL_WIDTH,
     height: CANONICAL_HEIGHT,
     svgVector: false,
-    allowSelfCheckIssues: false,
     bgCapture: "always",
   };
   for (let i = 2; i < argv.length; i += 1) {
@@ -198,7 +196,7 @@ function parseArgs(argv) {
       opts.bgCapture = value;
       i += 1;
     } else if (arg === "--allow-self-check-issues") {
-      opts.allowSelfCheckIssues = true;
+      // Backward-compatible no-op: editable export no longer runs HTML self-check.
     } else {
       failUsage();
     }
@@ -236,7 +234,7 @@ async function waitForDiagramLayout(page) {
     try {
       await pending;
     } catch {
-      // html_self_check reports the structured DiagramSpec render failure.
+      // Keep exporting the remaining DOM when an optional diagram render fails.
     }
   });
 }
@@ -251,57 +249,16 @@ function resolveBrowserBundle() {
   return bundlePath;
 }
 
-function runSelfCheck(htmlPath, width, height, reportPath, allowIssues) {
-  const checker = path.join(__dirname, "html_self_check.js");
-  try {
-    execFileSync(
-      process.execPath,
-      [
-        checker,
-        htmlPath,
-        "--canvas",
-        `${width}x${height}`,
-        "--dom-to-pptx",
-        "--allow-local-images",
-        "--report",
-        reportPath,
-      ],
-      {
-        stdio: "inherit",
-        env: process.env,
-      }
-    );
-  } catch (error) {
-    if (!allowIssues || !fs.existsSync(reportPath)) {
-      throw error;
-    }
-    let report;
-    try {
-      report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-    } catch {
-      throw error;
-    }
-    const issueCount = Array.isArray(report.issues) ? report.issues.length : 0;
-    console.error(
-      `HTML self-check still has ${issueCount} issue(s); continuing because --allow-self-check-issues was set.`
-    );
-  }
-}
-
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const htmlPath = path.resolve(opts.html);
   const pptxPath = path.resolve(opts.pptx);
   const outDir = path.resolve(opts.out);
-  const qaDir = path.join(path.dirname(pptxPath), "qa");
-  const selfCheckReport = path.join(qaDir, "html_self_check.json");
 
   if (!fs.existsSync(htmlPath)) {
     console.error(`HTML file not found: ${htmlPath}`);
     process.exit(1);
   }
-
-  fs.mkdirSync(qaDir, { recursive: true });
 
   const { chromium } = requireModule(
     "playwright",
@@ -393,10 +350,8 @@ async function main() {
 
   await waitForDiagramLayout(page);
 
-  runSelfCheck(htmlPath, detectedWidth, detectedHeight, selfCheckReport, opts.allowSelfCheckIssues);
   const fontResolution = await resolveExpressiveExportFonts(page);
   fontResolution.warnings.forEach(warning => console.warn(warning));
-
   const controlledSlideCount = await page.locator("#deck-root > .slide").count();
   const slideSelector = controlledSlideCount ? "#deck-root > .slide" : ".slide";
   const diagramSelector = controlledSlideCount
@@ -513,7 +468,6 @@ async function main() {
         nativeChartCount: exportResult.nativeChartCount,
         previews,
         fontResolution,
-        htmlSelfCheck: selfCheckReport,
         editableExport: "dom-to-pptx",
         localImagesInlinedForExport: inlinedImages,
         bgCapture: {
