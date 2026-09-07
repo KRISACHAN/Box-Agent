@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { createEditorProps } = require("../layouts/registry.js");
+const { createEditorProps, getLayout } = require("../layouts/registry.js");
 const {
   createDeckDesign,
   getTheme,
@@ -14,6 +14,7 @@ const {
   validateAndNormalizeDeck,
 } = require("./deck_spec_core.js");
 const { renderDocument } = require("./render_deck_html.js");
+const { preferredComposition } = require("../runtime/presentation-system.js");
 
 const DEFAULT_PREVIEW_THEME_IDS = Object.freeze([
   "technical-blueprint",
@@ -29,6 +30,11 @@ const DEFAULT_PREVIEW_THEME_IDS = Object.freeze([
   "block-frame-mono-blue",
   "retro-windows",
   "soft-editorial",
+  "impact-field",
+  "stadium-score",
+  "destination-atlas",
+  "tasting-menu",
+  "sketch-whiteboard",
 ]);
 
 function parseArgs(argv) {
@@ -108,7 +114,100 @@ function previewDeck(theme) {
   let middleSlide = { id: "preview-content", layout_id: "cards-grid-v1", props: cards };
   let finalSlide = { id: "preview-chart", layout_id: "chart-data-v1", props: chart };
 
-  if (theme.id === "technical-blueprint") {
+  if (theme.id === "sketch-whiteboard") {
+    Object.assign(cover, {
+      title: "把想法画出来，再一起讲清楚", subtitle: "手绘白板 · 头脑风暴与概念讲解",
+      eyebrow: "SKETCH / DISCUSS / TRY", meta: "手画笔触 · 可编辑文字 · 一起完善",
+    });
+    Object.assign(cards, {
+      eyebrow: "先观察，再动手", title: "三个问题，把讨论往前推", subtitle: "边框可以随性，信息要清楚。",
+      items: [
+        { kicker: "观察", title: "遇到了什么？", body: "用具体例子描述问题，把事实和猜测分开。" },
+        { kicker: "构思", title: "可以怎么做？", body: "先展开几种可能，圈出值得讨论的关键点。" },
+        { kicker: "验证", title: "先试哪一步？", body: "选一个小实验，写清负责人和反馈方式。" },
+      ],
+    });
+    const comparison = createEditorProps("comparison-two-column-v1");
+    Object.assign(comparison, {
+      eyebrow: "从便签到实验", title: "让模糊的点子，变成具体行动",
+      left: { label: "想法", title: "现在的假设", items: ["用户需要更清楚的下一步", "我们还不知道哪种提示有效"], footer: "先把不确定的地方圈出来" },
+      right: { label: "行动", title: "一个小实验", items: ["画出两种提示草图", "请用户试用，记录真实反馈"], footer: "用观察结果继续修改" },
+    });
+    finalSlide = { id: "preview-sketch-action", layout_id: "comparison-two-column-v1", props: comparison };
+  } else if (theme.id === "impact-field") {
+    Object.assign(cover, { title: "让减排进展可追溯", subtitle: "可持续发展报告 · 场景示例" });
+    Object.assign(cards, {
+      eyebrow: "MEASURE / ACT / REVIEW", title: "从核算边界到行动记录", subtitle: "先明确口径，再呈现进展。",
+      items: [
+        { kicker: "核算", title: "定义基准", body: "说明报告周期、组织边界与计量单位。" },
+        { kicker: "行动", title: "资源循环", body: "展示能源、材料与供应链的改善措施。" },
+        { kicker: "复核", title: "证据记录", body: "分别标注已核实结果、目标与待核验内容。" },
+      ],
+    });
+    Object.assign(chart, {
+      title: "同一口径比较基准与目标", subtitle: "排放强度指数 · 基准年 = 100 · 仅为布局示意",
+      categories: ["能源", "运输", "材料"], series: [{ name: "基准", values: ["100", "100", "100"] }, { name: "目标", values: ["75", "85", "80"] }],
+      insight: "目标值不代表已经实现的减排成果。", source: "示意数据，非真实企业披露",
+    });
+  } else if (theme.id === "stadium-score") {
+    Object.assign(cover, { title: "每一回合，都有进步", subtitle: "赛事复盘与训练总结 · 场景示例" });
+    const kpis = createEditorProps("kpi-grid-v1");
+    Object.assign(kpis, {
+      title: "比赛表现速览", subtitle: "示意数据，非真实赛果",
+      items: [
+        { label: "得分", value: "86", detail: "呈现本场核心结果。", delta: "" },
+        { label: "助攻", value: "24", detail: "观察团队配合质量。", delta: "" },
+        { label: "篮板", value: "42", detail: "回看攻防回合表现。", delta: "" },
+      ],
+    });
+    middleSlide = { id: "preview-score", layout_id: "kpi-grid-v1", props: kpis };
+    Object.assign(cards, {
+      title: "复盘落到训练动作", subtitle: "把观察转化为下一次训练的重点。",
+      items: [
+        { kicker: "进攻", title: "出球选择", body: "用关键回合解释传球和投篮决策。" },
+        { kicker: "防守", title: "转换落位", body: "从回放记录中寻找重复出现的问题。" },
+        { kicker: "训练", title: "专项练习", body: "为下一阶段明确动作、负责人和复测条件。" },
+      ],
+    });
+    finalSlide = { id: "preview-review", layout_id: "cards-grid-v1", props: cards };
+  } else if (theme.id === "destination-atlas") {
+    Object.assign(cover, { title: "沿着海岸，读懂一座城", subtitle: "文旅推介与城市漫游 · 概念路线示例" });
+    Object.assign(cards, {
+      title: "一条路线，三种记忆", subtitle: "以真实目的地资料替换以下概念节点。",
+      items: [
+        { kicker: "街巷", title: "旧城漫步", body: "沿街区纹理认识城市的日常生活。" },
+        { kicker: "文化", title: "地方展馆", body: "让藏品、工艺与在地故事互相呼应。" },
+        { kicker: "海岸", title: "滨水慢行", body: "用开阔风景收束一天的城市体验。" },
+      ],
+    });
+    const route = createEditorProps("timeline-horizontal-v1");
+    Object.assign(route, {
+      title: "一天的行程节奏", subtitle: "示例顺序，不代表已核实交通或开放时间",
+      steps: [
+        { phase: "上午", title: "街区", body: "步行探索与在地早餐。" },
+        { phase: "午后", title: "展馆", body: "文化体验与短暂停留。" },
+        { phase: "傍晚", title: "海岸", body: "滨水慢行与落日观景。" },
+      ],
+    });
+    finalSlide = { id: "preview-route", layout_id: "timeline-horizontal-v1", props: route };
+  } else if (theme.id === "tasting-menu") {
+    Object.assign(cover, { title: "把季节，端上餐桌", subtitle: "餐饮品牌与风味故事 · 概念菜单示例" });
+    Object.assign(cards, {
+      title: "一道菜的三层表达", subtitle: "从食材来源讲到餐桌体验。",
+      items: [
+        { kicker: "食材", title: "当季选择", body: "说明食材来源、季节特点与替换原则。" },
+        { kicker: "手艺", title: "烹饪表达", body: "用简短文字讲清技法与口感层次。" },
+        { kicker: "体验", title: "上菜节奏", body: "让器皿、服务与空间共同支持品牌故事。" },
+      ],
+    });
+    const menu = createEditorProps("comparison-two-column-v1");
+    Object.assign(menu, {
+      title: "两种餐桌体验", eyebrow: "MENU CONCEPT",
+      left: { label: "午间", title: "轻盈与明快", items: ["当季蔬菜与清爽汤品", "适合短暂停留的上菜节奏"], footer: "概念示例" },
+      right: { label: "晚间", title: "层次与分享", items: ["小份多道与风味递进", "适合交流的共享餐桌"], footer: "概念示例" },
+    });
+    finalSlide = { id: "preview-menu", layout_id: "comparison-two-column-v1", props: menu };
+  } else if (theme.id === "technical-blueprint") {
     const diagram = createEditorProps("technical-diagram-v1");
     Object.assign(diagram, {
       eyebrow: "SYSTEM BLUEPRINT",
@@ -160,12 +259,21 @@ function previewDeck(theme) {
     schema_version: 1,
     title: `${theme.name || theme.id} theme preview`,
     theme_id: theme.id,
-    design: createDeckDesign(theme, `preview-${theme.id}`),
+    design: createDeckDesign(theme, theme.id === "sketch-whiteboard"
+      ? "preview-sketch-whiteboard-notes" : `preview-${theme.id}`),
     slides: [
       { id: "preview-cover", layout_id: "cover-editorial-v1", props: cover },
       middleSlide,
       finalSlide,
-    ],
+    ].map(slide => {
+      slide.props.composition = preferredComposition(getLayout(slide.layout_id));
+      for (const field of ["image", "hero"]) {
+        if (slide.props[field]) slide.props[field] = { ...slide.props[field],
+          src: `data:image/svg+xml;base64,${fs.readFileSync(path.join(__dirname, "../examples/presentation-preview.svg")).toString("base64")}`,
+          alt: "主题预览用概念界面，非真实产品" };
+      }
+      return slide;
+    }),
   };
 }
 

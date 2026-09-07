@@ -5,6 +5,12 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createControlledDeckLayouts() {
 "use strict";
 
+const presentationSystem = typeof module === "object" && module.exports
+  ? require("../runtime/presentation-system.js") : globalThis.__deckPresentation;
+let activeFields = null;
+let activePresentation = null;
+let activeProps = null;
+
 const EDITOR_PLACEHOLDER_IMAGE =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
@@ -171,6 +177,20 @@ function escapeHtml(value) {
 }
 
 function editableText(tag, path, value, className = "", attributes = {}) {
+  const field = presentationSystem?.fieldAtPath(activeFields, path);
+  if (field?.role) attributes = { "data-deck-text-role": field.role, ...attributes };
+  if (field?.role === "metric") attributes = { "data-deck-text-fit": "metric", ...attributes };
+  const copyLength = Array.from(String(value || "").trim()).length;
+  if ((["body", "lead"].includes(field?.role) || path === "subtitle") && activePresentation?.density === "sparse"
+    && activeProps?.composition !== "standard" && copyLength >= 10 && copyLength <= 80) {
+    attributes = { "data-deck-text-fit": "copy", ...attributes };
+  }
+  if (tag === "th") attributes = { "data-presentation-surface": "tint", ...attributes };
+  if (path === "eyebrow" && String(value || "").trim()
+    && String(value).trim() === String(activeProps?.title || activeProps?.statement || "").trim()) {
+    attributes = { "data-presentation-redundant": "true", ...attributes };
+  }
+  if (/^h[123]$/.test(tag)) attributes = { "data-deck-text-fit": "heading", ...attributes };
   const classAttr = className ? ` class="${escapeHtml(className)}"` : "";
   const extraAttrs = Object.entries(attributes)
     .map(([name, attributeValue]) => ` ${escapeHtml(name)}="${escapeHtml(attributeValue)}"`)
@@ -180,7 +200,8 @@ function editableText(tag, path, value, className = "", attributes = {}) {
 
 function editableTableCell(tag, path, value, className = "") {
   const classAttr = className ? ` class="${escapeHtml(className)}"` : "";
-  return `<${tag}${classAttr}>${editableText("span", path, value, "data-table-cell-text")}</${tag}>`;
+  const surface = tag === "th" ? ' data-presentation-surface="tint"' : "";
+  return `<${tag}${classAttr}${surface}>${editableText("span", path, value, "data-table-cell-text")}</${tag}>`;
 }
 
 function image(path, media, className = "", modelRoot = "props") {
@@ -392,7 +413,11 @@ function compositionHtml(content, design) {
   ].join("\n");
 }
 
-function slideFrame(slide, index, layoutClass, content) {
+function slideFrame(slide, index, layoutClass, content, framing = "theme") {
+  if (framing === "theme" && slide.props.composition === "open") {
+    framing = "canvas";
+    layoutClass += " expressive-slide open-structured";
+  }
   const slideNumber = String(index + 1).padStart(2, "0");
   const composition = normalizedCompositionDesign(activeCompositionDesign);
   const background = slide.background && slide.background.src ? slide.background : null;
@@ -407,16 +432,17 @@ function slideFrame(slide, index, layoutClass, content) {
     ? `<div class="slide-background" aria-hidden="true">${image("background.src", background, "slide-background-image", "slide")}</div>`
     : "";
   return [
-    `<section class="slide ${layoutClass} has-composition-html${backgroundClass}" data-slide="${slideNumber}" data-slide-id="${escapeHtml(slide.id)}" data-layout-id="${escapeHtml(slide.layout_id)}" data-composition-template="${composition.template}"${backgroundOrigin}>`,
+    `<section class="slide ${layoutClass} has-composition-html${backgroundClass}" data-slide="${slideNumber}" data-slide-id="${escapeHtml(slide.id)}" data-layout-id="${escapeHtml(slide.layout_id)}" data-composition-template="${framing === "canvas" ? "canvas" : composition.template}" data-presentation-density="${activePresentation?.density || "regular"}" data-presentation-items="${activePresentation?.briefItems ? "brief" : activePresentation?.shortItems ? "short" : "long"}"${backgroundOrigin}>`,
     backgroundHtml,
     `  <div class="deck-page" aria-hidden="true">${slideNumber}</div>`,
-    compositionHtml(content, composition),
+    framing === "canvas" ? `<div class="expressive-content">${content}</div>` : compositionHtml(content, composition),
     "</section>",
   ].join("\n");
 }
 
 function renderCover(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderOpenCover(slide, index);
   const titleLength = Array.from(String(p.title || "").trim()).length;
   const titleFit = titleLength > 30
     ? "cover-title-long"
@@ -449,10 +475,10 @@ function renderSection(slide, index) {
     `layout-section section-${p.alignment || "left"}`,
     [
       '<div class="section-index" data-layout-region="section-index">',
-      editableText("span", "number", p.number, "section-number"),
+      editableText("span", "number", p.number, "section-number", { "data-deck-text-fit": "metric" }),
       '<span class="section-line"></span>',
       "</div>",
-      '<div class="section-copy" data-layout-region="section-copy">',
+      '<div class="section-copy" data-presentation-surface="base" data-layout-region="section-copy">',
       editableText("p", "eyebrow", p.eyebrow || "SECTION", "eyebrow"),
       editableText("h1", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "lead"),
@@ -464,6 +490,7 @@ function renderSection(slide, index) {
 
 function renderStatement(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderOpenStatement(slide, index);
   const proofStyle = statementProofStyle(p);
   const proofs = (p.proofs || [])
     .map((item, itemIndex) => [
@@ -498,6 +525,7 @@ function renderStatement(slide, index) {
 
 function renderCards(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderOpenCards(slide, index);
   const cards = p.items.map((item, itemIndex) => {
     const kicker = isAutomaticOrdinal(item.kicker, itemIndex)
       ? ""
@@ -518,7 +546,7 @@ function renderCards(slide, index) {
     index,
     `layout-cards cards-${p.variant || "balanced"} cards-count-${p.items.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -542,7 +570,7 @@ function renderQuadrantMatrix(slide, index) {
     index,
     `layout-quadrant-matrix quadrant-${p.variant || "impact-urgency"}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -578,7 +606,7 @@ function renderPyramid(slide, index) {
     index,
     `layout-pyramid pyramid-${p.variant || "one-to-many"} pyramid-count-${p.items.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -606,13 +634,14 @@ function comparisonColumn(side, value) {
 
 function renderComparison(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderOpenComparison(slide, index);
   const arrow = p.variant === "stacked" ? "↓" : "→";
   return slideFrame(
     slide,
     index,
     `layout-comparison comparison-${p.variant || "contrast"}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       "</header>",
@@ -627,10 +656,11 @@ function renderComparison(slide, index) {
 
 function renderKpis(slide, index) {
   const p = slide.props;
+  if (p.variant === "spotlight") return renderExpressiveMetrics(slide, index);
   const items = p.items.map((item, itemIndex) => [
     `<article class="kpi-card" data-item-index="${itemIndex}">`,
     editableText("p", `items.${itemIndex}.label`, item.label, "kpi-label"),
-    editableText("p", `items.${itemIndex}.value`, item.value, "kpi-value"),
+    editableText("p", `items.${itemIndex}.value`, item.value, "kpi-value", { "data-deck-text-fit": "metric" }),
     editableText("p", `items.${itemIndex}.detail`, item.detail, "kpi-detail"),
     editableText("p", `items.${itemIndex}.delta`, item.delta || "", "kpi-delta"),
     "</article>",
@@ -640,7 +670,7 @@ function renderKpis(slide, index) {
     index,
     `layout-kpis kpis-${p.variant || "cards"} kpis-count-${p.items.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -679,7 +709,7 @@ function renderArchitecture(slide, index) {
     index,
     `layout-architecture architecture-${p.variant || "stack"} architecture-count-${(p.layers || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -717,14 +747,14 @@ function renderSystemIntegration(slide, index) {
     index,
     `layout-system-integration integration-${p.variant || "hub-spoke"} integration-count-${systems.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
       "</header>",
       '<div class="integration-map" data-layout-region="content">',
       `<div class="integration-side integration-side-left">${left}</div>`,
-      '<article class="integration-hub">',
+      '<article class="integration-hub" data-presentation-surface="accent">',
       editableText("p", "hub.label", p.hub.label || "", "integration-hub-label"),
       editableText("h3", "hub.title", p.hub.title),
       editableText("p", "hub.body", p.hub.body, "integration-hub-body"),
@@ -847,7 +877,7 @@ function renderTechnicalDiagram(slide, index) {
     index,
     `layout-technical-diagram technical-diagram-${p.diagram_kind || "architecture"}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -875,7 +905,7 @@ function renderDashboardOverview(slide, index) {
     index,
     `layout-dashboard-overview dashboard-${p.variant || "management"} dashboard-count-${(p.items || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -888,6 +918,7 @@ function renderDashboardOverview(slide, index) {
 
 function renderTimeline(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderOpenTimeline(slide, index);
   const bodyless = p.steps.every((step) => !String(step.body || "").trim());
   const steps = p.steps.map((step, stepIndex) => [
     `<article class="timeline-step" data-item-index="${stepIndex}">`,
@@ -902,7 +933,7 @@ function renderTimeline(slide, index) {
     index,
     `layout-timeline timeline-${p.variant || "horizontal"} timeline-count-${p.steps.length}${bodyless ? " timeline-bodyless" : ""}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -940,7 +971,7 @@ function renderSwimlaneProcess(slide, index) {
     index,
     `layout-swimlane-process swimlane-${p.variant || "role-phase"}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -990,7 +1021,7 @@ function renderCustomerJourney(slide, index) {
     index,
     `layout-customer-journey journey-${p.variant || "experience-curve"} journey-count-${(p.stages || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1019,7 +1050,7 @@ function renderMaturityModel(slide, index) {
     index,
     `layout-maturity-model maturity-variant-${p.variant || "ladder"} maturity-count-${(p.levels || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1050,13 +1081,13 @@ function renderCauseTree(slide, index) {
     index,
     `layout-cause-tree cause-tree-${p.variant || "branches"} cause-count-${(p.causes || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
       "</header>",
       '<div class="cause-tree-stage" data-layout-region="content">',
-      '<article class="cause-problem">',
+      '<article class="cause-problem" data-presentation-surface="tint">',
       '<span class="cause-problem-label">核心问题</span>',
       editableText("h3", "problem.title", p.problem.title),
       editableText("p", "problem.body", p.problem.body || ""),
@@ -1071,7 +1102,7 @@ function renderCauseTree(slide, index) {
 function renderFactoryProcessLine(slide, index) {
   const p = slide.props;
   const stations = (p.stations || []).map((station, stationIndex) => [
-    `<article class="factory-station" data-item-index="${stationIndex}">`,
+    `<article class="factory-station" data-presentation-surface="base" data-item-index="${stationIndex}">`,
     '<div class="factory-station-head">',
     editableText("span", `stations.${stationIndex}.code`, station.code, "factory-station-code"),
     editableText("span", `stations.${stationIndex}.status`, station.status || "", "factory-station-status"),
@@ -1085,7 +1116,7 @@ function renderFactoryProcessLine(slide, index) {
     index,
     `layout-factory-process factory-count-${(p.stations || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1099,7 +1130,7 @@ function renderFactoryProcessLine(slide, index) {
 function renderLegalCaseLogic(slide, index) {
   const p = slide.props;
   const sections = (p.sections || []).map((section, sectionIndex) => [
-    `<article class="legal-logic-section" data-item-index="${sectionIndex}">`,
+    `<article class="legal-logic-section" data-presentation-surface="base" data-item-index="${sectionIndex}">`,
     '<div class="legal-section-index">',
     `<span>${String(sectionIndex + 1).padStart(2, "0")}</span>`,
     editableText("strong", `sections.${sectionIndex}.label`, section.label, "legal-section-label"),
@@ -1137,7 +1168,7 @@ function renderPropertyFactsheet(slide, index) {
     "</article>",
   ].join("\n")).join("\n");
   const metrics = (p.metrics || []).map((metric, metricIndex) => [
-    `<article class="property-metric" data-item-index="${metricIndex}">`,
+    `<article class="property-metric" data-presentation-surface="base" data-item-index="${metricIndex}">`,
     editableText("span", `metrics.${metricIndex}.label`, metric.label, "property-metric-label"),
     editableText("strong", `metrics.${metricIndex}.value`, metric.value, "property-metric-value"),
     "</article>",
@@ -1167,7 +1198,7 @@ function renderPropertyFactsheet(slide, index) {
 function renderCommerceFunnel(slide, index) {
   const p = slide.props;
   const stages = (p.stages || []).map((stage, stageIndex) => [
-    `<article class="commerce-stage" data-item-index="${stageIndex}">`,
+    `<article class="commerce-stage" data-presentation-surface="base" data-item-index="${stageIndex}">`,
     `<span class="commerce-stage-index">${String(stageIndex + 1).padStart(2, "0")}</span>`,
     editableText("h3", `stages.${stageIndex}.label`, stage.label),
     '<div class="commerce-stage-values">',
@@ -1182,7 +1213,7 @@ function renderCommerceFunnel(slide, index) {
     index,
     `layout-commerce-funnel commerce-count-${(p.stages || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1206,7 +1237,7 @@ function renderSupplyNetwork(slide, index) {
     "</article>",
   ].join("\n")).join("\n");
   const metrics = (p.metrics || []).map((metric, metricIndex) => [
-    `<article class="supply-metric" data-item-index="${metricIndex}">`,
+    `<article class="supply-metric" data-presentation-surface="tint" data-item-index="${metricIndex}">`,
     editableText("span", `metrics.${metricIndex}.label`, metric.label, "supply-metric-label"),
     editableText("strong", `metrics.${metricIndex}.value`, metric.value, "supply-metric-value"),
     "</article>",
@@ -1216,7 +1247,7 @@ function renderSupplyNetwork(slide, index) {
     index,
     `layout-supply-network supply-count-${(p.nodes || []).length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1230,6 +1261,7 @@ function renderSupplyNetwork(slide, index) {
 
 function renderProjectCase(slide, index) {
   const p = slide.props;
+  if (p.composition === "editorial") return renderExpressiveImage(slide, index, true);
   const metrics = (p.metrics || []).map((metric, metricIndex) => [
     `<article class="project-case-metric" data-item-index="${metricIndex}">`,
     editableText("strong", `metrics.${metricIndex}.value`, metric.value, "project-case-value"),
@@ -1257,6 +1289,7 @@ function renderProjectCase(slide, index) {
 
 function renderImageHero(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderExpressiveImage(slide, index);
   return slideFrame(
     slide,
     index,
@@ -1275,6 +1308,7 @@ function renderImageHero(slide, index) {
 
 function renderImageFeature(slide, index) {
   const p = slide.props;
+  if (p.composition === "editorial") return renderExpressiveImage(slide, index);
   return slideFrame(
     slide,
     index,
@@ -1312,8 +1346,222 @@ function renderImageFullBleed(slide, index) {
   );
 }
 
+// Canvas variants keep the existing semantic fields and editor contracts. The
+// page owns its geometry while the deck still supplies type and palette.
+function preferredTextSize(value, profile) {
+  const stops = {
+    cover: [[6, 320], [12, 180], [24, 132], [48, 96], [Infinity, 72]],
+    "primary-metric": [[3, 310], [6, 190], [10, 120], [Infinity, 76]],
+    metric: [[4, 90], [8, 64], [Infinity, 42]],
+    "image-title": [[36, 80], [Infinity, 58]],
+    "metric-title": [[40, 64], [Infinity, 48]],
+  }[profile];
+  if (!stops) return null;
+  const length = characterLength(value);
+  return stops.find(([limit]) => length <= limit)[1];
+}
+
+function renderExpressiveCover(slide, index) {
+  const p = slide.props;
+  const size = preferredTextSize(p.title, "cover");
+  const tags = (p.tags || []).map((tag, i) =>
+    editableText("span", `tags.${i}`, tag, "expressive-tag")
+  ).join("\n");
+  const dense = (p.tags || []).reduce((count, tag) => count + characterLength(tag), 0) > 80;
+  return slideFrame(slide, index, `expressive-slide expressive-cover expressive-align-${p.alignment || "left"}${dense ? " expressive-cover-dense" : ""}`, [
+    '<header class="expressive-masthead" data-layout-region="editorial-cover-meta">',
+    editableText("p", "eyebrow", p.eyebrow, "expressive-label"),
+    editableText("p", "marker", p.marker || "", "expressive-label"),
+    '</header>',
+    '<div class="expressive-title-stage" data-layout-region="editorial-cover-copy">',
+    editableText("h1", "title", p.title, "expressive-title", {
+      style: `--expressive-title-size:${size}px`, "data-deck-font-profile": "cover",
+    }),
+    '</div>',
+    '<div class="expressive-cover-bottom">',
+    editableText("p", "subtitle", p.subtitle || "", "expressive-summary"),
+    `<div class="expressive-tags">${tags}</div>`,
+    '</div>',
+    editableText("p", "meta", p.meta || "", "expressive-footer"),
+  ].join("\n"), "canvas");
+}
+
+function renderExpressiveImage(slide, index, project = false) {
+  const p = slide.props;
+  const textPath = project ? "positioning" : "body";
+  const dense = characterLength(p[textPath]) + characterLength(p.caption) > (project ? 180 : 220);
+  const metrics = project ? (p.metrics || []).map((metric, i) => [
+    '<article class="expressive-proof" data-item-index="' + i + '">',
+    editableText("strong", `metrics.${i}.value`, metric.value, "expressive-proof-value"),
+    editableText("span", `metrics.${i}.label`, metric.label, "expressive-proof-label"),
+    '</article>',
+  ].join("\n")).join("\n") : "";
+  return slideFrame(slide, index, `expressive-slide expressive-image ${project ? "expressive-project" : ""} expressive-media-${p.media_side || "left"}${dense ? " expressive-image-dense" : ""}`, [
+    '<header class="expressive-image-heading" data-layout-region="header">',
+    editableText("p", "eyebrow", p.eyebrow, "expressive-label"),
+    editableText("h2", "title", p.title, "expressive-image-title", {
+      style: `--expressive-title-size:${preferredTextSize(p.title, "image-title")}px`,
+      "data-deck-font-profile": "image-title",
+    }),
+    '</header>',
+    `<div class="expressive-media">${image("image.src", p.image, "expressive-photo")}</div>`,
+    `<aside class="expressive-notes" data-layout-region="${project ? "project-copy" : slide.layout_id === "image-hero-split-v1" ? "image-copy" : "image-feature-copy"}">`,
+    editableText("p", textPath, p[textPath], "expressive-summary"),
+    editableText("p", "caption", p.caption || "", "expressive-caption"),
+    '</aside>',
+    project ? `<div class="expressive-proofs" data-layout-region="project-metrics">${metrics}</div>` : "",
+  ].join("\n"), "canvas");
+}
+
+function renderExpressiveMetrics(slide, index) {
+  const p = slide.props;
+  const dense = p.items.length > 3 && p.items.some(item => (
+    characterLength(item.label) + characterLength(item.detail) + characterLength(item.delta) > 100
+    || characterLength(item.value) > 10
+  ));
+  const items = p.items.map((item, i) => {
+    const profile = i === 0 ? "primary-metric" : "metric";
+    const size = preferredTextSize(item.value, profile);
+    return [
+      `<article class="expressive-metric" data-item-index="${i}">`,
+      editableText("p", `items.${i}.label`, item.label, "expressive-metric-label"),
+      editableText("p", `items.${i}.value`, item.value, "expressive-metric-value", {
+        style: `--expressive-value-size:${size}px`, "data-deck-text-fit": "metric",
+        "data-deck-font-profile": profile,
+      }),
+      editableText("p", `items.${i}.detail`, item.detail || "", "expressive-metric-detail"),
+      editableText("p", `items.${i}.delta`, item.delta || "", "expressive-metric-delta"),
+      '</article>',
+    ].join("\n");
+  }).join("\n");
+  return slideFrame(slide, index, `expressive-slide expressive-metrics expressive-count-${p.items.length}${dense ? " expressive-metrics-dense" : ""}`, [
+    '<header class="expressive-metric-heading" data-layout-region="header">',
+    editableText("p", "eyebrow", p.eyebrow, "expressive-label"),
+    editableText("h2", "title", p.title, "expressive-image-title", {
+      style: `--expressive-title-size:${preferredTextSize(p.title, "metric-title")}px`,
+      "data-deck-font-profile": "metric-title",
+    }),
+    editableText("p", "subtitle", p.subtitle || "", "expressive-caption"),
+    '</header>',
+    `<div class="expressive-metric-grid" data-layout-region="content">${items}</div>`,
+  ].join("\n"), "canvas");
+}
+
+function openHeader(p) {
+  const dense = characterLength(p.title) > 40 || characterLength(p.subtitle) > 80;
+  return [`<header class="open-header${dense ? ' open-header-dense' : ''}" data-layout-region="header">`,
+    editableText('p', 'eyebrow', p.eyebrow || '', 'open-label'),
+    editableText('h2', 'title', p.title, 'open-title'),
+    Object.prototype.hasOwnProperty.call(p, 'subtitle') ? editableText('p', 'subtitle', p.subtitle || '', 'open-intro') : '',
+    '</header>'].join('\n');
+}
+
+function renderOpenCover(slide, index) {
+  const p = slide.props, hasMedia = Boolean(p.hero && p.hero.src);
+  return slideFrame(slide, index, `expressive-slide open-cover ${hasMedia ? 'with-media' : 'without-media'} media-${p.media_side || 'right'}`, [
+    '<div class="open-cover-copy" data-layout-region="cover-copy">',
+    editableText('p', 'eyebrow', p.eyebrow, 'open-label'),
+    editableText('h1', 'title', p.title, 'open-cover-title'),
+    editableText('p', 'subtitle', p.subtitle, 'open-cover-subtitle'),
+    editableText('p', 'meta', p.meta || '', 'open-cover-meta'),
+    '</div>',
+    hasMedia ? `<div class="open-cover-visual">${image('hero.src', p.hero, 'open-cover-image')}</div>` : '',
+  ].join('\n'), 'canvas');
+}
+
+function renderOpenStatement(slide, index) {
+  const p = slide.props;
+  const proofs = (p.proofs || []).map((item, i) => ['<article class="open-proof" data-item-index="'+i+'">',
+    editableText('strong', `proofs.${i}.value`, item.value, 'open-proof-value'),
+    editableText('p', `proofs.${i}.label`, item.label || '', 'open-proof-label'), '</article>'].join('\n')).join('\n');
+  return slideFrame(slide, index, `expressive-slide open-statement ${proofs ? 'with-proofs' : 'without-proofs'}`, [
+    editableText('p', 'eyebrow', p.eyebrow, 'open-label'),
+    '<div class="open-statement-copy" data-layout-region="statement-narrative">',
+    editableText('h1', 'statement', p.statement, 'open-statement-title'),
+    editableText('p', 'support', p.support || '', 'open-statement-support'), '</div>',
+    `<div class="open-proof-strip" data-layout-region="statement-proofs">${proofs}</div>`,
+  ].join('\n'), 'canvas');
+}
+
+function renderOpenCards(slide, index) {
+  const p = slide.props;
+  const items = p.items.map((item, i) => ['<article class="open-point" data-item-index="'+i+'">',
+    p.variant === 'numbered' ? `<span class="open-ordinal" aria-hidden="true">${String(i+1).padStart(2,'0')}</span>` : '',
+    '<div class="open-point-copy">',
+    editableText('p', `items.${i}.kicker`, isAutomaticOrdinal(item.kicker, i) ? '' : item.kicker || '', 'open-label'),
+    editableText('h3', `items.${i}.title`, item.title, 'open-point-title'),
+    editableText('p', `items.${i}.body`, item.body || '', 'open-point-body'), '</div></article>'].join('\n')).join('\n');
+  const dense = p.items.reduce((sum, item) => sum + characterLength(item.title) + characterLength(item.body) + characterLength(item.kicker), 0) > 560;
+  return slideFrame(slide, index, `expressive-slide open-cards open-count-${p.items.length} open-points-${p.variant || 'balanced'} layout-cards${dense ? ' open-dense' : ''}`, [
+    openHeader(p), `<div class="open-points-items" data-layout-region="content">${items}</div>`,
+  ].join('\n'), 'canvas');
+}
+
+function renderOpenComparison(slide, index) {
+  const p = slide.props;
+  const dense = [p.left, p.right].some(side => characterLength(side.title) > 24
+    || characterLength([side.title, ...side.items, side.footer].filter(Boolean).join('')) > 250);
+  const side = name => {
+    const data = p[name];
+    return [`<article class="open-side open-side-${name}">`, '<div class="open-side-heading">',
+      editableText('p', `${name}.label`, data.label, 'open-label'),
+      editableText('h3', `${name}.title`, data.title, 'open-side-title'), '</div>',
+      `<ul class="open-side-items">${data.items.map((item, i) => editableText('li', `${name}.items.${i}`, item)).join('\n')}</ul>`,
+      editableText('p', `${name}.footer`, data.footer || '', 'open-side-footer'), '</article>'].join('\n');
+  };
+  return slideFrame(slide, index, `expressive-slide open-comparison open-comparison-${p.variant || 'contrast'}${dense ? ' open-dense' : ''}`, [
+    openHeader(p), `<div class="open-sides" data-layout-region="content">${side('left')}${side('right')}</div>`,
+  ].join('\n'), 'canvas');
+}
+
+function renderOpenTimeline(slide, index) {
+  const p = slide.props;
+  const roomy = p.steps.every(step => characterLength(step.title) <= 20 && characterLength(step.body) <= 60);
+  const steps = p.steps.map((step, i) => [`<article class="open-route-step" data-item-index="${i}">`,
+    '<span class="open-route-rail" aria-hidden="true"></span><span class="open-route-dot" aria-hidden="true"></span>',
+    '<div class="open-route-copy">',
+    editableText('p', `steps.${i}.phase`, step.phase || '', 'open-label'),
+    editableText('h3', `steps.${i}.title`, step.title, 'open-route-title'),
+    editableText('p', `steps.${i}.body`, step.body || '', 'open-route-body'), '</div></article>'].join('\n')).join('\n');
+  return slideFrame(slide, index, `expressive-slide open-timeline open-route-${roomy ? 'roomy' : 'dense'} open-count-${p.steps.length}`, [
+    openHeader(p), `<div class="open-route-track" style="--open-count:${p.steps.length}" data-layout-region="content">${steps}</div>`,
+  ].join('\n'), 'canvas');
+}
+
+function renderOpenText(slide, index) {
+  const p = slide.props;
+  const length = p.sections.reduce((n, s) => n + characterLength(s.body) + (s.bullets || []).reduce((x, b) => x + characterLength(b), 0), 0);
+  const sections = p.sections.map((section, i) => [`<article class="open-text-section" data-item-index="${i}">`,
+    '<div class="open-text-heading">',
+    editableText('p', `sections.${i}.label`, isAutomaticOrdinal(section.label, i) ? '' : section.label || '', 'open-label'),
+    editableText('h3', `sections.${i}.title`, section.title, 'open-text-title'), '</div>',
+    editableText('p', `sections.${i}.body`, section.body, 'open-text-body'),
+    `<ul class="open-text-bullets">${(section.bullets || []).map((b, j) => editableText('li', `sections.${i}.bullets.${j}`, b)).join('\n')}</ul>`,
+    '</article>'].join('\n')).join('\n');
+  return slideFrame(slide, index, `expressive-slide open-text open-count-${p.sections.length}${length > 700 ? ' open-dense' : ''}${length > 1000 ? ' open-very-dense' : ''}`, [
+    openHeader(p), `<div class="open-text-sections" data-layout-region="content">${sections}</div>`,
+  ].join('\n'), 'canvas');
+}
+
+function renderOpenClosing(slide, index) {
+  const p = slide.props;
+  const actions = (p.actions || []).map((a, i) => [`<article class="open-action" data-item-index="${i}">`,
+    editableText('h3', `actions.${i}.label`, a.label, 'open-action-title'),
+    editableText('p', `actions.${i}.detail`, a.detail || '', 'open-action-detail'), '</article>'].join('\n')).join('\n');
+  const dense = characterLength(p.title) > 40 || characterLength(p.subtitle) > 100;
+  return slideFrame(slide, index, `expressive-slide open-closing open-count-${(p.actions || []).length}${dense ? ' open-dense' : ''}`, [
+    editableText('p', 'eyebrow', p.eyebrow, 'open-label'),
+    '<div class="open-closing-hero" data-layout-region="closing-copy">',
+    editableText('h1', 'title', p.title, 'open-closing-title'),
+    editableText('p', 'subtitle', p.subtitle || '', 'open-closing-subtitle'), '</div>',
+    `<div class="open-action-strip" style="--open-count:${Math.max(1,(p.actions || []).length)}" data-layout-region="closing-actions">${actions}</div>`,
+    editableText('p', 'contact', p.contact || '', 'open-closing-contact'),
+  ].join('\n'), 'canvas');
+}
+
 function renderEditorialCover(slide, index) {
   const p = slide.props;
+  if (p.composition === "poster") return renderExpressiveCover(slide, index);
   const titleLength = Array.from(String(p.title || "").trim()).length;
   const titleFit = titleLength > 30
     ? "editorial-title-long"
@@ -1354,6 +1602,7 @@ function renderEditorialCover(slide, index) {
 
 function renderTextColumns(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderOpenText(slide, index);
   const sections = p.sections.map((section, sectionIndex) => {
     const bullets = (section.bullets || [])
       .map((bullet, bulletIndex) => editableText(
@@ -1376,7 +1625,7 @@ function renderTextColumns(slide, index) {
     index,
     `layout-text-columns text-${p.variant || "columns"} text-count-${p.sections.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1481,7 +1730,7 @@ function renderBarChart(slide, index, _design = null, renderContext = null) {
     index,
     `layout-chart-bar chart-${p.variant || "horizontal"} chart-count-${p.items.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1492,7 +1741,7 @@ function renderBarChart(slide, index, _design = null, renderContext = null) {
       `  <div class="chart-fallback" aria-hidden="true">${fallback}</div>`,
       "</div>",
       '<div class="chart-footer">',
-      editableText("p", "insight", p.insight || "", "chart-insight"),
+      editableText("p", "insight", p.insight || "", "chart-insight", { "data-presentation-surface": "tint" }),
       editableText("p", "source", p.source || "", "chart-source"),
       "</div>",
       "</div>",
@@ -1722,7 +1971,7 @@ function renderDataChart(slide, index, _design = null, renderContext = null) {
     `chart-reading-${readingMode}`,
   ].join(" ");
   const header = [
-    '<header class="slide-header" data-layout-region="header">',
+    '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
     editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
     editableText("h2", "title", p.title),
     editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1796,7 +2045,7 @@ function renderDataChart(slide, index, _design = null, renderContext = null) {
       '<div class="chart-body chart-data-body" data-layout-region="content">',
       chartMarkup,
       '<div class="chart-footer">',
-      editableText("p", "insight", p.insight || "", "chart-insight"),
+      editableText("p", "insight", p.insight || "", "chart-insight", { "data-presentation-surface": "tint" }),
       editableText("p", "source", p.source || "", "chart-source"),
       "</div>",
       "</div>",
@@ -1833,7 +2082,7 @@ function renderDataTable(slide, index) {
     index,
     `layout-data-table table-${isGantt ? "gantt" : (p.variant || "ledger")} table-columns-${columns.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1912,7 +2161,7 @@ function renderHeatmapMatrix(slide, index) {
     index,
     `layout-heatmap-matrix heatmap-columns-${columns.length}`,
     [
-      '<header class="slide-header" data-layout-region="header">',
+      '<header class="slide-header" data-presentation-surface="base" data-layout-region="header">',
       editableText("p", "eyebrow", p.eyebrow, "eyebrow"),
       editableText("h2", "title", p.title),
       editableText("p", "subtitle", p.subtitle || "", "header-note"),
@@ -1935,6 +2184,7 @@ function renderHeatmapMatrix(slide, index) {
 
 function renderClosing(slide, index) {
   const p = slide.props;
+  if (p.composition === "open") return renderOpenClosing(slide, index);
   const actions = (p.actions || []).map((action, actionIndex) => [
     `<article class="closing-action" data-item-index="${actionIndex}">`,
     `<span class="closing-action-index" aria-hidden="true">${String(actionIndex + 1).padStart(2, "0")}</span>`,
@@ -2023,6 +2273,10 @@ const layouts = [
       description: "大标题、期次标记与可选背景",
       controls: {
         enums: {
+          composition: {
+            label: "封面构图",
+            options: { standard: "主题构图", poster: "大字海报" },
+          },
           alignment: {
             label: "标题对齐",
             options: { left: "左对齐", center: "居中" },
@@ -2043,6 +2297,7 @@ const layouts = [
         meta: "团队 · 日期",
         tags: [],
         alignment: "left",
+        composition: "standard",
       },
     },
     roles: ["cover", "title", "opening"],
@@ -2066,7 +2321,7 @@ const layouts = [
       decisionRule: "Prefer a typography-led cover; use a generated or existing background only when it adds atmosphere without competing with the title.",
     }),
     capabilities: ["editable", "pptx-safe", "generated-background"],
-    variants: ["left", "center"],
+    variants: ["left", "center", "poster"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(84, { role: "display" }),
@@ -2074,9 +2329,10 @@ const layouts = [
       marker: textField(24, { required: false, role: "metric" }),
       meta: textField(72, { required: false, role: "caption" }),
       tags: arrayField(0, 6, textField(24, { role: "label" })),
+      composition: enumField(["standard", "poster"], "standard"),
       alignment: enumField(["left", "center"], "left"),
     },
-    defaultProps: { subtitle: "", marker: "", meta: "", tags: [], alignment: "left" },
+    defaultProps: { subtitle: "", marker: "", meta: "", tags: [], alignment: "left", composition: "standard" },
     render: renderEditorialCover,
   },
   {
@@ -2229,7 +2485,7 @@ const layouts = [
       items: arrayField(3, 6, {
         kicker: textField(24, { required: false, role: "label" }),
         title: textField(36, { role: "heading" }),
-        body: textField(100, { role: "body" }),
+        body: textField(100, { required: false, role: "body" }),
       }),
       variant: enumField(["balanced", "numbered", "featured"], "balanced"),
     },
@@ -2498,15 +2754,15 @@ const layouts = [
   },
   {
     id: "kpi-grid-v1",
-    label: "Three to six KPI cards",
+    label: "Three to six KPIs with optional primary metric",
     editor: {
       label: "关键数据",
-      description: "三到六个指标与解释",
+      description: "三到六个指标，可选择等权排列或突出首个指标",
       controls: {
         enums: {
           variant: {
             label: "数据样式",
-            options: { cards: "等权卡片", ledger: "账本", hero: "主指标" },
+            options: { cards: "等权卡片", ledger: "账本", hero: "主指标", spotlight: "重点数字" },
           },
         },
         collections: {
@@ -2536,7 +2792,7 @@ const layouts = [
       textRegionNames: ["header", "content"],
     }),
     capabilities: ["editable", "pptx-safe", "data"],
-    variants: ["cards", "ledger", "hero"],
+    variants: ["cards", "ledger", "hero", "spotlight"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(64, { role: "heading" }),
@@ -2547,7 +2803,7 @@ const layouts = [
         detail: textField(90, { required: false, role: "body" }),
         delta: textField(28, { required: false, role: "label" }),
       }),
-      variant: enumField(["cards", "ledger", "hero"], "cards"),
+      variant: enumField(["cards", "ledger", "hero", "spotlight"], "cards"),
     },
     defaultProps: { subtitle: "", variant: "cards" },
     render: renderKpis,
@@ -3820,7 +4076,7 @@ const layouts = [
         enums: {
           composition: {
             label: "案例构图",
-            options: { split: "左右分栏", poster: "上下海报" },
+            options: { split: "左右分栏", poster: "上下海报", editorial: "作品与旁注" },
           },
           media_side: {
             label: "图片位置",
@@ -3866,7 +4122,7 @@ const layouts = [
       }],
     }),
     capabilities: ["editable", "pptx-safe", "generated-image", "data"],
-    variants: ["split-left", "split-right", "poster"],
+    variants: ["split-left", "split-right", "poster", "editorial"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(64, { role: "heading" }),
@@ -3877,7 +4133,7 @@ const layouts = [
         label: textField(36, { role: "caption" }),
       }),
       caption: textField(72, { required: false, role: "caption" }),
-      composition: enumField(["split", "poster"], "split"),
+      composition: enumField(["split", "poster", "editorial"], "split"),
       media_side: enumField(["left", "right"], "right"),
     },
     defaultProps: { caption: "", composition: "split", media_side: "right" },
@@ -3944,13 +4200,21 @@ const layouts = [
     editor: {
       label: "大图叙事",
       description: "一张横向大图与下方双栏叙事",
-      controls: {},
+      controls: {
+        enums: {
+          composition: {
+            label: "图文构图",
+            options: { standard: "上下图文", editorial: "大图与旁注" },
+          },
+        },
+      },
       defaultProps: {
         eyebrow: "视觉故事",
         title: "用大图建立这一页的核心场景",
         body: "用一段简洁叙述解释图片与核心观点之间的关系。",
         image: { src: EDITOR_PLACEHOLDER_IMAGE, alt: "双击替换横向大图" },
         caption: "",
+        composition: "standard",
       },
     },
     roles: ["visual-story", "product", "solution", "vision", "case-study"],
@@ -3971,15 +4235,16 @@ const layouts = [
       }],
     }),
     capabilities: ["editable", "pptx-safe", "generated-image"],
-    variants: ["wide-image"],
+    variants: ["wide-image", "editorial"],
     fields: {
       eyebrow: textField(32, { role: "label" }),
       title: textField(72, { role: "heading" }),
       body: textField(220, { role: "lead" }),
       image: mediaField({ required: true, aspectRatio: "16:9" }),
+      composition: enumField(["standard", "editorial"], "standard"),
       caption: textField(80, { required: false, role: "caption" }),
     },
-    defaultProps: { caption: "" },
+    defaultProps: { caption: "", composition: "standard" },
     render: renderImageFeature,
   },
   {
@@ -4086,7 +4351,7 @@ const layouts = [
       subtitle: textField(180, { required: false, role: "lead" }),
       actions: arrayField(0, 4, {
         label: textField(36, { role: "heading" }),
-        detail: textField(100, { role: "body" }),
+        detail: textField(100, { required: false, role: "body" }),
       }),
       contact: textField(100, { required: false, role: "caption" }),
       variant: enumField(["next-steps", "contact"], "next-steps"),
@@ -4097,6 +4362,15 @@ const layouts = [
 ];
 
 layouts.forEach(layout => {
+  if (!layout.fields.composition) {
+    layout.fields.composition = enumField(["standard", "open"], "standard");
+    layout.defaultProps.composition = "standard";
+    layout.editor.defaultProps.composition = "standard";
+    layout.editor.controls.enums = layout.editor.controls.enums || {};
+    layout.editor.controls.enums.composition = {
+      label: "页面构图", options: { standard: "主题框架", open: "开放构图" },
+    };
+  }
   const renderLayout = layout.render;
   layout.render = function renderCompositionAwareLayout(
     slide,
@@ -4105,11 +4379,20 @@ layouts.forEach(layout => {
     renderContext = null,
   ) {
     const previousDesign = activeCompositionDesign;
+    const previousFields = activeFields;
+    const previousPresentation = activePresentation;
+    const previousProps = activeProps;
     activeCompositionDesign = normalizedCompositionDesign(design);
+    activeFields = layout.fields;
+    activePresentation = presentationSystem?.measureContent(slide.props, layout.fields);
+    activeProps = slide.props;
     try {
       return renderLayout(slide, index, design, renderContext);
     } finally {
       activeCompositionDesign = previousDesign;
+      activeFields = previousFields;
+      activePresentation = previousPresentation;
+      activeProps = previousProps;
     }
   };
 });
@@ -4235,6 +4518,15 @@ function createEditorProps(layoutId, sourceSlide = null) {
   if (!sourceSlide) return props;
 
   const snapshot = contentSnapshot(sourceSlide);
+  const sourceComposition = snapshot.props.composition;
+  const choices = layout.fields.composition && layout.fields.composition.values;
+  const canvasSource = ["open", "editorial"].includes(sourceComposition)
+    || (sourceComposition === "poster" && sourceSlide.layout_id === "cover-editorial-v1");
+  if (choices && canvasSource && sourceSlide.layout_id !== layoutId) {
+    props.composition = presentationSystem?.preferredComposition(layout) || props.composition;
+  } else if (choices && choices.includes(sourceComposition)) {
+    props.composition = sourceComposition;
+  }
   if (Object.prototype.hasOwnProperty.call(props, "eyebrow") && snapshot.eyebrow) {
     props.eyebrow = fitText(snapshot.eyebrow, layout.fields.eyebrow.maxChars, props.eyebrow);
   }
@@ -4621,5 +4913,6 @@ return {
   getVisualCollectionContracts,
   layouts,
   manifestRecord,
+  preferredTextSize,
 };
 });

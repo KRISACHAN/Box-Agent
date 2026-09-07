@@ -144,6 +144,7 @@ async function waitForDiagramLayout(page) {
 }
 
 async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx = false, allowLocalImages = false) {
+  await page.evaluate(() => window.__deckTextReady);
   return page.evaluate(
     ({ expectedWidth, expectedHeight, domToPptx, allowLocalImages }) => {
       const issues = [];
@@ -466,7 +467,36 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
             const overX = el.scrollWidth - el.clientWidth;
             const overY = el.scrollHeight - el.clientHeight;
             const over = Math.max(overX, overY);
-            if (over > OVERFLOW_SLACK) {
+            let onlyDecoration = false;
+            if (over > OVERFLOW_SLACK && !el.querySelector(`${chartSelector}, ${diagramSelector}`)) {
+              // Connector arrowheads / station feet can extend past their own
+              // container while remaining inside the slide. Do not mistake
+              // that for clipped text; genuine text overflow still fails.
+              const extendedPseudo = ["::before", "::after"].some(pseudo => {
+                const pseudoStyle = getComputedStyle(el, pseudo);
+                if (pseudoStyle.position !== "absolute" || pseudoStyle.content === "none") return false;
+                const offsets = ["top", "right", "bottom", "left"].map(side => Math.min(0, parseFloat(pseudoStyle[side]) || 0));
+                return offsets.some(offset => offset < 0)
+                  && rect.top + offsets[0] >= slideRect.top
+                  && rect.right - offsets[1] <= slideRect.right
+                  && rect.bottom - offsets[2] <= slideRect.bottom
+                  && rect.left + offsets[3] >= slideRect.left;
+              });
+              if (extendedPseudo) {
+                const fits = box => box.left >= rect.left - 2 && box.right <= rect.right + 2
+                  && box.top >= rect.top - 2 && box.bottom <= rect.bottom + 2;
+                onlyDecoration = Array.from(el.querySelectorAll("img")).every(image => fits(image.getBoundingClientRect()));
+                const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                let node;
+                while (onlyDecoration && (node = walker.nextNode())) {
+                  if (!node.textContent.trim()) continue;
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  onlyDecoration = Array.from(range.getClientRects()).every(fits);
+                }
+              }
+            }
+            if (over > OVERFLOW_SLACK && !onlyDecoration) {
               const axis = `${overX > OVERFLOW_SLACK ? "x" : ""}${overY > OVERFLOW_SLACK ? "y" : ""}`;
               const detail = `${name}: text/content overflow detected (${axis}, ${Math.round(over)}px).`;
               if (over > OVERFLOW_ISSUE) {
@@ -498,7 +528,7 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
               text.length <= 24 &&
               !text.includes("\n") &&
               badgeTextRe.test(text) &&
-              !["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI"].includes(el.tagName);
+              !["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "TH", "TD"].includes(el.tagName);
             const isBoundedControlledLabel =
               hasEditableTextContract &&
               text.length <= 32 &&
@@ -636,11 +666,11 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
       });
 
       const cardGridStyles = slideEls.flatMap((slide, slideIndex) =>
-        Array.from(slide.querySelectorAll(".layout-cards .cards-grid")).map(grid => {
+        Array.from(slide.querySelectorAll(".cards-grid, .open-points-items")).map(grid => {
           const style = getComputedStyle(grid);
           return {
             slide: slideIndex + 1,
-            itemCount: grid.querySelectorAll(":scope > .content-card").length,
+            itemCount: grid.querySelectorAll(":scope > .content-card, :scope > .open-point").length,
             gridTemplateColumns: style.gridTemplateColumns,
             gridAutoRows: style.gridAutoRows,
             rowGap: style.rowGap,
@@ -648,6 +678,22 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
             paddingTop: style.paddingTop,
           };
         })
+      );
+      const requestedColumns = Number(document.body.dataset.deckStyleCardColumns);
+      if ([2, 3].includes(requestedColumns)) {
+        cardGridStyles.forEach(grid => {
+          const actual = grid.gridTemplateColumns.trim().split(/\s+/).length;
+          if (actual !== requestedColumns) {
+            issues.push(`slide-${String(grid.slide).padStart(2, "0")}: requested ${requestedColumns} card columns, rendered ${actual}.`);
+          }
+        });
+      }
+      const timelineStyles = slideEls.flatMap((slide, slideIndex) =>
+        Array.from(slide.querySelectorAll(".timeline-step, .open-route-step")).map(step => ({
+          slide: slideIndex + 1,
+          paddingLeft: getComputedStyle(step).paddingLeft,
+          paddingRight: getComputedStyle(step).paddingRight,
+        }))
       );
 
       const projectCaseStyles = slideEls.flatMap((slide, slideIndex) => {
@@ -668,6 +714,28 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
           imagePlaceholder: Boolean(image && image.classList.contains("editor-placeholder-image")),
         }];
       });
+      const typography = [];
+      if (window.__deckTextFit) slideEls.forEach((slide, slideIndex) => {
+        slide.querySelectorAll("[data-deck-text-fit]").forEach(element => {
+          if (!element.offsetWidth || !element.textContent.trim()) return;
+          const lines = window.__deckTextFit.textLines(element).map(line => line.text);
+          const kind = element.dataset.deckTextFit;
+          const entry = {
+            slide: slideIndex + 1, path: element.dataset.propPath, kind,
+            text: element.textContent, fontSize: parseFloat(getComputedStyle(element).fontSize),
+            lines, state: element.dataset.deckTextFitState,
+          };
+          typography.push(entry);
+          const label = `${labelFor(element, slideIndex)} (${entry.path})`;
+          if (kind === "metric" && lines.length > 1) {
+            warnings.push(`${label}: numeric value and unit wrap across lines.`);
+          } else if (kind === "heading" && lines.length > 1
+            && Array.from(lines[lines.length - 1].replace(/[\s\p{P}]/gu, "")).length < 2) {
+            warnings.push(`${label}: heading ends with an isolated character.`);
+          }
+          if (entry.state === "overflow") warnings.push(`${label}: display text could not fit within its readable size range.`);
+        });
+      });
       return {
         ok: issues.length === 0,
         slideCount: slideEls.length,
@@ -675,6 +743,8 @@ async function runHtmlSelfCheck(page, expectedWidth, expectedHeight, domToPptx =
         diagramCount: diagramSpecs.length,
         diagramSpecs,
         cardGridStyles,
+        timelineStyles,
+        typography,
         issues,
         warnings,
       };

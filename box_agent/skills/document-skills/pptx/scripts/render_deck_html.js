@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const presentationSystem = require("../runtime/presentation-system.js");
 
 const { escapeHtml, getLayout } = require("../layouts/registry.js");
 const {
@@ -16,6 +17,7 @@ const {
 const {
   paletteWithOverrides,
   readableForeground,
+  contrastRatio,
 } = require("./design_contract_core.js");
 
 function parseArgs(argv) {
@@ -49,6 +51,8 @@ function themeColor(palette, key, fallback) {
 
 function themeVariables(theme, designContract = null) {
   const palette = paletteWithOverrides(theme.palette, designContract);
+  const posterBackground = designContract && designContract.palette && designContract.palette.background
+    ? palette.background : palette.primary;
   const typography = theme.typography;
   const shape = theme.shape;
   const chart = Array.isArray(palette.chart) ? palette.chart : [];
@@ -60,9 +64,14 @@ function themeVariables(theme, designContract = null) {
     chartColor(index, cssValue(palette.background)),
     cssValue(palette.text),
   );
-  return [
+  const lines = [
     ":root {",
     `  --deck-bg: ${cssValue(palette.background)};`,
+    `  --deck-base-bg: ${cssValue(palette.background)};`,
+    `  --deck-poster-bg: ${cssValue(posterBackground)};`,
+    `  --deck-poster-text: ${readableForeground(posterBackground, palette.text)};`,
+    `  --deck-focus-text: ${cssValue(palette.primary_text)};`,
+    `  --deck-primary-fill-text: ${readableForeground(palette.primary, palette.inverse)};`,
     `  --deck-surface: ${cssValue(palette.surface)};`,
     `  --deck-surface-strong: ${cssValue(palette.surface_strong)};`,
     `  --deck-primary: ${cssValue(palette.primary)};`,
@@ -70,9 +79,11 @@ function themeVariables(theme, designContract = null) {
     `  --deck-primary-text: ${themeColor(palette, "primary_text", cssValue(palette.primary))};`,
     `  --deck-primary-soft: ${cssValue(palette.primary_soft)};`,
     `  --deck-accent-color: ${themeColor(palette, "accent", cssValue(palette.primary))};`,
+    `  --deck-accent-text: ${cssValue(palette.accent_text)};`,
     `  --deck-text: ${cssValue(palette.text)};`,
     `  --deck-muted: ${cssValue(palette.muted)};`,
     `  --deck-base-text: ${cssValue(palette.text)};`,
+    `  --deck-base-emphasis: ${contrastRatio(palette.primary, palette.background) >= 4.5 ? cssValue(palette.primary) : readableForeground(palette.background, palette.text)};`,
     `  --deck-base-muted: ${cssValue(palette.muted)};`,
     `  --deck-primary-soft-text: ${readableForeground(palette.primary_soft, palette.text)};`,
     `  --deck-surface-text: ${readableForeground(palette.surface, palette.text)};`,
@@ -86,6 +97,7 @@ function themeVariables(theme, designContract = null) {
     `  --deck-alt-border: ${themeColor(palette, "alt_border", cssValue(palette.border))};`,
     `  --deck-alt-primary: ${themeColor(palette, "alt_primary", cssValue(palette.primary))};`,
     `  --deck-alt-primary-text: ${themeColor(palette, "alt_primary_text", themeColor(palette, "alt_primary", cssValue(palette.primary)))};`,
+    `  --deck-alt-accent-text: ${themeColor(palette, "alt_accent_text", cssValue(palette.accent_text))};`,
     `  --deck-chart-1: ${chartColor(0, cssValue(palette.primary))};`,
     `  --deck-chart-2: ${chartColor(1, cssValue(palette.surface_strong))};`,
     `  --deck-chart-3: ${chartColor(2, cssValue(palette.text))};`,
@@ -102,7 +114,11 @@ function themeVariables(theme, designContract = null) {
     `  --deck-radius-large: ${Number(shape.radius_large)}px;`,
     `  --deck-border-width: ${Number(shape.border_width)}px;`,
     "}",
-  ].join("\n");
+  ];
+  // Canvas pages use the declared theme palette directly. Legacy body-level
+  // theme/composition variables must not silently override these surfaces.
+  return [lines.join("\n"), "body[data-deck-presentation] .expressive-slide {",
+    ...lines.filter(line => line.trim().startsWith("--deck-")), "}"].join("\n");
 }
 
 function styleOverrideAttributes(designContract) {
@@ -118,31 +134,9 @@ function styleOverrideAttributes(designContract) {
     .join("");
 }
 
-const THEME_STYLE_VALUES = Object.freeze({
-  canvas: new Set(["solid", "grid", "dots", "paper", "pixel", "gradient", "window"]),
-  surface: new Set(["soft", "outline", "hard", "pill", "paper", "window", "note"]),
-  shadow: new Set(["none", "soft", "hard", "glow"]),
-  heading: new Set(["standard", "editorial", "poster", "condensed", "italic", "pixel", "handwritten", "stencil"]),
-  label: new Set(["plain", "pill", "boxed", "mono", "tape"]),
-  accent: new Set(["line", "block", "underline", "bracket", "dot"]),
-  alternation: new Set(["none", "section"]),
-});
-
 function themeStyleAttributes(theme) {
-  const style = theme && theme.style && typeof theme.style === "object" ? theme.style : {};
-  return Object.entries(THEME_STYLE_VALUES).map(([key, allowed]) => {
-    const requested = String(style[key] || "").trim();
-    const fallback = key === "alternation" ? "none" : {
-      canvas: "solid",
-      surface: "soft",
-      shadow: "none",
-      heading: "standard",
-      label: "plain",
-      accent: "line",
-    }[key];
-    const value = allowed.has(requested) ? requested : fallback;
-    return ` data-deck-${key}="${escapeHtml(value)}"`;
-  }).join("");
+  return Object.entries(presentationSystem.resolveTheme(theme).style)
+    .map(([key, value]) => ` data-deck-${key}="${escapeHtml(value)}"`).join("");
 }
 
 function safeJson(value) {
@@ -267,6 +261,7 @@ function renderDocument(deck, theme) {
     "utf8"
   );
   const design = resolveDeckDesign(deck, theme);
+  const presentation = presentationSystem.resolveTheme(theme, design.family);
   const effectivePalette = paletteWithOverrides(theme.palette, deck.design_contract);
   const renderContext = {
     palette: effectivePalette,
@@ -333,10 +328,13 @@ function renderDocument(deck, theme) {
     "  <style>",
     runtimeCss,
     compositionCss,
+    fs.readFileSync(path.join(SKILL_ROOT, "runtime", "expressive.css"), "utf8"),
+    fs.readFileSync(path.join(SKILL_ROOT, "runtime", "open-layouts.css"), "utf8"),
+    fs.readFileSync(path.join(SKILL_ROOT, "runtime", "presentation-system.css"), "utf8"),
     themeVariables(theme, deck.design_contract),
     "  </style>",
     "</head>",
-    `<body data-deck-schema-version="1" data-deck-theme="${escapeHtml(visualDnaId)}" data-deck-theme-id="${escapeHtml(theme.id)}" data-deck-composition="${escapeHtml(design.family)}" data-deck-composition-variant="${escapeHtml(design.variant)}" data-deck-design-seed="${escapeHtml(design.seed)}"${paletteAccentUsage}${styleOverrides}${themeStyleAttributes(theme)}>`,
+    `<body data-deck-schema-version="1" data-deck-presentation="${presentation.version}" data-deck-voice="${presentation.voice}" data-deck-rhythm="${presentation.rhythm}" data-deck-theme="${escapeHtml(visualDnaId)}" data-deck-theme-id="${escapeHtml(theme.id)}" data-deck-composition="${escapeHtml(design.family)}" data-deck-composition-variant="${escapeHtml(design.variant)}" data-deck-design-seed="${escapeHtml(design.seed)}"${paletteAccentUsage}${styleOverrides}${themeStyleAttributes(theme)}>`,
     '  <main id="deck-root">',
     slideHtml,
     "  </main>",
@@ -348,14 +346,25 @@ function renderDocument(deck, theme) {
     '  <script type="application/json" id="deck-document">',
     safeJson(renderedDeck),
     "  </script>",
+    '  <script data-deck-runtime="presentation-system">',
+    safeInlineScript(fs.readFileSync(path.join(SKILL_ROOT, "runtime", "presentation-system.js"), "utf8")),
+    '  </script>',
     '  <script data-deck-runtime="layout-registry">',
     safeInlineScript(layoutRegistryJs),
     "  </script>",
     ...chartScripts,
     ...diagramScripts,
+    '  <script data-deck-runtime="text-fit">',
+    safeInlineScript(fs.readFileSync(path.join(SKILL_ROOT, "runtime", "text-fit.js"), "utf8")),
+    "  </script>",
     "  <script>",
     editorJs,
     "  </script>",
+    ...(presentation.voice === "sketch" ? [
+      '  <script data-deck-runtime="sketch-runtime">',
+      safeInlineScript(fs.readFileSync(path.join(SKILL_ROOT, "runtime", "sketch-runtime.js"), "utf8")),
+      "  </script>",
+    ] : []),
     "</body>",
     "</html>",
     "",

@@ -74,6 +74,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "card_columns": { "enum": ["2", "3"] },
             "collage": { "const": "off" },
             "decorations": { "const": "off" },
             "stagger": { "const": "off" },

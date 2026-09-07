@@ -315,7 +315,7 @@ function themeCatalogPayload(context) {
         "[--palette-accent-usage sparse|balanced|dominant] " +
         "[--style-override collage=off|decorations=off|stagger=off|" +
         "irregular_grid=off|shadow=off|texture=off|gradient=off|" +
-        "radius=square|rounded]"
+        "radius=square|rounded|card_columns=2|3]"
       ),
       style_override_axes: {
         collage: ["off"],
@@ -326,6 +326,7 @@ function themeCatalogPayload(context) {
         texture: ["off"],
         gradient: ["off"],
         radius: ["square", "rounded"],
+        card_columns: ["2", "3"],
       },
       semantic_review: {
         required_for_structured_palette: true,
@@ -395,7 +396,7 @@ function canonicalizeSourceFacts(sourceFacts) {
   const source = normalizeSourceText(binding.source_text);
   const changes = [];
   const facts = sourceFacts.map(value => String(value || "").trim()).filter(Boolean)
-    .map(fact => {
+    .flatMap(fact => {
       if (!binding.available || source.includes(normalizeSourceText(fact))) return fact;
       const labeled = /^[^:：]{1,32}[:：]\s*(.+)$/.exec(fact);
       const candidate = labeled ? labeled[1].trim() : "";
@@ -418,7 +419,7 @@ function canonicalizeSourceFacts(sourceFacts) {
           to: binding.source_text,
           reason: "restored exact runtime source text after a non-numeric copy drift",
         });
-        return binding.source_text;
+        return splitDefaultRuntimeSourceFacts(binding.source_text);
       }
       return fact;
     });
@@ -524,7 +525,7 @@ function parseArgs(argv) {
       opts.modelPalette = { ...(opts.modelPalette || {}), accent_usage: value };
       index += 1;
     } else if (arg === "--style-override" && value) {
-      const match = /^([a-z_]+)=(off|square|rounded)$/.exec(value);
+      const match = /^([a-z_]+)=(off|square|rounded|2|3)$/.exec(value);
       if (!match) {
         throw new Error("--style-override must use KEY=VALUE");
       }
@@ -627,6 +628,18 @@ function buildSlide(layoutId, index, outlineSlide = null) {
     outlineSlide && outlineSlide.layout,
     outlineSlide && outlineSlide.visual,
   ].filter(Boolean).join("\n");
+  // These are new-deck defaults only. Loading an existing deck still uses the
+  // legacy field defaults, and ordinary content patches preserve composition.
+  const asksForStandard = outlineVisual.split(/[。；;!?！？\n，,]+/).some(clause => (
+    /(?:传统|主题框架|标准模板|上下图文|standard|traditional)/i.test(clause)
+    && !/(?:不要|不用|避免|不希望|拒绝|\bavoid\b|\bwithout\b|\bnot\b)/i.test(clause)
+  ));
+  if (outlineSlide && !asksForStandard) {
+    props.composition = require("../runtime/presentation-system.js").preferredComposition(getLayout(layoutId));
+    if (layoutId === "kpi-grid-v1" && /(?:主指标|重点数字|核心数字|单一焦点|spotlight|dominant\s+metric)/i.test(outlineVisual)) {
+      props.variant = "spotlight";
+    }
+  }
   if (
     layoutId === "cards-grid-v1"
     && expectedVisualItemCount(outlineSlide)
@@ -1772,6 +1785,21 @@ function main() {
     ? readOutlineBinding(opts.outline, opts.layoutIds.length || null)
     : null;
   const runtimeBinding = runtimeSourceBinding();
+  const globalBriefText = [
+    opts.title,
+    runtimeBinding.source_text,
+    outlineBinding && outlineBinding.content
+      ? outlineBinding.content.deck_goal
+      : "",
+    outlineBinding && outlineBinding.content
+      ? outlineBinding.content.storyline
+      : "",
+  ].filter(Boolean).join("\n");
+  // A typography-led cover or another slide-local no-image direction must
+  // only skip that slide. Persist generation_forbidden=true solely for an
+  // explicit deck-wide constraint; buildImagePlanEntry applies local
+  // opt-outs independently to each slide.
+  const generationForbidden = opts.noImages || hasDeckWideImageOptOut(globalBriefText);
   const designContext = {
     title: opts.title,
     source_facts: opts.sourceFacts,
@@ -1814,7 +1842,7 @@ function main() {
       layoutPolicy
     ),
     outlineBinding,
-    { imageMode: opts.imageMode, noImages: opts.noImages }
+    { imageMode: opts.imageMode, noImages: generationForbidden }
   );
   const authoringPlan = expandOutlineDrivenPlan(
     layoutResolution.layoutIds,
@@ -2085,21 +2113,6 @@ function main() {
     fs.mkdirSync(path.dirname(deckFile), { recursive: true });
     fs.writeFileSync(deckFile, `${JSON.stringify(skeleton, null, 2)}\n`, "utf8");
 
-    const globalBriefText = [
-      opts.title,
-      runtimeBinding.source_text,
-      outlineBinding && outlineBinding.content
-        ? outlineBinding.content.deck_goal
-        : "",
-      outlineBinding && outlineBinding.content
-        ? outlineBinding.content.storyline
-        : "",
-    ].filter(Boolean).join("\n");
-    // A typography-led cover or another slide-local no-image direction must
-    // only skip that slide. Persist generation_forbidden=true solely for an
-    // explicit deck-wide constraint; buildImagePlanEntry applies local
-    // opt-outs independently to each slide.
-    const generationForbidden = opts.noImages || hasDeckWideImageOptOut(globalBriefText);
     const imageManifestPayload = {
       schema_version: 1,
       mode: opts.imageMode,

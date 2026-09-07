@@ -8,8 +8,10 @@ const {
   getLayout,
   readJson,
   resolveArtifactPath,
+  runtimeSourceBinding,
   validateAndNormalizeDeck,
 } = require("./deck_spec_core.js");
+const { resolveSourceCopy } = require("./source_copy_core.js");
 const { getVisualCollectionContract } = require("../layouts/registry.js");
 const {
   analyzeOutlineLayoutIntent,
@@ -259,6 +261,10 @@ function validateOutlineBinding(deckPath, deck) {
     allowIllustrativeQuantitative: allowsIllustrativeQuantitative(deck),
   };
   const requiresPersistedIntent = Number(contract.contract_version || 1) >= 2;
+  const source = runtimeSourceBinding();
+  const originalCopy = value => source.strict && outline.source_mode === "user_provided"
+    ? resolveSourceCopy(value, source.source_text)
+    : null;
   const coveredOutlinePages = new Set();
   const splitRangesByPage = new Map();
   deckSlides.forEach((slide, index) => {
@@ -336,7 +342,9 @@ function validateOutlineBinding(deckPath, deck) {
     const rawPropText = collectText(slide.props).join(" ");
     const propText = normalizeBindingText(rawPropText);
     const expectedTitle = normalizeBindingText(outlineSlide.title);
-    if (expectedTitle && !propText.includes(expectedTitle)) {
+    const originalTitle = normalizeBindingText(originalCopy(outlineSlide.title));
+    if (expectedTitle && !propText.includes(expectedTitle)
+      && !(originalTitle && propText.includes(originalTitle))) {
       issues.push(
         `${basePath}.props: must include outline page ${expectedPage} title ` +
         `${JSON.stringify(outlineSlide.title)}`
@@ -346,6 +354,8 @@ function validateOutlineBinding(deckPath, deck) {
       effectiveOutlineSlide.message,
       ...(Array.isArray(effectiveOutlineSlide.bullets) ? effectiveOutlineSlide.bullets : []),
     ].flatMap(supportBindingCandidates);
+    const originalSupportCandidates = supportCandidates.map(originalCopy)
+      .filter(Boolean).map(normalizeBindingText);
     const supportNumericTokens = numericBindingTokens([
       effectiveOutlineSlide.message,
       ...(Array.isArray(effectiveOutlineSlide.bullets) ? effectiveOutlineSlide.bullets : []),
@@ -356,6 +366,7 @@ function validateOutlineBinding(deckPath, deck) {
     if (
       supportCandidates.length
       && !supportCandidates.some(candidate => propText.includes(candidate))
+      && !originalSupportCandidates.some(candidate => propText.includes(candidate))
       && !quantitativeSupportPreserved
     ) {
       issues.push(

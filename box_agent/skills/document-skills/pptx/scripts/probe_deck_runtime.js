@@ -168,17 +168,28 @@ function loadPlaywright() {
 
 async function readEditorState(page, viewport) {
   return page.evaluate(({ width, height }) => {
+    const colorCanvas = document.createElement("canvas");
+    colorCanvas.width = colorCanvas.height = 1;
+    const colorContext = colorCanvas.getContext("2d", { willReadFrequently: true });
+    const colorCache = new Map();
+    function rgba(value) {
+      if (!value) return null;
+      if (colorCache.has(value)) return colorCache.get(value);
+      colorContext.clearRect(0, 0, 1, 1);
+      colorContext.fillStyle = "transparent";
+      colorContext.fillStyle = value;
+      colorContext.fillRect(0, 0, 1, 1);
+      const pixel = colorContext.getImageData(0, 0, 1, 1).data;
+      const color = [pixel[0], pixel[1], pixel[2], pixel[3] / 255];
+      colorCache.set(value, color);
+      return color;
+    }
     function rgb(value) {
-      const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value || "");
-      if (match) return match.slice(1, 4).map(Number);
-      const srgb = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(value || "");
-      if (srgb) return srgb.slice(1, 4).map(channel => Number(channel) * 255);
-      const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(value || "").trim());
-      if (!hex) return null;
-      const normalized = hex[1].length === 3
-        ? hex[1].split("").map(channel => channel + channel).join("")
-        : hex[1];
-      return [0, 2, 4].map(index => parseInt(normalized.slice(index, index + 2), 16));
+      const color = rgba(value);
+      return color && color[3] > 0 ? color.slice(0, 3) : null;
+    }
+    function composite(front, back) {
+      return [0, 1, 2].map(index => front[index] * front[3] + back[index] * (1 - front[3])).concat(1);
     }
     function luminance(color) {
       if (!color) return null;
@@ -191,26 +202,27 @@ async function readEditorState(page, viewport) {
       return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
     }
     function contrast(foreground, background) {
-      const left = luminance(rgb(foreground));
-      const right = luminance(rgb(background));
-      if (left == null || right == null) return null;
+      const front = rgba(foreground), back = rgba(background);
+      if (!front || !back || !front[3] || back[3] < 1) return null;
+      const left = luminance(composite(front, back).slice(0, 3));
+      const right = luminance(back.slice(0, 3));
       return (Math.max(left, right) + 0.05) / (Math.min(left, right) + 0.05);
     }
-    function isVisibleColor(value) {
-      if (String(value || "").trim() === "transparent") return false;
-      const rgba = /rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/.exec(value || "");
-      if (rgba) return Number(rgba[1]) > 0.05;
-      return Boolean(rgb(value));
-    }
-    function effectiveBackground(element, slide) {
+    function effectiveBackground(element) {
+      const layers = [];
       let current = element;
       while (current) {
-        const background = getComputedStyle(current).backgroundColor;
-        if (isVisibleColor(background)) return background;
-        if (current === slide) break;
+        const style = getComputedStyle(current);
+        const background = rgba(style.backgroundColor);
+        if (background && background[3] > 0) layers.push(background);
+        if (background && background[3] === 1) break;
+        // A transparent gradient/image has no single known backing color.
+        // Report it as unmeasured instead of interpreting transparency as black.
+        if (style.backgroundImage !== "none") return null;
         current = current.parentElement;
       }
-      return getComputedStyle(slide).backgroundColor;
+      const color = layers.reverse().reduce((back, front) => composite(front, back), [255, 255, 255, 1]);
+      return `rgb(${color.slice(0, 3).map(Math.round).join(", ")})`;
     }
 
     const firstSlide = document.querySelector("#deck-root > .slide");
@@ -300,6 +312,7 @@ async function readEditorState(page, viewport) {
       .filter(Boolean)
       .map(value => value.join(","));
     const contrastSamples = [];
+    const unresolvedBackgrounds = [];
     document.querySelectorAll("#deck-root > .slide").forEach((slide, slideIndex) => {
       slide.querySelectorAll(
         "h1,h2,h3,p,li,td,th,strong,.card-index,.timeline-marker,.timeline-number,.kpi-value,.eyebrow"
@@ -310,7 +323,10 @@ async function readEditorState(page, viewport) {
         const foreground = getComputedStyle(element).color;
         const background = effectiveBackground(element, slide);
         const ratio = contrast(foreground, background);
-        if (ratio == null) return;
+        if (ratio == null) {
+          if (background === null) unresolvedBackgrounds.push({ slide: slideIndex + 1, text: content.slice(0, 80) });
+          return;
+        }
         contrastSamples.push({
           slide: slideIndex + 1,
           element: element.tagName.toLowerCase(),
@@ -339,6 +355,8 @@ async function readEditorState(page, viewport) {
       },
       componentContrast: {
         sampled: contrastSamples.length,
+        unresolvedCount: unresolvedBackgrounds.length,
+        unresolvedBackgrounds: unresolvedBackgrounds.slice(0, 8),
         minimum: contrastSamples.length
           ? Math.min(...contrastSamples.map(sample => sample.ratio))
           : null,
@@ -504,7 +522,7 @@ async function main() {
         issues.push(`Toolbar ${menuName} menu closes during pointer transition`);
       }
     });
-    if (editor.statement && editor.statement.contrast < 4.5) {
+    if (editor.statement && editor.statement.contrast != null && editor.statement.contrast < 4.5) {
       issues.push(`Statement contrast is too low: ${editor.statement.contrast.toFixed(2)}`);
     }
     if (editor.palette && editor.palette.distinctCoreColors === 1) {
@@ -552,6 +570,9 @@ async function main() {
       issues.push("Export mode unexpectedly scales the slide canvas");
     }
 
+    if (editor.componentContrast.unresolvedCount) {
+      warnings.push(`${editor.componentContrast.unresolvedCount} text contrast sample(s) need visual inspection: transparent gradient/image background.`);
+    }
     const report = { ok: issues.length === 0, issues, warnings, editor, export: exported };
     const output = `${JSON.stringify(report, null, 2)}\n`;
     if (opts.report) {

@@ -53,6 +53,14 @@ already names a registered theme, skip the gallery and continue. A preview
 gallery is disposable discovery output, not durable deck-authoring state, so the new-deck
 hard start below has not begun yet.
 
+For sustainability, sports, tourism, or restaurant briefs, consult the scenario
+theme/layout pairings in `references/controlled-layouts.md`: `impact-field`,
+`stadium-score`, `destination-atlas`, and `tasting-menu` are executable presets,
+not mandatory routes. Their three-page examples are in the theme gallery.
+For hand-drawn whiteboard / Excalidraw-like briefs, use `sketch-whiteboard`:
+uneven double strokes, sketch arrows, circled labels and marker underlines with
+editable body text. See the same reference for layout pairings and export scope.
+
 For normal authoring, use the model-owned design route after `outline.json` is
 valid. First run `inspect_deck_contract.js --design-catalog` with the title, bound
 outline, and source facts. This discovery call returns the complete registered
@@ -68,7 +76,9 @@ auto --theme-model-choice <THEME_ID> --theme-model-reason <SHORT_REASON>
 style constraints into repeatable `--style-override KEY=VALUE` flags instead
 of replacing the theme or family: `collage=off`, `decorations=off`,
 `stagger=off`, `irregular_grid=off`, `shadow=off`, `texture=off`,
-`gradient=off`, or `radius=square|rounded`. User-authored opt-outs are also
+`gradient=off`, `radius=square|rounded`, or `card_columns=2|3` for an explicit
+deck-wide card-grid column count. Card columns outrank ledger/featured variants;
+they do not change table columns. User-authored opt-outs are also
 inferred from the exact source request and outrank model flags. After scaffolding and the
 content patch, review the complete final design exactly once with a separate model call. When
 `sub_agent` is available, call it once with `required_tools: ["read_file"]`,
@@ -151,6 +161,14 @@ without mistaking a palette change for a new composition. This is also opt-in
 discovery output and does not begin or alter durable deck-authoring state.
 
 ### New deck hard start
+
+Keep source phrases intact when planning a strict source-only outline. Content
+patches can recover small grammatical insertions such as “清晰的问题描述” back
+to the original “清晰问题描述”; outline QA accepts that exact original as the
+same content anchor. This does not authorize changed numbers, negation or facts.
+If outline wording is revised, the next content patch synchronizes its stored
+title/message. Layout, visual intent and item counts still require their normal
+controlled redesign checks; do not hand-edit those metadata fields to silence QA.
 
 For a new deck, do not hand-create the top-level `deck.json` structure. After
 the slide plan and ordered layout choices exist, the **first deck-authoring
@@ -313,6 +331,45 @@ and shapes from `fields`/`editor.defaultProps`; do not guess aliases or inspect
 the same layout again. Common arrays are `cards-grid-v1.items`,
 `quadrant-matrix-v1.items`, `kpi-grid-v1.items`, `project-case-study-v1.metrics`, and
 `timeline-horizontal-v1.steps`.
+
+Use page-specific visual hierarchy across **every theme**. For a new deck,
+prefer `cover-editorial-v1.composition="poster"` for a short memorable opening,
+`image-feature-v1.composition="editorial"` for a large image with narrow notes,
+and `project-case-study-v1.composition="editorial"` when the case also has proof
+metrics. These variants retain the theme's palette/type and editable fields,
+while giving the page its own canvas instead of repeating the family shell.
+For `kpi-grid-v1`, choose `variant="spotlight"` only when the content identifies
+one primary metric; place that supplied metric first and retain all remaining
+items. Equal-weight KPIs still use cards/ledger, and precise charts, tables,
+relationships, explicit counts and requested columns take priority over variety.
+All other registered layouts offer `composition="open"`: statement, cards,
+comparison, timeline, text-columns and closing have their own unboxed content
+structures; image-hero gives the image a dominant region; precision layouts
+retain their semantic grids/connections within a lighter shared shell. New
+outline-backed scaffolds select these compositions unless the outline explicitly
+requests a traditional theme frame. “Avoid traditional cards” is not such a
+request. Content patches and editor controls may choose another registered variant.
+Do not fill optional card bodies or action details with “待补充” just to occupy
+space. Leave them empty when the source supplies only a label; retain real gaps
+when the missing information is required by the user.
+
+Plan a rhythm of opening, evidence and explanation pages: one dominant title,
+image or number per page, with supporting information visibly quieter. A strong
+image must depict the actual subject or a clearly disclosed concept; an empty
+image slot or decorative filler is not a visual centerpiece. On the hand-drawn
+theme, use diagrams and annotations to explain real relationships; keep data
+geometry exact. Do not manufacture comparisons, metrics or process steps for
+the sake of an eye-catching design. Existing decks retain their current layout
+until the user requests redesign. See `references/controlled-layouts.md` for
+variant limits and export considerations.
+
+All canvas layouts use the shared presentation system: short content gets a
+larger visual presence, dense content retains its capacity budget, and theme
+traits control type, rules and reading rhythm. Do not compensate by adding
+theme-id CSS, arbitrary per-page font sizes or repeated corner illustrations.
+Hand-drawn marks should annotate concepts and actual relationships. For theme
+or layout maintenance, follow `references/presentation-system.md` and its
+all-theme/all-layout check; this is not a required step of ordinary deck creation.
 
 ## 0. Non-negotiable Rules
 
@@ -940,6 +997,21 @@ do not justify a route switch, and do not get a repair attempt.
 ### 4.2 Visual inspection is optional
 
 Rendered visual inspection (`scripts/render_pptx.py` + reading the resulting images) is **opt-in**, not a required gate.
+
+Model-based image inspection is also optional. If `inspect_images` is absent,
+the selected model does not support images, the request fails/times out, or its
+answer says it cannot see/read the image (including “Access Denied”), record
+visual inspection as **unverified** and continue to deliver the usable HTML.
+A tool-level `success: true` does not turn an “unable to read” answer into a
+completed visual review. Do not retry the same inspection, switch models, ask
+the user to configure a vision model, or repair the environment just to satisfy
+this optional check. Deterministic HTML/layout checks remain independent of
+model vision. Missing visual inspection alone never blocks the workflow or
+marks an otherwise usable deck incomplete. Follow an explicit user request to
+retry or use a particular vision model separately.
+If preparing the screenshot inputs fails, skip the model-based inspection at
+that point too. Do not cycle through capture methods or export a PPTX merely to
+obtain pictures for checking an HTML-only delivery.
 
 **Default behavior:** skip rendered visual inspection. The controlled HTML QA
 reports above are sufficient for an HTML-only delivery; PPTX structural QA is

@@ -311,6 +311,61 @@ title/message is long or the page carries three parallel proof points. These
 normalizations are advisory authoring corrections and never suppress an
 otherwise renderable artifact.
 
+### Scenario theme and layout pairings
+
+Use these as starting points when the brief matches. They are registered themes
+available in `--design-catalog` and the default theme gallery. Preserve explicit
+user theme/palette choices; do not force a scenario solely from one keyword or
+copy the gallery's illustrative figures into a real deck.
+
+| Scenario / theme id | Visual language | Suitable existing layouts |
+| --- | --- | --- |
+| Sustainability, ESG, resource efficiency / `impact-field` | Forest ink, evidence bands, baseline/target comparisons; default `analytical-exhibit` | `kpi-grid-v1` for supplied metrics, `chart-data-v1` for comparable quantities, `timeline-horizontal-v1` for dated commitments, `technical-diagram-v1` for resource flows |
+| Match review, athlete profile, training / `stadium-score` | Night-blue score panels, ice-blue timing bars, condensed headings and tabular scores; default `poster-asymmetric` | `image-full-bleed-v1` for licensed action photos, `kpi-grid-v1` for results, `comparison-two-column-v1` for tactics, `cards-grid-v1` for training actions |
+| Destination introduction, cultural tourism, itinerary / `destination-atlas` | Sea-blue labels, postcard frames and dashed route annotations; default `editorial-spread` | `image-feature-v1` for sourced scenery, `timeline-horizontal-v1` for ordered stops, `comparison-two-column-v1` for route options, `table-data-v1` for supplied logistics |
+| Restaurant concept, food brand, seasonal menu / `tasting-menu` | Berry ink, cream stock, menu rules and serif headings; default `literary-minimal` | `image-hero-split-v1` for dishes, `text-columns-v1` for ingredient stories, `comparison-two-column-v1` for menu concepts, `table-data-v1` for supplied prices |
+
+Keep facts separate from visual styling: ESG targets are not verified outcomes;
+sports scores need sources; travel times/opening hours require current evidence;
+food origin, nutrition, allergen, and certification claims need supplied or
+verified information. Missing quantities do not authorize invented KPI cards.
+The preview pages explicitly label sample data and conceptual content.
+
+### Shared composition and palette behavior
+
+For a deck-wide request such as “卡片采用三列网格” or “3列高密度”, preserve
+`design_contract.style_overrides.card_columns: "3"` (or `"2"`). The scaffold
+infers this from explicit card/grid wording, or accepts
+`--style-override card_columns=3`. It outranks ledger/featured card variants and
+survives editor rerenders. Table-column counts and page-specific wording are
+not interpreted as a deck-wide card setting. HTML self-check verifies the
+actual rendered column count when this contract exists.
+
+Keep accent fills/decoration separate from accent text. The renderer resolves
+a readable `accent_text` color for ordinary surfaces; solid primary-colored
+cards use their own readable foreground, including auxiliary text. Contrast
+probing composites translucent colors over ancestor backgrounds. A transparent
+image/gradient without an opaque backing is reported as unmeasured and needs
+visual inspection, rather than being treated as black or marked fully checked.
+
+`sketch-whiteboard` is the hand-drawn / Excalidraw-like whiteboard theme for
+brainstorming, workshops, teaching and product concepts. Choose it for explicit
+手绘线条、白板草图、双笔触、圈注 or hand-drawn/sketch requests. It uses deterministic
+SVG double strokes for uneven frames, hand-drawn comparison arrows, circled
+labels and marker underlines. Body text stays editable and readable; chart data
+and technical diagram node/edge geometry remain precise inside a sketch frame.
+The theme can also add loose squares, circles, stars, curved trails and short
+hatching in clear areas. It measures actual text and media bounds before placing
+these optional geometric marks; crowded slides omit them.
+Pair it with `cards-grid-v1`, `comparison-two-column-v1`,
+`timeline-horizontal-v1`, and `technical-diagram-v1` as the content requires.
+The decoration layer follows editor changes and resizing. Existing background
+capture flattens only these decorative strokes for PPTX export, preserving the
+text as text. Keep the default background-capture export path for this theme;
+do not promise individually editable PowerPoint pen strokes. `decorations=off`
+restores plain native borders. Handwriting fonts use local fallbacks; no font
+download is required for the linework.
+
 Composition families publish their actual content-left gutter through
 `--deck-content-left`. Theme guide lines and similar edge decorations derive
 their position from that shared gutter instead of using an independent
@@ -555,3 +610,42 @@ Use free-form HTML only when the registered library cannot express a required
 page. Keep that page or deck on the existing fragment/self-check pipeline and
 report that it is not structurally editable through controlled props. Do not
 silently mix arbitrary DOM into a controlled layout renderer.
+# Expressive page variants
+
+All registered themes support these optional per-page compositions through the
+existing layout fields; no new deck schema or custom HTML is required.
+
+| Page task | Layout and prop | Use and limits |
+| --- | --- | --- |
+| Memorable opening | `cover-editorial-v1`, `composition: "poster"` | Large editable title, theme primary background and computed readable foreground. Short titles have the strongest effect; long titles use smaller type. `standard` retains the theme shell. |
+| Image-led story | `image-feature-v1`, `composition: "editorial"` | Dominant image plus narrow narrative/caption. Resolve the existing required image slot. `standard` retains the wide-image layout. |
+| Case with evidence | `project-case-study-v1`, `composition: "editorial"` | Dominant image, side notes and an unboxed proof strip. Retains all 2–3 supplied metrics and `media_side`; `split`/`poster` remain available. |
+| One leading metric | `kpi-grid-v1`, `variant: "spotlight"` | First supplied item is visually dominant; all 3–6 items remain. Choose only when the narrative identifies a leading metric, not for equal-weight comparisons. |
+| Thesis with evidence | `statement-focus-v1`, `composition: "open"` | Large thesis, supporting narrative and optional unboxed proof strip. |
+| Parallel points | `cards-grid-v1`, `composition: "open"` | Three points use a title sidebar and open rows; denser content uses open columns. Explicit 2/3-column requests take priority. Optional body copy can be empty. |
+| Comparison | `comparison-two-column-v1`, `composition: "open"` | Prominent opposing headings and lists; no implied process arrow. Preserves symmetric/contrast/stacked choices. |
+| Ordered process | `timeline-horizontal-v1`, `composition: "open"` | Connected nodes retain left-to-right order; short copy alternates around the rail, dense copy stays below. |
+| Explanation | `text-columns-v1`, `composition: "open"` | Editorial rows separate section headings, prose and optional bullets without enclosing cards. |
+| Conclusion and actions | `closing-next-steps-v1`, `composition: "open"` | Large conclusion and open action strip. Details are optional; no compulsory filler or END watermark. |
+| Other registered pages | `composition: "open"` where offered | Shared lighter shell; tables, charts, matrices and technical diagrams preserve their meaningful internal geometry. |
+
+New outline-backed scaffolds use these open/expressive variants unless
+the outline explicitly asks for standard geometry. Spotlight is selected only
+for an explicit primary-metric intent. Legacy decks without these props keep
+their old defaults. The editor exposes the same enum controls, and content
+patches preserve them. All 33 layouts offer a canvas composition, across all
+themes; this does not mean every specialized diagram is redesigned. Changing
+layouts or adding a page in an open deck keeps a compatible canvas composition.
+
+Large display text uses ordinary tracking and roomy text boxes to reduce PPTX
+wrap drift. Text and metrics remain native editable elements; images remain
+image objects. When an editable PPTX is requested and a local renderer is
+available, inspect its actual replay as well as the HTML. A successful HTML
+screenshot alone does not verify PowerPoint font substitution or line wrapping.
+
+Controlled HTML fits marked headings and KPI values to their actual rendered
+font and available width. Numeric values retain their units on one line; short
+titles can reduce slightly to stay intact, while longer headings use balanced
+lines. The runtime refits after font loading and editor changes without changing
+the source text. Model-based visual review remains optional: unsupported models
+or unreadable-image responses mean “unverified”, not a blocked delivery.

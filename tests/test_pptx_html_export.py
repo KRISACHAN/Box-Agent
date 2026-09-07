@@ -444,3 +444,39 @@ def test_unmarked_inline_svg_keeps_existing_background_capture_behavior(
         )
         center = background.getpixel((background.width // 2, background.height // 2))
         assert center[0] > 200 and center[1] < 120 and center[2] < 150
+
+
+def test_expressive_export_keeps_text_native_and_resolves_missing_font(tmp_path: Path) -> None:
+    html_path = tmp_path / "index.html"
+    html_path.write_text('''<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0} .slide{position:relative;width:1920px;height:1080px;background:white;color:black;overflow:hidden}
+[data-prop-kind="text"]{position:absolute;left:80px;width:1700px;height:420px;margin:0;line-height:1.4;padding:0 24px 32px 0;box-sizing:border-box;font-family:"Pptx Nonexistent Font Sentinel",Arial,sans-serif}
+h1{top:50px;font-size:250px}p{top:550px;font-size:210px}
+</style></head><body><main id="deck-root"><section class="slide expressive-slide">
+<h1 data-prop-kind="text" data-prop-path="title">NOON</h1>
+<p data-prop-kind="text" data-prop-path="value">28</p>
+</section></main></body></html>''', encoding="utf-8")
+    pptx_path = tmp_path / "editable.pptx"
+    result = _run_node(EXPORT_SCRIPT_PATH, str(html_path), str(pptx_path), "--out", str(tmp_path / "slides"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = _last_json_object(result.stdout)
+    assert report["fontResolution"] == {"resolved": 2, "warnings": []}
+    with zipfile.ZipFile(pptx_path) as archive:
+        xml = archive.read("ppt/slides/slide1.xml").decode()
+    assert "Pptx Nonexistent Font Sentinel" not in xml
+    tree = ET.fromstring(xml)
+    texts = [node.text for node in tree.findall(".//{http://schemas.openxmlformats.org/drawingml/2006/main}t")]
+    assert texts == ["NOON", "28"]
+
+
+def test_expressive_font_resolution_reports_unavailable_probe_without_blocking(tmp_path: Path) -> None:
+    probe = tmp_path / "probe.js"
+    probe.write_text('''const {resolveExpressiveExportFonts} = require(process.argv[2]);
+const page = {locator: () => ({count: async () => 2}), context: () => ({newCDPSession: async () => {throw Error('CDP unavailable')}})};
+resolveExpressiveExportFonts(page).then(value => console.log(JSON.stringify(value)));
+''', encoding="utf-8")
+    result = _run_node(probe, str(SCRIPTS_DIR / "export_font_resolution.js"))
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["resolved"] == 0
+    assert report["warnings"] == ["Actual font resolution unavailable: CDP unavailable"]

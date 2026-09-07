@@ -217,6 +217,7 @@
     revision += 1;
     saveError = false;
     modelNode.textContent = safeJson(documentModel);
+    window.__deckTextFit?.refresh(selectedSlide() || root);
     refreshCurrentThumbnail();
     const detail = {
       reason,
@@ -598,7 +599,8 @@
     const nextValue = element.innerText.replace(/\r/g, "").trim();
     if (getAtPath(modelSlide.props, propPath) === nextValue) return;
     setAtPath(modelSlide.props, propPath, nextValue);
-    if (element.getAttribute("data-prop-rerender") === "true") {
+    if (element.getAttribute("data-prop-rerender") === "true"
+      || element.closest(".expressive-slide[data-presentation-density]")) {
       rerenderCurrentSlide("text");
     } else {
       emitChange("text");
@@ -1526,6 +1528,10 @@
     const layout = getLayout(layoutId);
     const props = layoutRegistry.createEditorProps(layoutId);
     if (!layout || !props) return;
+    const composition = documentModel.slides[currentIndex]?.props.composition;
+    if (["open", "poster", "editorial"].includes(composition)) {
+      props.composition = window.__deckPresentation?.preferredComposition(layout) || props.composition;
+    }
     const modelSlide = { id: createSlideId(), layout_id: layoutId, props };
     const element = renderSlideElement(modelSlide, currentIndex + 1);
     if (!element) {
@@ -1653,6 +1659,7 @@
   }
 
   function serializeHtml() {
+    window.__deckTextFit?.refresh(root);
     modelNode.textContent = safeJson(documentModel);
     const clone = document.documentElement.cloneNode(true);
     clone.querySelector("body").classList.remove(

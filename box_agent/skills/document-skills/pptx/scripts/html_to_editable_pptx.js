@@ -16,6 +16,7 @@ const {
   captureSlideBackgrounds,
   applyDecorationFlatten,
 } = require("./bg_capture");
+const { resolveExpressiveExportFonts } = require("./export_font_resolution");
 
 function officeRaccoonPrefix() {
   if (process.env.BOX_AGENT_NODE_PREFIX) return process.env.BOX_AGENT_NODE_PREFIX;
@@ -393,6 +394,8 @@ async function main() {
   await waitForDiagramLayout(page);
 
   runSelfCheck(htmlPath, detectedWidth, detectedHeight, selfCheckReport, opts.allowSelfCheckIssues);
+  const fontResolution = await resolveExpressiveExportFonts(page);
+  fontResolution.warnings.forEach(warning => console.warn(warning));
 
   const controlledSlideCount = await page.locator("#deck-root > .slide").count();
   const slideSelector = controlledSlideCount ? "#deck-root > .slide" : ".slide";
@@ -509,6 +512,7 @@ async function main() {
         diagramVectorExport: exportResult.diagramVectorExport,
         nativeChartCount: exportResult.nativeChartCount,
         previews,
+        fontResolution,
         htmlSelfCheck: selfCheckReport,
         editableExport: "dom-to-pptx",
         localImagesInlinedForExport: inlinedImages,

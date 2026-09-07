@@ -555,13 +555,25 @@ function restoreBoundOutlineTitles(deck, deckPath, changes) {
     const expectedTitle = outlinePage && typeof outlinePage.title === "string"
       ? outlinePage.title.trim()
       : "";
+    if (slide.outline_intent && outlinePage) {
+      for (const field of ["title", "message"]) {
+        const expected = typeof outlinePage[field] === "string" ? outlinePage[field].trim() : "";
+        if (slide.outline_intent[field] === expected) continue;
+        slide.outline_intent[field] = expected;
+        recordChange(changes, `slides.${slide.id}.outline_intent.${field}: synchronized revised outline copy`);
+      }
+    }
     const layout = getLayout(slide.layout_id);
-    if (!expectedTitle || !layout || !layout.fields.title) return;
-    if (slide.props.title === expectedTitle) return;
-    slide.props.title = expectedTitle;
+    const titleField = layout?.fields.title ? "title" : layout?.fields.statement ? "statement" : null;
+    if (!expectedTitle || !titleField) return;
+    if (titleField === "statement" && ["statement", "support", "eyebrow"].some(field => (
+      typeof slide.props[field] === "string" && slide.props[field].includes(expectedTitle)
+    ))) return;
+    if (slide.props[titleField] === expectedTitle) return;
+    slide.props[titleField] = expectedTitle;
     recordChange(
       changes,
-      `slides.${slide.id}.props.title: restored bound outline page title`
+      `slides.${slide.id}.props.${titleField}: restored bound outline page title`
     );
   });
 }

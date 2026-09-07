@@ -226,7 +226,7 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
         for dna_id in theme["selection"]["visual_dna_ids"]
     }
     assert len(visual_dna_ids) == 32
-    assert len(theme_ids) == 47
+    assert len(theme_ids) == 52
     assert visual_dna_ids - theme_ids == {"playful"}
     assert covered_dna_ids == (visual_dna_ids - {"playful"}) | {
         "comic-panel",
@@ -243,6 +243,11 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
         "property-atlas",
         "commerce-pulse",
         "logistics-control-tower",
+        "impact-field",
+        "stadium-score",
+        "destination-atlas",
+        "tasting-menu",
+        "sketch-whiteboard",
     }
     assert {
         direction["id"]: direction["family_ids"]
@@ -406,7 +411,7 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
     assert project["fields"]["image"]["required"] is False
     assert project["fields"]["metrics"]["minItems"] == 2
     assert project["fields"]["metrics"]["maxItems"] == 3
-    assert project["fields"]["composition"]["values"] == ["split", "poster"]
+    assert project["fields"]["composition"]["values"] == ["split", "poster", "editorial"]
     assert project["mediaSlots"]["slots"][0]["strategies"] == [
         "generate",
         "use_existing",
@@ -432,7 +437,7 @@ def test_every_collection_layout_publishes_one_typed_count_contract() -> None:
     assert "heatmap" in heatmap["capabilities"]
 
 
-def test_high_frequency_layouts_publish_three_structural_variants() -> None:
+def test_high_frequency_layouts_publish_structural_variants() -> None:
     manifest = json.loads((SKILL_DIR / "layouts" / "manifest.json").read_text())
     variants = {layout["id"]: layout["variants"] for layout in manifest["layouts"]}
 
@@ -447,7 +452,7 @@ def test_high_frequency_layouts_publish_three_structural_variants() -> None:
         "symmetric",
         "stacked",
     ]
-    assert variants["kpi-grid-v1"] == ["cards", "ledger", "hero"]
+    assert variants["kpi-grid-v1"] == ["cards", "ledger", "hero", "spotlight"]
     assert variants["timeline-horizontal-v1"] == [
         "horizontal",
         "staggered",
@@ -667,8 +672,15 @@ def test_every_visual_dna_theme_has_complete_contrast_safe_runtime_tokens() -> N
         assert _contrast_ratio(palette["inverse"], palette["primary"]) >= 4.5, theme["id"]
 
 
+def _legacy_css(name: str) -> str:
+    css = (SKILL_DIR / "runtime" / name).read_text(encoding="utf-8")
+    guard = ":where(:not(.expressive-slide, .expressive-slide *))"
+    assert guard in css
+    return css.replace(guard, "")
+
+
 def test_spec_sheet_measurement_rail_uses_one_consistent_left_gutter() -> None:
-    composition_css = (SKILL_DIR / "runtime" / "composition.css").read_text()
+    composition_css = _legacy_css("composition.css")
 
     assert (
         'body[data-deck-composition="technical-schematic"]'
@@ -695,7 +707,7 @@ def test_factory_floor_uses_role_based_page_rhythm() -> None:
     assert _contrast_ratio(palette["alt_text"], palette["alt_background"]) >= 4.5
     assert _contrast_ratio(palette["alt_muted"], palette["alt_background"]) >= 3
 
-    deck_css = (SKILL_DIR / "runtime" / "deck.css").read_text()
+    deck_css = _legacy_css("deck.css")
     assert (
         'body[data-deck-theme="factory-floor"] .layout-kpis .kpi-card:first-child'
         " { background: var(--deck-primary-soft); }"
@@ -704,7 +716,7 @@ def test_factory_floor_uses_role_based_page_rhythm() -> None:
     assert 'body[data-deck-theme="factory-floor"] .layout-closing {' in deck_css
     assert "  --deck-bg: #F2C94C;" in deck_css
 
-    composition_css = (SKILL_DIR / "runtime" / "composition.css").read_text()
+    composition_css = _legacy_css("composition.css")
     assert (
         'body[data-deck-theme-id="factory-floor"]'
         '[data-deck-composition="technical-schematic"]\n'
@@ -1046,7 +1058,7 @@ def test_theme_gallery_renders_real_opt_in_theme_previews(tmp_path: Path) -> Non
 
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
-    assert payload["theme_count"] == 13
+    assert payload["theme_count"] == 18
     assert payload["themes"] == [
         "technical-blueprint",
         "product-console",
@@ -1061,12 +1073,17 @@ def test_theme_gallery_renders_real_opt_in_theme_previews(tmp_path: Path) -> Non
         "block-frame-mono-blue",
         "retro-windows",
         "soft-editorial",
+        "impact-field",
+        "stadium-score",
+        "destination-atlas",
+        "tasting-menu",
+        "sketch-whiteboard",
     ]
     gallery = gallery_path.read_text(encoding="utf-8")
     assert "先看主题，再开始做 PPT" in gallery
     assert "回复卡片上的 theme_id" in gallery
-    assert gallery.count("?mode=gallery") == 13
-    assert gallery.count("打开 3 页完整预览") == 13
+    assert gallery.count("?mode=gallery") == 18
+    assert gallery.count("打开 3 页完整预览") == 18
     for theme_id in payload["themes"]:
         preview_path = gallery_path.parent / f"{theme_id}.html"
         preview = preview_path.read_text(encoding="utf-8")
@@ -1568,6 +1585,8 @@ def test_auto_theme_prompts_cover_every_registered_theme(tmp_path: Path) -> None
         (SKILL_DIR / "layouts" / "manifest.json").read_text(encoding="utf-8")
     )
     distinctive_prompts = {
+        "destination-atlas": "文旅推介与城市漫游，目的地介绍，海蓝色标签和明信片路线注释。",
+        "tasting-menu": "季节菜单与食材故事，风味表达，奶油纸色配莓红墨色，衬线字体和双线菜单。",
         "block-frame-mono-blue": (
             "黑白新野兽主义结构，只用克制的电光蓝点缀，"
             "硬阴影和零圆角。"
@@ -3249,7 +3268,7 @@ console.log(JSON.stringify({ layouts: slides.length, migrations, enumControls, c
     assert json.loads(result.stdout) == {
         "layouts": 33,
         "migrations": 1089,
-        "enumControls": 33,
+        "enumControls": 65,
         "collectionControls": 31,
     }
 
@@ -3283,7 +3302,7 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
     layout_payload = json.loads(layouts.stdout)
     theme_ids = [item["id"] for item in theme_payload["themes"]]
     assert theme_payload["composition_directions"] == list(COMPOSITION_DIRECTIONS)
-    assert len(theme_ids) == 47
+    assert len(theme_ids) == 52
     assert theme_ids == sorted(theme_ids)
     assert "playful" not in theme_ids
     assert {
@@ -3319,7 +3338,7 @@ def test_compact_theme_and_layout_list_aliases_are_supported() -> None:
         "chart-data-v1",
         "table-data-v1",
     }
-    assert len(themes.stdout) + len(layouts.stdout) < 45_000
+    assert len(themes.stdout) + len(layouts.stdout) < 46_000
 
 
 def test_removed_playful_theme_is_rejected_by_validation(tmp_path: Path) -> None:
@@ -12476,14 +12495,11 @@ def test_extended_layouts_render_editable_data_and_semantic_variants(
     assert 'data-deck-runtime="echarts" data-echarts-version="6.0.0"' in html
     assert 'data-deck-runtime="chart-runtime"' in html
     assert "layout-data-table table-comparison table-columns-5" in html
-    assert '<th><span class="data-table-cell-text"' in html
+    assert '<th data-presentation-surface="tint"><span class="data-table-cell-text"' in html
     assert 'data-prop-path="rows.0.4"' in html
     assert "layout-closing closing-contact" in html
     assert "layout-cards cards-numbered cards-count-6" in html
-    assert (
-        'class="card-kicker" data-prop-path="items.0.kicker" '
-        'data-prop-kind="text"></p>'
-    ) in html
+    assert re.search(r'class="card-kicker" data-prop-path="items\.0\.kicker" data-prop-kind="text"[^>]*></p>', html)
     assert ".cards-numbered .cards-grid::before" in html
     assert "display: none;" in html
 
@@ -13076,8 +13092,8 @@ def test_block_frame_theme_renders_builtin_visual_dna(tmp_path: Path) -> None:
     }
 
 
-def test_priority_and_high_frequency_themes_own_dedicated_css() -> None:
-    css = (SKILL_DIR / "runtime" / "deck.css").read_text(encoding="utf-8")
+def test_legacy_priority_themes_keep_their_dedicated_css() -> None:
+    css = _legacy_css("deck.css")
     minimum_selector_counts = {
         "technical-blueprint": 16,
         "product-console": 14,
@@ -13123,8 +13139,8 @@ def test_priority_and_high_frequency_themes_own_dedicated_css() -> None:
     assert 'content: "ORIGIN / TRANSIT / DELIVERY"' in css
 
 
-def test_near_duplicate_themes_own_distinct_composition_overrides() -> None:
-    css = (SKILL_DIR / "runtime" / "deck.css").read_text(encoding="utf-8")
+def test_legacy_near_duplicate_themes_keep_composition_overrides() -> None:
+    css = _legacy_css("deck.css")
 
     assert 'body[data-deck-theme-id="coral"] .layout-cards' in css
     assert (
@@ -15238,3 +15254,869 @@ def test_typography_cover_role_wins_over_roadmap_words_in_deck_title(
     assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
     deck = json.loads(deck_path.read_text(encoding="utf-8"))
     assert deck["slides"][0]["layout_id"] == "cover-editorial-v1"
+
+
+@pytest.mark.parametrize(
+    ("theme_id", "family", "scenario_title", "content_layout"),
+    [
+        ("impact-field", "analytical-exhibit", "让减排进展可追溯", "chart-data-v1"),
+        ("stadium-score", "poster-asymmetric", "每一回合，都有进步", "kpi-grid-v1"),
+        ("destination-atlas", "editorial-spread", "沿着海岸，读懂一座城", "timeline-horizontal-v1"),
+        ("tasting-menu", "literary-minimal", "把季节，端上餐桌", "comparison-two-column-v1"),
+        ("sketch-whiteboard", "institutional-grid", "把想法画出来，再一起讲清楚", "comparison-two-column-v1"),
+    ],
+)
+def test_scenario_themes_render_editable_examples_with_readable_runtime(
+    tmp_path: Path, theme_id: str, family: str, scenario_title: str, content_layout: str
+) -> None:
+    gallery = tmp_path / "index.html"
+    rendered = _run("render_theme_gallery.js", "--themes", theme_id, "--out", str(gallery))
+    assert rendered.returncode == 0, rendered.stdout + rendered.stderr
+    html_path = tmp_path / f"{theme_id}.html"
+    html = html_path.read_text()
+    embedded = re.search(r'<script[^>]+id="deck-document"[^>]*>(.*?)</script>', html, re.S)
+    assert embedded
+    deck = json.loads(embedded.group(1))
+    assert deck["theme_id"] == theme_id
+    assert deck["design"]["family"] == family
+    assert scenario_title in html
+    assert content_layout in {slide["layout_id"] for slide in deck["slides"]}
+    assert len(deck["slides"]) == 3
+    self_check = _run("html_self_check.js", str(html_path))
+    assert self_check.returncode == 0, self_check.stdout + self_check.stderr
+    runtime = _run("probe_deck_runtime.js", str(html_path), "--viewport", "1440x900")
+    assert runtime.returncode == 0, runtime.stdout + runtime.stderr
+    report = json.loads(runtime.stdout)
+    assert report["issues"] == []
+    assert report["editor"]["componentContrast"]["failureCount"] == 0
+
+
+def test_sketch_strokes_follow_edits_and_export_as_decoration(tmp_path: Path) -> None:
+    gallery = _run("render_theme_gallery.js", "--themes", "sketch-whiteboard",
+                   "--out", str(tmp_path / "index.html"))
+    assert gallery.returncode == 0, gallery.stdout + gallery.stderr
+    probe = tmp_path / "probe-sketch.js"
+    probe.write_text(r'''
+const path = require('path');
+const os = require('os');
+const Module = require('module');
+const {pathToFileURL} = require('url');
+const scripts = process.argv[2];
+const {ensurePlaywrightBrowsersPath, chromiumLaunchOptions} = require(path.join(scripts, 'playwright_host.js'));
+const {injectCaptureStyles, markDecorationNodes} = require(path.join(scripts, 'bg_capture.js'));
+const home = os.homedir();
+const prefix = process.env.BOX_AGENT_NODE_PREFIX || process.env.BOX_AGENT_RUNTIME_PREFIX ||
+  (process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'office-raccoon') :
+    process.platform === 'win32' ? path.join(process.env.APPDATA || home, 'office-raccoon') : path.join(home, '.config', 'office-raccoon'));
+process.env.NODE_PATH = [path.join(prefix, 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
+Module._initPaths();
+ensurePlaywrightBrowsersPath();
+const {chromium} = require('playwright');
+(async () => {
+  const browser = await chromium.launch(chromiumLaunchOptions(chromium, {headless:true}).options);
+  try {
+    const page = await browser.newPage({viewport:{width:1440,height:900}});
+    await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', {configurable:true, get:() => false}));
+    await page.goto(pathToFileURL(process.argv[3]).href);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForFunction(() => document.querySelectorAll('#deck-root > .slide > .sketch-overlay').length === 3);
+    const signature = () => page.locator('.sketch-overlay path').evaluateAll(nodes => nodes.map(n => n.getAttribute('d')));
+    const before = await signature();
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('box-agent:deck-change')));
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const deterministic = JSON.stringify(before) === JSON.stringify(await signature());
+    const changed = await page.evaluate(() => {
+      document.querySelectorAll('#deck-root > .slide')[1].dispatchEvent(new MouseEvent('click', {bubbles:true}));
+      return window.__deckRuntime.addLayoutItem('items');
+    });
+    await page.waitForFunction(() => {
+      const slide = document.querySelectorAll('#deck-root > .slide')[1];
+      return slide.querySelectorAll('.open-point').length === 4 && slide.querySelectorAll('[data-sketch-role="concept-circle"]').length === 4;
+    });
+    await page.evaluate(() => {
+      document.body.dataset.deckStyleDecorations = 'off';
+      window.dispatchEvent(new CustomEvent('box-agent:deck-change'));
+    });
+    await page.waitForFunction(() => !document.querySelector('#deck-root .sketch-overlay'));
+    const plainBorder = await page.locator('#deck-root .open-point').first().evaluate(n => getComputedStyle(n).borderTopColor);
+    await page.evaluate(() => {
+      delete document.body.dataset.deckStyleDecorations;
+      window.dispatchEvent(new CustomEvent('box-agent:deck-change'));
+    });
+    await page.waitForFunction(() => document.querySelectorAll('#deck-root > .slide > .sketch-overlay').length === 3);
+    await injectCaptureStyles(page);
+    await markDecorationNodes(page);
+    await page.evaluate(() => document.documentElement.classList.add('pptx-capture-mode'));
+    const captured = await page.locator('#deck-root .sketch-overlay').first().evaluate(n => getComputedStyle(n).visibility);
+    const textHidden = await page.locator('#deck-root h1').first().evaluate(n => getComputedStyle(n).visibility);
+    console.log(JSON.stringify({deterministic, changed, plainBorder, captured, textHidden,
+      studyCount: await page.locator('#deck-root [data-sketch-role="geometric-study"]').count(),
+      overlayTextCount: await page.locator('.sketch-overlay text').count(),
+      thumbnailOverlays: await page.locator('.deck-thumbnail-canvas > .slide > .sketch-overlay').count()}));
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exit(1); });
+''', encoding="utf-8")
+    result = _run(str(probe), str(SCRIPTS_DIR), str(tmp_path / "sketch-whiteboard.html"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    state = json.loads(result.stdout)
+    assert state["deterministic"] is True
+    assert state["changed"] is True
+    assert state["plainBorder"] != "rgba(0, 0, 0, 0)"
+    assert state["captured"] == "visible"
+    assert state["textHidden"] == "hidden"
+    assert state["overlayTextCount"] == 0
+    assert state["thumbnailOverlays"] == 3
+    assert state["studyCount"] == 0  # No repeated, unrelated corner illustration.
+
+
+@pytest.mark.parametrize(
+    ("brief", "expected"),
+    [
+        ("卡片采用三列网格，高密度排版", "3"),
+        ("3列高密度，粗黑描边", "3"),
+        ("Use a 2-column card grid", "2"),
+        ("表格有3列；另做六张卡片", None),
+        ("不要三列卡片", None),
+        ("第2页卡片用三列，其余页不限定", None),
+        ("13列网格", None),
+        ("Use a 12-column grid", None),
+    ],
+)
+def test_explicit_card_columns_are_inferred_without_reinterpreting_table_columns(brief, expected):
+    result = subprocess.run(
+        [str(NODE), "-e", "const {inferStyleOverrides}=require(process.argv[1]);console.log(JSON.stringify(inferStyleOverrides(process.argv[2])||{}))",
+         str(SCRIPTS_DIR / "design_contract_core.js"), brief], capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout).get("card_columns") == expected
+
+
+@pytest.mark.parametrize(
+    ("theme", "family", "seed", "layout", "count", "palette", "overrides"),
+    [
+        ("sketch-whiteboard", "institutional-grid", "eval-12-sketch-workshop", "cards-grid-v1", 6,
+         {"background":"#FCFCF8","text":"#27333A","primary":"#365BA6","accent":"#F7EBAC"}, {}),
+        ("block-frame", "brutalist-frame", "eval-04-studio-portfolio", "cards-grid-v1", 6,
+         {"background":"#FFFDF5","text":"#000000","primary":"#FE90E8","accent":"#F7CB46"}, {"card_columns":"3"}),
+        ("block-frame", "brutalist-frame", "eval-04-studio-portfolio", "cards-grid-v1", 6,
+         {"background":"#FFFDF5","text":"#000000","primary":"#FE90E8","accent":"#F7CB46"}, {"card_columns":"2"}),
+        ("blue-professional", "analytical-exhibit", "eval-02-coffee-business", "cards-grid-v1", 5,
+         {"background":"#FDFAE7","text":"#111111","primary":"#1E2BFA","accent":"#7B84FF"}, {}),
+        ("tasting-menu", "literary-minimal", "eval-10-restaurant-menu", "timeline-horizontal-v1", 5, {}, {}),
+        ("consulting-navy", "technical-schematic", "eval-06-technical-bid", "cover-editorial-v1", 0,
+         {"background":"#F4F7FA","text":"#14212D","primary":"#173B63","accent":"#4F6F8F"}, {}),
+        ("consulting-navy", "institutional-grid", "eval-05-quarterly-review", "cover-editorial-v1", 0,
+         {"background":"#F4F7FA","text":"#14212D","primary":"#173B63","accent":"#E66A2C"}, {}),
+    ],
+    ids=["sketch-accent", "pink-card-grid", "two-column-grid", "five-analysis-cards", "menu-timeline", "blueprint-cover", "gradient-cover"],
+)
+def test_scenario_visual_constraints_have_readable_text_and_fit(
+    tmp_path, theme, family, seed, layout, count, palette, overrides
+):
+    create = tmp_path / "create.js"
+    create.write_text(r'''
+const fs=require('fs'),path=require('path'),dir=process.argv[2],out=process.argv[3],c=JSON.parse(process.argv[4]);
+const {getTheme,createDeckDesign,validateAndNormalizeDeck}=require(path.join(dir,'scripts/deck_spec_core.js'));
+const {createEditorProps}=require(path.join(dir,'layouts/registry.js'));
+const {renderDocument}=require(path.join(dir,'scripts/render_deck_html.js'));
+const theme=getTheme(c.theme),p=createEditorProps(c.layout);p.title='测试内容的清晰呈现';
+if(p.items)p.items=Array.from({length:c.count},(_,i)=>({kicker:'主题',title:'第'+(i+1)+'个要点',body:'这段文字用于验证真实内容下的阅读空间，信息应完整保留。补充必要的背景、下一步行动与检查方式，不依赖隐藏溢出来容纳内容。'}));
+if(p.steps)p.steps=Array.from({length:c.count},(_,i)=>({phase:'阶段'+(i+1),title:'交付与复核',body:'说明这一阶段的输入、成果和验证方式。'}));
+const palette={source:'inferred',accent_usage:'sparse'};for(const [k,v] of Object.entries(c.palette))palette[k]={value:v,source:'inferred',requested:v};
+const deck={schema_version:1,title:'视觉约束回归',theme_id:c.theme,design:createDeckDesign(theme,c.seed,c.family),design_contract:{version:1,palette,style_overrides:c.overrides},slides:[{id:'test',layout_id:c.layout,props:p}]};
+const result=validateAndNormalizeDeck(deck);if(!result.ok)throw Error(JSON.stringify(result.issues));
+fs.writeFileSync(out,renderDocument(result.normalized,theme));
+''')
+    html = tmp_path / "index.html"
+    config = dict(theme=theme, family=family, seed=seed, layout=layout, count=count, palette=palette, overrides=overrides)
+    created = _run(str(create), str(SKILL_DIR), str(html), json.dumps(config))
+    assert created.returncode == 0, created.stdout + created.stderr
+    check_path = tmp_path / "check.json"
+    checked = _run("html_self_check.js", str(html), "--report", str(check_path))
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    check_report = json.loads(check_path.read_text())
+    if overrides.get("card_columns"):
+        assert len(check_report["cardGridStyles"][0]["gridTemplateColumns"].split()) == int(overrides["card_columns"])
+    if theme == "tasting-menu":
+        assert len(check_report["timelineStyles"]) == count
+        assert all(float(step["paddingLeft"].removesuffix("px")) >= 24 for step in check_report["timelineStyles"])
+    runtime = _run("probe_deck_runtime.js", str(html))
+    assert runtime.returncode == 0, runtime.stdout + runtime.stderr
+    report = json.loads(runtime.stdout)
+    assert report["editor"]["componentContrast"]["failureCount"] == 0
+
+
+@pytest.mark.parametrize("mode", ["transparent", "faint-text", "unknown-gradient"])
+def test_contrast_probe_resolves_alpha_and_reports_unknown_backgrounds(tmp_path, mode):
+    result = _run("render_theme_gallery.js", "--themes", "blue-professional", "--out", str(tmp_path / "index.html"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    html = tmp_path / "blue-professional.html"
+    background = "linear-gradient(#FFFFFF, #FFFFFF)" if mode == "unknown-gradient" else "none"
+    foreground = "rgba(17,17,17,0.1)" if mode == "faint-text" else "#111111"
+    override = f'''<style>body {{background:#FFFFFF !important;}}
+#deck-root > .slide:first-child {{background-color:transparent !important;background-image:{background} !important;}}
+#deck-root > .slide:first-child [data-prop-kind="text"]:not(h1) {{color:#111111 !important;}}
+#deck-root > .slide:first-child h1 {{color:{foreground} !important;}}</style>'''
+    html.write_text(html.read_text().replace("</head>", override + "</head>"))
+    runtime = _run("probe_deck_runtime.js", str(html))
+    assert runtime.returncode == 0, runtime.stdout + runtime.stderr
+    report = json.loads(runtime.stdout)
+    contrast = report["editor"]["componentContrast"]
+    if mode == "faint-text":
+        assert any(f["element"] == "h1" and f["ratio"] < 1.5 for f in contrast["failures"])
+    elif mode == "unknown-gradient":
+        assert contrast["unresolvedCount"] > 0
+        assert any("need visual inspection" in warning for warning in report["warnings"])
+    else:
+        assert contrast["failureCount"] == 0
+        assert contrast["unresolvedCount"] == 0
+
+
+def test_user_card_column_count_wins_over_model_style_override(tmp_path):
+    deck = tmp_path / "deck.json"
+    result = _run(
+        "inspect_deck_contract.js", "cards-grid-v1", "--theme", "block-frame",
+        "--family", "brutalist-frame", "--fact", "卡片采用三列网格，保留编号。",
+        "--style-override", "card_columns=2", "--out", str(deck),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    value = json.loads(deck.read_text())
+    assert value["design_contract"]["style_overrides"]["card_columns"] == "3"
+
+
+@pytest.mark.parametrize(
+    ("layout_id", "visual", "field", "expected"),
+    [
+        ("cover-editorial-v1", "大字文字封面", "composition", "poster"),
+        ("cover-editorial-v1", "传统文字封面", "composition", "standard"),
+        ("image-feature-v1", "大图叙事与旁注", "composition", "editorial"),
+        ("image-feature-v1", "上下图文，大图叙事", "composition", "standard"),
+        ("kpi-grid-v1", "重点数字与另外两个指标", "variant", "spotlight"),
+        ("kpi-grid-v1", "三个等权 KPI 指标", "variant", "cards"),
+    ],
+)
+def test_new_scaffold_selects_expressive_geometry_without_overriding_equal_weight(
+    tmp_path: Path, layout_id: str, visual: str, field: str, expected: str
+) -> None:
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update({
+        "title": "年度回顾", "message": "交付28个项目，服务3个领域，聚焦2个方向。",
+        "bullets": ["交付28个项目", "服务3个领域", "聚焦2个方向"],
+        "layout": "封面" if layout_id.startswith("cover") else "内容页",
+        "visual": visual,
+        "evidence": ["交付28个项目，服务3个领域，聚焦2个方向。"],
+    })
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding="utf-8")
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", layout_id, "--outline", str(outline_path),
+                  "--out", str(deck_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    slide = json.loads(deck_path.read_text())["slides"][0]
+    assert slide["layout_id"] == layout_id
+    assert slide["props"][field] == expected
+
+
+def test_expressive_variants_work_in_every_theme_and_keep_legacy_defaults(tmp_path: Path) -> None:
+    probe = r'''
+const path = require('path');
+const root = process.argv[1];
+const core = require(path.join(root, 'scripts/deck_spec_core.js'));
+const registry = require(path.join(root, 'layouts/registry.js'));
+const { renderDocument } = require(path.join(root, 'scripts/render_deck_html.js'));
+const variants = [
+  ['cover-editorial-v1', 'composition', 'poster', 'standard'],
+  ['image-feature-v1', 'composition', 'editorial', 'standard'],
+  ['project-case-study-v1', 'composition', 'editorial', 'split'],
+  ['kpi-grid-v1', 'variant', 'spotlight', 'cards'],
+];
+let count = 0;
+for (const item of core.listThemes()) {
+  const theme = core.getTheme(item.id);
+  for (const [id, key, value, legacy] of variants) {
+    const props = registry.createEditorProps(id);
+    if (props[key] !== legacy) throw Error('legacy default drift');
+    const slide = {id: 'example', layout_id: id, props};
+    const base = {schema_version: 1, title: 'Variant test', theme_id: theme.id, slides: [slide]};
+    // A legacy JSON file omits the added composition field entirely.
+    if (key === 'composition' && legacy === 'standard') delete props[key];
+    const old = core.validateAndNormalizeDeck(base);
+    if (!old.ok) throw Error(old.issues.join('\n'));
+    if (renderDocument(old.normalized, theme).includes('data-composition-template="canvas"')) throw Error('legacy framing changed');
+    props[key] = value;
+    const result = core.validateAndNormalizeDeck(base);
+    if (!result.ok) throw Error(result.issues.join('\n'));
+    const html = renderDocument(result.normalized, theme);
+    if (!html.includes('data-composition-template="canvas"')) throw Error('variant not rendered');
+    const paths = [...registry.getLayout(id).render(slide, 0).matchAll(/data-prop-path="([^"]+)"/g)].map(m => m[1]);
+    if (new Set(paths).size !== paths.length || !paths.includes('title')) throw Error('editor field paths lost or duplicated');
+    if (id === 'kpi-grid-v1' && !paths.includes('items.2.value')) throw Error('supporting metric dropped');
+    if (id === 'project-case-study-v1' && !paths.includes('metrics.1.value')) throw Error('case proof dropped');
+    count++;
+  }
+}
+console.log(JSON.stringify({count}));
+'''
+    result = subprocess.run([str(NODE), "-e", probe, str(SKILL_DIR)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["count"] == 52 * 4
+
+
+def test_content_patch_preserves_expressive_variant_and_all_metric_values(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", "kpi-grid-v1", "--out", str(deck_path))
+    assert result.returncode == 0, result.stderr
+    deck = json.loads(deck_path.read_text())
+    deck["slides"][0]["props"]["variant"] = "spotlight"
+    deck_path.write_text(json.dumps(deck), encoding="utf-8")
+    patch_path = tmp_path / "patch.json"
+    patch_path.write_text(json.dumps({"slides": {"slide-01": {"props": {"title": "更新后的数据结论"}}}}))
+    patched = _run("apply_deck_patch.js", str(deck_path), str(patch_path))
+    assert patched.returncode == 0, patched.stdout + patched.stderr
+    after = json.loads(deck_path.read_text())
+    assert after["slides"][0]["props"]["variant"] == "spotlight"
+    assert after["slides"][0]["props"]["items"] == deck["slides"][0]["props"]["items"]
+    assert after["slides"][0]["props"]["title"] == "更新后的数据结论"
+
+
+def test_expressive_runtime_preserves_variants_through_edit_and_save(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+    ids = ["cover-editorial-v1", "image-feature-v1", "project-case-study-v1", "kpi-grid-v1"]
+    scaffold = _run("inspect_deck_contract.js", *ids, "--theme", "bold-poster", "--out", str(deck_path))
+    assert scaffold.returncode == 0, scaffold.stderr
+    deck = json.loads(deck_path.read_text())
+    for slide, (key, value) in zip(deck["slides"], [("composition", "poster"), ("composition", "editorial"), ("composition", "editorial"), ("variant", "spotlight")], strict=True):
+        slide["props"][key] = value
+    deck_path.write_text(json.dumps(deck), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    assert _run("render_deck_html.js", str(deck_path), "--out", str(html_path)).returncode == 0
+    probe = tmp_path / "probe.js"
+    probe.write_text(r'''
+const fs=require('fs'), path=require('path'), os=require('os'), Module=require('module');
+const {pathToFileURL}=require('url');
+const scripts=process.argv[2];
+const {ensurePlaywrightBrowsersPath,chromiumLaunchOptions}=require(path.join(scripts,'playwright_host.js'));
+const home=os.homedir();
+const prefix=process.env.BOX_AGENT_NODE_PREFIX || process.env.BOX_AGENT_RUNTIME_PREFIX || (process.platform==='darwin' ? path.join(home,'Library','Application Support','office-raccoon') : process.platform==='win32' ? path.join(process.env.APPDATA || home,'office-raccoon') : path.join(home,'.config','office-raccoon'));
+process.env.NODE_PATH=[path.join(prefix,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(path.delimiter);Module._initPaths();ensurePlaywrightBrowsersPath();
+const {chromium}=require('playwright');
+(async()=>{
+ const browser=await chromium.launch(chromiumLaunchOptions(chromium,{headless:true}).options);
+ try {
+  const page=await browser.newPage({viewport:{width:1440,height:900}});
+  await page.addInitScript(()=>Object.defineProperty(navigator,'webdriver',{configurable:true,get:()=>false}));
+  await page.goto(pathToFileURL(process.argv[3]).href);
+  const title=page.locator('#deck-root > .slide').first().locator('[data-prop-path="title"]');
+  await page.locator('[data-action="edit"]').click();
+  await title.fill('NOON');await title.press('Tab');
+  const state=await page.evaluate(()=>{
+   const runtime=window.__deckRuntime;
+   if(!runtime.setLayoutOption('composition','standard'))throw Error('standard toggle failed');
+   if(!runtime.setLayoutOption('composition','poster'))throw Error('poster toggle failed');
+   const slides=[...document.querySelectorAll('#deck-root > .slide')];
+   slides[3].dispatchEvent(new MouseEvent('click',{bubbles:true}));
+   if(!runtime.setLayoutOption('variant','ledger') || !runtime.setLayoutOption('variant','spotlight'))throw Error('metric toggle failed');
+   return {html:runtime.serializeHtml(),document:runtime.getDocument(),canvas:document.querySelectorAll('#deck-root > [data-composition-template="canvas"]').length};
+  });
+  const saved=path.join(path.dirname(process.argv[3]),'saved.html');fs.writeFileSync(saved,state.html);
+  await page.goto(pathToFileURL(saved).href);
+  await page.setViewportSize({width:390,height:844});
+  const restored=await page.evaluate(()=>({document:window.__deckRuntime.getDocument(),canvas:document.querySelectorAll('#deck-root > [data-composition-template="canvas"]').length}));
+  console.log(JSON.stringify({before:state.document,after:restored.document,canvas:restored.canvas}));
+ } finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exit(1)});
+''', encoding="utf-8")
+    result = _run(str(probe), str(SCRIPTS_DIR), str(html_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    state = json.loads(result.stdout)
+    assert state["canvas"] == 4
+    assert state["before"] == state["after"]
+    assert state["after"]["slides"][0]["props"]["title"] == "NOON"
+    assert state["after"]["slides"][3]["props"]["items"] == deck["slides"][3]["props"]["items"]
+
+
+def test_expressive_variants_fit_maximum_copy_and_six_metrics(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+    ids = ["cover-editorial-v1", "image-feature-v1", "project-case-study-v1", "kpi-grid-v1"]
+    result = _run("inspect_deck_contract.js", *ids, "--theme", "bold-poster", "--out", str(deck_path))
+    assert result.returncode == 0, result.stderr
+    deck = json.loads(deck_path.read_text())
+    def copy(length: int) -> str:
+        return ("检查中文文案换行与边界的完整测试说明。" * 20)[:length]
+    cover, image, project, metrics = [s["props"] for s in deck["slides"]]
+    cover.update(composition="poster", title=copy(84), subtitle=copy(160), meta=copy(72), marker=copy(24), eyebrow=copy(32), tags=[copy(24)] * 6)
+    image.update(composition="editorial", title=copy(72), body=copy(220), caption=copy(80))
+    project.update(composition="editorial", title=copy(64), positioning=copy(180), caption=copy(72), metrics=[{"value": copy(24), "label": copy(36)} for _ in range(3)])
+    metrics.update(variant="spotlight", title=copy(64), subtitle=copy(120), items=[{"label": copy(36), "value": "12,345,678,901,234", "detail": copy(90), "delta": copy(28)} for _ in range(6)])
+    deck_path.write_text(json.dumps(deck), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    assert _run("render_deck_html.js", str(deck_path), "--out", str(html_path)).returncode == 0
+    report_path = tmp_path / "qa.json"
+    check = _run("html_self_check.js", str(html_path), "--report", str(report_path))
+    assert check.returncode == 0, check.stdout + check.stderr
+    report = json.loads(report_path.read_text())
+    assert report["issues"] == []
+    assert not any("overflow" in warning for warning in report["warnings"])
+
+
+def test_expressive_poster_honors_requested_background_color(tmp_path: Path) -> None:
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", "cover-editorial-v1", "--theme", "bold-poster",
+                  "--out", str(deck_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text())
+    deck["design_contract"] = {"version": 1, "palette": {"source": "explicit", "background": {"value": "#FFFFFF", "source": "explicit"}, "text": {"value": "#111111", "source": "explicit"}, "primary": {"value": "#C00000", "source": "explicit"}}}
+    deck["slides"][0]["props"]["composition"] = "poster"
+    deck_path.write_text(json.dumps(deck), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    assert _run("render_deck_html.js", str(deck_path), "--out", str(html_path)).returncode == 0
+    html = html_path.read_text()
+    assert "--deck-poster-bg: #FFFFFF;" in html
+    assert "--deck-poster-text: #111111;" in html
+
+
+def _render_typography_probe(tmp_path: Path, theme: str) -> tuple[Path, list[str]]:
+    deck_path = tmp_path / "deck.json"
+    scaffold = _run(
+        "inspect_deck_contract.js", "cover-editorial-v1", "kpi-grid-v1",
+        "cover-editorial-v1", "--theme", theme, "--out", str(deck_path),
+    )
+    assert scaffold.returncode == 0, scaffold.stdout + scaffold.stderr
+    deck = json.loads(deck_path.read_text())
+    short = "企业知识问答接入方案"
+    long = "让每个人都能理解复杂业务中的关键关系，并把清晰的问题、完整的事实与可执行的计划放在同一份演示中"
+    deck["slides"][0]["props"].update(title=short, composition="poster")
+    deck["slides"][1]["props"].update(
+        variant="spotlight", title="季度核心指标",
+        items=[
+            {"label": label, "value": value, "detail": "", "delta": ""}
+            for label, value in [
+                ("营收", "450万元"), ("毛利率", "62%"), ("活跃客户", "128家"),
+                ("续约率", "91%"), ("交付周期", "18天"), ("满意度", "4.6/5"),
+            ]
+        ],
+    )
+    deck["slides"][2]["props"].update(title=long, composition="poster")
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
+    html_path = tmp_path / "index.html"
+    rendered = _run("render_deck_html.js", str(deck_path), "--out", str(html_path))
+    assert rendered.returncode == 0, rendered.stderr
+    return html_path, [short, long]
+
+
+@pytest.mark.parametrize("theme", ["studio", "data-intelligence", "technical-blueprint"])
+def test_display_text_keeps_units_and_short_cjk_titles_together(tmp_path: Path, theme: str) -> None:
+    html_path, titles = _render_typography_probe(tmp_path, theme)
+    report_path = tmp_path / "qa.json"
+    checked = _run("html_self_check.js", str(html_path), "--report", str(report_path))
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    report = json.loads(report_path.read_text())
+    typography = report["typography"]
+    cover = next(t for t in typography if t["slide"] == 1 and t["path"] == "title")
+    metric = next(t for t in typography if t["slide"] == 2 and t["path"] == "items.0.value")
+    long_title = next(t for t in typography if t["slide"] == 3 and t["path"] == "title")
+    assert cover["lines"] == [titles[0]]
+    assert metric["lines"] == ["450万元"]
+    assert metric["fontSize"] > 100  # The main value remains visually dominant.
+    assert "".join(long_title["lines"]) == titles[1]
+    assert len(long_title["lines"][-1]) > 1
+    assert all(t["state"] == "fit" for t in typography)
+    assert not any("overflow" in warning for warning in report["warnings"])
+
+
+def test_html_qa_reports_split_metric_units_without_a_vision_model(tmp_path: Path) -> None:
+    html_path, _ = _render_typography_probe(tmp_path, "data-intelligence")
+    html = html_path.read_text().replace("</head>", '''<style>
+.slide .expressive-metric-value[data-prop-path="items.0.value"] {
+  white-space:normal!important; font-size:96px!important; width:220px!important;
+}
+</style></head>''')
+    html_path.write_text(html, encoding="utf-8")
+    report_path = tmp_path / "qa.json"
+    checked = _run("html_self_check.js", str(html_path), "--report", str(report_path))
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    report = json.loads(report_path.read_text())
+    assert any("numeric value and unit wrap" in warning for warning in report["warnings"])
+
+
+def test_display_text_fitting_survives_editing_thumbnails_and_saved_html(tmp_path: Path) -> None:
+    html_path, _ = _render_typography_probe(tmp_path, "studio")
+    probe = tmp_path / "edit_type.js"
+    probe.write_text(r'''
+const fs=require('fs'),path=require('path'),os=require('os'),Module=require('module'),{pathToFileURL}=require('url');
+const scripts=process.argv[2],host=require(path.join(scripts,'playwright_host.js'));host.ensurePlaywrightBrowsersPath();
+const prefix=process.env.BOX_AGENT_NODE_PREFIX || process.env.BOX_AGENT_RUNTIME_PREFIX || (process.platform==='darwin' ? path.join(os.homedir(),'Library/Application Support/office-raccoon') : process.platform==='win32' ? path.join(process.env.APPDATA || os.homedir(),'office-raccoon') : path.join(os.homedir(),'.config/office-raccoon'));
+process.env.NODE_PATH=[path.join(prefix,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(path.delimiter);Module._initPaths();const{chromium}=require('playwright');
+(async()=>{const browser=await chromium.launch(host.chromiumLaunchOptions(chromium,{headless:true}).options);try{
+ const page=await browser.newPage({viewport:{width:1440,height:900}});
+ await page.addInitScript(()=>Object.defineProperty(navigator,'webdriver',{configurable:true,get:()=>false}));
+ await page.goto(pathToFileURL(process.argv[3]).href);await page.evaluate(()=>window.__deckTextReady);
+ await page.locator('[data-action="edit"]').click();
+ const title=page.locator('#deck-root > .slide').nth(0).locator('[data-prop-path="title"]');
+ await title.click();await title.fill('NOON');await title.press('Tab');
+ const metric=page.locator('#deck-root > .slide').nth(1).locator('[data-prop-path="items.0.value"]');
+ await metric.click();await metric.fill('1280万元');await metric.press('Tab');
+ const capture=()=>page.evaluate(()=>{
+   const elements=[...document.querySelectorAll('#deck-root [data-deck-text-fit]')];
+   const size=e=>({text:e.textContent,font:parseFloat(getComputedStyle(e).fontSize),lines:window.__deckTextFit.textLines(e).map(l=>l.text)});
+   const before=elements.map(size);window.__deckTextFit.refresh();const after=elements.map(size);
+   return {document:window.__deckRuntime.getDocument(),text:after,idempotent:JSON.stringify(before)===JSON.stringify(after),thumbnailValue:document.querySelectorAll('.deck-thumbnail-canvas > .slide')[1]?.querySelector('[data-prop-path="items.0.value"]')?.textContent};
+ });
+ const before=await capture();const saved=path.join(path.dirname(process.argv[3]),'saved.html');fs.writeFileSync(saved,await page.evaluate(()=>window.__deckRuntime.serializeHtml()));
+ await page.goto(pathToFileURL(saved).href);await page.evaluate(()=>window.__deckTextReady);await page.setViewportSize({width:390,height:844});
+ const after=await capture();console.log(JSON.stringify({before,after}));
+}finally{await browser.close()}})().catch(e=>{console.error(e);process.exit(1)});
+''', encoding="utf-8")
+    result = _run(str(probe), str(SCRIPTS_DIR), str(html_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    state = json.loads(result.stdout)
+    assert state["before"]["document"] == state["after"]["document"]
+    for view in state.values():
+        assert view["idempotent"] is True
+        assert view["thumbnailValue"] == "1280万元"
+        title = next(t for t in view["text"] if t["text"] == "NOON")
+        value = next(t for t in view["text"] if t["text"] == "1280万元")
+        assert title["font"] >= 300
+        assert title["lines"] == ["NOON"]
+        assert value["lines"] == ["1280万元"]
+
+
+@pytest.mark.parametrize("visual, expected", [
+    ("开放分栏，避免传统方正卡片", "open"),
+    ("不要标准模板，使用开放行列", "open"),
+    ("traditional theme frame", "standard"),
+])
+def test_outline_body_composition_respects_positive_and_negative_requests(tmp_path, visual, expected):
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0]["visual"] = visual
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False))
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", "cards-grid-v1", "--outline", str(outline_path),
+                  "--no-images", "--out", str(deck_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(deck_path.read_text())["slides"][0]["props"]["composition"] == expected
+
+
+def test_recovered_long_runtime_facts_are_exact_bounded_chunks(tmp_path):
+    source = ("营收450万元、毛利率62%、活跃客户128家。" + "仅使用已经提供的内容进行排版。" * 38
+              + "不补充任何我未提供的事实。")
+    env = {**os.environ, "BOX_AGENT_SOURCE_TEXT_B64": base64.b64encode(source.encode()).decode()}
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", "kpi-grid-v1", "--fact", "营收450万元、毛利率62%、活跃客户128家",
+                  "--fact", "营收450万元，活跃客户128家", "--out", str(deck_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    facts = json.loads(deck_path.read_text())["truth_contract"]["source_facts"]
+    assert len(facts) > 1
+    assert all(len(f) <= 280 and f in source for f in facts)
+    assert len(facts) == len(set(facts))
+    # The exact supplied fact remains first; recovered original text is not lost.
+    assert "".join(facts[1:]) == source
+
+
+def test_runtime_original_numeric_title_survives_sanitization_without_authorizing_other_claims(tmp_path):
+    source = "共创工作坊。制作6页。收尾每人带走3件事：清晰问题描述、待验证假设、可执行小实验。不补充任何我未提供的事实。"
+    env = {**os.environ, "BOX_AGENT_SOURCE_TEXT_B64": base64.b64encode(source.encode()).decode()}
+    probe = tmp_path / "truth.cjs"
+    probe.write_text(r'''
+const path=require('path'),root=process.argv[2],reg=require(path.join(root,'layouts/registry.js'));
+const truth=require(path.join(root,'scripts/validate_deck_truth.js')),core=require(path.join(root,'scripts/deck_spec_core.js'));
+const deck={schema_version:1,title:'共创工作坊',theme_id:'studio',truth_contract:{mode:'source_bound',source_facts:['共创工作坊'],research_facts:[],assumptions:[]},slides:[{id:'close',layout_id:'closing-next-steps-v1',props:{...reg.createEditorProps('closing-next-steps-v1'),eyebrow:'共创工作坊',title:'每人带走3件事',subtitle:'',actions:[{label:'清晰问题描述',detail:'高效推进各方协作'}],contact:''}}]};
+const once=truth.sanitizeStrictSourceDeck(deck).deck,twice=truth.sanitizeStrictSourceDeck(once).deck;
+const bad=structuredClone(deck);bad.slides[0].props.title='服务6家客户';
+console.log(JSON.stringify({once,twice,valid:core.validateAndNormalizeDeck(once),issues:truth.validateSourceBoundDeck(once).issues,bad:truth.sanitizeStrictSourceDeck(bad).deck,badIssues:truth.validateSourceBoundDeck(bad).warnings}));
+''')
+    result = _run(str(probe), str(SKILL_DIR), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["once"] == data["twice"]
+    assert data["once"]["slides"][0]["props"]["title"] == "每人带走3件事"
+    assert data["once"]["slides"][0]["props"]["actions"][0]["detail"] == ""
+    assert data["valid"]["ok"], data["valid"]["issues"]
+    assert not any("numeric claim" in issue for issue in data["issues"])
+    assert data["bad"]["slides"][0]["props"]["title"] == "待补充"
+    assert any("numeric claim" in issue for issue in data["badIssues"])
+
+
+@pytest.mark.parametrize("theme", ["blue-professional", "sketch-whiteboard", "studio"])
+def test_all_registered_layouts_support_open_canvas_without_dropping_fields(tmp_path, theme):
+    probe = tmp_path / "open.cjs"
+    probe.write_text(r'''
+const fs=require('fs'),path=require('path'),root=process.argv[2],reg=require(path.join(root,'layouts/registry.js')),core=require(path.join(root,'scripts/deck_spec_core.js'));
+const slides=reg.layouts.map((layout,i)=>{const props=reg.createEditorProps(layout.id);props.composition=['open','editorial','poster'].find(v=>layout.fields.composition.values.includes(v));return {id:`s-${i}`,layout_id:layout.id,props}});
+const check=core.validateAndNormalizeDeck({schema_version:1,title:'开放构图',theme_id:process.argv[3],slides});if(!check.ok)throw Error(check.issues.join('\n'));
+const html=require(path.join(root,'scripts/render_deck_html.js')).renderDocument(check.normalized,core.getTheme(process.argv[3]));fs.writeFileSync(process.argv[4],html);
+for(const source of slides)for(const target of reg.layouts){const props=reg.createEditorProps(target.id,source);if(!target.render({id:"migration",layout_id:target.id,props},0).includes('data-composition-template="canvas"'))throw Error(`${source.layout_id} -> ${target.id} loses open composition`)}
+console.log(JSON.stringify({count:slides.length,canvas:(html.match(/data-composition-template="canvas"/g)||[]).length,slides}));
+''')
+    html_path = tmp_path / "index.html"
+    result = _run(str(probe), str(SKILL_DIR), theme, str(html_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["count"] == data["canvas"] == 33
+    qa_path = tmp_path / "qa.json"
+    checked = _run("html_self_check.js", str(html_path), "--report", str(qa_path))
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    report = json.loads(qa_path.read_text())
+    assert not report["issues"]
+    # Intentional station feet and between-node arrowheads exceed their own
+    # wrappers. All other overflow warnings require investigation.
+    assert all("article.factory-station" in w or "article.supply-node" in w for w in report["warnings"])
+    runtime = tmp_path / "runtime.json"
+    checked = _run("probe_deck_runtime.js", str(html_path), "--report", str(runtime))
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    contrast = json.loads(runtime.read_text())["editor"]["componentContrast"]
+    assert contrast["sampled"] > 0
+    assert contrast["failureCount"] == 0, contrast["failures"]
+
+
+@pytest.mark.parametrize("columns", [None, "2", "3"])
+def test_open_body_layouts_fit_maximum_text_without_truncation(tmp_path, columns):
+    probe = tmp_path / "capacity.cjs"
+    probe.write_text(r'''
+const fs=require('fs'),path=require('path'),skill=process.argv[2];
+const reg=require(path.join(skill,'layouts/registry.js')),core=require(path.join(skill,'scripts/deck_spec_core.js')),render=require(path.join(skill,'scripts/render_deck_html.js'));
+const ids=['statement-focus-v1','cards-grid-v1','comparison-two-column-v1','timeline-horizontal-v1','text-columns-v1','closing-next-steps-v1'];
+function fill(field,value){if(!field.type)return Object.fromEntries(Object.entries(field).map(([k,v])=>[k,fill(v,value?.[k])]));if(field.type==='text')return '内容需要保持完整并清晰呈现'.repeat(30).slice(0,field.maxChars);if(field.type==='array')return Array.from({length:field.maxItems},(_,i)=>fill(field.itemShape,value?.[i]||value?.[0]));if(field.type==='object')return Object.fromEntries(Object.entries(field.shape).map(([k,v])=>[k,fill(v,value?.[k])]));return value;}
+const slides=ids.map((id,i)=>{const l=reg.getLayout(id),p=reg.createEditorProps(id);for(const[k,v]of Object.entries(l.fields))p[k]=fill(v,p[k]);p.composition='open';return {id:`capacity-${i}`,layout_id:id,props:p}});
+
+const deck={schema_version:1,title:'Capacity',theme_id:'studio',slides:slides.flatMap(slide=>{const field=reg.getLayout(slide.layout_id).fields.variant;return field?field.values.map((v,i)=>({...slide,id:slide.id+'-'+i,props:{...slide.props,variant:v}})):[slide]})};
+if(process.argv[4]!=='none')deck.design_contract={version:1,style_overrides:{card_columns:process.argv[4]}};
+const check=core.validateAndNormalizeDeck(deck);if(!check.ok)throw Error(check.issues.join('\n'));
+fs.writeFileSync(process.argv[3],render.renderDocument(check.normalized,core.getTheme('studio')));
+''')
+    html = tmp_path / "index.html"
+    result = _run(str(probe), str(SKILL_DIR), str(html), columns or "none")
+    assert result.returncode == 0, result.stdout + result.stderr
+    qa = tmp_path / "qa.json"
+    result = _run("html_self_check.js", str(html), "--report", str(qa))
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(qa.read_text())
+    assert not report["issues"] and not report["warnings"]
+    if columns:
+        assert len(report["cardGridStyles"][0]["gridTemplateColumns"].split()) == int(columns)
+
+
+@pytest.mark.parametrize("slide, expected", [
+    ({"title":"下一步行动对比","layout":"comparison","visual":"左右两栏对比，不虚构优先级或效果","message":"两条工作线并列推进","bullets":["渠道优化","续约准备"]}, "comparison-two-column-v1"),
+    ({"title":"共创流程","layout":"timeline","visual":"五步流程图：五个节点带方向性连接（手绘箭头），保留顺序","message":"五个阶段按顺序推进","bullets":["阶段1 收集案例","阶段2 描述现象","阶段3 列出假设","阶段4 设计小实验","阶段5 约定复盘"]}, "timeline-horizontal-v1"),
+    ({"title":"原因假设图","layout":"matrix","visual":"中心问题节点向三个方向分支","message":"三个方向全部是待验证假设","bullets":["信息层级","命名","位置"]}, "cause-tree-v1"),
+])
+def test_explicit_relationship_survives_generic_layout_keywords(slide, expected):
+    probe = "const m=require(process.argv[1]);console.log(JSON.stringify(m.analyzeOutlineLayoutIntent(JSON.parse(process.argv[2]),'user_provided')));"
+    result = subprocess.run([str(NODE), "-e", probe, str(SCRIPTS_DIR / "outline_layout_contract.js"), json.dumps(slide, ensure_ascii=False)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["preferred_layout_id"] == expected
+
+
+def test_contact_sheet_reports_optional_unverified_review_without_blocking(tmp_path):
+    images = tmp_path / "slides"
+    images.mkdir()
+    (images / "slide-01.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+    result = _run("make_contact_sheet.js", str(images), "--out", str(tmp_path / "overview.png"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["count"] == 1
+    assert data["visualInspectionStatus"].startswith("UNVERIFIED")
+    assert "must not block" in data["visualInspectionStatus"]
+    assert "cannot read images" in Path(data["prompt"]).read_text()
+
+
+def test_open_composition_editor_refits_new_copy_and_preserves_saved_layout(tmp_path):
+    deck = {"schema_version": 1, "title": "编辑开放构图", "theme_id": "sketch-whiteboard", "slides": [{"id": "closing", "layout_id": "closing-next-steps-v1", "props": {"eyebrow": "下一步", "title": "项目推进安排", "subtitle": "", "composition": "open", "actions": [{"label": "安排复盘", "detail": ""}], "contact": ""}}]}
+    source = tmp_path / "deck.json"
+    source.write_text(json.dumps(deck, ensure_ascii=False))
+    html = tmp_path / "index.html"
+    result = _run("render_deck_html.js", str(source), "--out", str(html))
+    assert result.returncode == 0, result.stderr
+    probe = tmp_path / "edit-open.cjs"
+    probe.write_text(r'''
+const fs=require('fs'),path=require('path'),os=require('os'),Module=require('module'),{pathToFileURL}=require('url');
+const host=require(path.join(process.argv[2],'playwright_host.js'));host.ensurePlaywrightBrowsersPath();
+const prefix=process.env.BOX_AGENT_NODE_PREFIX||process.env.BOX_AGENT_RUNTIME_PREFIX||(process.platform==='darwin'?path.join(os.homedir(),'Library/Application Support/office-raccoon'):process.platform==='win32'?path.join(process.env.APPDATA||os.homedir(),'office-raccoon'):path.join(os.homedir(),'.config/office-raccoon'));
+process.env.NODE_PATH=[path.join(prefix,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(path.delimiter);Module._initPaths();const{chromium}=require('playwright');
+(async()=>{const b=await chromium.launch(host.chromiumLaunchOptions(chromium,{headless:true}).options);try{const p=await b.newPage({viewport:{width:1440,height:900}});await p.addInitScript(()=>Object.defineProperty(navigator,'webdriver',{configurable:true,get:()=>false}));await p.goto(pathToFileURL(process.argv[3]).href);await p.evaluate(()=>window.__deckTextReady);
+await p.locator('[data-action="edit"]').click();const detail=p.locator('#deck-root [data-prop-path="actions.0.detail"]');await detail.fill('明确复盘需要的材料。');await detail.press('Tab');
+const title=p.locator('#deck-root [data-prop-path="title"]');await title.fill('让每一次复盘都形成清晰的行动安排并明确需要检查的内容'.repeat(2));await title.press('Tab');
+const dense=await p.locator('#deck-root > .slide').evaluate(e=>e.classList.contains('open-dense'));
+await p.evaluate(()=>window.__deckRuntime.addSlide('cards-grid-v1'));const added=await p.evaluate(()=>window.__deckRuntime.getDocument().slides[1]);await p.evaluate(()=>window.__deckRuntime.changeLayout('statement-focus-v1'));
+const before=await p.evaluate(()=>window.__deckRuntime.getDocument());const save=path.join(path.dirname(process.argv[3]),'saved.html');fs.writeFileSync(save,await p.evaluate(()=>window.__deckRuntime.serializeHtml()));await p.goto(pathToFileURL(save).href);await p.evaluate(()=>window.__deckTextReady);const after=await p.evaluate(()=>window.__deckRuntime.getDocument());console.log(JSON.stringify({dense,added,before,after}));}finally{await b.close()}})().catch(e=>{console.error(e);process.exit(1)});
+''')
+    result = _run(str(probe), str(SCRIPTS_DIR), str(html))
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["dense"]
+    assert data["added"]["props"]["composition"] == "open"
+    assert data["added"]["props"]["title"] != data["before"]["slides"][0]["props"]["title"]
+    assert data["before"] == data["after"]
+    assert data["after"]["slides"][0]["props"]["actions"][0]["detail"] == "明确复盘需要的材料。"
+    assert data["after"]["slides"][1]["layout_id"] == "statement-focus-v1"
+    assert data["after"]["slides"][1]["props"]["composition"] == "open"
+
+
+def _source_copy_closing(tmp_path):
+    source = "共创工作坊。会后行动：清晰问题描述、待验证假设、可执行小实验。不补充任何我未提供的事实。"
+    env = {**os.environ, "BOX_AGENT_SOURCE_TEXT_B64": base64.b64encode(source.encode()).decode()}
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(title="会后行动", message="每人带走清晰的问题描述、待验证的假设和可执行的小实验",
+                              bullets=["清晰的问题描述", "待验证的假设", "可执行的小实验"], layout="closing", visual="行动式收尾")
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False))
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", "closing-next-steps-v1", "--outline", str(outline_path),
+                  "--fact", "共创工作坊", "--no-images", "--out", str(deck_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return deck_path, outline_path, env
+
+
+def test_strict_source_copy_and_outline_binding_converge_without_filler(tmp_path):
+    deck_path, _, env = _source_copy_closing(tmp_path)
+    patch = {"slides": {"slide-01": {"props": {"eyebrow": "共创工作坊", "title": "会后行动", "subtitle": "",
+             "actions": [{"label": t, "detail": ""} for t in ["清晰的问题描述", "待验证的假设", "可执行的小实验"]], "contact": ""}}}}
+    patch_path = tmp_path / "patch.json"
+    patch_path.write_text(json.dumps(patch, ensure_ascii=False))
+    first = _run("apply_deck_patch.js", str(deck_path), str(patch_path), env=env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    once = json.loads(deck_path.read_text())
+    assert [a["label"] for a in once["slides"][0]["props"]["actions"]] == ["清晰问题描述", "待验证假设", "可执行小实验"]
+    checked = _run("validate_deck_spec.js", str(deck_path), env=env)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    twice = _run("apply_deck_patch.js", str(deck_path), str(patch_path), env=env)
+    assert twice.returncode == 0, twice.stdout + twice.stderr
+    assert json.loads(deck_path.read_text()) == once
+
+
+def test_content_patch_refreshes_revised_outline_copy_but_not_visual_intent(tmp_path):
+    deck_path, outline_path, env = _source_copy_closing(tmp_path)
+    outline = json.loads(outline_path.read_text())
+    outline["slides"][0]["message"] = "清晰问题描述、待验证假设、可执行小实验"
+    outline["slides"][0]["bullets"] = ["清晰问题描述", "待验证假设", "可执行小实验"]
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False))
+    patch = {"slides": {"slide-01": {"props": {"eyebrow": "共创工作坊", "subtitle": "", "contact": "",
+             "actions": [{"label": t, "detail": ""} for t in outline["slides"][0]["bullets"]]}}}}
+    patch_path = tmp_path / "patch.json"
+    patch_path.write_text(json.dumps(patch, ensure_ascii=False))
+    applied = _run("apply_deck_patch.js", str(deck_path), str(patch_path), env=env)
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    checked = _run("validate_deck_spec.js", str(deck_path), env=env)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert json.loads(deck_path.read_text())["slides"][0]["outline_intent"]["message"] == outline["slides"][0]["message"]
+    outline["slides"][0]["visual"] = "柱状图"
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False))
+    _run("apply_deck_patch.js", str(deck_path), str(patch_path), env=env)
+    checked = _run("validate_deck_spec.js", str(deck_path), env=env)
+    assert checked.returncode != 0
+    assert "outline_intent.visual" in checked.stdout + checked.stderr
+
+
+@pytest.mark.parametrize("candidate, source, expected", [
+    ("清晰的问题描述", "𠀀。清晰问题描述、待验证假设", "清晰问题描述"),
+    ("已观察到的现象", "事实（已观察现象）", "已观察现象"),
+    ("事实：已观察到的现象", "事实（已观察现象）", "事实（已观察现象）"),
+    ("待验证的假设", "待验证假设", "待验证假设"),
+    ("已验证的假设", "未验证假设", None),
+    ("验证的假设", "未验证假设", None),
+    ("明确的问题描述", "不明确问题描述", None),
+    ("4万元的营收", "24万元营收", None),
+    ("营收增长30万元", "营收增长20万元", None),
+    ("三阶段的实施方案", "五阶段实施方案", None),
+    ("客户已经续约", "客户尚未续约", None),
+    ("甲公司的经营目标", "乙公司经营目标", None),
+    ("清晰的问题描述", "没有相关的原始材料", None),
+])
+def test_source_copy_recovery_preserves_numbers_negation_entities_and_original_substrings(candidate, source, expected):
+    script = "const m=require(process.argv[1]);console.log(JSON.stringify(m.resolveSourceCopy(process.argv[2],process.argv[3])));"
+    result = subprocess.run([str(NODE), "-e", script, str(SCRIPTS_DIR / "source_copy_core.js"), candidate, source], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == expected
+    if expected:
+        assert expected in source
+
+
+def test_outline_particle_tolerance_does_not_accept_unbacked_or_opposite_claim(tmp_path):
+    deck_path, outline_path, env = _source_copy_closing(tmp_path)
+    outline = json.loads(outline_path.read_text())
+    outline["slides"][0].update(message="已验证的假设", bullets=["已验证的假设"])
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False))
+    deck = json.loads(deck_path.read_text())
+    deck["slides"][0]["outline_intent"]["message"] = "已验证的假设"
+    deck["slides"][0]["props"].update(subtitle="", actions=[{"label":"待验证假设","detail":""}],contact="")
+    deck_path.write_text(json.dumps(deck, ensure_ascii=False))
+    result = _run("validate_deck_spec.js", str(deck_path), env=env)
+    assert result.returncode != 0
+    assert "must preserve at least one" in result.stdout + result.stderr
+
+
+def test_statement_page_restores_its_bound_title_and_uses_relevant_source_fragments(tmp_path):
+    source = "共创工作坊。三个平行概念：事实（已观察现象）、猜测（未验证解释）、方案（准备尝试动作）。不画成时间顺序或评分。" + "这是后续页面的其他内容。" * 30 + "收尾：清晰问题描述、待验证假设、可执行小实验。不补充任何我未提供的事实。"
+    env = {**os.environ, "BOX_AGENT_SOURCE_TEXT_B64": base64.b64encode(source.encode()).decode()}
+    outline_path = tmp_path / "outline.json"
+    outline = _write_outline(outline_path, page_count=1, source_mode="user_provided")
+    outline["slides"][0].update(title="三个平行概念", message="事实、猜测、方案是三个平行概念", bullets=["事实：已观察现象", "猜测：未验证解释", "方案：准备尝试动作"], layout="statement", visual="核心观点与三个平行概念")
+    outline_path.write_text(json.dumps(outline, ensure_ascii=False))
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", "statement-focus-v1", "--outline", str(outline_path), "--no-images", "--out", str(deck_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    patch = {"slides":{"slide-01":{"props":{"eyebrow":"概念", "statement":"事实、猜测与方案应当平行呈现", "support":"事实、猜测与方案这几个平行概念", "proofs":[{"label":"事实", "value":"已观察现象"},{"label":"猜测", "value":"未验证解释"},{"label":"方案", "value":"准备尝试动作"}]}}}}
+    patch_path = tmp_path / "patch.json"
+    patch_path.write_text(json.dumps(patch, ensure_ascii=False))
+    result = _run("apply_deck_patch.js", str(deck_path), str(patch_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    once = json.loads(deck_path.read_text())
+    props = once["slides"][0]["props"]
+    assert props["statement"] == "三个平行概念"
+    assert props["support"] in source
+    assert "后续页面" not in props["support"] and "收尾" not in props["support"]
+    assert "待补充" not in json.dumps(props, ensure_ascii=False)
+    result = _run("validate_deck_spec.js", str(deck_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    _run("apply_deck_patch.js", str(deck_path), str(patch_path), env=env)
+    assert json.loads(deck_path.read_text()) == once
+    original_statement = source.split("。")[1]
+    patch["slides"]["slide-01"]["props"]["statement"] = original_statement
+    patch_path.write_text(json.dumps(patch, ensure_ascii=False))
+    result = _run("apply_deck_patch.js", str(deck_path), str(patch_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(deck_path.read_text())["slides"][0]["props"]["statement"] == original_statement
+
+
+def test_runtime_image_opt_out_prevents_automatic_required_image_page(tmp_path):
+    outline_path = tmp_path / "outline.json"
+    _write_outline(outline_path, page_count=5, source_mode="user_provided")
+    source = "制作五页演示。不要生成图片或联网搜图。"
+    env = {**os.environ, "BOX_AGENT_SOURCE_TEXT_B64": base64.b64encode(source.encode()).decode()}
+    deck_path = tmp_path / "deck.json"
+    result = _run("inspect_deck_contract.js", "--outline", str(outline_path), "--out", str(deck_path), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    deck = json.loads(deck_path.read_text())
+    assert not any(s["layout_id"] == "image-feature-v1" for s in deck["slides"])
+    manifest = json.loads((tmp_path / "assets/generated/manifest.json").read_text())
+    assert manifest["generation_forbidden"] is True
+
+
+@pytest.mark.parametrize("layout", ["timeline", "timeline-horizontal-v1", "roadmap", "时间轴", "路线图"])
+def test_explicit_timeline_with_arrow_connected_steps_keeps_its_geometry(layout):
+    slide = {"layout":layout, "title":"共创流程", "visual":"手绘五步流程图，五步顺序用箭头连接，保留先后关系",
+             "bullets":["阶段1收集案例","阶段2描述现象","阶段3列出假设","阶段4设计小实验","阶段5约定复盘"]}
+    script = "const m=require(process.argv[1]);console.log(JSON.stringify(m.analyzeOutlineLayoutIntent(JSON.parse(process.argv[2]),'user_provided')));"
+    result = subprocess.run([str(NODE), "-e", script, str(SCRIPTS_DIR / "outline_layout_contract.js"), json.dumps(slide, ensure_ascii=False)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["preferred_layout_id"] == "timeline-horizontal-v1"
+
+
+def test_source_wording_recovery_does_not_modify_layout_controls(tmp_path):
+    source = "o的pen 和 bal的anced 是示例词。手绘表达。清晰问题描述。不补充任何我未提供的事实。"
+    env = {**os.environ, "BOX_AGENT_SOURCE_TEXT_B64": base64.b64encode(source.encode()).decode()}
+    probe = tmp_path / "typed-copy.cjs"
+    probe.write_text(r'''
+const path=require('path'),root=process.argv[2],reg=require(path.join(root,'layouts/registry.js')),truth=require(path.join(root,'scripts/validate_deck_truth.js'));
+const props=reg.createEditorProps('cards-grid-v1');props.composition='open';props.variant='balanced';props.items=props.items.map(item=>({...item,body:'清晰的问题描述'}));
+const result=truth.sanitizeStrictSourceDeck({schema_version:1,title:'手绘表达',theme_id:'studio',truth_contract:{mode:'source_bound',source_facts:['手绘表达']},slides:[{id:'copy',layout_id:'cards-grid-v1',props}]});console.log(JSON.stringify(result.deck.slides[0].props));
+''')
+    result = _run(str(probe), str(SKILL_DIR), env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    props = json.loads(result.stdout)
+    assert props["composition"] == "open"
+    assert props["variant"] == "balanced"
+    assert all(item["body"] == "清晰问题描述" for item in props["items"])

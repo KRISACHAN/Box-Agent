@@ -24,7 +24,7 @@ const PROJECT_CASE_MEDIA_RE = /(?:缩略图|项目(?:图片|视觉)|案例(?:图
 const PROJECT_CASE_METRICS_RE = /(?:关键数字|数字指标(?:卡)?|项目指标|成果指标|metrics?)/i;
 const GANTT_RE = /(?:甘特(?:图|计划)?|gantt(?:\s*(?:chart|plan|schedule))?)/i;
 const TIMELINE_RE = /(?:时间轴|路线图|里程碑|节点串联|timeline|roadmap)/i;
-const PROCESS_RE = /(?:三段式|四段式|能力路径|演进路径|流程路径|process\s*flow|journey)/i;
+const PROCESS_RE = /(?:三段式|四段式|能力路径|演进路径|流程路径|[一二三四五六七八九十\d]+步流程|流程图|process\s*flow|journey)/i;
 const AGENDA_RE = /(?:议程|行程|入职地图|agenda(?:[-_\s]*grid)?|编号流程|图标节点)/i;
 const FACTORY_PROCESS_RE = /(?:制造产线|生产线|工位流程|工序节拍|质量控制点|factory\s+line|production\s+line|station\s+flow|shop\s+floor)/i;
 const LEGAL_LOGIC_RE = /(?:IRAC|法律论证|案件逻辑|争点.{0,12}规则.{0,12}分析|issue.{0,12}rule.{0,12}analysis|legal\s+reasoning)/i;
@@ -35,9 +35,9 @@ const PYRAMID_RE = /(?:金字塔|pyramid)/i;
 const CUSTOMER_JOURNEY_RE = /(?:客户旅程(?:图|地图)?|用户旅程(?:图|地图)?|customer\s+journey(?:\s+map)?|user\s+journey(?:\s+map)?|journey\s+map)/i;
 const SWIMLANE_RE = /(?:泳道(?:图|流程)?|跨部门流程|跨角色流程|role\s*[×xX*]\s*phase|swim\s*lane|swimlane)/i;
 const MATURITY_RE = /(?:成熟度(?:模型|阶梯|评估)?|能力成熟度|maturity\s+(?:model|ladder|assessment))/i;
-const CAUSE_TREE_RE = /(?:根因(?:树|分析)?|原因树|因果树|鱼骨图|fishbone|cause\s+tree|root\s+cause)/i;
-const NUMBERED_ACTIONS_RE = /(?:行动清单|编号行动|(?<![上下第])[一二三四五六七八九十0-9]+步(?:行动|清单|流程)|numbered\s+actions?)/i;
-const COMPARISON_RE = /(?:双栏对比|前后对比|方案对比|two[- ]column\s*comparison|before\s*(?:and|\/)?\s*after)/i;
+const CAUSE_TREE_RE = /(?:根因(?:树|分析)?|原因树|原因假设图|因果树|鱼骨图|fishbone|cause\s+tree|root\s+cause)/i;
+const NUMBERED_ACTIONS_RE = /(?:行动清单|编号行动|(?<![上下第])[一二三四五六七八九十0-9]+步(?:行动|清单)|numbered\s+actions?)/i;
+const COMPARISON_RE = /(?:双栏对比|左右(?:两栏|两列|两侧)?(?:对比|对照)|前后对比|方案对比|\bcomparison\b|before\s*(?:and|\/)?\s*after)/i;
 const COVER_RE = /(?:封面|\bcover\b|cover[_-]|\bopening\b)/i;
 const SECTION_RE = /(?:章节页|章节分隔|章节标题|章节过渡|section\s*(?:divider|marker)|chapter\s*(?:divider|marker)|\bdivider\b)/i;
 const STATEMENT_RE = /(?:核心结论|关键结论|一句话结论|核心观点|关键观点|结论页|观点页|single\s+statement|key\s+takeaway|thesis\s+statement)/i;
@@ -231,7 +231,10 @@ function analyzeOutlineLayoutIntent(
     );
   }
 
-  if (NUMBERED_ACTIONS_RE.test(all)) {
+  const connectedSequence = hasOrderedSequence(slide)
+    && (/(?:节点[^\n]{0,24}(?:连接|串联|箭头)|(?:连接|箭头)[^\n]{0,24}节点)/.test(visual)
+      || (TIMELINE_RE.test(layout) && /(?:箭头|连接|串联|→)/.test(visual)));
+  if (NUMBERED_ACTIONS_RE.test(all) && !connectedSequence) {
     return semanticRule(
       "numbered-actions",
       "cards-grid-v1",

@@ -86,3 +86,14 @@ def test_pptx_keeps_intermediate_images_private_and_overview_optional():
     assert "screenshot each slide element separately" in text
     assert "Do not use a full-page scrolling screenshot" in text
     assert "Embed only the successfully created contact sheet once" in text
+
+
+def test_pptx_unsupported_vision_is_unverified_and_does_not_gate_delivery():
+    text = " ".join((PPTX_SKILL_ROOT / "SKILL.md").read_text().split())
+    assert "Model-based image inspection is also optional" in text
+    assert "record visual inspection as **unverified** and continue" in text
+    assert "A tool-level `success: true` does not turn" in text
+    assert "Missing visual inspection alone never blocks the workflow" in text
+    assert "Do not retry the same inspection, switch models" in text
+    assert "If preparing the screenshot inputs fails, skip" in text
+    assert "Do not cycle through capture methods" in text

@@ -3,8 +3,10 @@
 
 const fs = require("fs");
 const path = require("path");
+const { resolveSourceCopy } = require("./source_copy_core.js");
 
 const {
+  getLayout,
   readJson,
   resolveArtifactPath,
   runtimeSourceBinding,
@@ -721,13 +723,13 @@ function sourceOverlapScore(candidate, fact) {
 }
 
 function bestSourceFact(candidate, sourceFacts, maxChars, excluded = new Set()) {
-  const eligible = sourceFacts.filter(fact =>
+  const eligible = sourceFactFragments(sourceFacts).filter(fact =>
     !excluded.has(fact) && Array.from(String(fact)).length <= maxChars
-  );
+  ).map(fact => ({ fact, score: sourceOverlapScore(candidate, fact) }))
+    .filter(item => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.fact.length - right.fact.length);
   if (!eligible.length) return null;
-  return eligible
-    .map(fact => ({ fact, score: sourceOverlapScore(candidate, fact) }))
-    .sort((left, right) => right.score - left.score || right.fact.length - left.fact.length)[0].fact;
+  return eligible[0].fact;
 }
 
 function sourceFactFragments(sourceFacts) {
@@ -774,6 +776,14 @@ function strictTextOrFallback(value, normalizedSources, sourceFacts, maxChars, e
   return bestSourceFact(value, sourceFacts, maxChars, excluded) || "待补充";
 }
 
+function isRuntimeSourceCopy(text, runtimeSource) {
+  const normalized = normalizeText(text);
+  // A complete contextual phrase can be backed by the original request. A
+  // bare number cannot borrow a page count or another unrelated input value.
+  return (normalized.match(/\p{L}/gu) || []).length >= 2
+    && normalizeText(runtimeSource).includes(normalized);
+}
+
 function sanitizeUnsupportedClaims(
   value,
   fieldPath,
@@ -786,7 +796,8 @@ function sanitizeUnsupportedClaims(
   if (typeof value === "string") {
     if (isHonestPlaceholder(value)) return value;
     const entry = { path: fieldPath, text: value };
-    const hasUnsupportedNumber = numberTokens(value).some(token =>
+    const hasUnsupportedNumber = !isRuntimeSourceCopy(value, structuralContext.runtimeSource)
+      && numberTokens(value).some(token =>
       !isNumberBackedForSlide(token, sourceFacts, slide, fieldPath)
       && !isDiagramStructuralEntry(entry, slide)
       && !isStructuralNumber(
@@ -949,8 +960,22 @@ function sanitizeStrictSourceDeck(deck) {
   ].filter(Boolean);
 
   sanitized.slides.forEach((slide, slideIndex) => {
-    const props = slide.props;
     const basePath = slidePropsPath(slide, slideIndex);
+    function restoreCopy(value, fieldPath, contract) {
+      if (typeof value === "string") {
+        if (contract?.type !== "text" || isDiagramStructuralEntry({ path: fieldPath, text: value }, slide)) return value;
+        if (isSourceBacked(value, normalizedSources)) return value;
+        const original = resolveSourceCopy(value, binding.source_text);
+        if (original) changes.push(`${fieldPath}: restored exact runtime source wording`);
+        return original || value;
+      }
+      if (Array.isArray(value)) return value.map((item, index) => restoreCopy(item, `${fieldPath}.${index}`, contract?.itemShape));
+      if (!isPlainObject(value) || isMediaObject(value)) return value;
+      const fields = contract?.shape || contract || {};
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, restoreCopy(item, `${fieldPath}.${key}`, fields[key])]));
+    }
+    const props = restoreCopy(slide.props, basePath, getLayout(slide.layout_id)?.fields);
+    slide.props = props;
     ["subtitle", "meta", "caption", "insight"].forEach(field => {
       const cleaned = stripPresentationDirectives(props[field]);
       if (cleaned !== props[field]) {
@@ -960,20 +985,21 @@ function sanitizeStrictSourceDeck(deck) {
     });
     if (slide.layout_id === "statement-focus-v1") {
       const used = new Set();
+      const replacementFacts = [...claimFacts, binding.source_text];
       const statement = strictTextOrFallback(
         props.statement,
         normalizedSources,
-        claimFacts,
+        replacementFacts,
         120,
         used
       );
       if (statement !== props.statement) changes.push(`${basePath}.statement: restored source-backed copy`);
       props.statement = statement;
-      if (claimFacts.includes(statement)) used.add(statement);
+      used.add(statement);
       const support = strictTextOrFallback(
         props.support,
         normalizedSources,
-        claimFacts,
+        replacementFacts,
         180,
         used
       );
@@ -1228,6 +1254,7 @@ function sanitizeStrictSourceDeck(deck) {
       {
         slideCount: sanitized.slides.length,
         eyebrowOrdinal: expectedEyebrowOrdinal(sanitized.slides, slideIndex),
+        runtimeSource: binding.source_text,
       }
     );
   });
@@ -1315,7 +1342,7 @@ function validateSourceBoundDeck(deck) {
         || isDiagramStructuralEntry(entry, slide)
       ) return;
       numberTokens(entry.text).forEach(token => {
-        const sourceBackedNumber = isNumberBackedForSlide(
+        const sourceBackedNumber = isRuntimeSourceCopy(entry.text, sourceBinding.source_text) || isNumberBackedForSlide(
           token,
           claimFacts,
           slide,

@@ -24,6 +24,7 @@ const STYLE_OVERRIDE_VALUES = Object.freeze({
   texture: Object.freeze(["off"]),
   gradient: Object.freeze(["off"]),
   radius: Object.freeze(["square", "rounded"]),
+  card_columns: Object.freeze(["2", "3"]),
 });
 
 function isPlainObject(value) {
@@ -68,8 +69,10 @@ function contrastRatio(left, right) {
 }
 
 function readableForeground(background, preferred) {
-  return [...new Set([preferred, "#111111", "#FFFFFF"].map(normalizeHex).filter(Boolean))]
+  const best = [...new Set([preferred, "#111111", "#FFFFFF"].map(normalizeHex).filter(Boolean))]
     .sort((left, right) => contrastRatio(right, background) - contrastRatio(left, background))[0];
+  return contrastRatio(best, background) < 4.5 && contrastRatio("#000000", background) > contrastRatio(best, background)
+    ? "#000000" : best;
 }
 
 function readableEmphasis(palette, preferred) {
@@ -86,6 +89,7 @@ function readableEmphasis(palette, preferred) {
 
 function resolvePaletteTextRoles(palette) {
   palette.primary_text = readableEmphasis(palette, palette.primary_text || palette.primary);
+  palette.accent_text = readableEmphasis(palette, palette.accent || palette.primary);
   palette.muted = readableEmphasis(palette, palette.muted || palette.text);
   if (contrastRatio(palette.inverse, palette.primary) < 4.5) {
     palette.inverse = readableForeground(palette.primary, palette.text);
@@ -99,6 +103,7 @@ function resolvePaletteTextRoles(palette) {
     };
     palette.alt_primary_text = readableEmphasis(alternate,
       palette.alt_primary_text || palette.alt_primary || palette.primary);
+    palette.alt_accent_text = readableEmphasis(alternate, palette.accent || alternate.primary);
     palette.alt_muted = readableEmphasis(alternate, palette.alt_muted || palette.muted);
   }
   return palette;
@@ -118,6 +123,14 @@ function inferStyleOverrides(value) {
     : collectText(value).join("\n");
   const text = source.normalize("NFKC");
   const overrides = {};
+  const columnText = text
+    .replace(/(?:不要|避免|禁用|不用|不使用|no|without|avoid)\s*[23二两三]\s*(?:[列栏]|[- ]column)[^。；;\n，,]*/gi, "")
+    .replace(/(?:第[0-9一二三四五六七八九十]+页|slide\s+\d+)[^。；;\n]*/gi, "");
+  const columnMatch = columnText.match(/(?:卡片|网格)[^。；;\n]{0,16}?(?<![\d一二两三四五六七八九十])([23二两三])\s*[列栏]|(?<![\d一二两三四五六七八九十])([23二两三])\s*[列栏]\s*(?:网格|卡片|排版|布局|密集|高密度)|(?<!\d)([23])[- ]column\s+(?:cards?|grid)/i);
+  if (columnMatch) {
+    const value = columnMatch[1] || columnMatch[2] || columnMatch[3];
+    overrides.card_columns = /[3三]/.test(value) ? "3" : "2";
+  }
   if (/(?:不要|避免|禁用|不使用|拒绝|无|去掉)(?:任何)?(?:拼贴|collage)|(?:no|without|avoid)\s+collage/i.test(text)) {
     overrides.collage = "off";
   }
@@ -638,6 +651,7 @@ function mixHex(base, overlay, overlayWeight) {
 }
 
 module.exports = {
+  contrastRatio,
   explicitCount,
   explicitCountContract,
   inferDesignContract,

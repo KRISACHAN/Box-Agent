@@ -366,6 +366,7 @@ function getTheme(themeId) {
 }
 
 function themeManifestRecord(theme) {
+  const composition = compositionManifestRecord(theme);
   return {
     id: theme.id,
     name: theme.name || theme.id,
@@ -376,7 +377,8 @@ function themeManifestRecord(theme) {
     typography: isPlainObject(theme.typography) ? deepClone(theme.typography) : {},
     shape: isPlainObject(theme.shape) ? deepClone(theme.shape) : {},
     style: isPlainObject(theme.style) ? deepClone(theme.style) : {},
-    composition: compositionManifestRecord(theme),
+    presentation: require("../runtime/presentation-system.js").resolveTheme(theme, composition.family),
+    composition,
   };
 }
 
