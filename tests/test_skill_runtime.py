@@ -1043,3 +1043,26 @@ def test_skill_pythonpath_supports_dependency_created_after_process_start(
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_source_binding_retains_recent_unicode_with_bounded_environment():
+    import base64
+
+    from box_agent.tools.skill_execution_env import bind_user_source_text
+
+    updates = {}
+
+    class Bash:
+        def update_runtime_env(self, values):
+            updates.update(values)
+
+    source = bind_user_source_text({"bash": Bash()}, "前" * 120_000, "不要生图。")
+    assert len(source) == 120_000
+    assert source.endswith("\n\n不要生图。")
+    assert base64.b64decode(updates["BOX_AGENT_SOURCE_TEXT_B64"]).decode("utf-8") == source
+
+
+def test_source_binding_preserves_requests_when_bash_is_unavailable():
+    from box_agent.tools.skill_execution_env import bind_user_source_text
+
+    assert bind_user_source_text({}, "第一条", "第二条") == "第一条\n\n第二条"

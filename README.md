@@ -351,6 +351,11 @@ Requires Node.js ≥ 18 on `PATH`. Chromium lands in `~/.box-agent/browsers/` (s
 
 In-session commands: `/help`, `/clear`, `/clear_all`, `/history`, `/stats`, `/sandbox_status`, `/log`, `/goal`, `/memory review`, `/exit`
 
+CLI Skill subprocesses receive the original user requests, including constraints
+such as "do not generate images", through the same source-binding contract as
+ACP. Interactive requests accumulate until `/clear` or `/clear_all`; assistant
+output and automatic goal-continuation prompts are not added as source facts.
+
 ACP session traces keep their existing `~/.box-agent/log/sessions/<session-id>.jsonl`
 name and `box-agent-session-trace/v1` record format. Retention removes only whole,
 inactive session files: files older than 7 days are eligible, and the directory

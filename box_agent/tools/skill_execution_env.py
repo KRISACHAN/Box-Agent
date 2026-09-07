@@ -2,11 +2,39 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from box_agent.tools.runtime import SkillRuntimeContext
+
+
+_MAX_SOURCE_TEXT_ENV_CHARS = 120_000
+
+
+def bind_user_source_text(
+    tools: Mapping[str, object],
+    source_text: str,
+    user_request: str,
+) -> str:
+    """Bind real user requests to provenance-aware Skill subprocesses.
+
+    Adapters own the conversation boundary: pass only real user input, never
+    assistant output or synthetic continuation prompts. Empty prior text and
+    input clear the binding when a conversation is reset.
+    """
+    request = user_request.strip()
+    if request:
+        source_text = (
+            f"{source_text.rstrip()}\n\n{request}" if source_text.strip() else request
+        )[-_MAX_SOURCE_TEXT_ENV_CHARS:]
+    update_env = getattr(tools.get("bash"), "update_runtime_env", None)
+    if callable(update_env):
+        encoded = base64.b64encode(source_text.encode("utf-8")).decode("ascii")
+        update_env({"BOX_AGENT_SOURCE_TEXT_B64": encoded})
+    return source_text
 
 
 def build_skill_execution_env(

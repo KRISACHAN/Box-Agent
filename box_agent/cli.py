@@ -77,7 +77,10 @@ from box_agent.tools.runtime import (
     build_skill_runtime_prompt,
     resolve_cli_shell_python,
 )
-from box_agent.tools.skill_execution_env import build_skill_execution_env
+from box_agent.tools.skill_execution_env import (
+    bind_user_source_text,
+    build_skill_execution_env,
+)
 from box_agent.tools.skill_scratch import cleanup_skill_scratch_dir
 from box_agent.trace_viewer import launch_trace_viewer
 from box_agent.utils import calculate_display_width
@@ -2200,6 +2203,7 @@ async def run_agent(
         ),
     )
 
+    user_source_text = bind_user_source_text(agent.tools, "", "")
     restored_goal = _restore_cli_goal(agent, workspace_dir)
     if initial_goal and initial_goal.strip():
         restored_goal = agent.set_goal(initial_goal)
@@ -2333,6 +2337,7 @@ async def run_agent(
         await _refresh_mcp_after_auth_change()
         _apply_skill_filter(task)
         _apply_cli_auto_loaded_skills(task)
+        user_source_text = bind_user_source_text(agent.tools, user_source_text, task)
         agent.add_user_message(task)
         ok = True
         error: str | None = None
@@ -2566,6 +2571,7 @@ async def run_agent(
                 elif command == "/clear":
                     # Clear message history but keep system prompt
                     cleared_count = agent.clear_history()
+                    user_source_text = bind_user_source_text(agent.tools, "", "")
                     print(f"{Colors.GREEN}✅ Cleared {cleared_count} messages, starting new session{Colors.RESET}\n")
                     if sandbox_mode:
                         print(f"{Colors.YELLOW}⚠️  Note: /clear does not clear sandbox state.{Colors.RESET}")
@@ -2575,6 +2581,7 @@ async def run_agent(
                 elif command == "/clear_all":
                     # Clear both message history AND sandbox kernel
                     cleared_count = agent.clear_history()
+                    user_source_text = bind_user_source_text(agent.tools, "", "")
                     if sandbox_mode:
                         await JupyterSandboxTool.shutdown_all()
                         print(f"{Colors.GREEN}✅ Cleared {cleared_count} messages and shut down sandbox kernel{Colors.RESET}\n")
@@ -2684,6 +2691,9 @@ async def run_agent(
             )
             _apply_skill_filter(user_input)
             _apply_cli_auto_loaded_skills(user_input)
+            user_source_text = bind_user_source_text(
+                agent.tools, user_source_text, user_input
+            )
             agent.add_user_message(user_input)
 
             # Create cancellation event

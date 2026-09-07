@@ -855,3 +855,132 @@ def test_cli_json_reports_waiting_for_user_without_completion(
     assert summary["completed"] is False
     assert "recoverable" not in summary
     assert "checkpoint" not in summary
+
+
+def _exercise_cli_source_binding(
+    tmp_path, monkeypatch, *, task=None, inputs=(), on_run=None, autopilot=False,
+):
+    import base64
+
+    from box_agent.tools.bash_tool import BashTool
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_key: test\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(
+            max_steps=2, workspace_dir=str(workspace), enable_memory=False,
+            enable_memory_extraction=False, memory_maintainer_enabled=False,
+            memory_promotion_proposal_enabled=False,
+        ),
+        tools=ToolsConfig(
+            enable_file_tools=False, enable_bash=False, enable_todo=False,
+            enable_plan=False, enable_sub_agent=False, enable_mcp=False,
+            enable_skills=False, allow_full_access=True,
+        ),
+    )
+    bash = BashTool(
+        workspace_dir=str(workspace), non_interactive=True,
+        runtime_env={"BOX_AGENT_SOURCE_TEXT_B64": base64.b64encode(b"stale source").decode()},
+    )
+    captured = []
+    prompts = iter(inputs)
+
+    class InputSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def prompt_async(self, *args, **kwargs):
+            try:
+                return next(prompts)
+            except StopIteration:
+                raise EOFError from None
+
+    async def base_tools(*args, **kwargs):
+        return [bash], None, None, None
+
+    async def run(self, *args, **kwargs):
+        captured.append(base64.b64decode(
+            bash._subprocess_env["BOX_AGENT_SOURCE_TEXT_B64"]
+        ).decode("utf-8"))
+        if on_run:
+            await on_run(bash, workspace)
+        return "assistant interpretation is not a user source"
+
+    monkeypatch.setattr(cli.Config, "get_default_config_path", staticmethod(lambda: config_path))
+    monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
+    monkeypatch.setattr(cli.Config, "find_config_file", staticmethod(lambda _name: None))
+    monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
+    monkeypatch.setattr(cli, "initialize_base_tools", base_tools)
+    monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "PromptSession", InputSession)
+    monkeypatch.setattr(cli.Agent, "run", run)
+    if autopilot:
+        monkeypatch.setattr(
+            cli, "should_continue_goal_autopilot",
+            lambda _agent, _reason: len(captured) < 2,
+        )
+    exit_code = asyncio.run(cli.run_agent(
+        workspace, task=task, sandbox_mode=False, verify_api=False,
+        initial_goal="完成测试交付" if autopilot else None,
+        goal_autopilot_enabled=autopilot,
+    ))
+    assert exit_code == 0
+    return captured, bash
+
+
+def test_cli_task_binds_verbatim_source_for_skill_subprocesses(tmp_path, monkeypatch):
+    task = "生成 PPT，不需要生图。\n保留字符：$HOME、`literal`、引号'\"。"
+    captured, _ = _exercise_cli_source_binding(tmp_path, monkeypatch, task=task)
+    assert captured == [task]
+
+
+def test_cli_source_excludes_synthetic_goal_continuations(tmp_path, monkeypatch):
+    task = "使用已有图片制作 PPT，不需要生图。"
+    captured, _ = _exercise_cli_source_binding(
+        tmp_path, monkeypatch, task=task, autopilot=True,
+    )
+    assert captured == [task, task]
+
+
+def test_cli_interactive_source_accumulates_and_clear_starts_fresh(tmp_path, monkeypatch):
+    import base64
+
+    captured, bash = _exercise_cli_source_binding(
+        tmp_path, monkeypatch,
+        inputs=("不要生图。", "背景 #FFFFFF", "/clear", "新的独立请求", "/clear_all"),
+    )
+    assert captured == ["不要生图。", "不要生图。\n\n背景 #FFFFFF", "新的独立请求"]
+    assert base64.b64decode(bash._subprocess_env["BOX_AGENT_SOURCE_TEXT_B64"]) == b""
+
+
+def test_cli_source_image_optout_reaches_real_pptx_scaffold(tmp_path, monkeypatch):
+    import shlex
+    import shutil
+
+    import pytest
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for the PPTX scaffold")
+    script = Path(cli.__file__).parent / "skills/document-skills/pptx/scripts/inspect_deck_contract.js"
+    manifests = []
+
+    async def scaffold(bash, workspace):
+        result = await bash.execute(command=shlex.join([
+            node, str(script), "cover-hero-v1", "--title", "工作坊主视觉",
+            "--out", str(workspace / "deck.json"),
+        ]))
+        assert result.success, result.error or result.content
+        manifests.append(json.loads(
+            (workspace / "assets/generated/manifest.json").read_text(encoding="utf-8")
+        ))
+
+    _exercise_cli_source_binding(
+        tmp_path, monkeypatch, task="制作工作坊 PPT，不需要生图。", on_run=scaffold,
+    )
+    assert manifests[0]["generation_forbidden"] is True
+    assert all(item["decision"] == "skip" for item in manifests[0]["image_plan"])
