@@ -337,11 +337,92 @@ async def test_search_accepts_workbuddy_style_independent_queries() -> None:
     assert payload["matched_count"] == 2
     assert payload["activated_count"] == 2
     assert payload["queries"] == ["天气预报", "weather forecast", "stock news"]
-    assert search.parameters["anyOf"] == [
-        {"required": ["query"]},
-        {"required": ["queries"]},
-        {"required": ["tool_names"]},
+
+
+def test_search_provider_schemas_do_not_require_top_level_unions() -> None:
+    search = ToolSearchTool(MCPToolCatalog(), OrderedDict())
+
+    for schema in (
+        search.to_schema()["input_schema"],
+        search.to_openai_schema()["function"]["parameters"],
+    ):
+        assert schema["type"] == "object"
+        assert not {"anyOf", "oneOf", "allOf"}.intersection(schema)
+        assert set(schema["properties"]) == {
+            "query", "queries", "tool_names", "server_name", "top_k",
+        }
+        assert schema["additionalProperties"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [
+    {"query": "forecast"},
+    {"queries": ["forecast"]},
+    {"tool_names": ["weather/get_forecast"]},
+    {"query": "forecast", "queries": ["forecast"],
+     "tool_names": ["weather/get_forecast"]},
+])
+async def test_search_invoke_accepts_each_input_form_and_combined_inputs(
+    arguments: dict,
+) -> None:
+    catalog = MCPToolCatalog()
+    catalog.replace_server(
+        "weather", [FakeMCPTool("get_forecast", "weather", "Get a forecast")],
+    )
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(catalog, activated).invoke(arguments)
+
+    assert result.success is True
+    assert [item["name"] for item in json.loads(result.content)["activated"]] == [
+        "get_forecast",
     ]
+    assert len(activated) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [
+    {},
+    {"top_k": 2, "server_name": "weather"},
+    {"query": ""},
+    {"query": "  "},
+    {"queries": [" "]},
+    {"tool_names": [" "]},
+])
+async def test_search_invoke_rejects_missing_or_blank_inputs_without_activation(
+    arguments: dict,
+) -> None:
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(MCPToolCatalog(), activated).invoke(arguments)
+
+    assert result.success is False
+    assert result.error == "Tool search input is empty."
+    assert json.loads(result.content)["activated_count"] == 0
+    assert not activated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [
+    {"query": 123},
+    {"queries": "forecast"},
+    {"queries": []},
+    {"queries": [123]},
+    {"tool_names": []},
+    {"tool_names": [123]},
+    {"query": "forecast", "top_k": 0},
+    {"query": "forecast", "unknown": True},
+])
+async def test_search_invoke_still_rejects_invalid_fields_without_activation(
+    arguments: dict,
+) -> None:
+    activated = OrderedDict()
+
+    result = await ToolSearchTool(MCPToolCatalog(), activated).invoke(arguments)
+
+    assert result.success is False
+    assert result.raw_output["code"] == "INVALID_TOOL_ARGUMENTS"
+    assert not activated
 
 
 @pytest.mark.asyncio

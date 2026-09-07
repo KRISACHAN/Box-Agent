@@ -64,7 +64,9 @@ class ToolSearchTool(Tool):
             "deferred catalog tools are not exposed, while alwaysLoad tools remain "
             "visible without search. Use query for one keyword search, queries for "
             "independent bilingual or synonymous searches, or tool_names to activate "
-            "only exact catalog IDs or names. Prefer short capability, server, or tool "
+            "only exact catalog IDs or names. Provide at least one non-empty query, "
+            "queries, or tool_names input; they may be combined. "
+            "Prefer short capability, server, or tool "
             "keywords; task-specific operands are tolerated but should be omitted "
             "when possible. Set top_k to however many matching tool "
             "schemas the task actually needs, including ten or more when appropriate. "
@@ -78,6 +80,8 @@ class ToolSearchTool(Tool):
 
     @property
     def parameters(self) -> dict:
+        # Some providers reject top-level unions. execute() checks that at
+        # least one search input is non-empty before accessing the catalog.
         return {
             "type": "object",
             "properties": {
@@ -126,11 +130,6 @@ class ToolSearchTool(Tool):
                     ),
                 },
             },
-            "anyOf": [
-                {"required": ["query"]},
-                {"required": ["queries"]},
-                {"required": ["tool_names"]},
-            ],
             "additionalProperties": False,
         }
 

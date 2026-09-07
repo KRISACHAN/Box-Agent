@@ -151,6 +151,13 @@ box-agent goal complete --evidence "uv run pytest tests/ -q passed"
 权限协商、有界重试和重复请求保护。只有确定不会触发运行时权限请求时，适配器
 才应直接调用 `Tool.invoke()`。
 
+`tool_search` 的对外参数 Schema 使用普通对象，不包含顶层 `anyOf`，以兼容
+拒绝顶层联合约束或要求完整分支定义的模型接口。`query`、`queries`、
+`tool_names` 仍须至少提供一种非空输入，也可以组合使用；字段类型、数组长度
+和未知字段由 `Tool.invoke()` 校验，缺少搜索输入则由 `execute()` 在访问目录、
+激活工具之前拒绝。该兼容处理仅针对 `tool_search`，不会删除其他 MCP 工具的
+Schema 约束。
+
 #### 工具名称与别名
 
 `Tool.name` 是 Provider 工具 Schema 中唯一暴露的 canonical name。工具还可以
