@@ -43,6 +43,12 @@ _SENSENOVA_MODEL_PREFIXES_ENV = "BOX_AGENT_SENSENOVA_MODEL_PREFIXES"
 _SENSENOVA_PREFIX_BOUNDARIES = frozenset("-_/:.")
 _GLM_5_3_MODEL_MARKERS = ("glm-5-3", "glm-5.3")
 _GEMINI_NO_DISABLE_MARKERS = ("gemini-2.5-pro", "gemini-3.1-pro")
+# Replay formats are gateway-specific; only change combinations verified live.
+_REASONING_CONTENT_REPLAY_MODELS = {
+    "https://code-stage.xiaohuanxiong.com/api/web/llm/v2": frozenset({
+        "sn-kimi-k3",
+    }),
+}
 _SENSENOVA_PSEUDO_TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*<function=([A-Za-z_][\w.-]*)>\s*(.*?)\s*</function>\s*</tool_call>",
     re.DOTALL,
@@ -105,6 +111,9 @@ def _apply_thinking_params(
 ) -> None:
     """Map the session deep-think flag to the provider request dialect."""
     normalized_model = (model or "").strip().casefold()
+    if re.search(r"(?:^|/)(?:sn-)?kimi-k3(?:$|[-:])", normalized_model):
+        params["reasoning_effort"] = "high" if thinking_enabled else "low"
+        return
     if any(marker in normalized_model for marker in _GLM_5_3_MODEL_MARKERS):
         params["reasoning_effort"] = "high" if thinking_enabled else "low"
         return
@@ -678,13 +687,14 @@ class OpenAIClient(LLMClientBase):
                         )
                     assistant_msg["tool_calls"] = tool_calls_list
 
-                # IMPORTANT: Add reasoning_details if thinking is present
-                # This is CRITICAL for Interleaved Thinking to work properly!
-                # The complete response_message (including reasoning_details) must be
-                # preserved in Message History and passed back to the model in the next turn.
-                # This ensures the model's chain of thought is not interrupted.
                 if msg.thinking:
-                    assistant_msg["reasoning_details"] = [{"text": msg.thinking}]
+                    replay_models = _REASONING_CONTENT_REPLAY_MODELS.get(
+                        self.api_base.strip().rstrip("/"), frozenset()
+                    )
+                    if (self.model or "").strip().casefold() in replay_models:
+                        assistant_msg["reasoning_content"] = msg.thinking
+                    else:
+                        assistant_msg["reasoning_details"] = [{"text": msg.thinking}]
 
                 api_messages.append(assistant_msg)
 

@@ -192,6 +192,8 @@ async def test_openai_request_no_extra_body_by_default(monkeypatch):
     ("model", "thinking_enabled", "expected_extra_body", "expected_effort"),
     [
         ("gpt-5", True, None, "high"),
+        ("sn-kimi-k3", True, None, "high"),
+        ("sn-kimi-k3", False, None, "low"),
         ("custom-chat-model", False, None, None),
         ("SenseNova-Flash-Lite-test", False, None, "none"),
         ("SenseNova-Flash-Lite-test", True, None, "high"),
@@ -693,6 +695,15 @@ async def test_sensenova_sdk_sends_reasoning_effort_in_wire_body(
         ("raccoon-405a1c", False, {}),
         ("sn-sensenova-6-8-flash-lite", True, {"reasoning_effort": "high"}),
         ("sn-sensenova-6-8-flash-lite", False, {"reasoning_effort": "none"}),
+        ("kimi-k3", True, {"reasoning_effort": "high"}),
+        ("kimi-k3", False, {"reasoning_effort": "low"}),
+        ("sn-kimi-k3", True, {"reasoning_effort": "high"}),
+        ("sn-kimi-k3", False, {"reasoning_effort": "low"}),
+        (" SN-Kimi-K3 ", False, {"reasoning_effort": "low"}),
+        ("moonshotai/kimi-k3", False, {"reasoning_effort": "low"}),
+        ("kimi-k3-2026-07-17", False, {"reasoning_effort": "low"}),
+        ("kimi-k2.5", False, {}),
+        ("kimi-k30", False, {}),
         ("sn-glm-5-2", True, {"reasoning_effort": "high"}),
         ("sn-glm-5-2", False, {}),
         ("sn-glm-5-3", True, {"reasoning_effort": "high"}),
@@ -858,16 +869,36 @@ def test_openai_response_parses_reasoning_aliases(reasoning_fields):
 
 
 @pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
-def test_openai_reasoning_alias_round_trip_uses_canonical_details(reasoning_field):
-    """Inbound aliases normalize to the existing outbound history contract."""
-    client = OpenAIClient(api_key="k", api_base="https://x.example", model="qwen")
+@pytest.mark.parametrize(
+    ("api_base", "model", "replay_field"),
+    [
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-sensenova-6-8-flash-lite", "reasoning_details"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-2", "reasoning_details"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-3-flash", "reasoning_details"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-deepseek-v4-pro", "reasoning_details"),
+        ("https://code-stage.xiaohuanxiong.com/api/web/llm/v2", "sn-kimi-k3", "reasoning_content"),
+        ("https://code-stage.xiaohuanxiong.com/api/web/llm/v2/", " SN-Kimi-K3 ", "reasoning_content"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-3", "reasoning_details"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "raccoon-8c4485", "reasoning_details"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-kimi-k3", "reasoning_details"),
+        ("https://openrouter.ai/api/v1", "sn-kimi-k3", "reasoning_details"),
+        ("https://other.example/v1", "sn-glm-5-2", "reasoning_details"),
+        ("https://x.example", "qwen", "reasoning_details"),
+    ],
+)
+def test_openai_reasoning_replay_matches_verified_gateway(
+    reasoning_field, api_base, model, replay_field,
+):
+    """Verified gateways retain plain reasoning; unknown routes keep prior behavior."""
+    client = OpenAIClient(api_key="k", api_base=api_base, model=model)
+    thinking = "  private reasoning\nsecond line\n"
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(
                     content="answer",
                     tool_calls=None,
-                    **{reasoning_field: "private reasoning"},
+                    **{reasoning_field: thinking},
                 ),
             )
         ],
@@ -883,7 +914,7 @@ def test_openai_reasoning_alias_round_trip_uses_canonical_details(reasoning_fiel
         {
             "role": "assistant",
             "content": "answer",
-            "reasoning_details": [{"text": "private reasoning"}],
+            replay_field: thinking if replay_field == "reasoning_content" else [{"text": thinking}],
         }
     ]
 
