@@ -22,6 +22,8 @@ from typing import Any, TypeVar
 
 from .llm.debug_logging import sanitize_for_logging
 
+from box_agent.user_paths import state_path
+
 logger = logging.getLogger(__name__)
 
 _TRACE_SCHEMA_VERSION = "box-agent-session-trace/v1"
@@ -57,8 +59,8 @@ def session_trace_enabled() -> bool:
 def default_session_trace_dir() -> Path:
     configured = os.environ.get("BOX_AGENT_SESSION_TRACE_DIR", "").strip()
     if configured:
-        return Path(configured).expanduser()
-    return Path.home() / ".box-agent" / "log" / "sessions"
+        return state_path("log/sessions", configured)
+    return state_path('log/sessions')
 
 
 def session_trace_retention_enabled() -> bool:

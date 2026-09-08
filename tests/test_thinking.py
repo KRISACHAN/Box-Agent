@@ -872,10 +872,10 @@ def test_openai_response_parses_reasoning_aliases(reasoning_fields):
 @pytest.mark.parametrize(
     ("api_base", "model", "replay_field"),
     [
-        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-sensenova-6-8-flash-lite", "reasoning_details"),
-        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-2", "reasoning_details"),
-        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-3-flash", "reasoning_details"),
-        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-deepseek-v4-pro", "reasoning_details"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-sensenova-6-8-flash-lite", "reasoning_content"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-2", "reasoning_content"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-3-flash", "reasoning_content"),
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-deepseek-v4-pro", "reasoning_content"),
         ("https://code-stage.xiaohuanxiong.com/api/web/llm/v2", "sn-kimi-k3", "reasoning_content"),
         ("https://code-stage.xiaohuanxiong.com/api/web/llm/v2/", " SN-Kimi-K3 ", "reasoning_content"),
         ("https://xiaohuanxiong.com/api/web/llm/v2", "sn-glm-5-3", "reasoning_details"),
@@ -917,6 +917,73 @@ def test_openai_reasoning_replay_matches_verified_gateway(
             replay_field: thinking if replay_field == "reasoning_content" else [{"text": thinking}],
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    ("api_base", "replay_field"),
+    [
+        ("https://xiaohuanxiong.com/api/web/llm/v2", "reasoning_content"),
+        ("https://other.example/v1", "reasoning_details"),
+    ],
+)
+async def test_tool_followup_wire_preserves_reasoning_and_tool_identity(
+    streaming, api_base, replay_field,
+):
+    captured = {}
+    thinking = "  Remember the lookup result.\nKeep this text unchanged.\n"
+
+    async def handler(request):
+        captured.update(json.loads(request.content))
+        common = {"id": "test", "created": 0, "model": "sn-glm-5-2"}
+        if streaming:
+            chunk = {
+                **common, "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"content": "42"}, "finish_reason": "stop"}],
+            }
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"},
+                text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
+            )
+        return httpx.Response(200, json={
+            **common, "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "42"}, "finish_reason": "stop"}],
+        })
+
+    client = OpenAIClient(api_key="k", api_base=api_base, model="sn-glm-5-2")
+    await client.client.close()
+    client.client = AsyncOpenAI(
+        api_key="k", base_url=api_base,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    messages = [
+        Message(role="user", content="Look up the number."),
+        Message(role="assistant", content="", thinking=thinking, tool_calls=[{
+            "id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": {}},
+        }]),
+        Message(role="tool", content="42", tool_call_id="call-1"),
+    ]
+    try:
+        if streaming:
+            events = [event async for event in client.generate_stream(messages)]
+            assert "".join(event.delta or "" for event in events if event.type == "text") == "42"
+        else:
+            assert (await client.generate(messages)).content == "42"
+    finally:
+        await client.client.close()
+
+    assistant = captured["messages"][1]
+    assert assistant[replay_field] == (
+        thinking if replay_field == "reasoning_content" else [{"text": thinking}]
+    )
+    other_field = "reasoning_details" if replay_field == "reasoning_content" else "reasoning_content"
+    assert other_field not in assistant
+    assert assistant["tool_calls"] == [{
+        "id": "call-1", "type": "function",
+        "function": {"name": "lookup", "arguments": "{}"},
+    }]
+    assert captured["messages"][2] == {"role": "tool", "content": "42", "tool_call_id": "call-1"}
 
 
 # ───────────────────────── Core plumbing ─────────────────────────

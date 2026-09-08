@@ -11,6 +11,8 @@ from .llm.debug_logging import (
 )
 from .schema import Message, ToolCall
 
+from box_agent.user_paths import state_path
+
 
 class AgentLogger:
     """Agent run logger
@@ -26,7 +28,7 @@ class AgentLogger:
         Logs are stored in ~/.box-agent/log/ directory
         """
         # Use ~/.box-agent/log/ directory for logs
-        self.log_dir = Path.home() / ".box-agent" / "log"
+        self.log_dir = state_path('log')
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = None
         self.log_index = 0

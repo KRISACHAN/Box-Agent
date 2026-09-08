@@ -586,6 +586,7 @@ def test_main_returns_run_agent_exit_code(
 ) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path)
+    monkeypatch.setattr(cli, "WorkspaceRegistry", lambda: WorkspaceRegistry(tmp_path / "workspaces.json"))
 
     async def fake_run_agent(*args, **kwargs):
         assert args[0] == tmp_path

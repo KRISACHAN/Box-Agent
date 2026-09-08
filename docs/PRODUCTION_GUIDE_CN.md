@@ -92,6 +92,12 @@ OfficeV3 不再需要单独实现注册逻辑：
 仍按当前 manifest 刷新。源码安装环境在没有 frozen manifest 时使用
 `box-agent-web-extract-mcp` console script。
 
+`web_extract` 的 MCP 声明复用内置工具的显式参数 schema，避免可空联合类型在
+部分 Gemini 网关中触发缺少 `type` 的错误。仅 `url` 必填；模型侧应省略不需要的
+`model` / `max_output_tokens`，不要传 `null`。提供时分别为字符串和正整数，
+不接受未声明的参数。MCP 服务的执行入口仍兼容旧客户端直接传入 `null`。
+已打包用户需更新 runtime、重启 MCP/宿主并用原模型复测；源码测试不能替代此步骤。
+
 Windows 专用构建器复用通用构建器的 PyInstaller hidden-import、collection 和
 runtime manifest helper，确保 `bin/box-agent-acp.exe` 的 `web_extract`
 dispatch 与 `mcp_servers` 声明一致；不要再维护 Windows 独立副本。

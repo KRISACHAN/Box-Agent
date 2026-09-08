@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from .user_paths import state_path
+
 
 WorkspaceTaskType = Literal["general", "code"]
 WORKSPACE_CONFIG_SCHEMA_VERSION = 1
@@ -33,7 +35,7 @@ class WorkspaceProfile:
 
 
 def default_workspace_registry_path(home_dir: Path | None = None) -> Path:
-    return (home_dir or Path.home()) / ".box-agent" / "config" / "workspaces.json"
+    return state_path("config/workspaces.json", home_dir=home_dir)
 
 
 def normalize_workspace_path(value: str | Path) -> str:

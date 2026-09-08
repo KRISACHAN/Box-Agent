@@ -23,6 +23,8 @@ from ..artifacts import ensure_output_dir
 from ._win_job import assign_pid_to_job
 from .base import Tool, ToolResult
 
+from box_agent.user_paths import state_path
+
 # True when running inside a PyInstaller frozen binary
 IS_FROZEN = getattr(sys, "frozen", False)
 
@@ -62,7 +64,7 @@ SANDBOX_DEFAULT_PACKAGES = [
     "chardet",          # encoding detection for text/CSV
 ]
 
-SANDBOX_BASE_DIR = Path.home() / ".box-agent" / "sandbox"
+SANDBOX_BASE_DIR = state_path('sandbox')
 
 # Keep generated tool-call JSON below provider completion caps. Match the file
 # chunk size so large static bodies do not migrate into Python string literals.
@@ -71,7 +73,7 @@ MAX_EXECUTE_CODE_CHARS_DISPLAY = f"{MAX_EXECUTE_CODE_CHARS:,}"
 
 # User-level directory for packages installed at runtime in frozen mode.
 # Survives across sessions; kept separate from the frozen binary itself.
-RUNTIME_PACKAGES_DIR = Path.home() / ".box-agent" / "runtime-packages"
+RUNTIME_PACKAGES_DIR = state_path('runtime-packages')
 
 
 async def _communicate_sandbox_process(

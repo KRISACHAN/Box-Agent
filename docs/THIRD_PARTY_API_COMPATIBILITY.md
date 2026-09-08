@@ -88,11 +88,13 @@ Kimi K3 始终开启思考，因此关闭开关表示降低思考强度，不表
 
 | API Base | 模型 |
 | --- | --- |
+| `https://xiaohuanxiong.com/api/web/llm/v2` | `sn-sensenova-6-8-flash-lite`、`sn-glm-5-2`、`sn-glm-5-3-flash`、`sn-deepseek-v4-pro` |
 | `https://code-stage.xiaohuanxiong.com/api/web/llm/v2` | `sn-kimi-k3` |
 
 该名单基于真实工具续轮对照，按地址和模型精确匹配；其他组合保留现有回传行为。
-此转换不解决结构化思考块、签名或加密内容的保留问题；这些需要独立的供应商
-协议适配。
+线上 `sn-glm-5-3` 尚未验证思考回传有效，不在名单中。DeepSeek V4 有部分历史样本
+未生效，因此字段修正不代表所有续轮场景均已验证。此转换不解决结构化思考块、签名
+或加密内容的保留问题；这些需要独立的供应商协议适配。
 
 ## SenseNova OpenAI 兼容模式
 

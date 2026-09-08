@@ -45,6 +45,12 @@ _GLM_5_3_MODEL_MARKERS = ("glm-5-3", "glm-5.3")
 _GEMINI_NO_DISABLE_MARKERS = ("gemini-2.5-pro", "gemini-3.1-pro")
 # Replay formats are gateway-specific; only change combinations verified live.
 _REASONING_CONTENT_REPLAY_MODELS = {
+    "https://xiaohuanxiong.com/api/web/llm/v2": frozenset({
+        "sn-sensenova-6-8-flash-lite",
+        "sn-glm-5-2",
+        "sn-glm-5-3-flash",
+        "sn-deepseek-v4-pro",
+    }),
     "https://code-stage.xiaohuanxiong.com/api/web/llm/v2": frozenset({
         "sn-kimi-k3",
     }),

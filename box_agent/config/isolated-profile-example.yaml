@@ -1,0 +1,20 @@
+# Copy explicitly to $BOX_AGENT_HOME/config/config.yaml before starting a test profile.
+# This is a no-background-startup example, not a tool/OS sandbox or production credential.
+# Replace endpoint/key/model only after the host authorizes a real model call.
+api_key: isolated-fixture-key
+api_base: https://example.invalid/v1
+provider: openai
+model: isolated-fixture
+enable_memory: false
+enable_memory_extraction: false
+memory_maintainer_enabled: false
+hooks: []
+tools:
+  enable_file_tools: false
+  enable_bash: false
+  enable_todo: false
+  enable_plan: false
+  enable_sub_agent: false
+  enable_skills: false
+  enable_mcp: false
+  allow_full_access: false

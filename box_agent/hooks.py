@@ -30,8 +30,9 @@ from __future__ import annotations
 import importlib
 import logging
 import sys
-from pathlib import Path
 from typing import Any
+
+from box_agent.user_paths import state_path
 
 log = logging.getLogger(__name__)
 
@@ -270,7 +271,7 @@ class HookManager:
 
 # User hooks directory — added to sys.path so that config.yaml
 # can reference modules by short name (e.g. ``"safety.SafetyHook"``).
-USER_HOOKS_DIR = Path.home() / ".box-agent" / "hooks"
+USER_HOOKS_DIR = state_path('hooks')
 
 
 def _ensure_hooks_dir_on_path() -> None:

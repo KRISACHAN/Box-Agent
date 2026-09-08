@@ -12,19 +12,21 @@ from typing import Any
 
 from .base import Tool, ToolResult
 
+from box_agent.user_paths import state_path
+
 OBSIDIAN_PERMISSION_SCOPE = "external_app"
 OBSIDIAN_LAUNCH_SCOPE = "obsidian_launch"
 OBSIDIAN_CONFIG_ENV = "BOX_AGENT_OBSIDIAN_CONFIG"
 OBSIDIAN_CLI_ENV = "BOX_AGENT_OBSIDIAN_CLI"
 OBSIDIAN_APP_ENV = "BOX_AGENT_OBSIDIAN_APP"
 
-_DEFAULT_CONFIG_PATH = Path.home() / ".box-agent" / "config" / "obsidian.json"
+_DEFAULT_CONFIG_PATH = state_path('config/obsidian.json')
 _DEFAULT_CLI_NAME = "obsidian"
 _NOTE_TITLE_RE = re.compile(r"[^A-Za-z0-9\u4e00-\u9fff._ -]+")
 
 
 def obsidian_config_path() -> Path:
-    return Path(os.environ.get(OBSIDIAN_CONFIG_ENV, str(_DEFAULT_CONFIG_PATH))).expanduser()
+    return state_path("config/obsidian.json", os.environ.get(OBSIDIAN_CONFIG_ENV, str(_DEFAULT_CONFIG_PATH)))
 
 
 def _launch_permission_request(reason: str) -> dict[str, Any]:

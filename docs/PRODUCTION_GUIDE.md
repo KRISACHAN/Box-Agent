@@ -130,6 +130,15 @@ each other; runtime-relative executable paths are still refreshed from the
 active manifest. Source installs use the `box-agent-web-extract-mcp` console
 script when no frozen manifest is available.
 
+The `web_extract` MCP declaration reuses the built-in tool's explicit parameter
+schema to avoid missing-`type` errors from nullable unions in some Gemini
+gateways. Only `url` is required. Model callers should omit unused `model` and
+`max_output_tokens` arguments instead of sending `null`; supplied values must
+be a string and a positive integer respectively, with no undeclared arguments.
+The MCP execution entrypoint still accepts direct legacy calls with `null`.
+Packaged users need a runtime update, an MCP/host restart, and a retry with the
+original model; source tests do not establish that deployment result.
+
 The dedicated Windows builder consumes the same PyInstaller hidden-import,
 collection, and runtime-manifest helpers as the generic builder. This keeps the
 `web_extract` dispatch and `mcp_servers` declaration identical for

@@ -9,6 +9,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from box_agent.tools.runtime import SkillRuntimeContext
+from box_agent.user_paths import (
+    PROFILE_ENV,
+    box_agent_home,
+    configured_box_agent_home,
+    state_path,
+)
 
 
 _MAX_SOURCE_TEXT_ENV_CHARS = 120_000
@@ -51,11 +57,16 @@ def build_skill_execution_env(
     is_windows = target_platform == "win32"
     separator = ";" if is_windows else ":"
 
-    default_root = (home_dir or Path.home()) / ".box-agent" / "skill-tools"
+    profile_root = configured_box_agent_home(inherited)
+    default_root = state_path("skill-tools", env=inherited, home_dir=home_dir)
     skill_tools_root = _safe_skill_tools_root(
         inherited.get("BOX_AGENT_SKILL_TOOLS_ROOT"),
         default=default_root,
     )
+    if profile_root is not None:
+        skill_tools_root = state_path(
+            "skill-tools", inherited.get("BOX_AGENT_SKILL_TOOLS_ROOT") or None, env=inherited
+        )
     npm_bin_dir = skill_tools_root if is_windows else skill_tools_root / "bin"
     python_user_base = skill_tools_root / "python"
     python_user_bin = python_user_base / ("Scripts" if is_windows else "bin")
@@ -104,8 +115,12 @@ def build_skill_execution_env(
 
     browser_root = Path(
         inherited.get("PLAYWRIGHT_BROWSERS_PATH")
-        or (home_dir or Path.home()) / ".box-agent" / "browsers"
+        or box_agent_home(home_dir, env=inherited) / "browsers"
     )
+    if profile_root is not None:
+        browser_root = state_path(
+            "browsers", inherited.get("PLAYWRIGHT_BROWSERS_PATH") or None, env=inherited
+        )
     browser_executable = _resolve_skill_browser_executable(
         inherited,
         browser_root=browser_root,
@@ -114,6 +129,7 @@ def build_skill_execution_env(
 
     result = {
         **runtime_env,
+        **({PROFILE_ENV: str(profile_root)} if profile_root is not None else {}),
         "BOX_AGENT_SKILL_TOOLS_ROOT": str(skill_tools_root),
         "BOX_AGENT_SKILL_PATH_PREFIX": separator.join(path_prefix),
         "PATH": separator.join(final_path),

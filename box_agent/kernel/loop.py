@@ -218,6 +218,8 @@ from ..loop_guards import (
     truncation_continuation_text,
 )
 
+from box_agent.user_paths import state_path
+
 __all__ = ["run_agent_loop"]
 
 _log = logging.getLogger("box_agent.core")
@@ -872,7 +874,7 @@ async def _run_agent_loop_impl(
         else None
     )
     result_storage = tool_result_storage or ToolResultStorage(
-        Path.home() / ".box-agent" / "sessions"
+        state_path('sessions')
     )
     result_storage.set_context_token_limit(token_limit)
     result_storage.initialize_history(messages)

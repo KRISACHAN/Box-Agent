@@ -16,6 +16,8 @@ from uuid import uuid4
 
 import httpx
 
+from box_agent.user_paths import configured_box_agent_home, state_path
+
 AUTH_TOKEN_ENV_VARS = (
     "BOX_AGENT_AUTH_TOKEN",
     "OFFICEV3_AUTH_TOKEN",
@@ -48,7 +50,7 @@ def _read_auth_state(auth_file: str | Path | None) -> tuple[Path | None, dict[st
     if not auth_file:
         return None, {}
 
-    path = Path(auth_file).expanduser()
+    path = state_path("config/auth.json", auth_file)
     if not path.exists():
         return path, {}
 
@@ -236,6 +238,9 @@ def resolve_auth_token(
     file_token = read_auth_token_file(auth_file)
     if file_token:
         return file_token
+
+    if configured_box_agent_home() is not None:
+        return ""  # An isolated profile must not inherit the desktop user's login token.
 
     for name in AUTH_TOKEN_ENV_VARS:
         token = os.environ.get(name, "").strip()

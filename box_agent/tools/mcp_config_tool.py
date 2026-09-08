@@ -8,6 +8,7 @@ from typing import Any
 
 from box_agent.config import Config
 from box_agent.tools.base import Tool, ToolResult
+from box_agent.user_paths import configured_box_agent_home, state_path
 
 
 _ALLOWED_SERVER_FIELDS = frozenset(
@@ -128,6 +129,11 @@ def _browser_config_summary(config: Any) -> list[str]:
 
 
 def _resolve_write_target() -> Path:
+    if configured_box_agent_home() is not None:
+        from box_agent.tools.mcp_loader import get_mcp_config_path
+        target = state_path("config/mcp.json", get_mcp_config_path() or None)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
     # Priority: loader's actual runtime path > user config dir > packaged config.
     # In dev, box-agent may boot before ~/.box-agent/config/mcp.json exists and
     # end up loading ./box_agent/config/mcp.json. Writing to user dir here would
@@ -144,7 +150,7 @@ def _resolve_write_target() -> Path:
     except Exception:
         pass
 
-    user_path = Path("~/.box-agent/config/mcp.json").expanduser()
+    user_path = state_path("config/mcp.json")
     if user_path.exists():
         return user_path
     try:

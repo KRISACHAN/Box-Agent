@@ -55,6 +55,8 @@ from box_agent.tools.sub_agent_tool import SubAgentTool
 from box_agent.tools.todo_tool import TodoReadTool, TodoStore, TodoWriteTool
 from box_agent.tools.image_inspection_tool import ImageInspectionTool
 
+from box_agent.user_paths import configured_box_agent_home, state_path
+
 if TYPE_CHECKING:
     from box_agent.tools.permissions import PermissionEngine
 
@@ -331,16 +333,24 @@ async def initialize_base_tools(
                     Path("box_agent") / skills_path,  # ./box_agent/skills
                     Config.get_package_dir() / skills_path,  # site-packages/box_agent/skills
                 ]
+                if configured_box_agent_home() is not None:
+                    # Explicit profiles never auto-discover a cwd's legacy skills directory.
+                    search_paths = [Config.get_package_dir() / skills_path]
 
-                builtin_dir = skills_path  # default
+                builtin_dir = search_paths[0] if configured_box_agent_home() is not None else skills_path
                 for path in search_paths:
                     if path.exists():
                         builtin_dir = path.resolve()
                         break
 
+            if configured_box_agent_home() is not None:
+                resolved_builtin = builtin_dir.resolve()
+                if not resolved_builtin.is_relative_to(Config.get_package_dir().resolve()):
+                    builtin_dir = state_path("skills", resolved_builtin)
+
             # User skills directory: ~/.box-agent/skills/
             # Auto-created so officev3 can drop new skills in and we pick them up on mtime change.
-            user_skills_dir = Path.home() / ".box-agent" / "skills"
+            user_skills_dir = state_path('skills')
             user_skills_dir.mkdir(parents=True, exist_ok=True)
 
             # User skills take priority on ordinary name conflicts. Runtime-
@@ -412,8 +422,10 @@ async def initialize_base_tools(
         bootstrap_target = (
             configured_mcp
             if configured_mcp.is_absolute()
-            else Path.home() / ".box-agent" / "config" / "mcp.json"
+            else state_path('config/mcp.json')
         )
+        if configured_box_agent_home() is not None:
+            bootstrap_target = state_path("config/mcp.json", bootstrap_target)
         bootstrap = bootstrap_managed_mcp_config(bootstrap_target)
         if bootstrap.warning:
             _out(f"{Colors.YELLOW}⚠️  {bootstrap.warning}{Colors.RESET}")

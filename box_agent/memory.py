@@ -25,6 +25,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any, Iterator
 
 from .llm.model_routing import resolve_model_client
+from .user_paths import configured_box_agent_home, default_memory_dir, state_path
 
 if TYPE_CHECKING:
     from .schema import Message
@@ -516,12 +517,14 @@ class MemoryManager:
 
     def __init__(
         self,
-        memory_dir: str = "~/.box-agent/memory",
+        memory_dir: str | None = None,
         *,
         dedup_jaccard_threshold: float = 0.85,
         **_kwargs,
     ):
-        self.memory_dir = Path(memory_dir).expanduser()
+        self.memory_dir = state_path(
+            "memory", memory_dir if memory_dir is not None else default_memory_dir()
+        )
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.dedup_jaccard_threshold = dedup_jaccard_threshold
         self._context_transaction_lock = threading.RLock()
@@ -1190,6 +1193,8 @@ class MemoryManager:
 
         Returns the imported content, or empty string if nothing to import.
         """
+        if configured_box_agent_home() is not None:
+            return ""  # Do not read global memories or write an "imported" marker for this profile.
         if self._openclaw_imported_marker.exists():
             return ""
 
