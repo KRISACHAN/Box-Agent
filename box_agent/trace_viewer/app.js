@@ -945,6 +945,7 @@
   }
 
   async function chooseDirectory() {
+    state.directoryDialogMode = "ledger";
     if (location.protocol === "http:" || location.protocol === "https:") {
       openDirectoryDialog("ledger");
       return;
@@ -970,17 +971,21 @@
     }
   }
 
-  async function chooseComparisonDirectory() {
-    if (state.comparisonGroups.length || state.comparisonDirectoryName) {
-      showComparison();
-      return;
-    }
+  function openComparisonDirectoryChooser() {
     state.directoryDialogMode = "comparison";
     if (location.protocol === "http:" || location.protocol === "https:") {
       openDirectoryDialog("comparison");
       return;
     }
     byId("directory-input").click();
+  }
+
+  async function chooseComparisonDirectory() {
+    if (state.comparisonGroups.length || state.comparisonDirectoryName) {
+      showComparison();
+      return;
+    }
+    openComparisonDirectoryChooser();
   }
 
   function showSession(records, warnings, fileName, mode) {
@@ -1159,7 +1164,7 @@
   byId("compare-sources").addEventListener("click", chooseComparisonDirectory);
   byId("comparison-open-directory").addEventListener(
     "click",
-    () => openDirectoryDialog("comparison"),
+    openComparisonDirectoryChooser,
   );
   byId("reference-source").addEventListener("change", (event) => {
     state.comparisonReference = event.target.value;
