@@ -329,6 +329,17 @@ box-agent install-node      # install managed Node.js runtime for skills (macOS)
 
 Run `box-agent trace-viewer` to open the packaged, offline developer viewer. Open `~/.box-agent/log/sessions/` for a newest-first overview of every trace, then select one run to inspect per-turn metrics, LLM/tool waterfalls, raw events, and the complete system → user → assistant/tool → final-response chain. You can still open one `.jsonl` file directly.
 
+Both ACP and CLI create session traces automatically. Each CLI invocation writes
+`cli-<unique-id>.jsonl`; interactive user turns have distinct turn IDs in that
+file. `/clear` resets conversation history without deleting the diagnostic trace,
+and Goal autopilot continuations stay within the originating user turn. Native
+CLI traces include input, LLM/tool activity, final output, stop reason and turn
+duration; no test-harness writer is required. Startup probes and idle CLI commands
+are outside the turn trace. Set `BOX_AGENT_SESSION_TRACE_DIR` to override the
+directory, or `BOX_AGENT_SESSION_TRACE_ENABLED=0` to disable tracing. CLI trace
+initialization or write failures do not fail the task. These files contain sensitive task data; the same
+retention policy below applies to both entrypoints.
+
 Choose **Compare sources** to compare equivalent runs from any number of sources. The selected root uses source directories directly, without an extra data-directory level:
 
 ```text

@@ -6,19 +6,22 @@ Trace failures are swallowed so observability can never change agent behavior.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
 import threading
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, TypeVar
+from uuid import uuid4
 
 from .llm.debug_logging import sanitize_for_logging
 
@@ -354,6 +357,65 @@ def set_session_trace_writer(
 
 def reset_session_trace_writer(token: Token[tuple[SessionTraceWriter, str] | None]) -> None:
     _TRACE_CONTEXT.reset(token)
+
+
+@dataclass
+class SessionTraceTurn:
+    """The observed result of a host-owned turn, not execution policy."""
+
+    content: str = ""
+    stop_reason: str | None = None
+
+
+@contextmanager
+def traced_session_turn(
+    writer: SessionTraceWriter,
+    *,
+    content: str,
+) -> Iterator[SessionTraceTurn]:
+    """Record one turn around awaited work without changing its result.
+
+    The caller supplies the final content and internal stop reason. Bind in
+    the task that owns this scope (before creating any run task), never across
+    an async-generator yield. Escaped exceptions keep their original behavior;
+    normal cancellation is not reported as an execution error.
+    """
+
+    turn_id = f"turn-{uuid4().hex}"
+    result = SessionTraceTurn()
+    started_at = time.perf_counter()
+    writer.write("turn.input", turn_id=turn_id, data={"content": content})
+    token = set_session_trace_writer(writer, turn_id=turn_id)
+    error: dict[str, Any] | None = None
+    try:
+        yield result
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        result.stop_reason = "cancelled"
+        raise
+    except BaseException as exc:
+        result.stop_reason = "error"
+        error = {"message": str(exc), "error_type": type(exc).__name__, "unexpected": True}
+        raise
+    finally:
+        # Reset even when rendering, cancellation or an unexpected host error
+        # exits the turn. A surrounding caller's context must remain intact.
+        reset_session_trace_writer(token)
+        if result.stop_reason == "error":
+            writer.write(
+                "turn.error", turn_id=turn_id,
+                data=error or {"message": result.content.strip() or "Agent execution failed."},
+            )
+        writer.write(
+            "turn.output", turn_id=turn_id,
+            data={"content": result.content, "stop_reason": result.stop_reason},
+        )
+        writer.write(
+            "turn.end", turn_id=turn_id,
+            data={
+                "stop_reason": result.stop_reason,
+                "duration_ms": max(0, int((time.perf_counter() - started_at) * 1000)),
+            },
+        )
 
 
 def emit_session_trace(

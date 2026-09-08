@@ -60,6 +60,7 @@ decision, read those entries together.
 | MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 | Sub-agent delegation | `sub_agent_tool.py`, `sub_agent_capabilities.py`, `required_tools`, `write_scope`, `files` | The public request is flat; runtime-derived policy limits implicit tools to trusted local readers, keeps process/external/unknown MCP capabilities fail-closed, and scopes path writes. | Supersedes the caller-authored nested constraint contract while retaining its runtime enforcement goals. | [2026-08-19 flattened contract](#2026-08-19--flattened-sub-agent-contract-with-derived-policy) |
 | Session and workflow ownership | `session_log.py`, explicit Skills, `WAITING_FOR_USER`, legacy workflow files | Session Log is the sole durable Agent-session source. Skills/plugins own domain progress and recovery instructions; legacy checkpoint and owner files are ignored but not deleted. | PR #100 supersedes the proposed runtime owner/checkpoint lifecycle while retaining generic Tool safety boundaries. | [PR #100](#2026-09-02--session-log-only-recovery-pr-100), [earlier owner design](#2026-08-20--workflow-owner-precedence-for-third-party-skills) |
+| Native CLI session traces | `box_agent/cli.py`, `box_agent/session_trace.py`, `SessionTraceWriter`, `BOX_AGENT_SESSION_TRACE_ENABLED` | CLI creates best-effort v1 traces by default, with one file per invocation and one scope per user turn; Session Log remains the only durable recovery source. Existing opt-out, redaction and retention apply. | Adds native CLI production of traces; read together with the existing viewer and Session Log contracts, not as a replacement for them. | [2026-09-08 native CLI tracing](#2026-09-08--native-cli-session-tracing) |
 | Agent Trace diagnostics | `box_agent/trace_viewer/`, `box-agent trace-viewer`, `box-agent-session-trace/v1` | The packaged viewer is a read-only v1 trace consumer; static access stays browser-local and the optional directory service is loopback-only, authority-validated, explicit-path, and size-bounded. Flat ledgers stay top-level; comparison roots add exactly one `source / trace` level with input-first, filename-assisted grouping. | The 2026-09-04 comparison extension preserves the original writer, Core, provider, ACP, and flat-ledger contracts. | [2026-09-04 multi-source comparison](#2026-09-04--input-matched-multi-source-agent-trace-comparison), [2026-08-20 trace viewer](#2026-08-20--local-agent-trace-diagnostics) |
 | Model routing and controlled presentations | `box_agent/llm/model_routing.py`, PPTX Skill, Session Log, controlled PPTX | Automatic child-model routing keeps its host allowlist. Presentation progress, validation, and recovery instructions belong to the Skill instead of an internal runtime state machine. | PR #100 supersedes the presentation-lifecycle portion of PR #30; model-routing constraints remain in force. | [PR #100](#2026-09-02--session-log-only-recovery-pr-100), [PR #30](#2026-08-14--runtime-routing-and-presentation-reliability-pr-30) |
 | Configurable operational limits | `box_agent/config.py`, `box_agent/core.py` (`provider_stale_seconds`), `image_generation_tool.py` (`max_dimension`), `setup.py` (`generate_image` gating), `openai_client.py` (SenseNova prefixes) | Hardcoded stale/image/thinking limits become config/env with unchanged defaults; generic image endpoints clamp oversized sizes and unconfigured `generate_image` is not registered. | Pending; defaults unchanged except the generic image clamp and `generate_image` gating. | [2026-08-21 configurable limits](#2026-08-21--configurable-runtime-operational-limits) |
@@ -71,6 +72,45 @@ Release, provider API, and ACP compatibility have their own sources under
 [long-lived release and compatibility history](#long-lived-release-and-compatibility-history).
 
 ## Pending material changes
+
+### 2026-09-08 — native CLI session tracing
+
+- **Change:** `feat(cli): record native session traces` on
+  `codex/kernel-plugin-refactor`, following `7c750e2`; no PR or merge reference
+  exists yet. This adds a CLI trace producer without changing the earlier
+  viewer comparison or Session Log-only recovery decisions.
+- **Durable behavior:** CLI tracing is enabled by default under the existing
+  `~/.box-agent/log/sessions/` directory, with `cli-<unique-id>.jsonl` per
+  invocation and distinct interactive turn IDs. `/clear` resets conversation
+  history without erasing diagnostics; Goal autopilot continuations share the
+  originating user turn. Startup probes and idle CLI commands stay outside
+  the turn scope. The v1 lifecycle includes input, final output, internal stop
+  reason and duration, reusing existing LLM/tool records without fake usage
+  totals. Cancelled interactive run tasks settle before the turn closes.
+- **Compatibility and privacy:** diagnostic path/write failures do not fail
+  CLI tasks, and the caller's trace context is restored. Public run arguments,
+  prompt construction, provider requests and ACP protocol behavior are
+  unchanged. No Session Log migration or second recovery state is introduced.
+  Trace contents remain sensitive despite shared redaction and retention;
+  `BOX_AGENT_SESSION_TRACE_DIR` selects the directory and
+  `BOX_AGENT_SESSION_TRACE_ENABLED=0` disables both ACP and CLI tracing.
+- **Proof anchors:** `tests/test_cli_session_trace.py` covers task/interactive
+  execution, Goal continuation, cancellation, exceptions, opt-out, invalid
+  paths and context isolation; `tests/test_session_trace.py` covers the shared
+  writer and existing ACP integration. Run these together with
+  `tests/test_trace_viewer.py`, `tests/test_trace_viewer_server.py`, and
+  `tests/test_architecture_boundaries.py`. Source CLI model/tool smoke and
+  viewer inspection exercised native traces without harness writer injection.
+- **Residual gaps and runtime:** the broader Windows suite is not all green;
+  baseline home/path/runtime expectations and shared fixed-session test state
+  were checked separately, and viewer socket failures passed isolated reruns.
+  The smoke also retained a model-specific auxiliary judgement HTTP 422; it
+  is not full business-case acceptance. No new runtime build/install, host
+  restart or packaged-host task was verified for this feature.
+- **Rollback:** disable tracing using the existing environment switch, noting
+  that it also affects ACP, or revert this CLI producer and lifecycle-helper
+  change for a CLI-only rollback. Preserve existing diagnostic files and
+  Session Log data; consumers require no schema migration.
 
 ### 2026-09-08 — conservative ACP/CLI runtime extraction
 

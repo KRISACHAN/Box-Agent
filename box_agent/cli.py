@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -60,6 +61,7 @@ from box_agent.goal_runtime import (
 from box_agent.turn_runtime import sync_skill_cache_fingerprint_context
 from box_agent.llm.model_routing import resolve_model_client
 from box_agent.schema import LLMProvider, Message
+from box_agent.session_trace import SessionTraceWriter, traced_session_turn
 from box_agent.tools.base import Tool
 from box_agent.tools.jupyter_tool import JupyterSandboxTool, SandboxStatusTool
 from box_agent.tools.mcp_loader import (
@@ -2321,6 +2323,31 @@ async def run_agent(
                     f"{result.get('error') or 'unknown error'}{Colors.RESET}"
                 )
 
+    # One diagnostic file per CLI invocation; no synthetic ACP identity.
+    trace_session_id = f"cli-{uuid4().hex}"
+    try:
+        trace_writer = SessionTraceWriter(session_id=trace_session_id, acp_session_id="")
+    except Exception:
+        # Invalid diagnostic paths must not prevent an otherwise valid run.
+        # Keep a disabled context so an enclosing caller's trace stays isolated.
+        trace_writer = SessionTraceWriter(
+            session_id=trace_session_id, acp_session_id="",
+            trace_dir=workspace_dir, enabled=False,
+        )
+    trace_writer.write(
+        "session.start",
+        data={
+            "entrypoint": "cli",
+            "workspace": str(workspace_dir),
+            "session_mode": "code_agent" if code_workspace else "general",
+            "artifact_mode": "project" if code_workspace else "output",
+            "model": config.llm.model,
+            "context_window": config.llm.context_window,
+            "max_output_tokens": config.llm.max_output_tokens,
+            "context_token_limit": config.llm.context_token_limit,
+        },
+    )
+
     # 8. Display welcome information
     if not task:
         print_banner()
@@ -2356,33 +2383,36 @@ async def run_agent(
             no_progress_limit=config.agent.goal_autopilot_no_progress_turns,
         )
         try:
-            final_content = await agent.run(
-                force_plan_start=force_plan_start,
-                current_turn_text=task,
-            )
-            while auto_enabled and should_continue_goal_autopilot(agent, agent.last_stop_reason):
-                if autopilot.budget_exhausted_at(perf_counter()):
-                    break
-                if agent.goal is None:
-                    break
-                autopilot.begin_continuation()
-                print(
-                    f"\n{Colors.DIM}Goal autopilot continuing "
-                    f"{autopilot.continuations}/{config.agent.goal_autopilot_max_turns}...{Colors.RESET}\n"
+            with traced_session_turn(trace_writer, content=task) as traced_turn:
+                final_content = await agent.run(
+                    force_plan_start=force_plan_start,
+                    current_turn_text=task,
                 )
-                agent.add_user_message(
-                    goal_autopilot_prompt(
-                        agent.goal,
-                        autopilot.continuations,
-                        config.agent.goal_autopilot_max_turns,
-                    )
-                )
-                before_signature = goal_autopilot_progress_signature(agent.goal)
-                final_content = await agent.run()
-                after_signature = goal_autopilot_progress_signature(agent.goal)
-                if should_continue_goal_autopilot(agent, agent.last_stop_reason):
-                    if autopilot.record_progress(before_signature, after_signature):
+                while auto_enabled and should_continue_goal_autopilot(agent, agent.last_stop_reason):
+                    if autopilot.budget_exhausted_at(perf_counter()):
                         break
+                    if agent.goal is None:
+                        break
+                    autopilot.begin_continuation()
+                    print(
+                        f"\n{Colors.DIM}Goal autopilot continuing "
+                        f"{autopilot.continuations}/{config.agent.goal_autopilot_max_turns}...{Colors.RESET}\n"
+                    )
+                    agent.add_user_message(
+                        goal_autopilot_prompt(
+                            agent.goal,
+                            autopilot.continuations,
+                            config.agent.goal_autopilot_max_turns,
+                        )
+                    )
+                    before_signature = goal_autopilot_progress_signature(agent.goal)
+                    final_content = await agent.run()
+                    after_signature = goal_autopilot_progress_signature(agent.goal)
+                    if should_continue_goal_autopilot(agent, agent.last_stop_reason):
+                        if autopilot.record_progress(before_signature, after_signature):
+                            break
+                traced_turn.content = final_content
+                traced_turn.stop_reason = agent.last_stop_reason
             if agent.last_stop_reason == StopReason.ERROR.value:
                 ok = False
                 error = final_content.strip() or "Agent execution failed."
@@ -2741,20 +2771,29 @@ async def run_agent(
             esc_thread.start()
 
             try:
-                agent_task = asyncio.create_task(
-                    agent.run(
-                        force_plan_start=force_plan_next_turn,
-                        current_turn_text=user_input,
+                with traced_session_turn(trace_writer, content=user_input) as traced_turn:
+                    agent_task = asyncio.create_task(
+                        agent.run(
+                            force_plan_start=force_plan_next_turn,
+                            current_turn_text=user_input,
+                        )
                     )
-                )
-                force_plan_next_turn = False
+                    try:
+                        force_plan_next_turn = False
 
-                while not agent_task.done():
-                    if esc_cancelled[0]:
-                        cancel_event.set()
-                    await asyncio.sleep(0.1)
+                        while not agent_task.done():
+                            if esc_cancelled[0]:
+                                cancel_event.set()
+                            await asyncio.sleep(0.1)
 
-                _ = agent_task.result()
+                        traced_turn.content = agent_task.result()
+                        traced_turn.stop_reason = agent.last_stop_reason
+                    finally:
+                        # The child inherits this trace context: settle it before
+                        # closing the turn or returning to the next CLI prompt.
+                        if not agent_task.done():
+                            agent_task.cancel()
+                            await asyncio.gather(agent_task, return_exceptions=True)
 
             except asyncio.CancelledError:
                 print(f"\n{Colors.BRIGHT_YELLOW}⚠️  Agent execution cancelled{Colors.RESET}")
