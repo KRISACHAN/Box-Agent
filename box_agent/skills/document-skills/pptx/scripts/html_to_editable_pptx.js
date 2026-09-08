@@ -3,7 +3,6 @@ const fs = require("fs");
 const Module = require("module");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const { fileURLToPath, pathToFileURL } = require("url");
 const {
   chromiumLaunchOptions,
@@ -46,15 +45,15 @@ Module._initPaths();
 // Single source of truth for the slide canvas contract — mirrors
 // html_self_check.js. The PPTX always exports at LAYOUT_WIDE (13.333x7.5in,
 // 16:9); a `.slide` authored at any other aspect ratio silently distorts on
-// export, so we assert the canvas size here instead of auto-detecting it.
+// export. Report mismatches without withholding a file the user can repair.
 const CANONICAL_WIDTH = 1920;
 const CANONICAL_HEIGHT = 1080;
 
 function usage() {
   console.log(
-    "Usage: html_to_editable_pptx.js deck.html output.pptx [--out slides] [--canvas WxH] [--svg-vector true|false] [--bg-capture always|never] [--allow-self-check-issues] (default: --svg-vector false for pixel fidelity, automatically true when data-pptx-diagram is present; --bg-capture always for visual fidelity)"
+    "Usage: html_to_editable_pptx.js deck.html output.pptx [--out slides] [--canvas WxH] [--svg-vector true|false] [--bg-capture always|never] [--allow-self-check-issues] (default: --svg-vector false for pixel fidelity, automatically true when data-pptx-diagram is present; --bg-capture always for visual fidelity; --allow-self-check-issues is a deprecated no-op)"
   );
-  console.log(`  The canvas contract is ${CANONICAL_WIDTH}x${CANONICAL_HEIGHT} (16:9). Every .slide must match it exactly.`);
+  console.log(`  The expected canvas is ${CANONICAL_WIDTH}x${CANONICAL_HEIGHT} (16:9). Size mismatches are reported as warnings.`);
   console.log("  --canvas WxH overrides the contract for a deliberately non-standard deck (e.g. --canvas 1280x720).");
   console.log("  --width/--height are NOT accepted; set .slide CSS to the canvas size instead.");
 }
@@ -162,7 +161,6 @@ function parseArgs(argv) {
     width: CANONICAL_WIDTH,
     height: CANONICAL_HEIGHT,
     svgVector: false,
-    allowSelfCheckIssues: false,
     bgCapture: "always",
   };
   for (let i = 2; i < argv.length; i += 1) {
@@ -198,7 +196,7 @@ function parseArgs(argv) {
       opts.bgCapture = value;
       i += 1;
     } else if (arg === "--allow-self-check-issues") {
-      opts.allowSelfCheckIssues = true;
+      // Backward-compatible no-op: editable export no longer runs HTML self-check.
     } else {
       failUsage();
     }
@@ -236,7 +234,7 @@ async function waitForDiagramLayout(page) {
     try {
       await pending;
     } catch {
-      // html_self_check reports the structured DiagramSpec render failure.
+      // Keep exporting the remaining DOM when an optional diagram render fails.
     }
   });
 }
@@ -251,57 +249,16 @@ function resolveBrowserBundle() {
   return bundlePath;
 }
 
-function runSelfCheck(htmlPath, width, height, reportPath, allowIssues) {
-  const checker = path.join(__dirname, "html_self_check.js");
-  try {
-    execFileSync(
-      process.execPath,
-      [
-        checker,
-        htmlPath,
-        "--canvas",
-        `${width}x${height}`,
-        "--dom-to-pptx",
-        "--allow-local-images",
-        "--report",
-        reportPath,
-      ],
-      {
-        stdio: "inherit",
-        env: process.env,
-      }
-    );
-  } catch (error) {
-    if (!allowIssues || !fs.existsSync(reportPath)) {
-      throw error;
-    }
-    let report;
-    try {
-      report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-    } catch {
-      throw error;
-    }
-    const issueCount = Array.isArray(report.issues) ? report.issues.length : 0;
-    console.error(
-      `HTML self-check still has ${issueCount} issue(s); continuing because --allow-self-check-issues was set.`
-    );
-  }
-}
-
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const htmlPath = path.resolve(opts.html);
   const pptxPath = path.resolve(opts.pptx);
   const outDir = path.resolve(opts.out);
-  const qaDir = path.join(path.dirname(pptxPath), "qa");
-  const selfCheckReport = path.join(qaDir, "html_self_check.json");
 
   if (!fs.existsSync(htmlPath)) {
     console.error(`HTML file not found: ${htmlPath}`);
     process.exit(1);
   }
-
-  fs.mkdirSync(qaDir, { recursive: true });
 
   const { chromium } = requireModule(
     "playwright",
@@ -322,9 +279,8 @@ async function main() {
   }
 
   // The canvas size is fixed by the contract (canonical 1920x1080, or an
-  // explicit --canvas override). We probe at that size, then assert the actual
-  // .slide CSS matches it before exporting — exporting a mismatched .slide would
-  // silently distort it into the 16:9 LAYOUT_WIDE PPTX frame.
+  // explicit --canvas override). Export remains available for mismatched slides;
+  // report their dimensions below so the user can repair the resulting PPTX.
   const expectedWidth = opts.width;
   const expectedHeight = opts.height;
   const probeViewport = { width: expectedWidth, height: expectedHeight };
@@ -346,22 +302,8 @@ async function main() {
 
   const cssW = detected && detected.w > 0 ? detected.w : null;
   const cssH = detected && detected.h > 0 ? detected.h : null;
-  const mismatchW = cssW !== null && Math.abs(expectedWidth - cssW) > 2;
-  const mismatchH = cssH !== null && Math.abs(expectedHeight - cssH) > 2;
   if (cssW === null || cssH === null) {
     console.error("Refusing to export: no .slide element with a CSS size was found.");
-    await browser.close();
-    process.exit(1);
-  }
-  if (mismatchW || mismatchH) {
-    console.error(
-      `Refusing to export: .slide CSS size is ${Math.round(cssW)}x${Math.round(cssH)}, ` +
-      `but the canvas contract is ${expectedWidth}x${expectedHeight}.`
-    );
-    console.error(
-      `Set .slide { width: ${expectedWidth}px; height: ${expectedHeight}px; } in the HTML. ` +
-      "For a deliberately non-standard deck, pass --canvas WxH to match the HTML."
-    );
     await browser.close();
     process.exit(1);
   }
@@ -393,10 +335,8 @@ async function main() {
 
   await waitForDiagramLayout(page);
 
-  runSelfCheck(htmlPath, detectedWidth, detectedHeight, selfCheckReport, opts.allowSelfCheckIssues);
   const fontResolution = await resolveExpressiveExportFonts(page);
   fontResolution.warnings.forEach(warning => console.warn(warning));
-
   const controlledSlideCount = await page.locator("#deck-root > .slide").count();
   const slideSelector = controlledSlideCount ? "#deck-root > .slide" : ".slide";
   const diagramSelector = controlledSlideCount
@@ -405,6 +345,28 @@ async function main() {
   const nativeChartSelector = controlledSlideCount
     ? '#deck-root > .slide [data-pptx-chart][data-native-chart="true"]'
     : '[data-pptx-chart][data-native-chart="true"]';
+  const diagnostics = await page.evaluate(({ slideSelector, width, height }) => {
+    const warnings = [];
+    let incompleteDiagramCount = 0;
+    document.querySelectorAll(slideSelector).forEach((slide, slideIndex) => {
+      const bounds = slide.getBoundingClientRect();
+      if (Math.abs(bounds.width - width) > 2 || Math.abs(bounds.height - height) > 2) {
+        warnings.push(`Slide ${slideIndex + 1}: size ${Math.round(bounds.width)}x${Math.round(bounds.height)} differs from ${width}x${height}; check the exported layout.`);
+      }
+      slide.querySelectorAll('[data-pptx-diagram]').forEach((diagram, diagramIndex) => {
+        const roots = diagram.querySelectorAll(':scope > svg');
+        const svg = roots.length === 1 ? roots[0] : null;
+        const bounds = svg && svg.getBoundingClientRect();
+        if (diagram.dataset.diagramRenderState === 'error' || !svg ||
+            !svg.childElementCount || bounds.width <= 0 || bounds.height <= 0) {
+          incompleteDiagramCount += 1;
+          warnings.push(`Slide ${slideIndex + 1}, diagram ${diagramIndex + 1}: missing or failed diagram; check and repair the exported content.`);
+        }
+      });
+    });
+    return { warnings, incompleteDiagramCount };
+  }, { slideSelector, width: expectedWidth, height: expectedHeight });
+  diagnostics.warnings.forEach(warning => console.warn(warning));
   const diagramCount = await page.locator(diagramSelector).count();
   const effectiveSvgVector = opts.svgVector || diagramCount > 0;
   if (diagramCount > 0 && !opts.svgVector) {
@@ -509,11 +471,11 @@ async function main() {
         slideCount: exportResult.slideCount,
         bytes: exportResult.bytes,
         diagramCount: exportResult.diagramCount,
-        diagramVectorExport: exportResult.diagramVectorExport,
+        diagramVectorExport: exportResult.diagramVectorExport && diagnostics.incompleteDiagramCount === 0,
         nativeChartCount: exportResult.nativeChartCount,
         previews,
         fontResolution,
-        htmlSelfCheck: selfCheckReport,
+        warnings: diagnostics.warnings,
         editableExport: "dom-to-pptx",
         localImagesInlinedForExport: inlinedImages,
         bgCapture: {

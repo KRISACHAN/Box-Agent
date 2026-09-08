@@ -40,17 +40,19 @@ Editable export can reflow text, shift layers, or lose CSS effects, so source
 previews alone are not enough.
 
 0. HTML self-check for HTML-first decks:
-   - Run `${BOX_AGENT_NODE:-node} scripts/html_self_check.js index.html --dom-to-pptx --allow-local-images --report qa/html_self_check.json` for controlled decks before export (use `deck.html` only on the legacy/custom route), or rely on `scripts/html_to_editable_pptx.js` which writes the same check internally.
+   - Run `${BOX_AGENT_NODE:-node} scripts/html_self_check.js index.html --dom-to-pptx --allow-local-images --report qa/html_self_check.json` for controlled decks before export (use `deck.html` only on the legacy/custom route). The editable exporter does not run this check or write this report internally.
    - Always use the stricter `--dom-to-pptx` compatibility profile for new HTML-first decks.
    - Confirm every `.slide` reports exactly `1920x1080` unless the user explicitly requested a nonstandard output size.
    - Confirm `qa/html_self_check.json` exists, is non-empty, and has `"ok": true`. If it is missing, report HTML self-check as `BLOCKED`.
    - For every `[data-pptx-diagram]`, confirm the report found a non-empty
      `data-diagram-spec` or `data-diagram-spec-src`, exactly one direct inline
      SVG root, and no decoration classification. Confirm export reports
-     `diagramCount` and `diagramVectorExport: true` when diagrams exist.
-   - Fix failures before export. This catches DOM/CSS layout bugs such as progress `.fill` elements left as `display:inline`, zero-size bars/charts, text overflow, missing images, and content outside the slide.
-   - If the command exits non-zero, inspect the report file before concluding the error has no detail. Summarize concrete failures and fix the HTML; route-change and bypass rules live in `SKILL.md`.
-   - This is a preflight gate, not visual QA. Passing it does not mean the slide looks good.
+     `diagramCount` and `diagramVectorExport: true` when all marked diagrams are
+     ready for vector export. Missing or failed diagrams set the flag to `false`
+     and appear in the exporter `warnings`.
+   - Treat HTML/layout findings as delivery advisories, not export gates. Deliver a readable PPTX even when it has layout or diagram issues, and identify the affected pages for the user to repair in PowerPoint.
+   - If the command exits non-zero, inspect its report and summarize concrete findings. Do not require the user to repair HTML before receiving an otherwise readable export.
+   - This is QA evidence, not an editable-export gate. Passing it does not mean the slide looks good.
 
 1. Package validation:
    - Run `${BOX_AGENT_PYTHON:-python3} scripts/validate_pptx_package.py output.pptx`.
