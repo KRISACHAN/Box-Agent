@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from box_agent.tools.skill_loader import SkillLoader
+from tests.pptx_test_support import skip_unavailable_pptx_runtime
 
 
 SKILL_DIR = (
@@ -110,15 +111,7 @@ def _run(
         cwd=cwd,
         env=env,
     )
-    # ── playwright probe ──────────────────────────────────────────
-    # Several scripts need playwright but CI runners don't have it.
-    # Skip the whole test instead of failing with an opaque exit code.
-    if result.returncode != 0 and (
-        "Cannot find module 'playwright'" in result.stderr
-        or "Executable doesn't exist" in result.stderr
-        or "Missing dependency: playwright" in result.stderr
-    ):
-        pytest.skip("Managed Playwright browser is unavailable")
+    skip_unavailable_pptx_runtime(result)
     return result
 
 

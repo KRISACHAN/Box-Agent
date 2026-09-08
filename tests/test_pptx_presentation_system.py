@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.pptx_test_support import skip_unavailable_pptx_runtime
+
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "box_agent/skills/document-skills/pptx"
 NODE = os.environ.get("BOX_AGENT_NODE") or shutil.which("node")
@@ -17,12 +19,15 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="Node.js is required")
 
 def node(code: str, *args: str) -> dict:
     result = subprocess.run([str(NODE), "-e", code, str(SKILL), *map(str, args)], text=True, capture_output=True, check=False)
+    skip_unavailable_pptx_runtime(result)
     assert result.returncode == 0, result.stdout + result.stderr
     return json.loads(result.stdout)
 
 
 def run(script: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([str(NODE), str(SKILL / "scripts" / script), *map(str, args)], text=True, capture_output=True, check=False)
+    result = subprocess.run([str(NODE), str(SKILL / "scripts" / script), *map(str, args)], text=True, capture_output=True, check=False)
+    skip_unavailable_pptx_runtime(result)
+    return result
 
 
 def test_all_themes_and_layouts_inherit_one_presentation_contract():

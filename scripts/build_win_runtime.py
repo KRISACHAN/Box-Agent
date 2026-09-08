@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Windows-only BoxAgent runtime builder with two stages.
+"""Windows-only BoxAgent runtime builder; ACP-only by default.
 
 Stages:
     bin/              ← PyInstaller-frozen BoxAgent (changes when source changes)
-    runtime/          ← PortableGit (bash) + python-build-standalone (python)
-    runtimes/         ← Node
+    runtime/          ← PortableGit + Python (only --bundled-python-sandbox)
+    runtimes/         ← Node (only --bundled-python-sandbox)
 
 `--exe-only` rebuilds **bin/ only**, leaving runtime/ and runtimes/ untouched.
+The selected profile must match the existing output and --install-to manifests;
+switch profiles with a clean build (without --exe-only).
 Use this when you change BoxAgent Python source but don't touch bash/node/python.
 
 Usage:
-    # Full build (PyInstaller + bash + python + node + tar.gz)
+    # Slim ACP build; analysis kernel and stable runtimes are provided by the host
     python scripts/build_win_runtime.py --version 0.8.40
+
+    # Legacy full bundle (PyInstaller + bash + python + node + tar.gz)
+    python scripts/build_win_runtime.py --version 0.8.40 --bundled-python-sandbox
 
     # Rebuild only the BoxAgent exe; keep existing runtime/ and runtimes/
     python scripts/build_win_runtime.py --version 0.8.40 --exe-only
@@ -136,26 +141,28 @@ def _rmtree_with_retry(
             time.sleep(delay_seconds * (attempt + 1))
 
 
-def _windows_pyinstaller_hidden_imports() -> list[str]:
+def _windows_pyinstaller_hidden_imports(*, external_python_sandbox: bool = True) -> list[str]:
     """Return the shared runtime hidden imports for the Windows build."""
     from scripts import build_runtime
 
     return build_runtime.pyinstaller_hidden_imports(
-        external_python_sandbox=False,
+        external_python_sandbox=external_python_sandbox,
     )
 
 
-def _windows_pyinstaller_collect_args() -> list[str]:
+def _windows_pyinstaller_collect_args(*, external_python_sandbox: bool = True) -> list[str]:
     """Return the shared runtime collect args for the Windows build."""
     from scripts import build_runtime
 
     return build_runtime.pyinstaller_collect_args(
-        external_python_sandbox=False,
+        external_python_sandbox=external_python_sandbox,
     )
 
 
-def _run_pyinstaller(bin_dir: Path) -> None:
+def _run_pyinstaller(bin_dir: Path, *, external_python_sandbox: bool = True) -> None:
     """Run PyInstaller and copy the output into ``bin_dir``."""
+    from scripts import build_runtime
+
     work_dir = bin_dir.parent.parent / "pyinstaller_work"
     dist_dir = bin_dir.parent.parent / "pyinstaller_out"
     spec_dir = bin_dir.parent.parent
@@ -175,11 +182,18 @@ def _run_pyinstaller(bin_dir: Path) -> None:
         if Path(src).exists():
             datas_args.extend(["--add-data", f"{src}{os.pathsep}{dst}"])
 
-    hidden_imports = _windows_pyinstaller_hidden_imports()
+    hidden_imports = _windows_pyinstaller_hidden_imports(
+        external_python_sandbox=external_python_sandbox
+    )
     hidden_args: list[str] = []
     for imp in hidden_imports:
         hidden_args.extend(["--hidden-import", imp])
-    collect_args = _windows_pyinstaller_collect_args()
+    collect_args = _windows_pyinstaller_collect_args(
+        external_python_sandbox=external_python_sandbox
+    )
+    exclude_args = build_runtime.pyinstaller_exclude_args(
+        external_python_sandbox=external_python_sandbox
+    )
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -188,7 +202,7 @@ def _run_pyinstaller(bin_dir: Path) -> None:
         "--distpath", str(dist_dir),
         "--workpath", str(work_dir),
         "--specpath", str(spec_dir),
-        *datas_args, *hidden_args, *collect_args,
+        *datas_args, *hidden_args, *collect_args, *exclude_args,
         str(entry_point),
     ]
 
@@ -238,7 +252,9 @@ def _install_node_win(runtime_dir: Path) -> None:
     print(f"[win] Node runtime ready: {node_root}")
 
 
-def _write_manifest(runtime_dir: Path, version: str) -> None:
+def _write_manifest(
+    runtime_dir: Path, version: str, *, external_python_sandbox: bool = True
+) -> None:
     from scripts import build_runtime
 
     manifest = build_runtime.build_runtime_manifest(
@@ -246,17 +262,36 @@ def _write_manifest(runtime_dir: Path, version: str) -> None:
         plat="win32",
         arch="x64",
         entry_path="bin/box-agent-acp.exe",
-        external_python_sandbox=False,
+        external_python_sandbox=external_python_sandbox,
         bundled_components=build_runtime.bundled_stable_runtime_components(
             plat="win32",
             arch="x64",
-            external_python_sandbox=False,
+            external_python_sandbox=external_python_sandbox,
         ),
     )
     (runtime_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
     (runtime_dir / "VERSION").write_text(version + "\n", encoding="utf-8")
+
+
+def _validate_exe_only_profile(runtime_dir: Path, *, external_python_sandbox: bool) -> None:
+    """Reject an in-place rebuild that would mislabel retained runtime files."""
+    rebuild_hint = "Run a clean build without --exe-only to create or switch profiles."
+    try:
+        manifest = json.loads((runtime_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot read runtime manifest at {runtime_dir}. {rebuild_hint}") from exc
+    existing = manifest.get("external_python_sandbox") if isinstance(manifest, dict) else None
+    if not isinstance(existing, bool):
+        raise ValueError(f"Cannot determine runtime profile at {runtime_dir}. {rebuild_hint}")
+    if existing != external_python_sandbox:
+        existing_name = "slim" if existing else "full"
+        requested_name = "slim" if external_python_sandbox else "full"
+        raise ValueError(
+            f"--exe-only profile mismatch at {runtime_dir}: existing {existing_name}, "
+            f"requested {requested_name}. {rebuild_hint}"
+        )
 
 
 def _create_tar(output_dir: Path, runtime_dir: Path, version: str) -> Path:
@@ -301,18 +336,32 @@ def main() -> None:
     parser.add_argument("--output", default="dist/runtime",
                         help="Output directory (default: dist/runtime)")
     parser.add_argument("--exe-only", action="store_true",
-                        help="Only rebuild bin/ (PyInstaller). Keep existing runtime/ and runtimes/.")
+                        help="Only rebuild bin/ (PyInstaller), keeping the same slim/full profile "
+                             "and existing runtime/ and runtimes/ in output and --install-to.")
     parser.add_argument("--no-tar", action="store_true",
                         help="Skip the tar.gz archive step (faster dev iteration).")
+    parser.add_argument("--bundled-python-sandbox", action="store_true",
+                        help="Legacy standalone bundle including Python analysis dependencies. "
+                             "By default Windows builds ACP only and uses the host's managed tools.")
     parser.add_argument("--install-to", default=None,
                         help="After build, copy artifacts to this path "
                              "(e.g. officev3 build-resources/box-agent-runtime).")
     args = parser.parse_args()
+    external_python_sandbox = not args.bundled_python_sandbox
 
     version = args.version or _read_version_from_package()
     output_dir = Path(args.output).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     runtime_dir = output_dir / "box-agent-runtime"
+    if args.exe_only:
+        try:
+            _validate_exe_only_profile(runtime_dir, external_python_sandbox=external_python_sandbox)
+            if args.install_to:
+                _validate_exe_only_profile(
+                    Path(args.install_to).resolve(), external_python_sandbox=external_python_sandbox
+                )
+        except ValueError as exc:
+            parser.error(str(exc))
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n[win] Installing runtime extras...")
     _install_runtime_extras()
@@ -324,21 +373,13 @@ def main() -> None:
     print(f"Mode: {'exe-only' if args.exe_only else 'full'}")
 
     if args.exe_only:
-        if not runtime_dir.exists():
-            print(
-                f"\nERROR: --exe-only requires an existing runtime at:\n  {runtime_dir}\n"
-                "Run a full build first (drop --exe-only) to bootstrap "
-                "runtime/ and runtimes/.",
-                file=sys.stderr,
-            )
-            sys.exit(3)
         # Wipe only bin/
         bin_dir = runtime_dir / "bin"
         if bin_dir.exists():
             _rmtree_with_retry(bin_dir)
-        _run_pyinstaller(bin_dir)
+        _run_pyinstaller(bin_dir, external_python_sandbox=external_python_sandbox)
         # Manifest version bump so consumers see the new exe
-        _write_manifest(runtime_dir, version)
+        _write_manifest(runtime_dir, version, external_python_sandbox=external_python_sandbox)
     else:
         # Full clean build
         if runtime_dir.exists():
@@ -346,15 +387,16 @@ def main() -> None:
         runtime_dir.mkdir(parents=True)
         bin_dir = runtime_dir / "bin"
         bin_dir.mkdir()
-        _run_pyinstaller(bin_dir)
-        _write_manifest(runtime_dir, version)
+        _run_pyinstaller(bin_dir, external_python_sandbox=external_python_sandbox)
+        _write_manifest(runtime_dir, version, external_python_sandbox=external_python_sandbox)
         # bash + python + sandbox packages + node
-        _install_portable_git_win(runtime_dir)
-        _install_portable_python_win(runtime_dir)
-        python_exe = runtime_dir / "runtime" / "python" / "python.exe"
-        if python_exe.is_file():
-            _install_sandbox_packages_win(python_exe)
-        _install_node_win(runtime_dir)
+        if not external_python_sandbox:
+            _install_portable_git_win(runtime_dir)
+            _install_portable_python_win(runtime_dir)
+            python_exe = runtime_dir / "runtime" / "python" / "python.exe"
+            if python_exe.is_file():
+                _install_sandbox_packages_win(python_exe)
+            _install_node_win(runtime_dir)
 
     print(f"\n[win] Runtime tree assembled: {runtime_dir}")
 

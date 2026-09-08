@@ -135,6 +135,15 @@ collection, and runtime-manifest helpers as the generic builder. This keeps the
 `web_extract` dispatch and `mcp_servers` declaration identical for
 `bin/box-agent-acp.exe`; do not add Windows-only copies of those contracts.
 
+The Windows-specific `scripts/build_win_runtime.py` defaults to a slim ACP build;
+`--bundled-python-sandbox` produces the full Python/Node/PortableGit bundle.
+`--exe-only` updates only `bin/`, the manifest, and version: it does not install
+stable runtimes. Its selected profile must match the existing manifests in both
+the output directory and any `--install-to` target. Full-bundle incremental builds
+still need `--bundled-python-sandbox`. A profile mismatch, missing manifest, or
+unknown profile is rejected before any build changes. To switch profiles, omit
+`--exe-only` and run a clean build, preferably in a separate output directory.
+
 #### Key Constraints
 
 | Channel | Content | Rule |
