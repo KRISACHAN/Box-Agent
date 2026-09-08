@@ -11,6 +11,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from .auth import should_attach_auth_header
+from .user_paths import (
+    box_agent_home,
+    configured_box_agent_home,
+    default_memory_dir,
+    default_workspace_dir,
+    state_path,
+)
 
 DEFAULT_API_KEY_PLACEHOLDER = "YOUR_API_KEY_HERE"
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
@@ -193,7 +200,7 @@ class AgentConfig(BaseModel):
     """Agent configuration"""
 
     max_steps: int = 300
-    workspace_dir: str = "./workspace"
+    workspace_dir: str = Field(default_factory=default_workspace_dir)
     # Hard ceiling on how many parallel_safe tool calls (sub_agent,
     # generate_image) run concurrently within a single step, regardless of how
     # many the model emits. Excess calls queue and run as slots free up. Guards
@@ -249,7 +256,7 @@ class AgentConfig(BaseModel):
     code_prompt_path: str = "code_prompt.md"
     # Memory
     enable_memory: bool = True
-    memory_dir: str = "~/.box-agent/memory"
+    memory_dir: str = Field(default_factory=default_memory_dir)
     # Memory auto-extraction
     enable_memory_extraction: bool = True
     memory_extraction_cooldown: int = 300  # seconds between extractions
@@ -369,6 +376,8 @@ class HooksConfig(BaseModel):
 class Config(BaseModel):
     """Main configuration class"""
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     llm: LLMConfig
     lite_llm: LiteLLMConfig = Field(default_factory=LiteLLMConfig)
     image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
@@ -377,6 +386,24 @@ class Config(BaseModel):
     tools: ToolsConfig
     officev3: Officev3Config = Field(default_factory=Officev3Config)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
+
+    @model_validator(mode="after")
+    def _resolve_profile_paths(self) -> "Config":
+        if configured_box_agent_home() is None:
+            return self
+        self.llm.auth_file = str(state_path("config/auth.json", self.llm.auth_file or None))
+        if self.lite_llm.auth_file:
+            self.lite_llm.auth_file = str(
+                state_path("config/auth.json", self.lite_llm.auth_file)
+            )
+        self.image_generation.auth_file = str(
+            state_path("config/auth.json", self.image_generation.auth_file or self.llm.auth_file)
+        )
+        self.agent.memory_dir = str(state_path("memory", self.agent.memory_dir))
+        self.agent.workspace_dir = str(state_path("workspace", self.agent.workspace_dir))
+        mcp_path = state_path("config") / self.tools.mcp_config_path
+        self.tools.mcp_config_path = str(state_path("config/mcp.json", mcp_path))
+        return self
 
     @classmethod
     def load(cls) -> "Config":
@@ -401,6 +428,8 @@ class Config(BaseModel):
             ValueError: Invalid configuration format or missing required fields
         """
         config_path = Path(config_path)
+        if configured_box_agent_home() is not None:
+            config_path = state_path("config/config.yaml", config_path)
 
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file does not exist: {config_path}")
@@ -645,13 +674,24 @@ class Config(BaseModel):
         Returns:
             Path to found config file, or None if not found
         """
+        if configured_box_agent_home() is not None:
+            configured = state_path("config", box_agent_home() / "config" / filename)
+            if configured.is_file():
+                return configured
+            # Only immutable packaged prompt resources may fall back, never credentials/config/MCP.
+            if filename in {"system_prompt.md", "analysis_prompt.md", "code_prompt.md"}:
+                bundled = cls.get_package_dir() / "config" / filename
+                if bundled.is_file():
+                    return bundled
+            return None
+
         # Priority 1: Development mode - current directory's config/ subdirectory
         dev_config = Path.cwd() / "box_agent" / "config" / filename
         if dev_config.exists():
             return dev_config
 
         # Priority 2: User config directory
-        user_config = Path.home() / ".box-agent" / "config" / filename
+        user_config = box_agent_home() / "config" / filename
         if user_config.exists():
             return user_config
 
@@ -676,6 +716,9 @@ class Config(BaseModel):
         if config_path:
             return config_path
 
+        if configured_box_agent_home() is not None:
+            raise FileNotFoundError(f"Explicit profile config.yaml is missing: {state_path('config/config.yaml')}")
+
         # No config.yaml found anywhere — bootstrap from example
         return cls._ensure_user_config()
 
@@ -686,7 +729,7 @@ class Config(BaseModel):
         Returns:
             Path to the newly created config.yaml
         """
-        user_config_dir = Path.home() / ".box-agent" / "config"
+        user_config_dir = state_path("config")
         user_config_dir.mkdir(parents=True, exist_ok=True)
         target = user_config_dir / "config.yaml"
 

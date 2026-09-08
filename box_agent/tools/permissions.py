@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from box_agent.user_paths import state_path
+
 if TYPE_CHECKING:
     from box_agent.config import Config
 
@@ -173,7 +175,7 @@ class PermissionEngine:
         # trash, log, ...). It is engine-internal data, not user business
         # data — never prompt for it, regardless of scope or config.
         try:
-            self._box_agent_dir: Path | None = (self._home_dir / ".box-agent").resolve()
+            self._box_agent_dir: Path | None = state_path("", home_dir=self._home_dir).resolve()
         except (OSError, RuntimeError):
             self._box_agent_dir = None
 

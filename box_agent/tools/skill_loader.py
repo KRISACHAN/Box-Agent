@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 import yaml
 
+from box_agent.user_paths import state_path
+
 SkillSource = Literal["builtin", "user"]
 
 MANIFEST_FILENAME = "_manifest.json"
@@ -56,7 +58,7 @@ def _tokenize(text: str) -> Set[str]:
 
 
 SKILL_SLOT_SENTINEL = "__BOX_AGENT_SKILLS_SLOT__"
-SKILL_SETTINGS_PATH = Path.home() / ".box-agent" / "config" / "skill-settings.json"
+SKILL_SETTINGS_PATH = state_path('config/skill-settings.json')
 _SKILL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
@@ -332,7 +334,7 @@ class SkillLoader:
         Tests and standalone loaders often point at temporary skill roots; they
         must not be affected by the developer machine's real desktop settings.
         """
-        user_skills_dir = Path.home() / ".box-agent" / "skills"
+        user_skills_dir = state_path('skills')
         for entry in self._sources:
             try:
                 if entry.directory.expanduser().resolve() == user_skills_dir.resolve():

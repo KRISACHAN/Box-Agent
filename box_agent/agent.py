@@ -58,6 +58,8 @@ from .tool_result_storage import ToolResultStorage
 from .utils import calculate_display_width
 from .session_continuation import ContinuationMessage
 
+from box_agent.user_paths import state_path
+
 
 _log = logging.getLogger(__name__)
 _ACTIVE_SKILL_TOKEN_BUDGET = 32_000
@@ -529,7 +531,7 @@ class Agent:
                 ),
             )
         self.tool_result_storage = ToolResultStorage(
-            Path.home() / ".box-agent" / "sessions"
+            state_path('sessions')
         )
         self.token_limit = token_limit
         self.workspace_dir = Path(workspace_dir)

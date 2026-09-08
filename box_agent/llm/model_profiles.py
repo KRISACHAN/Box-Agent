@@ -16,6 +16,8 @@ from box_agent.schema import LLMProvider
 
 from .llm_wrapper import LLMClient
 
+from box_agent.user_paths import state_path
+
 
 REGISTRY_VERSION = 1
 
@@ -27,8 +29,8 @@ class ModelProfileUnavailable(ValueError):
 def default_model_profile_registry_path() -> Path:
     configured = os.environ.get("BOX_AGENT_MODEL_PROFILES_FILE", "").strip()
     if configured:
-        return Path(configured).expanduser()
-    return Path.home() / ".box-agent" / "config" / "model-profiles.json"
+        return state_path("config/model-profiles.json", configured)
+    return state_path('config/model-profiles.json')
 
 
 def _positive_int(value: Any, *, field: str, default: int | None = None) -> int:

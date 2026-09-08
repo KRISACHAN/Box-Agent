@@ -401,10 +401,12 @@ async def test_duck_typing():
 
 
 @pytest.mark.asyncio
-async def test_hook_via_agent_class():
+async def test_hook_via_agent_class(tmp_path, monkeypatch):
     """Hooks work through the Agent wrapper."""
     from box_agent.agent import Agent
     from box_agent.llm import LLMClient
+
+    monkeypatch.setattr("box_agent.logger.state_path", lambda _name: tmp_path / "log")
 
     hook = RecordingHook()
 
@@ -415,6 +417,7 @@ async def test_hook_via_agent_class():
         tools=[],
         max_steps=5,
         hooks=[hook],
+        workspace_dir=str(tmp_path / "workspace"),
     )
     agent.add_user_message("hi")
     await agent.run()

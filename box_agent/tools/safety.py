@@ -15,8 +15,10 @@ from pathlib import Path
 
 from .shell_inspection import ShellInspection, ShellInvocation, inspect_shell_command
 
+from box_agent.user_paths import state_path
+
 # Global trash directory for file backups
-TRASH_DIR = Path.home() / ".box-agent" / "trash"
+TRASH_DIR = state_path('trash')
 
 _DANGEROUS_EXECUTABLE_REASONS = {
     "chmod": "chmod: changes file permissions",

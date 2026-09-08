@@ -16,11 +16,13 @@ from typing import Any, Literal
 
 from box_agent.tools.jupyter_tool import SandboxEnvironment
 
+from box_agent.user_paths import configured_box_agent_home, state_path
+
 RuntimeKind = Literal["python", "node"]
 RuntimeProvider = Literal["box_agent", "host", "missing"]
 RuntimeStatus = Literal["available", "missing", "unavailable"]
 
-DEFAULT_NODE_RUNTIME_ROOT = Path.home() / ".box-agent" / "runtimes" / "node"
+DEFAULT_NODE_RUNTIME_ROOT = state_path('runtimes/node')
 DEFAULT_NODE_VERSION = "v24.15.0"
 NODE_DIST_BASE_URL = "https://nodejs.org/dist"
 _MAX_RUNTIME_PATH_LEN = 1024
@@ -262,6 +264,8 @@ class NodeRuntimeManager:
     """Discover Box-Agent's self-managed Node runtime from a manifest."""
 
     def __init__(self, root: Path | None = None):
+        if root is None and configured_box_agent_home() is not None:
+            root = state_path("runtimes/node")
         self.root = (root or _bundled_node_runtime_root() or DEFAULT_NODE_RUNTIME_ROOT).expanduser()
         self.manifest_path = self.root / "manifest.json"
         self.downloads_dir = self.root / "downloads"
@@ -763,11 +767,7 @@ def _build_node_runtime(
         office_root = (
             Path(configured_office_root).expanduser()
             if configured_office_root
-            else Path.home()
-            / ".box-agent"
-            / "box-agent-runtime"
-            / "runtimes"
-            / "node"
+            else state_path('box-agent-runtime/runtimes/node')
         )
     office_runtime = NodeRuntimeManager(root=office_root).discover()
     return office_runtime if office_runtime.available else runtime

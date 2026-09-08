@@ -197,6 +197,8 @@ from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryErr
 
 from .debug_logger import acp_logger as log
 
+from box_agent.user_paths import configured_box_agent_home, state_path
+
 # Keep stdlib logger for backward compat with existing log calls
 logger = logging.getLogger(__name__)
 _DEFAULT_AGENT_TITLE = "Box-Agent"
@@ -1918,7 +1920,7 @@ class BoxACPAgent:
                     existing_log.assert_workspace(workspace)
                     existing_log.close()
                 del self._sessions[existing_handle]
-            session_root = Path.home() / ".box-agent" / "sessions"
+            session_root = state_path('sessions')
             try:
                 session_log = SessionLog.open(
                     session_root,
@@ -2193,7 +2195,7 @@ class BoxACPAgent:
         memory_scarce = is_memory_scarce(self._memory.read_core() if self._memory else None)
 
         try:
-            _user_mcp = Path.home() / ".box-agent" / "config" / "mcp.json"
+            _user_mcp = state_path('config/mcp.json')
             mcp_path = _user_mcp if _user_mcp.exists() else Config.find_config_file(self._config.tools.mcp_config_path)
         except Exception:
             mcp_path = None
@@ -5461,8 +5463,10 @@ async def run_acp_server(config: Config | None = None) -> None:
     import os as _os
     _os.environ.setdefault(
         "PLAYWRIGHT_BROWSERS_PATH",
-        str(Path.home() / ".box-agent" / "browsers"),
+        str(state_path('browsers')),
     )
+    if configured_box_agent_home() is not None:
+        _os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(state_path("browsers", _os.environ["PLAYWRIGHT_BROWSERS_PATH"]))
 
     # ── Stdout guard ────────────────────────────────────────
     # ACP protocol owns stdout exclusively.  Redirect sys.stdout to

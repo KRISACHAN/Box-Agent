@@ -87,6 +87,8 @@ from box_agent.utils import calculate_display_width
 from box_agent.acp.project_context import build_project_startup_context_prompt
 from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
 
+from box_agent.user_paths import state_path
+
 
 _CLI_PROBE_MAX_OUTPUT_TOKENS = 4_096
 
@@ -494,7 +496,7 @@ def _config_exit_error(message: str, json_output: bool = False) -> int:
 
 def get_log_directory() -> Path:
     """Get the log directory path."""
-    return Path.home() / ".box-agent" / "log"
+    return state_path('log')
 
 
 def show_log_directory(open_file_manager: bool = True) -> None:
@@ -755,7 +757,7 @@ def print_goal_status(agent: Agent) -> None:
 
 def _goal_store_path(workspace_dir: Path) -> Path:
     key = hashlib.sha256(str(workspace_dir.expanduser().absolute()).encode("utf-8")).hexdigest()[:24]
-    return Path.home() / ".box-agent" / "goals" / f"{key}.json"
+    return state_path('goals') / f"{key}.json"
 
 
 def _load_goal_state(workspace_dir: Path) -> GoalState | None:
@@ -1511,7 +1513,7 @@ def _doctor_sandbox_status() -> dict[str, Any]:
 
 
 def _doctor_mcp_status() -> dict[str, Any]:
-    _user_mcp = Path.home() / ".box-agent" / "config" / "mcp.json"
+    _user_mcp = state_path('config/mcp.json')
     mcp_path = _user_mcp if _user_mcp.exists() else Config.find_config_file("mcp.json")
     if mcp_path:
         return _doctor_check("ok", str(mcp_path), config_file=str(mcp_path))
@@ -1559,7 +1561,7 @@ async def cmd_doctor(json_output: bool = False) -> int:
 
 def _default_browsers_path() -> Path:
     """Default Chromium cache directory shared by CLI install and ACP runtime."""
-    return Path.home() / ".box-agent" / "browsers"
+    return state_path('browsers')
 
 
 def _playwright_env() -> dict[str, str]:
@@ -1702,7 +1704,7 @@ def cmd_install_node(version: str = DEFAULT_NODE_VERSION) -> None:
 
 def _ensure_user_mcp_config() -> Path:
     """Return path to the user-writable mcp.json, copying the example if needed."""
-    user_dir = Path.home() / ".box-agent" / "config"
+    user_dir = state_path('config')
     user_dir.mkdir(parents=True, exist_ok=True)
     target = user_dir / "mcp.json"
     if target.exists():
@@ -2506,7 +2508,7 @@ async def run_agent(
 
     # Create prompt session with history and auto-suggest
     # Use FileHistory for persistent history across sessions (stored in user's home directory)
-    history_file = Path.home() / ".box-agent" / ".history"
+    history_file = state_path('.history')
     history_file.parent.mkdir(parents=True, exist_ok=True)
     session = PromptSession(
         history=FileHistory(str(history_file)),

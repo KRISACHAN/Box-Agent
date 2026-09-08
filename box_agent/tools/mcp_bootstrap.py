@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from box_agent.user_paths import state_path
+
 
 MANAGED_MCP_SCHEMA_KEY = "boxAgentManagedMcpVersion"
 MANAGED_MCP_SCHEMA_VERSION = 1
@@ -53,7 +55,7 @@ def _runtime_root(explicit_root: Path | None = None) -> Path | None:
 
 def default_managed_mcp_config_path() -> Path:
     """Return the shared user MCP configuration owned by Box-Agent."""
-    return Path.home() / ".box-agent" / "config" / "mcp.json"
+    return state_path('config/mcp.json')
 
 
 def _normalize_hosted_search_url(value: str) -> str | None:

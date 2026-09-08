@@ -295,6 +295,12 @@ box-agent doctor                    # check environment & API connectivity
 box-agent doctor --json             # machine-readable health check
 ```
 
+### Isolated runtime profiles
+
+Hosts may opt into a dedicated absolute `BOX_AGENT_HOME` before starting the runtime. This routes Box-Agent-owned configuration and state away from the default user profile without changing the operating-system `HOME`; unset behavior stays compatible. Explicit profiles require their own `config/config.yaml` and never fall back to legacy configuration or login-token environment variables.
+
+See [isolated runtime profiles](docs/isolated-runtime-profile.md) and the no-background-startup [example configuration](box_agent/config/isolated-profile-example.yaml). This is path/configuration isolation, not an OS sandbox or permission to call a model.
+
 ## CLI Usage
 
 ```bash
