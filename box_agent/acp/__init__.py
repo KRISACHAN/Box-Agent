@@ -32,7 +32,7 @@ import logging
 import platform
 import signal
 import sys
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
@@ -61,6 +61,15 @@ from pydantic import field_validator
 from acp.schema import AgentCapabilities, Implementation, McpCapabilities
 
 from box_agent import __version__
+from box_agent.agent_service import AgentService
+from box_agent.agent_runtime import (
+    build_agent,
+    build_llm_client,
+    build_memory_extractor,
+    build_memory_manager,
+    build_permission_engine,
+)
+from box_agent.agent_run import AgentRunHandle
 from box_agent.acp.stdio_compat import stdio_streams_largebuf
 from box_agent.artifacts import ensure_output_dir
 from box_agent.agent import (
@@ -79,6 +88,8 @@ from box_agent.tools.setup import (
     build_sandbox_info_prompt,
     initialize_base_tools,
     render_system_prompt_template,
+    # Retained as module-level compatibility hooks; MCP reconciliation now
+    # delegates through ``MCPRuntimeController`` below.
     sync_mcp_tool_list,
     sync_mcp_tools,
 )
@@ -135,6 +146,12 @@ from box_agent.events import (
     ToolCallStart as ToolCallStartEvent,
     WebSearchEvent,
 )
+from box_agent.goal_runtime import (
+    GoalAutopilotController,
+)
+from box_agent.mcp_runtime import MCPRuntimeController
+from box_agent.skill_runtime import prepare_auto_loaded_skills
+from box_agent.turn_runtime import sync_skill_cache_fingerprint_context
 from box_agent.client_info import ClientInfo, scoped_client_info
 from box_agent.llm import LLMClient, SessionBoundLLM
 from box_agent.llm.model_routing import normalize_auto_routing, resolve_model_client
@@ -160,7 +177,7 @@ from box_agent.acp.action_hints import (
     is_playwright_unavailable_from_env_context,
     normalize_action_hint_blocks,
 )
-from box_agent.acp.env_context import EnvContext, build_env_context_prompt
+from box_agent.env_context import EnvContext, build_env_context_prompt
 from box_agent.acp.follow_up_suggestions import (
     FollowUpSuggestionsStreamExtractor,
     build_follow_up_suggestions_generation_prompt,
@@ -169,7 +186,17 @@ from box_agent.acp.follow_up_suggestions import (
     parse_follow_up_suggestions_response,
 )
 from box_agent.llm.lightweight import LightweightPromptError, run_lightweight_prompt
-from box_agent.acp.project_context import build_project_startup_context_prompt
+from box_agent.project_context import (
+    PROJECT_WORKSPACE_MODE_PROMPT,
+    append_prompt_segment,
+    build_project_startup_context_prompt,
+    compose_prompt_segments,
+)
+from box_agent.run_observer import (
+    ArtifactObserver,
+    RunObserver,
+    cleanup_turn_resources,
+)
 from box_agent.experts import ExpertSessionContext
 from box_agent.execution_profile import (
     FAST_OPTIONAL_SKILLS,
@@ -187,6 +214,8 @@ from box_agent.tools.runtime import (
 )
 from box_agent.tools.skill_preload import (
     SkillPreloadAttribution,
+    # Retained for downstream monkeypatch/import compatibility; active turns
+    # use ``prepare_auto_loaded_skills`` below.
     build_auto_loaded_skills_prompt,
     host_runtime_preload_skill_names,
     strip_auto_loaded_skills,
@@ -1011,6 +1040,18 @@ class SessionState:
     last_error_details: dict[str, Any] | None = None
     mcp_fallback_tools: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Transitional facade for the shared Agent Runtime state.  Keep the
+        # handle out of the dataclass field list so ``asdict``/equality and
+        # existing ACP state snapshots retain their historical shape.
+        self._run_handle = AgentRunHandle(self)
+
+    @property
+    def run_handle(self) -> AgentRunHandle:
+        """Return the shared-state facade without adding a new state owner."""
+
+        return self._run_handle
+
 
 _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 4_096
 _TITLE_MAX_OUTPUT_TOKENS = 8_000
@@ -1056,6 +1097,14 @@ class BoxACPAgent:
         self._hooks = hooks
         self._skill_loader = skill_loader
         self._base_mcp_fallback_tools: dict[str, Any] = {}
+        self._mcp_controller = MCPRuntimeController(
+            base_tools=self._base_tools,
+            base_fallback_tools=self._base_mcp_fallback_tools,
+            session_registries=lambda: (
+                (state.agent.tools, state.mcp_fallback_tools)
+                for state in self._sessions.values()
+            ),
+        )
         self._mcp_task = mcp_task  # background MCP discovery; awaited on first prompt
         self._mcp_loaded = mcp_task is None  # True once the live catalog is ready
         # Guards against re-scheduling the deferred finalize task on subsequent
@@ -1172,13 +1221,14 @@ class BoxACPAgent:
         return strip_auto_loaded_skills(system_prompt)
 
     def _sync_cache_fingerprint_context(self, state: SessionState) -> None:
-        state.agent.cache_fingerprint_context["filtered_skill_names"] = (
-            list(state.skill_selector.matched_skill_names)
-            if state.skill_selector is not None
-            else []
-        )
-        state.agent.cache_fingerprint_context["preloaded_skill_names"] = list(
-            state.preloaded_skill_names
+        sync_skill_cache_fingerprint_context(
+            state.agent.cache_fingerprint_context,
+            matched_skill_names=(
+                state.skill_selector.matched_skill_names
+                if state.skill_selector is not None
+                else None
+            ),
+            preloaded_skill_names=state.preloaded_skill_names,
         )
 
     def _log_cache_fingerprint(
@@ -1243,26 +1293,21 @@ class BoxACPAgent:
             self._sync_cache_fingerprint_context(state)
             return
         include_disabled = state.expert_context is not None
-        previous_skill_names = set(state.preloaded_skill_names)
-        result = build_auto_loaded_skills_prompt(
+        result, unloaded_skill_names = prepare_auto_loaded_skills(
             skill_loader,
             state.agent.system_prompt,
             skill_names,
             include_disabled=include_disabled,
+            preloaded_skill_names=state.preloaded_skill_names,
+            preloaded_skill_hashes=state.preloaded_skill_hashes,
+            preloaded_skill_attributions=state.preloaded_skill_attributions,
+            prompt_builder=build_auto_loaded_skills_prompt,
         )
         for skill_name in result.missing_names:
             log.warn("skills/preload_missing", session_id=session_id, skill=skill_name)
-        state.preloaded_skill_names = list(result.loaded_names)
-        state.preloaded_skill_hashes.clear()
-        state.preloaded_skill_hashes.update(result.loaded_skill_hashes)
-        state.preloaded_skill_attributions = {
-            attribution.skill_name: attribution
-            for attribution in result.loaded_attributions
-        }
         self._sync_cache_fingerprint_context(state)
         if result.changed:
             self._set_agent_system_prompt(state.agent, result.system_prompt)
-        unloaded_skill_names = previous_skill_names - set(result.loaded_names)
         if unloaded_skill_names:
             log.info(
                 "skills/auto_unloaded",
@@ -1302,19 +1347,19 @@ class BoxACPAgent:
             return
         mcp_tools = await await_mcp_tools(self._mcp_task)
         if not self._config.tools.mcp.deferred_loading_enabled:
-            sync_mcp_tool_list(
-                self._base_tools,
-                mcp_tools,
-                self._base_mcp_fallback_tools,
-            )
-            for state in self._sessions.values():
-                sync_mcp_tools(
-                    state.agent.tools,
-                    mcp_tools,
-                    state.mcp_fallback_tools,
-                )
+            self._sync_mcp_registries(mcp_tools)
         self._mcp_loaded = True
         log.info("mcp/ready", count=len(mcp_tools))
+
+    def _sync_mcp_registries(self, mcp_tools: list[Any]) -> None:
+        """Apply the shared MCP catalog to base and live session registries."""
+        # Keep legacy monkeypatch/reassignment of these ACP attributes visible
+        # to the controller before each reconciliation.
+        self._mcp_controller.base_tools = self._base_tools
+        self._mcp_controller.base_fallback_tools = self._base_mcp_fallback_tools
+        self._mcp_controller.base_sync = sync_mcp_tool_list
+        self._mcp_controller.session_sync = sync_mcp_tools
+        self._mcp_controller.reconcile(mcp_tools)
 
     def _sub_agent_capability_state(self) -> str:
         """Expose MCP readiness without leaking configuration or permissions."""
@@ -1330,17 +1375,7 @@ class BoxACPAgent:
         if self._mcp_loaded:
             return
         if not self._config.tools.mcp.deferred_loading_enabled:
-            sync_mcp_tool_list(
-                self._base_tools,
-                mcp_tools,
-                self._base_mcp_fallback_tools,
-            )
-            for state in self._sessions.values():
-                sync_mcp_tools(
-                    state.agent.tools,
-                    mcp_tools,
-                    state.mcp_fallback_tools,
-                )
+            self._sync_mcp_registries(mcp_tools)
         self._mcp_loaded = True
         log.info("mcp/ready", count=len(mcp_tools), source="deferred")
         injected = self._inject_mcp_runtime_update(
@@ -1372,17 +1407,7 @@ class BoxACPAgent:
 
         if not self._config.tools.mcp.deferred_loading_enabled:
             all_mcp_tools = get_all_mcp_tools()
-            sync_mcp_tool_list(
-                self._base_tools,
-                all_mcp_tools,
-                self._base_mcp_fallback_tools,
-            )
-            for state in self._sessions.values():
-                sync_mcp_tools(
-                    state.agent.tools,
-                    all_mcp_tools,
-                    state.mcp_fallback_tools,
-                )
+            self._sync_mcp_registries(all_mcp_tools)
 
         for result in results:
             name = str(result.get("name") or "")
@@ -1734,7 +1759,12 @@ class BoxACPAgent:
 
                 effective_policy = base_policy
 
-                perm_engine = PermissionEngine(effective_policy, workspace, grant_store=grant_store)
+                perm_engine = build_permission_engine(
+                    effective_policy,
+                    workspace,
+                    grant_store=grant_store,
+                    engine_factory=PermissionEngine,
+                )
                 log.info("session/permissions", session_id=session_id,
                          message=f"PermissionEngine created: scope={effective_policy.filesystem_scope}, "
                                  f"openclaw={effective_policy.openclaw_import_enabled}, "
@@ -1747,7 +1777,12 @@ class BoxACPAgent:
                     session_workspace_root=str(workspace),
                 )
                 effective_policy = fallback_policy
-                perm_engine = PermissionEngine(fallback_policy, workspace, grant_store=grant_store)
+                perm_engine = build_permission_engine(
+                    fallback_policy,
+                    workspace,
+                    grant_store=grant_store,
+                    engine_factory=PermissionEngine,
+                )
         elif permission_mode in elevated_permission_modes:
             log.warn(
                 "session/permissions",
@@ -1794,7 +1829,7 @@ class BoxACPAgent:
             recalled = await asyncio.to_thread(self._memory.recall)
             if recalled:
                 memory_block = recalled
-                system_prompt = f"{system_prompt.rstrip()}\n\n{memory_block}"
+                system_prompt = append_prompt_segment(system_prompt, memory_block)
                 log.info("session/memory", session_id=session_id, message="Memory context injected")
 
         preloaded_skill_hashes: dict[str, str] = {}
@@ -1935,7 +1970,9 @@ class BoxACPAgent:
                 session_log.prepare_resume()
                 session_log_restored = True
 
-        agent = Agent(
+        # Resolve the module-level factory at session creation time, matching
+        # the historical direct ``Agent(...)`` call and its test hook.
+        agent = AgentService(agent_factory=Agent).create_agent(
             llm_client=session_llm,
             system_prompt=system_prompt,
             tools=tools,
@@ -2024,12 +2061,13 @@ class BoxACPAgent:
         session_extractor = None
         if self._memory and self._config.agent.enable_memory_extraction and not utility:
             from box_agent.memory import MemoryExtractor
-            session_extractor = MemoryExtractor(
+            session_extractor = build_memory_extractor(
                 llm=session_llm,
                 memory_manager=self._memory,
                 session_id=upstream_session_id,
                 cooldown=self._config.agent.memory_extraction_cooldown,
                 step_interval=self._config.agent.memory_extraction_step_interval,
+                extractor_factory=MemoryExtractor,
             )
 
         trace_writer = SessionTraceWriter(
@@ -2227,53 +2265,63 @@ class BoxACPAgent:
         }
 
         use_output_dir = artifact_mode != "project"
-        base_prompt = (
-            self._system_prompt.replace(
-                "{SANDBOX_INFO}",
-                build_sandbox_info_prompt(use_output_dir=use_output_dir),
-            )
-            .replace(
-                "{FILE_DELIVERY_INFO}",
-                build_file_delivery_prompt(use_output_dir=use_output_dir),
-            )
+        base_prompt = compose_prompt_segments(
+            self._system_prompt,
+            replacements={
+                "{SANDBOX_INFO}": build_sandbox_info_prompt(
+                    use_output_dir=use_output_dir
+                ),
+                "{FILE_DELIVERY_INFO}": build_file_delivery_prompt(
+                    use_output_dir=use_output_dir
+                ),
+            },
+            segments=(
+                PROJECT_WORKSPACE_MODE_PROMPT
+                if artifact_mode == "project"
+                else None,
+            ),
         )
-        if artifact_mode == "project":
-            project_mode_prompt = (
-                "## Project Workspace Mode\n"
-                "- This session is editing an existing code/project workspace.\n"
-                "- Do not create or use an `output/` folder unless the user explicitly asks for one.\n"
-                "- Treat file edits, generated source files, tests, and build results in the project tree as the deliverable."
-            )
-            base_prompt = f"{base_prompt.rstrip()}\n\n{project_mode_prompt}"
         if workspace is not None:
-            base_prompt = f"{base_prompt.rstrip()}\n\n{self._filesystem_access_prompt(workspace, policy)}"
+            base_prompt = append_prompt_segment(
+                base_prompt,
+                self._filesystem_access_prompt(workspace, policy),
+            )
             layout_prompt = _workspace_layout_prompt(
                 workspace=workspace,
                 artifact_root=artifact_root or (workspace / "output").resolve(),
                 layout=workspace_layout,
                 artifact_mode=artifact_mode,
             )
-            base_prompt = f"{base_prompt.rstrip()}\n\n{layout_prompt}"
+            base_prompt = append_prompt_segment(base_prompt, layout_prompt)
 
         if session_mode == "code_agent" and workspace is not None:
-            base_prompt = f"{base_prompt.rstrip()}\n\n{build_project_startup_context_prompt(workspace)}"
+            base_prompt = append_prompt_segment(
+                base_prompt,
+                build_project_startup_context_prompt(workspace),
+            )
 
         env_prompt = build_env_context_prompt(env_context)
         if env_prompt:
-            base_prompt = f"{base_prompt.rstrip()}\n\n{env_prompt}"
+            base_prompt = append_prompt_segment(base_prompt, env_prompt)
 
         runtime_context = skill_runtime_context or build_skill_runtime_context(
             sandbox_mode=True,
             env_context=env_context,
         )
-        base_prompt = f"{base_prompt.rstrip()}\n\n{build_skill_runtime_prompt(runtime_context)}"
+        base_prompt = append_prompt_segment(
+            base_prompt,
+            build_skill_runtime_prompt(runtime_context),
+        )
 
         hints_prompt = self._build_action_hints_prompt(env_context)
         if hints_prompt:
-            base_prompt = f"{base_prompt.rstrip()}\n\n{hints_prompt}"
+            base_prompt = append_prompt_segment(base_prompt, hints_prompt)
 
         if follow_up_suggestions_enabled:
-            base_prompt = f"{base_prompt.rstrip()}\n\n{build_follow_up_suggestions_prompt()}"
+            base_prompt = append_prompt_segment(
+                base_prompt,
+                build_follow_up_suggestions_prompt(),
+            )
 
         attr = _MODE_PROMPT_MAP.get(session_mode or "")
         if attr:
@@ -2282,14 +2330,18 @@ class BoxACPAgent:
                 mode_path = Config.find_config_file(prompt_filename)
                 if mode_path and mode_path.exists():
                     mode_prompt = mode_path.read_text(encoding="utf-8").strip()
-                    base_prompt = f"{base_prompt.rstrip()}\n\n{mode_prompt}"
+                    base_prompt = append_prompt_segment(
+                        base_prompt,
+                        mode_prompt,
+                        skip_empty=False,
+                    )
                 else:
                     log.warn("session/prompt", message=f"Mode prompt not found: {prompt_filename}")
 
         if expert_context:
             expert_prompt = expert_context.render_prompt()
             if expert_prompt:
-                base_prompt = f"{base_prompt.rstrip()}\n\n{expert_prompt}"
+                base_prompt = append_prompt_segment(base_prompt, expert_prompt)
         return base_prompt
 
     def _has_officev3_policy(self) -> bool:
@@ -2850,13 +2902,15 @@ class BoxACPAgent:
             turn_meter.merge(attachment_meter)
         browser_owner = f"{session_id}:{turn_id}"
         browser_owner_token = set_browser_runtime_owner(browser_owner)
-        auto_continuations = 0
-        auto_budget_exhausted = False
-        auto_no_progress_turns = 0
-        auto_no_progress_exhausted = False
         auto_enabled = (
             self._config.agent.goal_autopilot_enabled
             and self._config.agent.goal_autopilot_max_turns > 0
+        )
+        autopilot = GoalAutopilotController(
+            started_at=prompt_start,
+            max_turns=self._config.agent.goal_autopilot_max_turns,
+            max_seconds=self._config.agent.goal_autopilot_max_seconds,
+            no_progress_limit=self._config.agent.goal_autopilot_no_progress_turns,
         )
         try:
             stop_reason = await self._run_turn(
@@ -2879,25 +2933,20 @@ class BoxACPAgent:
                 and state.pending_plan_approval is None
                 and should_continue_goal_autopilot(state.agent, stop_reason)
             ):
-                elapsed = perf_counter() - prompt_start
-                if (
-                    auto_continuations >= self._config.agent.goal_autopilot_max_turns
-                    or elapsed >= self._config.agent.goal_autopilot_max_seconds
-                ):
-                    auto_budget_exhausted = True
+                if autopilot.budget_exhausted_at(perf_counter()):
                     break
                 if state.cancelled or state.agent.goal is None:
                     break
-                auto_continuations += 1
+                autopilot.begin_continuation()
                 continuation = goal_autopilot_prompt(
                     state.agent.goal,
-                    auto_continuations,
+                    autopilot.continuations,
                     self._config.agent.goal_autopilot_max_turns,
                 )
                 log.info(
                     "goal_autopilot/continue",
                     session_id=session_id,
-                    continuation=auto_continuations,
+                    continuation=autopilot.continuations,
                     max_continuations=self._config.agent.goal_autopilot_max_turns,
                 )
                 state.agent.add_user_message(continuation)
@@ -2914,15 +2963,7 @@ class BoxACPAgent:
                 )
                 after_signature = goal_autopilot_progress_signature(state.agent.goal)
                 if should_continue_goal_autopilot(state.agent, stop_reason):
-                    if after_signature == before_signature:
-                        auto_no_progress_turns += 1
-                    else:
-                        auto_no_progress_turns = 0
-                    if (
-                        self._config.agent.goal_autopilot_no_progress_turns > 0
-                        and auto_no_progress_turns >= self._config.agent.goal_autopilot_no_progress_turns
-                    ):
-                        auto_no_progress_exhausted = True
+                    if autopilot.record_progress(before_signature, after_signature):
                         break
         except asyncio.CancelledError as exc:
             if state.trace_writer is not None:
@@ -2954,73 +2995,58 @@ class BoxACPAgent:
         finally:
             state.turn_active = False
             bash_tool = state.agent.tools.get("bash")
-            if isinstance(bash_tool, BashTool):
-                try:
-                    terminated_bash_ids = await bash_tool.cleanup_background_processes(
-                        lifetime=BASH_LIFETIME_TURN
-                    )
-                    if terminated_bash_ids:
-                        log.info(
-                            "bash/session_cleanup",
-                            session_id=session_id,
-                            turn_id=turn_id,
-                            lifetime=BASH_LIFETIME_TURN,
-                            count=len(terminated_bash_ids),
-                            bash_ids=terminated_bash_ids,
-                        )
-                except Exception as cleanup_error:
-                    log.error(
-                        "bash/session_cleanup_failed",
-                        session_id=session_id,
-                        turn_id=turn_id,
-                        error=str(cleanup_error),
-                    )
             write_tool = state.agent.tools.get("write_file")
-            if isinstance(write_tool, WriteTool):
-                try:
-                    discarded_paths = write_tool.cleanup_pending_writes()
-                    if discarded_paths:
-                        log.info(
-                            "write_file/session_cleanup",
-                            session_id=session_id,
-                            turn_id=turn_id,
-                            count=len(discarded_paths),
-                            paths=discarded_paths,
-                        )
-                except Exception as cleanup_error:
-                    log.error(
-                        "write_file/session_cleanup_failed",
+
+            def _log_cleanup_success(kind: str, values: list[str]) -> None:
+                if kind == "bash" and values:
+                    log.info(
+                        "bash/session_cleanup",
                         session_id=session_id,
                         turn_id=turn_id,
-                        error=str(cleanup_error),
+                        lifetime=BASH_LIFETIME_TURN,
+                        count=len(values),
+                        bash_ids=values,
                     )
-            if state.skill_scratch_dir is not None:
-                try:
-                    removed_scratch_paths = cleanup_skill_scratch_dir(
-                        state.skill_scratch_dir
-                    )
-                    if removed_scratch_paths:
-                        log.info(
-                            "skill_scratch/session_cleanup",
-                            session_id=session_id,
-                            turn_id=turn_id,
-                            count=len(removed_scratch_paths),
-                        )
-                except Exception as cleanup_error:
-                    log.error(
-                        "skill_scratch/session_cleanup_failed",
+                elif kind == "write_file" and values:
+                    log.info(
+                        "write_file/session_cleanup",
                         session_id=session_id,
                         turn_id=turn_id,
-                        error=str(cleanup_error),
+                        count=len(values),
+                        paths=values,
                     )
-            try:
-                await release_browser_runtime(browser_owner)
-            except Exception as cleanup_error:
+                elif kind == "skill_scratch" and values:
+                    log.info(
+                        "skill_scratch/session_cleanup",
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        count=len(values),
+                    )
+
+            def _log_cleanup_error(kind: str, error: Exception) -> None:
                 log.error(
-                    "browser/session_cleanup_failed",
+                    {
+                        "bash": "bash/session_cleanup_failed",
+                        "write_file": "write_file/session_cleanup_failed",
+                        "skill_scratch": "skill_scratch/session_cleanup_failed",
+                        "browser": "browser/session_cleanup_failed",
+                    }.get(kind, "session_cleanup_failed"),
                     session_id=session_id,
                     turn_id=turn_id,
-                    error=str(cleanup_error),
+                    error=str(error),
+                )
+
+            try:
+                cleanup_result = await cleanup_turn_resources(
+                    bash_tool=bash_tool if isinstance(bash_tool, BashTool) else None,
+                    write_tool=write_tool if isinstance(write_tool, WriteTool) else None,
+                    skill_scratch_dir=state.skill_scratch_dir,
+                    browser_owner=browser_owner,
+                    bash_lifetime=BASH_LIFETIME_TURN,
+                    cleanup_scratch=cleanup_skill_scratch_dir,
+                    release_browser=release_browser_runtime,
+                    on_success=_log_cleanup_success,
+                    on_error=_log_cleanup_error,
                 )
             finally:
                 reset_browser_runtime_owner(browser_owner_token)
@@ -3066,7 +3092,7 @@ class BoxACPAgent:
                         "total_tokens": turn_total_tokens,
                         "calls": turn_meter.calls if turn_meter else 0,
                     },
-                    "goal_autopilot_continuations": auto_continuations,
+                    "goal_autopilot_continuations": autopilot.continuations,
                     "task_id": task_id,
                 },
             )
@@ -3079,10 +3105,10 @@ class BoxACPAgent:
             stop_reason=stop_reason,
             duration_ms=duration_ms,
             total_tokens=turn_total_tokens,
-            goal_autopilot_continuations=auto_continuations,
-            goal_autopilot_budget_exhausted=auto_budget_exhausted,
-            goal_autopilot_no_progress_exhausted=auto_no_progress_exhausted,
-            goal_autopilot_no_progress_turns=auto_no_progress_turns,
+            goal_autopilot_continuations=autopilot.continuations,
+            goal_autopilot_budget_exhausted=autopilot.budget_exhausted,
+            goal_autopilot_no_progress_exhausted=autopilot.no_progress_exhausted,
+            goal_autopilot_no_progress_turns=autopilot.no_progress_turns,
         )
         # Map box-agent stop reasons to ACP-valid StopReason values.
         # ACP only accepts: "end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"
@@ -3096,7 +3122,7 @@ class BoxACPAgent:
         }
         acp_stop_reason = _ACP_STOP_REASON_MAP.get(stop_reason, "end_turn")
         if (
-            (auto_budget_exhausted or auto_no_progress_exhausted)
+            (autopilot.budget_exhausted or autopilot.no_progress_exhausted)
             and state.agent.goal is not None
             and state.agent.goal.status == "active"
         ):
@@ -3142,13 +3168,13 @@ class BoxACPAgent:
                 "turn_id": turn_id,
             }
         }
-        if state.agent.goal is not None or auto_continuations > 0:
+        if state.agent.goal is not None or autopilot.continuations > 0:
             response_meta["goalAutopilot"] = {
                 "enabled": auto_enabled,
-                "continuations": auto_continuations,
-                "budgetExhausted": auto_budget_exhausted,
-                "noProgressExhausted": auto_no_progress_exhausted,
-                "noProgressTurns": auto_no_progress_turns,
+                "continuations": autopilot.continuations,
+                "budgetExhausted": autopilot.budget_exhausted,
+                "noProgressExhausted": autopilot.no_progress_exhausted,
+                "noProgressTurns": autopilot.no_progress_turns,
                 "lastStopReason": stop_reason,
             }
         if state.task_registry_error:
@@ -3399,17 +3425,7 @@ class BoxACPAgent:
             result = await reconnect_mcp_server(name)
             if not self._config.tools.mcp.deferred_loading_enabled:
                 all_mcp_tools = get_all_mcp_tools()
-                sync_mcp_tool_list(
-                    self._base_tools,
-                    all_mcp_tools,
-                    self._base_mcp_fallback_tools,
-                )
-                for state in self._sessions.values():
-                    sync_mcp_tools(
-                        state.agent.tools,
-                        all_mcp_tools,
-                        state.mcp_fallback_tools,
-                    )
+                self._sync_mcp_registries(all_mcp_tools)
             if result.get("success"):
                 new_tools = get_mcp_tools_for_server(name)
                 injected = self._inject_mcp_runtime_update(
@@ -3446,17 +3462,7 @@ class BoxACPAgent:
             removed = set(result.get("removedTools", []))
             if not self._config.tools.mcp.deferred_loading_enabled:
                 all_mcp_tools = get_all_mcp_tools()
-                sync_mcp_tool_list(
-                    self._base_tools,
-                    all_mcp_tools,
-                    self._base_mcp_fallback_tools,
-                )
-                for state in self._sessions.values():
-                    sync_mcp_tools(
-                        state.agent.tools,
-                        all_mcp_tools,
-                        state.mcp_fallback_tools,
-                    )
+                self._sync_mcp_registries(all_mcp_tools)
             injected = self._inject_mcp_runtime_update(
                 name=name,
                 state="disconnected",
@@ -3972,13 +3978,14 @@ class BoxACPAgent:
     ) -> str:
         """Consume the shared execution core and translate events to ACP updates."""
         if task_context is None:
-            fallback_turn_id = turn_id or state.current_turn_id or session_id
+            fallback_turn_id = turn_id or state.run_handle.current_turn_id or session_id
             task_context = TaskContext(
                 session_id=state.upstream_session_id or session_id,
                 task_id=state.current_task_id or fallback_turn_id,
                 turn_id=fallback_turn_id,
             )
         agent = state.agent
+        run_handle = state.run_handle
         state.last_error = None
         state.last_error_code = None
         state.last_error_category = None
@@ -4012,7 +4019,7 @@ class BoxACPAgent:
 
         skill_name_by_tool_call_id: dict[str, str] = {}
         used_skill_names: list[str] = []
-        for preloaded_skill_name in state.preloaded_skill_names:
+        for preloaded_skill_name in run_handle.preloaded_skill_names:
             preloaded_skill_name = preloaded_skill_name.strip()
             if preloaded_skill_name and preloaded_skill_name not in used_skill_names:
                 used_skill_names.append(preloaded_skill_name)
@@ -4020,12 +4027,16 @@ class BoxACPAgent:
         recorded_skill_invocation_ids: set[str] = set()
         used_tool_counts: dict[str, int] = {}
         used_mcp_tool_counts: dict[tuple[str, str], int] = {}
-        turn_token_usage = {
-            "promptTokens": 0,
-            "completionTokens": 0,
-            "totalTokens": 0,
-            "calls": 0,
-        }
+        observer = RunObserver(
+            trace_writer=state.trace_writer,
+            turn_id=turn_id,
+        )
+        artifact_observer = ArtifactObserver(
+            workspace_dir=state.agent.workspace_dir,
+            task_context=task_context,
+            artifact_root_dir=state.output_dir,
+            register_revision=register_artifact_revision,
+        )
         usage_tool_call_id = f"turn-usage-{uuid4().hex[:8]}"
 
         def _get_skill_name_from_args(args: Any) -> str | None:
@@ -4109,7 +4120,7 @@ class BoxACPAgent:
             return invocation
 
         for preloaded_skill_name in used_skill_names:
-            attribution = state.preloaded_skill_attributions.get(preloaded_skill_name)
+            attribution = run_handle.preloaded_skill_attributions.get(preloaded_skill_name)
             _record_skill_invocation(
                 preloaded_skill_name,
                 "preloaded",
@@ -4129,30 +4140,8 @@ class BoxACPAgent:
                 "current": skill_name,
             }
 
-        def _as_int(mapping: dict[str, Any], *keys: str) -> int:
-            for key in keys:
-                value = mapping.get(key)
-                if isinstance(value, int):
-                    return value
-                if isinstance(value, float):
-                    return int(value)
-            return 0
-
         def _record_token_usage(usage: Any) -> bool:
-            if not isinstance(usage, dict):
-                return False
-            prompt_tokens = _as_int(usage, "prompt_tokens", "promptTokens")
-            completion_tokens = _as_int(usage, "completion_tokens", "completionTokens")
-            total_tokens = _as_int(usage, "total_tokens", "totalTokens")
-            if total_tokens <= 0 and (prompt_tokens > 0 or completion_tokens > 0):
-                total_tokens = prompt_tokens + completion_tokens
-            if prompt_tokens <= 0 and completion_tokens <= 0 and total_tokens <= 0:
-                return False
-            turn_token_usage["promptTokens"] += prompt_tokens
-            turn_token_usage["completionTokens"] += completion_tokens
-            turn_token_usage["totalTokens"] += total_tokens
-            turn_token_usage["calls"] += 1
-            return True
+            return observer.record_usage(usage)
 
         def _mcp_tool_info(tool_name: str) -> tuple[str, str] | None:
             tool = agent.tools.get(tool_name)
@@ -4206,7 +4195,7 @@ class BoxACPAgent:
                     "calls": meter.calls,
                 }
                 if meter is not None and meter.total_tokens > 0
-                else dict(turn_token_usage)
+                else observer.usage.as_payload()
             )
             payload: dict[str, Any] = {
                 "type": "turn_usage",
@@ -4338,8 +4327,8 @@ class BoxACPAgent:
                     expected_turn_id,
                 )
                 if (
-                    state.current_turn_id != expected_turn_id
-                    or state.cancelled
+                    run_handle.current_turn_id != expected_turn_id
+                    or run_handle.cancelled
                     or not suggestions
                 ):
                     return
@@ -4394,18 +4383,17 @@ class BoxACPAgent:
         if state.follow_up_suggestions_enabled:
             llm = _FollowUpSuggestionsExtractingLLM(llm)
 
-        run_options = replace(
-            agent.default_run_options(),
+        run_options = run_handle.build_run_options(
             llm=llm,
             summary_llm=state.summary_llm,
-            is_cancelled=lambda: state.cancelled,
+            is_cancelled=lambda: run_handle.cancelled,
             logger=None,  # ACP uses its own logging via the connection
             permission_negotiator=negotiator,
             hooks=self._hooks,
             memory_manager=self._memory,
             memory_extractor=state.memory_extractor,
             memory_turn_id=turn_id,
-            inject_queue=state.inject_queue,
+            inject_queue=run_handle.inject_queue,
             session_id=state.upstream_session_id,
             turn_id=turn_id,
             title=state.upstream_title,
@@ -4416,8 +4404,8 @@ class BoxACPAgent:
             pause_after_plan_write=not auto_approve_plan,
             web_search_total_limit=web_search_total_limit_for_active_skills(
                 (
-                    state.skill_selector.matched_skill_names
-                    if state.skill_selector is not None
+                    run_handle.skill_selector.matched_skill_names
+                    if run_handle.skill_selector is not None
                     else ()
                 ),
                 # Explicit user requirements are active policy inputs even
@@ -4425,8 +4413,8 @@ class BoxACPAgent:
                 tuple(
                     dict.fromkeys(
                         (
-                            *state.preloaded_skill_names,
-                            *sorted(state.explicitly_allowed_skill_names),
+                            *run_handle.preloaded_skill_names,
+                            *sorted(run_handle.explicitly_allowed_skill_names),
                         )
                     )
                 ),
@@ -4442,10 +4430,10 @@ class BoxACPAgent:
             current_turn_text=plan_start_text,
         )
         events = agent.run_events(options=run_options)
-        if state.trace_writer is not None:
+        if observer.trace_writer is not None:
             events = scoped_session_trace(
                 events,
-                writer=state.trace_writer,
+                writer=observer.trace_writer,
                 turn_id=turn_id,
             )
         async for event in events:
@@ -4687,15 +4675,10 @@ class BoxACPAgent:
                         # ACP SessionUpdate has no native "artifact" variant —
                         # we ride on tool_call_update.rawOutput, with a stable
                         # ``type: "artifact"`` discriminator the host dispatches on.
-                        lineage = None
-                        try:
-                            lineage = register_artifact_revision(
-                                state.agent.workspace_dir,
-                                task_context,
-                                art,
-                                artifact_root_dir=state.output_dir,
-                            )
-                        except Exception as exc:
+                        artifact_observation = artifact_observer.observe(art)
+                        lineage = artifact_observation.lineage
+                        if artifact_observation.error is not None:
+                            exc = artifact_observation.error
                             state.task_registry_error = str(exc)
                             log.warn(
                                 "task_registry/artifact_failed",
@@ -4738,17 +4721,15 @@ class BoxACPAgent:
                         state.last_error_code = error_code
                         state.last_error_category = error_category
                         state.last_error_details = error_details
-                        if state.trace_writer is not None:
-                            state.trace_writer.write(
-                                "turn.error",
-                                turn_id=turn_id,
-                                data={
-                                    "message": msg,
-                                    "error_code": error_code,
-                                    "error_category": error_category,
-                                    "error_details": error_details,
-                                },
-                            )
+                        observer.trace(
+                            "turn.error",
+                            data={
+                                "message": msg,
+                                "error_code": error_code,
+                                "error_category": error_category,
+                                "error_details": error_details,
+                            },
+                        )
                         await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))
                         # Don't return yet — let the loop consume the subsequent DoneEvent
                         # so the async generator is properly exhausted.
@@ -4773,15 +4754,13 @@ class BoxACPAgent:
 
                     case DoneEvent(stop_reason=reason, final_content=final_content):
                         log.debug("done", session_id=session_id, stop_reason=reason.value)
-                        if state.trace_writer is not None:
-                            state.trace_writer.write(
-                                "turn.output",
-                                turn_id=turn_id,
-                                data={
-                                    "content": final_content,
-                                    "stop_reason": reason.value,
-                                },
-                            )
+                        observer.trace(
+                            "turn.output",
+                            data={
+                                "content": final_content,
+                                "stop_reason": reason.value,
+                            },
+                        )
                         suggestions = getattr(llm, "follow_up_suggestions", [])
                         if (
                             state.follow_up_suggestions_enabled
@@ -4868,15 +4847,10 @@ class BoxACPAgent:
                                 progress["success"] = ok
                             case ArtifactEvent() as art:
                                 progress["event"] = "artifact"
-                                lineage = None
-                                try:
-                                    lineage = register_artifact_revision(
-                                        state.agent.workspace_dir,
-                                        task_context,
-                                        art,
-                                        artifact_root_dir=state.output_dir,
-                                    )
-                                except Exception as exc:
+                                artifact_observation = artifact_observer.observe(art)
+                                lineage = artifact_observation.lineage
+                                if artifact_observation.error is not None:
+                                    exc = artifact_observation.error
                                     state.task_registry_error = str(exc)
                                     log.warn(
                                         "task_registry/sub_agent_artifact_failed",
@@ -5501,7 +5475,8 @@ async def run_acp_server(config: Config | None = None) -> None:
     try:
         rcfg = config.llm.retry
         provider = LLMProvider.ANTHROPIC if config.llm.provider.lower() == "anthropic" else LLMProvider.OPENAI
-        llm = LLMClient(
+        llm = build_llm_client(
+            client_factory=LLMClient,
             api_key=config.llm.api_key,
             provider=provider,
             api_base=config.llm.api_base,
@@ -5525,9 +5500,10 @@ async def run_acp_server(config: Config | None = None) -> None:
         # Create memory manager if enabled
         memory_mgr = None
         if config.agent.enable_memory:
-            memory_mgr = MemoryManager(
+            memory_mgr = build_memory_manager(
                 memory_dir=config.agent.memory_dir,
                 dedup_jaccard_threshold=config.agent.memory_dedup_jaccard,
+                manager_factory=MemoryManager,
             )
 
         # Memory bootstrap (one-time OpenClaw import + maintenance) runs OFF the

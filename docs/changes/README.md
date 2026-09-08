@@ -72,6 +72,32 @@ Release, provider API, and ACP compatibility have their own sources under
 
 ## Pending material changes
 
+### 2026-09-08 — conservative ACP/CLI runtime extraction
+
+- **Task:** centralize protocol-independent construction, prompt segments,
+  Skill preload state, Goal continuation budgets, MCP registry reconciliation,
+  and usage/artifact/cleanup observation. Keep ACP wire translation and CLI
+  interaction policy in their existing entry points. Move terminal rendering
+  behind `CliRenderer` while retaining `Agent.run()` and its rendering wrappers.
+- **Compatibility:** retain ACP `SessionState`, `_run_turn`, historical import
+  paths and factory hooks. `AgentRunHandle` proxies the original state; it is
+  not a second state owner or a completed session-ownership migration. This is
+  the first incremental slice, not a claim that all adapter assembly is thin.
+- **Target consistency:** rebase onto `origin/main` at `56ee390`. The older
+  kernel extraction is superseded by the upstream extraction and lifecycle
+  fixes; `core.py`, `kernel/`, `composition.py`, `plugins/`, and `runtime.py`
+  have no changes relative to that target. Do not replay the old extraction
+  over newer kernel behavior.
+- **Proof:** see the dated verification section in the
+  [implementation plan](../superpowers/plans/2026-09-04-thin-acp-cli-agent-runtime.md).
+  Compare same-entrypoint requests before interpreting model-output differences;
+  changing runtime paths and transport IDs is not a prompt-policy change.
+- **Risk:** compatibility wrappers and host-specific sequencing intentionally
+  remain. Remove them only after consumer migration and direct parity tests.
+  Source/build checks and a local wheel import probe do not establish an
+  installed officev3 runtime or a restarted host. Live model runs with missing
+  inputs, tool failures, or plan/approval pauses are not task-acceptance proof.
+
 ### 2026-09-06 — kernel lifecycle follow-up
 
 - Agent and kernel event streams close their owned tool iterators explicitly.

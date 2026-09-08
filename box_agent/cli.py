@@ -33,6 +33,15 @@ from prompt_toolkit.styles import Style
 import yaml
 
 from box_agent import LLMClient, __version__
+from box_agent.agent_service import AgentService
+from box_agent.agent_runtime import (
+    build_agent,
+    build_llm_client,
+    build_memory_extractor,
+    build_memory_manager,
+    build_permission_engine,
+)
+from box_agent.cli_renderer import Colors
 from box_agent.artifacts import ensure_output_dir
 from box_agent.agent import (
     Agent,
@@ -45,6 +54,10 @@ from box_agent.agent import (
 )
 from box_agent.config import AgentConfig, Config
 from box_agent.events import StopReason
+from box_agent.goal_runtime import (
+    GoalAutopilotController,
+)
+from box_agent.turn_runtime import sync_skill_cache_fingerprint_context
 from box_agent.llm.model_routing import resolve_model_client
 from box_agent.schema import LLMProvider, Message
 from box_agent.tools.base import Tool
@@ -55,6 +68,8 @@ from box_agent.tools.mcp_loader import (
     reconnect_auth_failed_mcp_servers_if_token_changed,
 )
 from box_agent.tools.skill_preload import (
+    # Compatibility import for callers that patched the historical builder;
+    # turn execution delegates to ``prepare_auto_loaded_skills`` below.
     build_auto_loaded_skills_prompt,
     resolve_explicit_skill_invocation,
     turn_preload_skill_names,
@@ -84,7 +99,13 @@ from box_agent.tools.skill_execution_env import (
 from box_agent.tools.skill_scratch import cleanup_skill_scratch_dir
 from box_agent.trace_viewer import launch_trace_viewer
 from box_agent.utils import calculate_display_width
-from box_agent.acp.project_context import build_project_startup_context_prompt
+from box_agent.project_context import (
+    PROJECT_WORKSPACE_MODE_PROMPT,
+    append_prompt_segment,
+    build_project_startup_context_prompt,
+    compose_prompt_segments,
+)
+from box_agent.skill_runtime import prepare_auto_loaded_skills
 from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
 
 
@@ -187,41 +208,6 @@ def run_setup_wizard(config_path: Path) -> bool:
     print(f"{Colors.DIM}   provider: {provider}, api_base: {api_base}{Colors.RESET}")
     print()
     return True
-
-
-# ANSI color codes
-class Colors:
-    """Terminal color definitions"""
-
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-
-    # Foreground colors
-    BLACK = "\033[30m"
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    MAGENTA = "\033[35m"
-    CYAN = "\033[36m"
-    WHITE = "\033[37m"
-
-    # Bright colors
-    BRIGHT_BLACK = "\033[90m"
-    BRIGHT_RED = "\033[91m"
-    BRIGHT_GREEN = "\033[92m"
-    BRIGHT_YELLOW = "\033[93m"
-    BRIGHT_BLUE = "\033[94m"
-    BRIGHT_MAGENTA = "\033[95m"
-    BRIGHT_CYAN = "\033[96m"
-    BRIGHT_WHITE = "\033[97m"
-
-    # Background colors
-    BG_RED = "\033[41m"
-    BG_GREEN = "\033[42m"
-    BG_YELLOW = "\033[43m"
-    BG_BLUE = "\033[44m"
 
 
 MAIN_LLM_KEYS = {
@@ -1325,7 +1311,7 @@ def cmd_config(
 
 def build_cli_env_context():
     """Build host-style environment facts for standalone CLI sessions."""
-    from box_agent.acp.env_context import EnvContext
+    from box_agent.env_context import EnvContext
     from box_agent.tools.obsidian_tool import load_obsidian_config
 
     obsidian_config = load_obsidian_config()
@@ -1467,7 +1453,8 @@ async def _doctor_api_status(config: Config | None) -> dict[str, Any]:
 
         provider = LP.ANTHROPIC if config.llm.provider.lower() == "anthropic" else LP.OPENAI
         no_retry = DoctorRetryConfig(enabled=False, max_retries=0)
-        client = LLMClient(
+        client = build_llm_client(
+            client_factory=LLMClient,
             api_key=config.llm.api_key,
             provider=provider,
             api_base=config.llm.api_base,
@@ -1869,7 +1856,8 @@ async def run_agent(
     # Convert provider string to LLMProvider enum
     provider = LLMProvider.ANTHROPIC if config.llm.provider.lower() == "anthropic" else LLMProvider.OPENAI
 
-    llm_client = LLMClient(
+    llm_client = build_llm_client(
+        client_factory=LLMClient,
         api_key=config.llm.api_key,
         provider=provider,
         api_base=config.llm.api_base,
@@ -1891,7 +1879,8 @@ async def run_agent(
         try:
             from box_agent.retry import RetryConfig as VerifyRetryConfig
             # Use a temporary client with retry disabled to avoid long waits
-            _verify_client = LLMClient(
+            _verify_client = build_llm_client(
+                client_factory=LLMClient,
                 api_key=config.llm.api_key,
                 provider=provider,
                 api_base=config.llm.api_base,
@@ -1928,7 +1917,8 @@ async def run_agent(
                     try:
                         config = Config.from_yaml(config_path)
                         provider = LLMProvider.ANTHROPIC if config.llm.provider.lower() == "anthropic" else LLMProvider.OPENAI
-                        llm_client = LLMClient(
+                        llm_client = build_llm_client(
+                            client_factory=LLMClient,
                             api_key=config.llm.api_key,
                             provider=provider,
                             api_base=config.llm.api_base,
@@ -1941,7 +1931,8 @@ async def run_agent(
                         if config.llm.retry.enabled:
                             llm_client.retry_callback = on_retry
                         print(f"{Colors.DIM}Verifying API connection...{Colors.RESET}", end=" ", flush=True)
-                        _verify_client2 = LLMClient(
+                        _verify_client2 = build_llm_client(
+                            client_factory=LLMClient,
                             api_key=config.llm.api_key,
                             provider=provider,
                             api_base=config.llm.api_base,
@@ -1970,9 +1961,10 @@ async def run_agent(
     if config.agent.enable_memory:
         from box_agent.memory import MemoryManager
 
-        memory_mgr = MemoryManager(
+        memory_mgr = build_memory_manager(
             memory_dir=config.agent.memory_dir,
             dedup_jaccard_threshold=config.agent.memory_dedup_jaccard,
+            manager_factory=MemoryManager,
         )
 
     # 3.4 One-time OpenClaw import
@@ -2003,11 +1995,12 @@ async def run_agent(
     if memory_mgr and config.agent.enable_memory_extraction:
         from box_agent.memory import MemoryExtractor
 
-        memory_extractor = MemoryExtractor(
+        memory_extractor = build_memory_extractor(
             llm=llm_client,
             memory_manager=memory_mgr,
             cooldown=config.agent.memory_extraction_cooldown,
             step_interval=config.agent.memory_extraction_step_interval,
+            extractor_factory=MemoryExtractor,
         )
 
     # 3.5 Initialize base tools (independent of workspace). MCP loads in the background.
@@ -2055,7 +2048,12 @@ async def run_agent(
                 policy = policy.model_copy(update={"session_workspace_root": str(workspace_dir)})
         else:
             policy = CapabilityPolicy(session_workspace_root=str(workspace_dir))
-        perm_engine = PermissionEngine(policy, workspace_dir, grant_store=grant_store)
+        perm_engine = build_permission_engine(
+            policy,
+            workspace_dir,
+            grant_store=grant_store,
+            engine_factory=PermissionEngine,
+        )
 
     cli_env_context = build_cli_env_context()
     skill_runtime_context = build_skill_runtime_context(
@@ -2124,27 +2122,27 @@ async def run_agent(
         # Remove placeholder if sandbox not enabled
         system_prompt = system_prompt.replace("{SANDBOX_INFO}", "")
 
-    system_prompt = system_prompt.replace(
-        "{FILE_DELIVERY_INFO}",
-        build_file_delivery_prompt(use_output_dir=not code_workspace),
+    system_prompt = compose_prompt_segments(
+        system_prompt,
+        replacements={
+            "{FILE_DELIVERY_INFO}": build_file_delivery_prompt(
+                use_output_dir=not code_workspace
+            )
+        },
+        segments=(
+            PROJECT_WORKSPACE_MODE_PROMPT if code_workspace else None,
+            build_project_startup_context_prompt(workspace_dir)
+            if code_workspace
+            else None,
+        ),
     )
 
     if code_workspace:
-        project_mode_prompt = (
-            "## Project Workspace Mode\n"
-            "- This session is editing an existing code/project workspace.\n"
-            "- Do not create or use an `output/` folder unless the user explicitly asks for one.\n"
-            "- Treat file edits, generated source files, tests, and build results in the project tree as the deliverable."
-        )
-        system_prompt = (
-            f"{system_prompt.rstrip()}\n\n{project_mode_prompt}\n\n"
-            f"{build_project_startup_context_prompt(workspace_dir)}"
-        )
         code_prompt_path = Config.find_config_file(config.agent.code_prompt_path)
         if code_prompt_path and code_prompt_path.exists():
             code_prompt = code_prompt_path.read_text(encoding="utf-8").strip()
             if code_prompt:
-                system_prompt = f"{system_prompt.rstrip()}\n\n{code_prompt}"
+                system_prompt = append_prompt_segment(system_prompt, code_prompt)
                 print(
                     f"{Colors.GREEN}✅ Loaded code workspace prompt "
                     f"(from: {code_prompt_path}){Colors.RESET}"
@@ -2152,31 +2150,33 @@ async def run_agent(
         else:
             print(f"{Colors.YELLOW}⚠️  Code workspace prompt not found{Colors.RESET}")
 
-    system_prompt = (
-        f"{system_prompt.rstrip()}\n\n{build_image_generation_prompt(config)}"
+    system_prompt = compose_prompt_segments(
+        system_prompt,
+        segments=(
+            build_image_generation_prompt(config),
+            build_skill_runtime_prompt(skill_runtime_context),
+        ),
     )
 
-    system_prompt = f"{system_prompt.rstrip()}\n\n{build_skill_runtime_prompt(skill_runtime_context)}"
-
     if cli_env_context is not None:
-        from box_agent.acp.env_context import build_env_context_prompt
+        from box_agent.env_context import build_env_context_prompt
 
         env_prompt = build_env_context_prompt(cli_env_context)
         if env_prompt:
-            system_prompt = f"{system_prompt.rstrip()}\n\n{env_prompt}"
+            system_prompt = append_prompt_segment(system_prompt, env_prompt)
             print(f"{Colors.GREEN}✅ Loaded CLI environment context{Colors.RESET}")
 
     # 6.6 Inject Memory context
     if memory_mgr:
         memory_block = await asyncio.to_thread(memory_mgr.recall)
         if memory_block:
-            system_prompt = f"{system_prompt.rstrip()}\n\n{memory_block}"
+            system_prompt = append_prompt_segment(system_prompt, memory_block)
             print(f"{Colors.GREEN}✅ Loaded memory context{Colors.RESET}")
 
     # 7. Create Agent
     from box_agent.hooks import load_hooks
     hooks = load_hooks(config.hooks.hooks) if config.hooks.hooks else None
-    agent = Agent(
+    agent = AgentService(agent_factory=Agent).create_agent(
         llm_client=llm_client,
         system_prompt=system_prompt,
         tools=tools,
@@ -2240,11 +2240,14 @@ async def run_agent(
     cli_preloaded_skill_names: list[str] = []
 
     def _sync_cli_cache_fingerprint_context() -> None:
-        agent.cache_fingerprint_context["filtered_skill_names"] = (
-            list(skill_selector.matched_skill_names) if skill_selector is not None else []
-        )
-        agent.cache_fingerprint_context["preloaded_skill_names"] = list(
-            cli_preloaded_skill_names
+        sync_skill_cache_fingerprint_context(
+            agent.cache_fingerprint_context,
+            matched_skill_names=(
+                skill_selector.matched_skill_names
+                if skill_selector is not None
+                else None
+            ),
+            preloaded_skill_names=cli_preloaded_skill_names,
         )
 
     def _apply_skill_filter(user_input: str) -> tuple[str, ...]:
@@ -2275,21 +2278,19 @@ async def run_agent(
         if not preload_names and not cli_preloaded_skill_names:
             _sync_cli_cache_fingerprint_context()
             return
-        result = build_auto_loaded_skills_prompt(
+        result, unloaded_skill_names = prepare_auto_loaded_skills(
             skill_loader,
             agent.system_prompt,
             preload_names,
+            preloaded_skill_names=cli_preloaded_skill_names,
+            preloaded_skill_hashes=cli_preloaded_skill_hashes,
+            prompt_builder=build_auto_loaded_skills_prompt,
         )
-        previous_skill_names = set(cli_preloaded_skill_names)
-        cli_preloaded_skill_names[:] = list(result.loaded_names)
-        cli_preloaded_skill_hashes.clear()
-        cli_preloaded_skill_hashes.update(result.loaded_skill_hashes)
         _sync_cli_cache_fingerprint_context()
         for missing_name in result.missing_names:
             print(f"{Colors.YELLOW}⚠️  Skill preload target not found: {missing_name}{Colors.RESET}")
         if result.changed:
             _set_agent_system_prompt(result.system_prompt)
-        unloaded_skill_names = previous_skill_names - set(result.loaded_names)
         if unloaded_skill_names:
             print(
                 f"{Colors.DIM}Auto-unloaded skills: "
@@ -2341,10 +2342,6 @@ async def run_agent(
         agent.add_user_message(task)
         ok = True
         error: str | None = None
-        auto_continuations = 0
-        auto_budget_exhausted = False
-        auto_no_progress_turns = 0
-        auto_no_progress_exhausted = False
         final_content = ""
         auto_enabled = (
             goal_autopilot_enabled
@@ -2352,30 +2349,31 @@ async def run_agent(
             and config.agent.goal_autopilot_max_turns > 0
         )
         auto_started = perf_counter()
+        autopilot = GoalAutopilotController(
+            started_at=auto_started,
+            max_turns=config.agent.goal_autopilot_max_turns,
+            max_seconds=config.agent.goal_autopilot_max_seconds,
+            no_progress_limit=config.agent.goal_autopilot_no_progress_turns,
+        )
         try:
             final_content = await agent.run(
                 force_plan_start=force_plan_start,
                 current_turn_text=task,
             )
             while auto_enabled and should_continue_goal_autopilot(agent, agent.last_stop_reason):
-                elapsed = perf_counter() - auto_started
-                if (
-                    auto_continuations >= config.agent.goal_autopilot_max_turns
-                    or elapsed >= config.agent.goal_autopilot_max_seconds
-                ):
-                    auto_budget_exhausted = True
+                if autopilot.budget_exhausted_at(perf_counter()):
                     break
                 if agent.goal is None:
                     break
-                auto_continuations += 1
+                autopilot.begin_continuation()
                 print(
                     f"\n{Colors.DIM}Goal autopilot continuing "
-                    f"{auto_continuations}/{config.agent.goal_autopilot_max_turns}...{Colors.RESET}\n"
+                    f"{autopilot.continuations}/{config.agent.goal_autopilot_max_turns}...{Colors.RESET}\n"
                 )
                 agent.add_user_message(
                     goal_autopilot_prompt(
                         agent.goal,
-                        auto_continuations,
+                        autopilot.continuations,
                         config.agent.goal_autopilot_max_turns,
                     )
                 )
@@ -2383,15 +2381,7 @@ async def run_agent(
                 final_content = await agent.run()
                 after_signature = goal_autopilot_progress_signature(agent.goal)
                 if should_continue_goal_autopilot(agent, agent.last_stop_reason):
-                    if after_signature == before_signature:
-                        auto_no_progress_turns += 1
-                    else:
-                        auto_no_progress_turns = 0
-                    if (
-                        config.agent.goal_autopilot_no_progress_turns > 0
-                        and auto_no_progress_turns >= config.agent.goal_autopilot_no_progress_turns
-                    ):
-                        auto_no_progress_exhausted = True
+                    if autopilot.record_progress(before_signature, after_signature):
                         break
             if agent.last_stop_reason == StopReason.ERROR.value:
                 ok = False
@@ -2401,15 +2391,15 @@ async def run_agent(
             error = str(e)
             print(f"\n{Colors.RED}❌ Error: {e}{Colors.RESET}")
         finally:
-            if auto_budget_exhausted and agent.goal is not None and agent.goal.status == "active":
+            if autopilot.budget_exhausted and agent.goal is not None and agent.goal.status == "active":
                 print(
                     f"\n{Colors.YELLOW}⚠️  Goal autopilot stopped after "
-                    f"{auto_continuations} continuation(s); goal remains active.{Colors.RESET}"
+                    f"{autopilot.continuations} continuation(s); goal remains active.{Colors.RESET}"
                 )
-            if auto_no_progress_exhausted and agent.goal is not None and agent.goal.status == "active":
+            if autopilot.no_progress_exhausted and agent.goal is not None and agent.goal.status == "active":
                 print(
                     f"\n{Colors.YELLOW}⚠️  Goal autopilot stopped after "
-                    f"{auto_no_progress_turns} continuation(s) without recorded goal progress.{Colors.RESET}"
+                    f"{autopilot.no_progress_turns} continuation(s) without recorded goal progress.{Colors.RESET}"
                 )
             _save_goal_state(workspace_dir, agent.goal)
             if skill_scratch_dir is not None:
@@ -2440,10 +2430,10 @@ async def run_agent(
                     "goal": goal_payload(agent.goal),
                     "goalAutopilot": {
                         "enabled": auto_enabled,
-                        "continuations": auto_continuations,
-                        "budgetExhausted": auto_budget_exhausted,
-                        "noProgressExhausted": auto_no_progress_exhausted,
-                        "noProgressTurns": auto_no_progress_turns,
+                        "continuations": autopilot.continuations,
+                        "budgetExhausted": autopilot.budget_exhausted,
+                        "noProgressExhausted": autopilot.no_progress_exhausted,
+                        "noProgressTurns": autopilot.no_progress_turns,
                         "lastStopReason": agent.last_stop_reason,
                     },
                     "stats": _session_stats(agent, session_start),

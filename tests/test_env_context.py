@@ -3,6 +3,24 @@
 from __future__ import annotations
 
 from box_agent.acp.env_context import EnvContext, build_env_context_prompt
+from box_agent.env_context import (
+    EnvContext as NeutralEnvContext,
+    build_env_context_prompt as neutral_build_env_context_prompt,
+)
+
+
+def test_neutral_env_context_preserves_acp_compatibility() -> None:
+    raw = {
+        "platform": "darwin",
+        "cli": {"lark-cli": "/usr/local/bin/lark-cli"},
+        "memory_configured": True,
+    }
+    acp = EnvContext.from_meta(raw)
+    neutral = NeutralEnvContext.from_meta(raw)
+
+    assert acp is not None and neutral is not None
+    assert acp.model_dump() == neutral.model_dump()
+    assert build_env_context_prompt(acp) == neutral_build_env_context_prompt(neutral)
 
 
 # ── EnvContext.from_meta ────────────────────────────────────────

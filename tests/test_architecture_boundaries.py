@@ -11,6 +11,19 @@ from tests.architecture_imports import forbidden_adapter_layer_imports
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "box_agent"
 CORE_BRIDGE = Path("runtime.py")
 APPLICATION_ADAPTER_MODULES = ("box_agent.acp", "box_agent.cli", "acp", "cli")
+NEUTRAL_RUNTIME_MODULES = (
+    "agent_runtime.py",
+    "agent_run.py",
+    "agent_service.py",
+    "cli_renderer.py",
+    "env_context.py",
+    "goal_runtime.py",
+    "mcp_runtime.py",
+    "project_context.py",
+    "run_observer.py",
+    "skill_runtime.py",
+    "turn_runtime.py",
+)
 PRESENTATION_WORKFLOW_TOKENS = (
     "controlled_presentation",
     "presentation_research_mode",
@@ -139,6 +152,21 @@ def test_core_does_not_depend_on_application_adapters() -> None:
     core_path = PACKAGE_ROOT / "core.py"
     forbidden = _application_adapter_imports(core_path)
     assert forbidden == [], f"Core must not import application adapters: {forbidden}"
+
+
+def test_neutral_runtime_modules_do_not_depend_on_application_adapters() -> None:
+    violations: list[str] = []
+    for relative_path in map(Path, NEUTRAL_RUNTIME_MODULES):
+        path = PACKAGE_ROOT / relative_path
+        violations.extend(
+            f"{relative_path}:{violation}"
+            for violation in _application_adapter_imports(path)
+        )
+
+    assert violations == [], (
+        "Neutral runtime modules must not import ACP/CLI adapters: "
+        f"{violations}"
+    )
 
 
 def test_core_has_no_workflow_state_machine_dependency() -> None:
