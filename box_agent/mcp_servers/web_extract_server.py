@@ -5,22 +5,13 @@ from __future__ import annotations
 from functools import lru_cache
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.tools import Tool as MCPFunctionTool
 
 from box_agent.config import Config
 from box_agent.llm import LLMClient
 from box_agent.mcp_servers.web_extract import WebExtractTool
 from box_agent.retry import RetryConfig
 from box_agent.schema import LLMProvider
-
-
-mcp = FastMCP(
-    "box-agent-web-extract",
-    instructions=(
-        "Fetch public HTTP(S) pages without executing JavaScript. Long pages are "
-        "summarized with the configured Box-Agent model or the model requested by "
-        "the caller."
-    ),
-)
 
 
 def _create_configured_llm() -> LLMClient:
@@ -54,14 +45,6 @@ def _extractor() -> WebExtractTool:
     return WebExtractTool(llm=_create_configured_llm())
 
 
-@mcp.tool(
-    name="web_extract",
-    description=(
-        "Fetch and extract text from one public web page. Pages over 5,000 "
-        "characters are summarized with the configured Box-Agent model, or with "
-        "the optional model supplied by the caller. JavaScript is not executed."
-    ),
-)
 async def web_extract(
     url: str,
     model: str | None = None,
@@ -76,6 +59,29 @@ async def web_extract(
     if not result.success:
         raise ValueError(result.error or "Web extraction failed")
     return result.content or ""
+
+
+_mcp_tool = MCPFunctionTool.from_function(
+    web_extract,
+    name="web_extract",
+    description=(
+        "Fetch and extract text from one public web page. Pages over 5,000 "
+        "characters are summarized with the configured Box-Agent model, or with "
+        "the optional model supplied by the caller. JavaScript is not executed."
+    ),
+)
+# Reuse the tool's explicit schema: FastMCP's inferred nullable unions can be
+# rejected by model APIs. Keep the function metadata accepting legacy nulls.
+_mcp_tool.parameters = WebExtractTool(llm=None).parameters
+mcp = FastMCP(
+    "box-agent-web-extract",
+    instructions=(
+        "Fetch public HTTP(S) pages without executing JavaScript. Long pages are "
+        "summarized with the configured Box-Agent model or the model requested by "
+        "the caller."
+    ),
+    tools=[_mcp_tool],
+)
 
 
 def main() -> None:
