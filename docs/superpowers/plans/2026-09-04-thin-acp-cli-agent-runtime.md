@@ -515,3 +515,52 @@ open and requires the missing inputs/capabilities and follow-up execution.
 The final HTTP audit counted 134 main requests returning 200 and 40 auxiliary
 judge requests returning 422. No API credentials or raw business cases are
 included in this commit.
+
+## Main integration refresh — 2026-09-08 (`6ef43f9`)
+
+### Rebase preservation
+
+- Fetched upstream `main` at `6ef43f90c6b6662fcb2c3456ceb538af88385b4f`
+  and fast-forwarded local `main`. The published feature head before this
+  refresh was `bb2ecc5449cfb47ff072392614fa719ff2db7fb2`.
+- Rebased the five feature commits without conflicts. The resulting source
+  head is `8252f231513c74e04dfa6565d7015c6925b07be7`; the subsequent documentation
+  commit records this validation only.
+- `git range-diff 56ee390..bb2ecc5 6ef43f9..8252f23` reports `=` for all five
+  commits. An independent read-only audit compared all 47 feature-path blobs
+  with the old head and all 12 upstream-path blobs with the new main: every
+  comparison matched. The path sets are disjoint, and the new source head
+  differs from the old head only by those 12 upstream changes.
+- Upstream Kimi thinking/reasoning replay, Windows slim-build/profile guards,
+  and PPTX optional-host test support are retained. No new runtime policy or
+  feature-specific source adaptation was needed for this integration.
+
+### Fresh checks at the rebased source head
+
+```powershell
+uv run --no-sync python -m pytest tests/test_agent_run.py tests/test_agent_runtime.py tests/test_agent_service.py tests/test_cli_renderer.py tests/test_env_context.py tests/test_goal_runtime.py tests/test_mcp_runtime.py tests/test_project_context.py tests/test_run_observer.py tests/test_turn_runtime.py tests/test_cli_session_trace.py tests/test_session_trace.py tests/test_trace_viewer.py tests/test_trace_viewer_server.py tests/test_architecture_boundaries.py -q --tb=short --show-capture=no
+
+uv run --no-sync python -m pytest tests/test_thinking.py tests/test_build_win_runtime.py tests/test_pptx_test_support.py -q --tb=short --show-capture=no
+
+node --test tests/js/*.test.js
+```
+
+Results: **143 passed**, **185 passed**, and **19 JavaScript tests passed**,
+respectively. Python commands used `PYTHONUTF8=1` and the existing environment;
+no dependency/lock update was required. `git diff --check` passed.
+
+### Evidence and deployment limits
+
+The earlier full-suite, prompt-parity and real-model matrix results above remain
+historical evidence at their recorded source snapshots. They were not rerun for
+this refresh and are not a full-suite or business-acceptance claim for the new
+head. In particular, earlier CLI matrix traces used harness lifecycle markers;
+the later native CLI trace producer is preserved by this rebase, not retrofitted
+into those old traces.
+
+This integration was validated at source only. The Windows packaging tests use
+fixtures; they do not prove a freshly built or installed Windows runtime. No
+new package build/install, officev3 restart, live model request or packaged-host
+task was performed. Existing broader test failures and auxiliary judgement
+model limitations remain outside this rebase. No credentials, raw traces or
+business inputs are included in this documentation update.

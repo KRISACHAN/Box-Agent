@@ -128,6 +128,13 @@ Release, provider API, and ACP compatibility have their own sources under
   fixes; `core.py`, `kernel/`, `composition.py`, `plugins/`, and `runtime.py`
   have no changes relative to that target. Do not replay the old extraction
   over newer kernel behavior.
+- **Later integration refresh (2026-09-08):** the five feature commits,
+  including native CLI tracing, were rebased onto upstream `6ef43f9` with
+  unchanged patches. Kimi provider compatibility, Windows build guards and
+  PPTX optional-host test support remain intact. The
+  [latest integration record](../superpowers/plans/2026-09-04-thin-acp-cli-agent-runtime.md#main-integration-refresh--2026-09-08-6ef43f9)
+  separates fresh source checks from the earlier full-suite and live evidence;
+  it does not claim a new packaged-runtime release.
 - **Proof:** see the dated verification section in the
   [implementation plan](../superpowers/plans/2026-09-04-thin-acp-cli-agent-runtime.md).
   Compare same-entrypoint requests before interpreting model-output differences;
