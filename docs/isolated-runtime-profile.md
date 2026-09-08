@@ -42,6 +42,8 @@ BOX_AGENT_HOME="$BOX_PREVIEW_ROOT" uv run --no-sync --offline python -m box_agen
 
 日志、trace、模型档案、auth、Obsidian 设置和 Skill 缓存的已有路径覆盖在显式 profile 下也须位于该根内；不设置 profile 时原覆盖行为保持。MCP 配置工具继续跟随 loader 的实际配置文件，但会拒绝指向 profile 外的旧路径。用户 Skill 根位于 profile，builtin 相对目录只从安装包查找，不再自动扫描 cwd。
 
+Box-Agent 管理的 stdio MCP（包括内置 Web Extract）会在启动配置中显式传入当前 `BOX_AGENT_HOME`，覆盖该管理项中残留的旧 profile 值，并保留其他环境配置。自定义 MCP 和远端 HTTP 服务配置不受此规则影响；未启用 profile 时保留原行为。
+
 ## 凭据与背景能力
 
 - 显式 profile 不回退读取 `BOX_AGENT_AUTH_TOKEN`、Office/Raccoon 等旧登录 token 环境变量；只接受显式调用参数或 profile 内 auth 文件。LLM/config 中显式提供的 key 仍按原协议处理。
