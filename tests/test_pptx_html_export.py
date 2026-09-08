@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from tests.pptx_test_support import skip_unavailable_pptx_runtime
+
 
 SCRIPTS_DIR = (
     Path(__file__).resolve().parents[1]
@@ -39,16 +41,7 @@ def _run_node(script: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
-    unavailable = (
-        "Cannot find module 'playwright'",
-        "Missing dependency: playwright",
-        "Executable doesn't exist",
-        "Playwright Chromium is not available",
-    )
-    if result.returncode != 0 and any(
-        marker in result.stdout + result.stderr for marker in unavailable
-    ):
-        pytest.skip("Managed Playwright browser is unavailable")
+    skip_unavailable_pptx_runtime(result)
     return result
 
 
