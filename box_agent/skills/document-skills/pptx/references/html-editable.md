@@ -120,7 +120,11 @@ the source contains any `[data-pptx-diagram]`, the exporter overrides that
 default and forces `svgAsVector: true` for the whole export. Every marked
 diagram must provide recoverable DiagramSpec data and exactly one direct inline
 `<svg>` root; `<img src="*.svg">` is not a supported technical-diagram path.
-The export summary records `diagramCount` and `diagramVectorExport: true`. If
+The export summary records `diagramCount`, `warnings`, and `diagramVectorExport`.
+Missing or failed diagrams produce warnings and set `diagramVectorExport: false`;
+the remaining content is still exported. Slide-size mismatches likewise produce
+warnings instead of blocking export. Deliver the readable PPTX with these
+limitations so the user can repair it in PowerPoint. If
 the separately generated `qa/html_self_check.json` is missing, do not say HTML
 self-check passed.
 

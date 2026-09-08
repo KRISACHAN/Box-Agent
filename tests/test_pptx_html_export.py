@@ -244,7 +244,10 @@ def test_background_capture_exports_below_authored_full_slide_image(
         assert top_center[0] > 180 and top_center[1] < 80 and top_center[2] < 90
 
 
-def test_editable_export_does_not_run_html_self_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("legacy_flag", [[], ["--allow-self-check-issues"]])
+def test_editable_export_does_not_run_html_self_check(
+    tmp_path: Path, legacy_flag: list[str]
+) -> None:
     case_dir = tmp_path / "export-with-advisory-layout-overflow"
     case_dir.mkdir()
     html_path = case_dir / "deck.html"
@@ -281,12 +284,83 @@ def test_editable_export_does_not_run_html_self_check(tmp_path: Path) -> None:
         str(case_dir / "slides"),
         "--bg-capture",
         "never",
+        *legacy_flag,
     )
 
     assert exported.returncode == 0, exported.stdout + exported.stderr
     assert pptx_path.exists()
     assert not report_path.exists()
     assert "htmlSelfCheck" not in _last_json_object(exported.stdout)
+
+
+@pytest.mark.parametrize("mismatched_slide", [0, 1])
+def test_editable_export_warns_without_blocking_mismatched_slide_sizes(
+    tmp_path: Path, mismatched_slide: int
+) -> None:
+    slides = [
+        '<section class="slide">First slide</section>',
+        '<section class="slide">Second slide</section>',
+    ]
+    slides[mismatched_slide] = slides[mismatched_slide].replace(
+        'class="slide"', 'class="slide" style="width:1000px;height:1000px"'
+    )
+    html_path = tmp_path / "deck.html"
+    html_path.write_text(
+        '<html><head><style>html,body{margin:0}'
+        '.slide{position:relative;width:1920px;height:1080px;background:#fff}'
+        '</style></head><body>' + "".join(slides) + '</body></html>',
+        encoding="utf-8",
+    )
+    pptx_path = tmp_path / "deck.pptx"
+    result = _run_node(
+        EXPORT_SCRIPT_PATH, str(html_path), str(pptx_path),
+        "--out", str(tmp_path / "slides"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    summary = _last_json_object(result.stdout)
+    assert summary["slideCount"] == 2
+    assert len(summary["warnings"]) == 1
+    assert f"Slide {mismatched_slide + 1}: size 1000x1000" in summary["warnings"][0]
+    with zipfile.ZipFile(pptx_path) as archive:
+        assert "ppt/slides/slide2.xml" in archive.namelist()
+    assert not (tmp_path / "qa" / "html_self_check.json").exists()
+
+
+@pytest.mark.parametrize("stale_svg", [False, True])
+def test_editable_export_reports_incomplete_diagram_without_blocking(
+    tmp_path: Path, stale_svg: bool
+) -> None:
+    svg = (
+        '<svg viewBox="0 0 600 300"><rect width="600" height="300" fill="red"/></svg>'
+        if stale_svg else ""
+    )
+    html_path = tmp_path / "deck.html"
+    html_path.write_text(
+        '<html><head><style>html,body{margin:0}'
+        '.slide{width:1920px;height:1080px;position:relative;background:#fff}'
+        '[data-pptx-diagram],svg{width:600px;height:300px}'
+        '</style></head><body><section class="slide"><h1>Keep this content</h1>'
+        '<div data-pptx-diagram data-diagram-render-state="error" '
+        'data-diagram-spec-src="missing.json">' + svg + '</div></section>'
+        '<script>window.__diagramReady=Promise.reject(new Error("render failed"));'
+        'window.__diagramReady.catch(()=>{});</script></body></html>',
+        encoding="utf-8",
+    )
+    pptx_path = tmp_path / "deck.pptx"
+    result = _run_node(
+        EXPORT_SCRIPT_PATH, str(html_path), str(pptx_path),
+        "--out", str(tmp_path / "slides"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    summary = _last_json_object(result.stdout)
+    assert summary["diagramCount"] == 1
+    assert summary["diagramVectorExport"] is False
+    assert len(summary["warnings"]) == 1
+    assert "Slide 1, diagram 1: missing or failed diagram" in summary["warnings"][0]
+    with zipfile.ZipFile(pptx_path) as archive:
+        assert "Keep this content" in archive.read("ppt/slides/slide1.xml").decode()
 
 
 def test_html_self_check_rejects_invalid_technical_diagram_contract(

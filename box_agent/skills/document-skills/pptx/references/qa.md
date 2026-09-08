@@ -47,10 +47,12 @@ previews alone are not enough.
    - For every `[data-pptx-diagram]`, confirm the report found a non-empty
      `data-diagram-spec` or `data-diagram-spec-src`, exactly one direct inline
      SVG root, and no decoration classification. Confirm export reports
-     `diagramCount` and `diagramVectorExport: true` when diagrams exist.
-   - Fix failures before export. This catches DOM/CSS layout bugs such as progress `.fill` elements left as `display:inline`, zero-size bars/charts, text overflow, missing images, and content outside the slide.
-   - If the command exits non-zero, inspect the report file before concluding the error has no detail. Summarize concrete failures and fix the HTML; route-change and bypass rules live in `SKILL.md`.
-   - This is a preflight gate, not visual QA. Passing it does not mean the slide looks good.
+     `diagramCount` and `diagramVectorExport: true` when all marked diagrams are
+     ready for vector export. Missing or failed diagrams set the flag to `false`
+     and appear in the exporter `warnings`.
+   - Treat HTML/layout findings as delivery advisories, not export gates. Deliver a readable PPTX even when it has layout or diagram issues, and identify the affected pages for the user to repair in PowerPoint.
+   - If the command exits non-zero, inspect its report and summarize concrete findings. Do not require the user to repair HTML before receiving an otherwise readable export.
+   - This is QA evidence, not an editable-export gate. Passing it does not mean the slide looks good.
 
 1. Package validation:
    - Run `${BOX_AGENT_PYTHON:-python3} scripts/validate_pptx_package.py output.pptx`.
