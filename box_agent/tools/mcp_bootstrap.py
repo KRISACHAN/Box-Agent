@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from box_agent.user_paths import state_path
+from box_agent.user_paths import PROFILE_ENV, configured_box_agent_home, state_path
 
 
 MANAGED_MCP_SCHEMA_KEY = "boxAgentManagedMcpVersion"
@@ -242,6 +242,7 @@ def bootstrap_managed_mcp_config(
     Later runs preserve explicit user ``disabled`` and hosted-search URL choices
     while refreshing runtime-relative executable paths.
     """
+    profile_root = configured_box_agent_home()
     path = path.expanduser()
     hosted_search_server, hosted_search_warning, host_override = (
         _resolve_hosted_search_server(hosted_search_url)
@@ -296,6 +297,14 @@ def bootstrap_managed_mcp_config(
             managed,
             migrate_legacy_disabled=not already_migrated,
         )
+        if profile_root is not None and "command" in managed:
+            # The MCP SDK does not inherit BOX_AGENT_HOME by default. Keep
+            # managed children on the current profile even after a profile move.
+            server_env = servers[name].get("env")
+            servers[name]["env"] = {
+                **(server_env if isinstance(server_env, dict) else {}),
+                PROFILE_ENV: str(profile_root),
+            }
 
     updated = dict(payload)
     updated["mcpServers"] = servers
