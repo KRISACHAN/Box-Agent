@@ -7,6 +7,8 @@ Stages:
     runtimes/         ← Node (only --bundled-python-sandbox)
 
 `--exe-only` rebuilds **bin/ only**, leaving runtime/ and runtimes/ untouched.
+The selected profile must match the existing output and --install-to manifests;
+switch profiles with a clean build (without --exe-only).
 Use this when you change BoxAgent Python source but don't touch bash/node/python.
 
 Usage:
@@ -273,6 +275,25 @@ def _write_manifest(
     (runtime_dir / "VERSION").write_text(version + "\n", encoding="utf-8")
 
 
+def _validate_exe_only_profile(runtime_dir: Path, *, external_python_sandbox: bool) -> None:
+    """Reject an in-place rebuild that would mislabel retained runtime files."""
+    rebuild_hint = "Run a clean build without --exe-only to create or switch profiles."
+    try:
+        manifest = json.loads((runtime_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot read runtime manifest at {runtime_dir}. {rebuild_hint}") from exc
+    existing = manifest.get("external_python_sandbox") if isinstance(manifest, dict) else None
+    if not isinstance(existing, bool):
+        raise ValueError(f"Cannot determine runtime profile at {runtime_dir}. {rebuild_hint}")
+    if existing != external_python_sandbox:
+        existing_name = "slim" if existing else "full"
+        requested_name = "slim" if external_python_sandbox else "full"
+        raise ValueError(
+            f"--exe-only profile mismatch at {runtime_dir}: existing {existing_name}, "
+            f"requested {requested_name}. {rebuild_hint}"
+        )
+
+
 def _create_tar(output_dir: Path, runtime_dir: Path, version: str) -> Path:
     archive_name = f"box-agent-runtime-v{version}-win32-x64.tar.gz"
     archive_path = output_dir / archive_name
@@ -315,7 +336,8 @@ def main() -> None:
     parser.add_argument("--output", default="dist/runtime",
                         help="Output directory (default: dist/runtime)")
     parser.add_argument("--exe-only", action="store_true",
-                        help="Only rebuild bin/ (PyInstaller). Keep existing runtime/ and runtimes/.")
+                        help="Only rebuild bin/ (PyInstaller), keeping the same slim/full profile "
+                             "and existing runtime/ and runtimes/ in output and --install-to.")
     parser.add_argument("--no-tar", action="store_true",
                         help="Skip the tar.gz archive step (faster dev iteration).")
     parser.add_argument("--bundled-python-sandbox", action="store_true",
@@ -329,8 +351,17 @@ def main() -> None:
 
     version = args.version or _read_version_from_package()
     output_dir = Path(args.output).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     runtime_dir = output_dir / "box-agent-runtime"
+    if args.exe_only:
+        try:
+            _validate_exe_only_profile(runtime_dir, external_python_sandbox=external_python_sandbox)
+            if args.install_to:
+                _validate_exe_only_profile(
+                    Path(args.install_to).resolve(), external_python_sandbox=external_python_sandbox
+                )
+        except ValueError as exc:
+            parser.error(str(exc))
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n[win] Installing runtime extras...")
     _install_runtime_extras()
@@ -342,14 +373,6 @@ def main() -> None:
     print(f"Mode: {'exe-only' if args.exe_only else 'full'}")
 
     if args.exe_only:
-        if not runtime_dir.exists():
-            print(
-                f"\nERROR: --exe-only requires an existing runtime at:\n  {runtime_dir}\n"
-                "Run a full build first (drop --exe-only) to bootstrap "
-                "runtime/ and runtimes/.",
-                file=sys.stderr,
-            )
-            sys.exit(3)
         # Wipe only bin/
         bin_dir = runtime_dir / "bin"
         if bin_dir.exists():
