@@ -22,6 +22,14 @@ from box_agent.tools.runtime import (
     build_skill_runtime_prompt,
 )
 from box_agent.tools.skill_execution_env import build_skill_execution_env
+from box_agent.skill_runtime import (
+    apply_auto_loaded_skill_state,
+    prepare_auto_loaded_skills,
+)
+from box_agent.tools.skill_preload import (
+    AutoLoadedSkillsPrompt,
+    SkillPreloadAttribution,
+)
 
 
 def _make_executable(path: Path) -> None:
@@ -1066,3 +1074,125 @@ def test_source_binding_preserves_requests_when_bash_is_unavailable():
     from box_agent.tools.skill_execution_env import bind_user_source_text
 
     assert bind_user_source_text({}, "第一条", "第二条") == "第一条\n\n第二条"
+
+
+def test_apply_auto_loaded_skill_state_updates_shared_collections() -> None:
+    previous_names = ["old", "kept"]
+    hashes = {"old": "old-hash", "kept": "kept-hash"}
+    attributions = {
+        "old": SkillPreloadAttribution("old", "primary"),
+        "kept": SkillPreloadAttribution("kept", "primary"),
+    }
+    result = AutoLoadedSkillsPrompt(
+        system_prompt="updated",
+        loaded_names=("kept", "new"),
+        loaded_skill_hashes=(("kept", "kept-new-hash"), ("new", "new-hash")),
+        loaded_attributions=(
+            SkillPreloadAttribution("kept", "primary"),
+            SkillPreloadAttribution("new", "dependency", dependency_of="kept"),
+        ),
+        missing_names=(),
+        changed=True,
+    )
+
+    unloaded = apply_auto_loaded_skill_state(
+        result,
+        preloaded_skill_names=previous_names,
+        preloaded_skill_hashes=hashes,
+        preloaded_skill_attributions=attributions,
+    )
+
+    assert unloaded == {"old"}
+    assert previous_names == ["kept", "new"]
+    assert hashes == {"kept": "kept-new-hash", "new": "new-hash"}
+    assert attributions == {
+        "kept": SkillPreloadAttribution("kept", "primary"),
+        "new": SkillPreloadAttribution("new", "dependency", dependency_of="kept"),
+    }
+
+
+def test_apply_auto_loaded_skill_state_can_skip_optional_attributions() -> None:
+    names = ["old"]
+    hashes = {"old": "old-hash"}
+    result = AutoLoadedSkillsPrompt(
+        system_prompt="base",
+        loaded_names=(),
+        loaded_skill_hashes=(),
+        loaded_attributions=(),
+        missing_names=("missing",),
+        changed=True,
+    )
+
+    unloaded = apply_auto_loaded_skill_state(
+        result,
+        preloaded_skill_names=names,
+        preloaded_skill_hashes=hashes,
+    )
+
+    assert unloaded == {"old"}
+    assert names == []
+    assert hashes == {}
+
+
+def test_prepare_auto_loaded_skills_builds_and_applies_one_transition() -> None:
+    class CaptureLoader:
+        def get_skill(self, name: str, **_kwargs):
+            return None
+
+    names = ["old"]
+    hashes = {"old": "old-hash"}
+    result, unloaded = prepare_auto_loaded_skills(
+        CaptureLoader(),
+        "base",
+        ["missing"],
+        preloaded_skill_names=names,
+        preloaded_skill_hashes=hashes,
+    )
+
+    assert result.missing_names == ("missing",)
+    assert unloaded == {"old"}
+    assert names == []
+    assert hashes == {}
+
+
+def test_prepare_auto_loaded_skills_keeps_builder_injection_hook() -> None:
+    class CaptureLoader:
+        pass
+
+    captured: dict[str, object] = {}
+
+    def builder(loader, prompt, names, *, include_disabled=False):
+        captured.update(
+            loader=loader,
+            prompt=prompt,
+            names=names,
+            include_disabled=include_disabled,
+        )
+        return AutoLoadedSkillsPrompt(
+            system_prompt=prompt,
+            loaded_names=(),
+            loaded_skill_hashes=(),
+            loaded_attributions=(),
+            missing_names=(),
+            changed=False,
+        )
+
+    loader = CaptureLoader()
+    names: list[str] = []
+    hashes: dict[str, str] = {}
+    prepare_auto_loaded_skills(
+        loader,
+        "base",
+        ["skill"],
+        include_disabled=True,
+        preloaded_skill_names=names,
+        preloaded_skill_hashes=hashes,
+        prompt_builder=builder,
+    )
+
+    assert captured == {
+        "loader": loader,
+        "prompt": "base",
+        "names": ["skill"],
+        "include_disabled": True,
+    }

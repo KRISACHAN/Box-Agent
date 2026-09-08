@@ -79,7 +79,8 @@ class TraceViewerRequestHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - inherited HTTP handler contract
         if self._reject_untrusted_request():
             return
-        if urlsplit(self.path).path != "/api/directory":
+        request_path = urlsplit(self.path).path
+        if request_path not in {"/api/directory", "/api/compare-directory"}:
             self._send_json(404, {"error": "Not found"})
             return
 
@@ -109,21 +110,31 @@ class TraceViewerRequestHandler(SimpleHTTPRequestHandler):
 
         metadata_only = request.get("metadataOnly") is True
         try:
-            entries, skipped = _read_trace_directory(
-                directory,
-                include_text=not metadata_only,
-            )
+            if request_path == "/api/compare-directory":
+                entries, skipped, sources = _read_comparison_directory(
+                    directory,
+                    include_text=not metadata_only,
+                )
+            else:
+                entries, skipped = _read_trace_directory(
+                    directory,
+                    include_text=not metadata_only,
+                )
+                sources = None
         except OSError as error:
             self._send_json(400, {"error": f"Could not read directory: {error}"})
             return
 
+        payload: dict[str, Any] = {
+            "directory": {"name": directory.name, "path": str(directory)},
+            "entries": entries,
+            "skipped": skipped,
+        }
+        if sources is not None:
+            payload["sources"] = sources
         self._send_json(
             200,
-            {
-                "directory": {"name": directory.name, "path": str(directory)},
-                "entries": entries,
-                "skipped": skipped,
-            },
+            payload,
         )
 
 
@@ -158,6 +169,69 @@ def _read_trace_directory(
         total_bytes += int(entry["size"])
         entries.append(entry)
     return entries, skipped
+
+
+def _read_comparison_directory(
+    directory: Path,
+    *,
+    include_text: bool = True,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[str]]:
+    """Read one JSONL level beneath immediate source directories."""
+
+    entries: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    sources: list[str] = []
+    total_bytes = 0
+    source_directories = sorted(
+        (
+            path
+            for path in directory.iterdir()
+            if not path.is_symlink() and path.is_dir()
+        ),
+        key=lambda path: path.name.casefold(),
+    )
+    for source_directory in source_directories:
+        sources.append(source_directory.name)
+        candidates = sorted(
+            source_directory.iterdir(),
+            key=lambda path: path.name.casefold(),
+        )
+        for path in candidates:
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.suffix.casefold() != ".jsonl"
+            ):
+                continue
+            relative_path = path.relative_to(directory).as_posix()
+            stat = path.stat()
+            if stat.st_size > MAX_TRACE_BYTES:
+                skipped.append(
+                    {"fileName": relative_path, "reason": "larger than 50 MiB"}
+                )
+                continue
+            if total_bytes + stat.st_size > MAX_DIRECTORY_BYTES:
+                skipped.append(
+                    {
+                        "fileName": relative_path,
+                        "reason": "directory exceeds 200 MiB",
+                    }
+                )
+                continue
+            entry: dict[str, Any] = {
+                "name": path.name,
+                "source": source_directory.name,
+                "relativePath": relative_path,
+                "size": stat.st_size,
+                "lastModified": round(stat.st_mtime * 1000),
+            }
+            if include_text:
+                content = path.read_bytes()
+                entry["size"] = len(content)
+                entry["text"] = content.decode("utf-8", errors="replace")
+            total_bytes += int(entry["size"])
+            entries.append(entry)
+    return entries, skipped, sources
 
 
 def create_server(

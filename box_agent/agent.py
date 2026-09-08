@@ -55,7 +55,7 @@ from .tools.mcp_tool_search import (
 )
 from .tools.skill_preload import build_active_skills_prompt
 from .tool_result_storage import ToolResultStorage
-from .utils import calculate_display_width
+from .cli_renderer import CliRenderer, Colors, _format_size
 from .session_continuation import ContinuationMessage
 
 from box_agent.user_paths import state_path
@@ -103,33 +103,6 @@ class AgentRunOptions:
     cache_fingerprint_context: dict[str, Any] | None = None
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None
     current_turn_text: str | None = None
-
-
-# ANSI color codes
-class Colors:
-    """Terminal color definitions"""
-
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-
-    # Foreground colors
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    MAGENTA = "\033[35m"
-    CYAN = "\033[36m"
-
-    # Bright colors
-    BRIGHT_BLACK = "\033[90m"
-    BRIGHT_RED = "\033[91m"
-    BRIGHT_GREEN = "\033[92m"
-    BRIGHT_YELLOW = "\033[93m"
-    BRIGHT_BLUE = "\033[94m"
-    BRIGHT_MAGENTA = "\033[95m"
-    BRIGHT_CYAN = "\033[96m"
-    BRIGHT_WHITE = "\033[97m"
 
 
 @dataclass
@@ -456,17 +429,6 @@ class _GoalWriteTool(Tool):
             )
 
         return ToolResult(success=False, error=f"Unknown action: {action}")
-
-
-def _format_size(n: int) -> str:
-    """Render a byte count as a short human label (``12.4KB``)."""
-    if n < 0:
-        return "?"
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024 or unit == "GB":
-            return f"{n:.1f}{unit}" if unit != "B" else f"{n}B"
-        n /= 1024  # type: ignore[assignment]
-    return f"{n}B"
 
 
 class Agent:
@@ -1284,163 +1246,30 @@ class Agent:
 
     # ── Terminal renderer ───────────────────────────────────
 
-    def _render_event(self, event: AgentEvent) -> None:  # noqa: C901 — intentionally flat
-        """Translate an ``AgentEvent`` into terminal output."""
+    def _render_event(self, event: AgentEvent) -> None:
+        """Delegate terminal rendering while preserving the legacy method."""
 
-        # End streaming line before non-streaming events
-        is_streaming = (
-            isinstance(event, (ThinkingEvent, ContentEvent))
-            and getattr(event, "_streaming", False)
+        renderer = getattr(self, "_cli_renderer", None)
+        if renderer is None:
+            renderer = CliRenderer()
+            self._cli_renderer = renderer
+        renderer.streaming_active = getattr(
+            self,
+            "_streaming_active",
+            renderer.streaming_active,
         )
-        if not is_streaming and self._streaming_active:
-            print()  # newline to end the streaming line
-            self._streaming_active = False
-
-        match event:
-            case LogFileEvent(path=p):
-                print(f"{Colors.DIM}📝 Log file: {p}{Colors.RESET}")
-
-            case SummarizationEvent(estimated_tokens=est, api_tokens=api, token_limit=limit):
-                print(
-                    f"\n{Colors.BRIGHT_YELLOW}📊 Token usage - Local estimate: {est}, "
-                    f"API reported: {api}, Limit: {limit}{Colors.RESET}"
-                )
-                if event.mode == "fallback":
-                    print(
-                        f"{Colors.BRIGHT_YELLOW}⚠️ Summary provider failed; "
-                        "using a bounded deterministic history record."
-                        f"{Colors.RESET}"
-                    )
-                elif event.mode == "blocked":
-                    print(
-                        f"{Colors.BRIGHT_RED}⛔ Context remains above the safe limit "
-                        f"after compaction ({event.estimated_after} tokens).{Colors.RESET}"
-                    )
-                else:
-                    print(
-                        f"{Colors.BRIGHT_YELLOW}🔄 Message history compacted to "
-                        f"approximately {event.estimated_after} tokens.{Colors.RESET}"
-                    )
-
-            case StepStart(step=s, max_steps=mx):
-                BOX_WIDTH = 58
-                step_text = f"{Colors.BOLD}{Colors.BRIGHT_CYAN}💭 Step {s}/{mx}{Colors.RESET}"
-                step_display_width = calculate_display_width(step_text)
-                padding = max(0, BOX_WIDTH - 1 - step_display_width)
-                print(f"\n{Colors.DIM}╭{'─' * BOX_WIDTH}╮{Colors.RESET}")
-                print(f"{Colors.DIM}│{Colors.RESET} {step_text}{' ' * padding}{Colors.DIM}│{Colors.RESET}")
-                print(f"{Colors.DIM}╰{'─' * BOX_WIDTH}╯{Colors.RESET}")
-
-            case ThinkingEvent() if event._streaming:
-                if event._header:
-                    print(f"\n{Colors.BOLD}{Colors.MAGENTA}🧠 Thinking:{Colors.RESET}")
-                else:
-                    print(f"{Colors.DIM}{event.content}{Colors.RESET}", end="", flush=True)
-                    self._streaming_active = True
-
-            case ThinkingEvent(content=text):
-                print(f"\n{Colors.BOLD}{Colors.MAGENTA}🧠 Thinking:{Colors.RESET}")
-                print(f"{Colors.DIM}{text}{Colors.RESET}")
-
-            case ContentEvent() if event._streaming:
-                if event._header:
-                    print(f"\n{Colors.BOLD}{Colors.BRIGHT_BLUE}🤖 Assistant:{Colors.RESET}")
-                else:
-                    print(f"{event.content}", end="", flush=True)
-                    self._streaming_active = True
-
-            case ContentEvent(content=text):
-                print(f"\n{Colors.BOLD}{Colors.BRIGHT_BLUE}🤖 Assistant:{Colors.RESET}")
-                print(f"{text}")
-
-            case ToolCallStart(tool_name=name, arguments=args, user_visible=user_visible):
-                if not user_visible:
-                    return
-                print(f"\n{Colors.BRIGHT_YELLOW}🔧 Tool Call:{Colors.RESET} {Colors.BOLD}{Colors.CYAN}{name}{Colors.RESET}")
-                print(f"{Colors.DIM}   Arguments:{Colors.RESET}")
-                truncated = {}
-                for k, v in args.items():
-                    vs = str(v)
-                    truncated[k] = vs[:200] + "..." if len(vs) > 200 else v
-                for line in json.dumps(truncated, indent=2, ensure_ascii=False).split("\n"):
-                    print(f"   {Colors.DIM}{line}{Colors.RESET}")
-
-            case ToolCallResult(success=ok, content=text, error=err, raw_output=raw_output, user_visible=user_visible):
-                if not user_visible:
-                    return
-                if ok:
-                    display = text[:300] + f"{Colors.DIM}...{Colors.RESET}" if len(text) > 300 else text
-                    print(f"{Colors.BRIGHT_GREEN}✓ Result:{Colors.RESET} {display}")
-                    if raw_output and raw_output.get("type") == "memory_search":
-                        self._render_memory_search(raw_output)
-                else:
-                    print(f"{Colors.BRIGHT_RED}✗ Error:{Colors.RESET} {Colors.RED}{err}{Colors.RESET}")
-
-            case ArtifactEvent(kind=kind, filename=fname, rel_path=rel, size=sz):
-                size_label = _format_size(sz)
-                print(f"{Colors.BRIGHT_CYAN}📎 {kind}{Colors.RESET} {fname} · {size_label} · {Colors.DIM}{rel}{Colors.RESET}")
-
-            case SubAgentEvent(task_preview=preview, event=inner, sub_agent_id=_, title=sub_title):
-                raw_label = sub_title or preview
-                label = raw_label[:40] + "..." if len(raw_label) > 40 else raw_label
-                prefix = f"{Colors.DIM}  ┊ [{label}]{Colors.RESET}"
-                match inner:
-                    case StepStart(step=s, max_steps=mx):
-                        print(f"{prefix}{Colors.DIM} Step {s}/{mx}{Colors.RESET}")
-                    case ToolCallStart(tool_name=name, user_visible=True):
-                        print(f"{prefix}{Colors.DIM} 🔧 {name}{Colors.RESET}")
-                    case ToolCallResult(tool_name=name, success=ok, user_visible=True):
-                        mark = "✓" if ok else "✗"
-                        print(f"{prefix}{Colors.DIM} {mark} {name}{Colors.RESET}")
-                    case ArtifactEvent(filename=fname):
-                        print(f"{prefix}{Colors.DIM} 📎 {fname}{Colors.RESET}")
-                    case ErrorEvent(message=msg):
-                        print(f"{prefix}{Colors.DIM} ❌ {msg}{Colors.RESET}")
-
-            case ErrorEvent(message=msg):
-                print(f"\n{Colors.BRIGHT_RED}❌ Error:{Colors.RESET} {msg}")
-
-            case PermissionRequestEvent(scope=scope, requested_scope=req_scope, path=path, reason=reason):
-                print(f"\n{Colors.BRIGHT_YELLOW}🔒 Permission required: {scope} → {req_scope}{Colors.RESET}")
-                if path:
-                    print(f"   Path: {path}")
-                print(f"   Reason: {reason}")
-
-            case InjectedMessageEvent(content=text, user_visible=user_visible):
-                if not user_visible:
-                    return
-                preview = text[:80] + "..." if len(text) > 80 else text
-                print(f"\n{Colors.DIM}💉 Injected:{Colors.RESET} {Colors.BRIGHT_WHITE}{preview}{Colors.RESET}")
-
-            case StepEnd(step=s, elapsed_seconds=el, total_elapsed_seconds=tot):
-                print(f"\n{Colors.DIM}⏱️  Step {s} completed in {el:.2f}s (total: {tot:.2f}s){Colors.RESET}")
-
-            case DoneEvent(stop_reason=reason, final_content=_):
-                if reason == StopReason.CANCELLED:
-                    print(f"\n{Colors.BRIGHT_YELLOW}⚠️  Task cancelled by user.{Colors.RESET}")
-                elif reason == StopReason.MAX_STEPS:
-                    print(f"\n{Colors.BRIGHT_YELLOW}⚠️  {event.final_content}{Colors.RESET}")
-
-            case _:
-                pass  # TokenUsageEvent etc. — no terminal output needed
+        renderer.render(event)
+        self._streaming_active = renderer.streaming_active
 
     def _render_memory_search(self, raw_output: dict) -> None:
-        """Render structured memory_search matches in the terminal."""
-        matches = raw_output.get("matched_memories")
-        if not isinstance(matches, list):
-            return
+        """Delegate structured memory rendering for compatibility callers."""
 
-        query = raw_output.get("query", "")
-        if matches:
-            print(f"{Colors.BRIGHT_CYAN}🧠 Matched memories:{Colors.RESET} {query}")
-            for item in matches:
-                if not isinstance(item, dict):
-                    continue
-                text = str(item.get("text", "")).strip()
-                if text:
-                    print(f"  {Colors.DIM}{text}{Colors.RESET}")
-        else:
-            print(f"{Colors.DIM}🧠 Matched memories: none for {query}{Colors.RESET}")
+        renderer = getattr(self, "_cli_renderer", None)
+        if renderer is None:
+            renderer = CliRenderer()
+            renderer.streaming_active = getattr(self, "_streaming_active", False)
+            self._cli_renderer = renderer
+        renderer.render_memory_search(raw_output)
 
     def get_history(self) -> list[Message]:
         """Get message history."""

@@ -60,7 +60,8 @@ decision, read those entries together.
 | MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 | Sub-agent delegation | `sub_agent_tool.py`, `sub_agent_capabilities.py`, `required_tools`, `write_scope`, `files` | The public request is flat; runtime-derived policy limits implicit tools to trusted local readers, keeps process/external/unknown MCP capabilities fail-closed, and scopes path writes. | Supersedes the caller-authored nested constraint contract while retaining its runtime enforcement goals. | [2026-08-19 flattened contract](#2026-08-19--flattened-sub-agent-contract-with-derived-policy) |
 | Session and workflow ownership | `session_log.py`, explicit Skills, `WAITING_FOR_USER`, legacy workflow files | Session Log is the sole durable Agent-session source. Skills/plugins own domain progress and recovery instructions; legacy checkpoint and owner files are ignored but not deleted. | PR #100 supersedes the proposed runtime owner/checkpoint lifecycle while retaining generic Tool safety boundaries. | [PR #100](#2026-09-02--session-log-only-recovery-pr-100), [earlier owner design](#2026-08-20--workflow-owner-precedence-for-third-party-skills) |
-| Agent Trace diagnostics | `box_agent/trace_viewer/`, `box-agent trace-viewer`, `box-agent-session-trace/v1` | The packaged viewer is a read-only v1 trace consumer; static access stays browser-local and the optional directory service is loopback-only, authority-validated, explicit-path, top-level JSONL, and size-bounded. | Pending review; adds diagnostics without changing the trace writer, Core, provider, or ACP contracts. | [2026-08-20 trace viewer](#2026-08-20--local-agent-trace-diagnostics) |
+| Native CLI session traces | `box_agent/cli.py`, `box_agent/session_trace.py`, `SessionTraceWriter`, `BOX_AGENT_SESSION_TRACE_ENABLED` | CLI creates best-effort v1 traces by default, with one file per invocation and one scope per user turn; Session Log remains the only durable recovery source. Existing opt-out, redaction and retention apply. | Adds native CLI production of traces; read together with the existing viewer and Session Log contracts, not as a replacement for them. | [2026-09-08 native CLI tracing](#2026-09-08--native-cli-session-tracing) |
+| Agent Trace diagnostics | `box_agent/trace_viewer/`, `box-agent trace-viewer`, `box-agent-session-trace/v1` | The packaged viewer is a read-only v1 trace consumer; static access stays browser-local and the optional directory service is loopback-only, authority-validated, explicit-path, and size-bounded. Flat ledgers stay top-level; comparison roots add exactly one `source / trace` level with input-first, filename-assisted grouping. | The 2026-09-04 comparison extension preserves the original writer, Core, provider, ACP, and flat-ledger contracts. | [2026-09-04 multi-source comparison](#2026-09-04--input-matched-multi-source-agent-trace-comparison), [2026-08-20 trace viewer](#2026-08-20--local-agent-trace-diagnostics) |
 | Model routing and controlled presentations | `box_agent/llm/model_routing.py`, PPTX Skill, Session Log, controlled PPTX | Automatic child-model routing keeps its host allowlist. Presentation progress, validation, and recovery instructions belong to the Skill instead of an internal runtime state machine. | PR #100 supersedes the presentation-lifecycle portion of PR #30; model-routing constraints remain in force. | [PR #100](#2026-09-02--session-log-only-recovery-pr-100), [PR #30](#2026-08-14--runtime-routing-and-presentation-reliability-pr-30) |
 | Configurable operational limits | `box_agent/config.py`, `box_agent/core.py` (`provider_stale_seconds`), `image_generation_tool.py` (`max_dimension`), `setup.py` (`generate_image` gating), `openai_client.py` (SenseNova prefixes) | Hardcoded stale/image/thinking limits become config/env with unchanged defaults; generic image endpoints clamp oversized sizes and unconfigured `generate_image` is not registered. | Pending; defaults unchanged except the generic image clamp and `generate_image` gating. | [2026-08-21 configurable limits](#2026-08-21--configurable-runtime-operational-limits) |
 
@@ -71,6 +72,78 @@ Release, provider API, and ACP compatibility have their own sources under
 [long-lived release and compatibility history](#long-lived-release-and-compatibility-history).
 
 ## Pending material changes
+
+### 2026-09-08 — native CLI session tracing
+
+- **Change:** `feat(cli): record native session traces` on
+  `codex/kernel-plugin-refactor`, following `7c750e2`; no PR or merge reference
+  exists yet. This adds a CLI trace producer without changing the earlier
+  viewer comparison or Session Log-only recovery decisions.
+- **Durable behavior:** CLI tracing is enabled by default under the existing
+  `~/.box-agent/log/sessions/` directory, with `cli-<unique-id>.jsonl` per
+  invocation and distinct interactive turn IDs. `/clear` resets conversation
+  history without erasing diagnostics; Goal autopilot continuations share the
+  originating user turn. Startup probes and idle CLI commands stay outside
+  the turn scope. The v1 lifecycle includes input, final output, internal stop
+  reason and duration, reusing existing LLM/tool records without fake usage
+  totals. Cancelled interactive run tasks settle before the turn closes.
+- **Compatibility and privacy:** diagnostic path/write failures do not fail
+  CLI tasks, and the caller's trace context is restored. Public run arguments,
+  prompt construction, provider requests and ACP protocol behavior are
+  unchanged. No Session Log migration or second recovery state is introduced.
+  Trace contents remain sensitive despite shared redaction and retention;
+  `BOX_AGENT_SESSION_TRACE_DIR` selects the directory and
+  `BOX_AGENT_SESSION_TRACE_ENABLED=0` disables both ACP and CLI tracing.
+- **Proof anchors:** `tests/test_cli_session_trace.py` covers task/interactive
+  execution, Goal continuation, cancellation, exceptions, opt-out, invalid
+  paths and context isolation; `tests/test_session_trace.py` covers the shared
+  writer and existing ACP integration. Run these together with
+  `tests/test_trace_viewer.py`, `tests/test_trace_viewer_server.py`, and
+  `tests/test_architecture_boundaries.py`. Source CLI model/tool smoke and
+  viewer inspection exercised native traces without harness writer injection.
+- **Residual gaps and runtime:** the broader Windows suite is not all green;
+  baseline home/path/runtime expectations and shared fixed-session test state
+  were checked separately, and viewer socket failures passed isolated reruns.
+  The smoke also retained a model-specific auxiliary judgement HTTP 422; it
+  is not full business-case acceptance. No new runtime build/install, host
+  restart or packaged-host task was verified for this feature.
+- **Rollback:** disable tracing using the existing environment switch, noting
+  that it also affects ACP, or revert this CLI producer and lifecycle-helper
+  change for a CLI-only rollback. Preserve existing diagnostic files and
+  Session Log data; consumers require no schema migration.
+
+### 2026-09-08 — conservative ACP/CLI runtime extraction
+
+- **Task:** centralize protocol-independent construction, prompt segments,
+  Skill preload state, Goal continuation budgets, MCP registry reconciliation,
+  and usage/artifact/cleanup observation. Keep ACP wire translation and CLI
+  interaction policy in their existing entry points. Move terminal rendering
+  behind `CliRenderer` while retaining `Agent.run()` and its rendering wrappers.
+- **Compatibility:** retain ACP `SessionState`, `_run_turn`, historical import
+  paths and factory hooks. `AgentRunHandle` proxies the original state; it is
+  not a second state owner or a completed session-ownership migration. This is
+  the first incremental slice, not a claim that all adapter assembly is thin.
+- **Target consistency:** rebase onto `origin/main` at `56ee390`. The older
+  kernel extraction is superseded by the upstream extraction and lifecycle
+  fixes; `core.py`, `kernel/`, `composition.py`, `plugins/`, and `runtime.py`
+  have no changes relative to that target. Do not replay the old extraction
+  over newer kernel behavior.
+- **Later integration refresh (2026-09-08):** the five feature commits,
+  including native CLI tracing, were rebased onto upstream `6ef43f9` with
+  unchanged patches. Kimi provider compatibility, Windows build guards and
+  PPTX optional-host test support remain intact. The
+  [latest integration record](../superpowers/plans/2026-09-04-thin-acp-cli-agent-runtime.md#main-integration-refresh--2026-09-08-6ef43f9)
+  separates fresh source checks from the earlier full-suite and live evidence;
+  it does not claim a new packaged-runtime release.
+- **Proof:** see the dated verification section in the
+  [implementation plan](../superpowers/plans/2026-09-04-thin-acp-cli-agent-runtime.md).
+  Compare same-entrypoint requests before interpreting model-output differences;
+  changing runtime paths and transport IDs is not a prompt-policy change.
+- **Risk:** compatibility wrappers and host-specific sequencing intentionally
+  remain. Remove them only after consumer migration and direct parity tests.
+  Source/build checks and a local wheel import probe do not establish an
+  installed officev3 runtime or a restarted host. Live model runs with missing
+  inputs, tool failures, or plan/approval pauses are not task-acceptance proof.
 
 ### 2026-09-06 — kernel lifecycle follow-up
 
@@ -87,6 +160,39 @@ Release, provider API, and ACP compatibility have their own sources under
 - Proof anchors: kernel compatibility, Bash process cancellation, permission
   negotiation, and plugin host regression tests. These source checks do not
   establish installed runtime or OfficeV3 behavior.
+
+### 2026-09-04 — input-matched multi-source Agent Trace comparison
+
+- Change: implementation on `codex/kernel-plugin-refactor`; no PR, merge, or
+  packaged-runtime reference exists yet.
+- Durable consumer behavior: **Compare sources** accepts an explicitly selected
+  root whose immediate child directories are sources and whose source-level
+  top-level `.jsonl` files are runs. It supports any number of sources, groups
+  exact normalized first-turn inputs first, and uses normalized filenames only
+  as a fallback when known inputs do not conflict. Repeated runs remain
+  selectable newest-first within each source. Duration, LLM/tool call, token,
+  and error deltas use a user-selected reference source.
+- Compatibility and security: the original flat ledger and single-trace views
+  are unchanged. Comparison adds one bounded `root / source / trace` read mode,
+  not recursive discovery. Explicit-path selection, loopback `Host`/`Origin`
+  validation, symlink rejection, 50 MiB per-file and 200 MiB per-root response
+  limits, read-only behavior, and no-telemetry behavior remain in force. The
+  trace writer, Agent loop, ACP, CLI launch contract, and provider contracts do
+  not change.
+- Proof anchors: `tests/test_trace_viewer.py`,
+  `tests/test_trace_viewer_server.py`, and `tests/js/trace_model.test.js` cover
+  the new navigation, bounded source scan, same-name source identity, N-way
+  grouping, conflict rejection, repeated-run ordering, and exact deltas. A
+  loopback Chromium probe loaded 28 baseline/current traces into 10 matched
+  input groups, switched repeated runs, drilled into an existing trace detail,
+  returned without losing selection, and produced no console warnings or
+  errors.
+- Runtime boundary and rollback: the comparison page was served directly from
+  the source checkout, and wheel/sdist construction included the updated
+  assets. The package was not installed, no host was restarted, and no fresh
+  packaged task was run. Revert the comparison endpoint, model helpers, and
+  comparison view to remove the feature; the flat ledger requires no data
+  migration or rollback.
 
 ### 2026-09-03 — stable kernel and static plugin composition
 
@@ -246,8 +352,10 @@ Release, provider API, and ACP compatibility have their own sources under
   content checks, and a real Chromium directory probe that detected a new trace
   without a page refresh.
 - Residual gap and rollback: the service intentionally scans only one directory
-  level and requires a user-entered path when the browser picker is unavailable.
-  Revert the eventual PR implementation and rebuild any consuming
+  level for its original flat ledger and requires a user-entered path when the
+  browser picker is unavailable. The 2026-09-04 entry extends the consumer with
+  a separately selected, bounded source-directory level while preserving this
+  flat mode. Revert the eventual PR implementation and rebuild any consuming
   package/runtime; no data migration is required.
 
 ### 2026-08-20 — built-in tool-name compatibility aliases

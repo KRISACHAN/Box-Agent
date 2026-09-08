@@ -303,6 +303,16 @@ box-agent install-node      # 安装技能脚本使用的托管 Node.js 运行�
 
 运行 `box-agent trace-viewer` 可打开随包发布的离线开发者诊断页。打开 `~/.box-agent/log/sessions/` 可先查看按时间从新到旧排列的全部 trace 总览，再选择一次运行查看单轮指标、LLM/工具 Waterfall、原始事件，以及从 system prompt、user、assistant/tool 到 final response 的完整纵向链路；也可以直接打开单个 `.jsonl` 文件。
 
+ACP 和 CLI 都会自动创建 session trace。每次 CLI 启动写入独立的
+`cli-<唯一标识>.jsonl`；交互模式的各次用户输入使用不同的 turn ID。
+`/clear` 只清空对话历史，不删除诊断文件；Goal autopilot 续跑归入最初的用户回合。
+CLI 原生 trace 包含输入、LLM/工具调用、最终输出、内部停止原因和回合耗时，
+无需测试脚本注入 writer。启动探测和回合之间的 CLI 命令不属于回合 trace。
+设置 `BOX_AGENT_SESSION_TRACE_DIR` 可修改目录，设置
+`BOX_AGENT_SESSION_TRACE_ENABLED=0` 可关闭记录。CLI trace 初始化或写入失败不会中断任务。
+这些文件包含敏感任务数据；CLI 沿用 ACP 的脱敏和保留策略，保留设置见
+[英文诊断说明](README.md#agent-trace-diagnostics)。
+
 如果内置浏览器不提供原生文件选择器，可启动仅监听本机回环地址的服务，并在页面中输入 trace 目录路径：
 
 ```bash

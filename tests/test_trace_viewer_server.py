@@ -86,6 +86,83 @@ def test_local_service_reads_only_top_level_jsonl_files(
     assert payload["entries"][0]["size"] == trace.stat().st_size
 
 
+def test_comparison_service_reads_jsonl_from_immediate_source_directories(
+    trace_viewer_server,
+    tmp_path: Path,
+) -> None:
+    """Losing the source boundary would make cross-run comparisons ambiguous."""
+
+    baseline = tmp_path / "baseline"
+    current = tmp_path / "current"
+    baseline.mkdir()
+    current.mkdir()
+    (baseline / "case-one.jsonl").write_text(
+        '{"event":"turn.input","data":{"content":"same"}}\n',
+        encoding="utf-8",
+    )
+    (current / "case-one.jsonl").write_text(
+        '{"event":"turn.input","data":{"content":"same"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "root.jsonl").write_text("must stay out", encoding="utf-8")
+    nested = current / "nested"
+    nested.mkdir()
+    (nested / "too-deep.jsonl").write_text("must stay out", encoding="utf-8")
+
+    status, content_type, raw = _request(
+        trace_viewer_server,
+        "POST",
+        "/api/compare-directory",
+        {"path": str(tmp_path)},
+    )
+
+    assert status == 200
+    assert content_type.startswith("application/json")
+    payload = json.loads(raw)
+    assert payload["directory"] == {"name": tmp_path.name, "path": str(tmp_path.resolve())}
+    assert payload["sources"] == ["baseline", "current"]
+    assert [
+        (entry["source"], entry["relativePath"], entry["name"])
+        for entry in payload["entries"]
+    ] == [
+        ("baseline", "baseline/case-one.jsonl", "case-one.jsonl"),
+        ("current", "current/case-one.jsonl", "case-one.jsonl"),
+    ]
+    assert all("text" in entry for entry in payload["entries"])
+
+
+def test_comparison_service_metadata_scan_preserves_source_relative_identity(
+    trace_viewer_server,
+    tmp_path: Path,
+) -> None:
+    """Polling must distinguish same-named traces that belong to different sources."""
+
+    for source in ("baseline", "current", "candidate"):
+        source_dir = tmp_path / source
+        source_dir.mkdir()
+        (source_dir / "same-name.jsonl").write_text(
+            '{"event":"session.start"}\n',
+            encoding="utf-8",
+        )
+
+    status, _, raw = _request(
+        trace_viewer_server,
+        "POST",
+        "/api/compare-directory",
+        {"path": str(tmp_path), "metadataOnly": True},
+    )
+
+    assert status == 200
+    payload = json.loads(raw)
+    assert payload["sources"] == ["baseline", "candidate", "current"]
+    assert [entry["relativePath"] for entry in payload["entries"]] == [
+        "baseline/same-name.jsonl",
+        "candidate/same-name.jsonl",
+        "current/same-name.jsonl",
+    ]
+    assert all("text" not in entry for entry in payload["entries"])
+
+
 def test_local_service_metadata_scan_omits_bodies_and_sees_new_trace_files(
     trace_viewer_server,
     tmp_path: Path,
@@ -208,6 +285,4 @@ def test_local_service_accepts_its_exact_loopback_origin(
     )
 
     assert status == 200
-    assert json.loads(raw)["entries"][0]["text"] == trace.read_text(
-        encoding="utf-8"
-    )
+    assert json.loads(raw)["entries"][0]["text"] == trace.read_bytes().decode("utf-8")

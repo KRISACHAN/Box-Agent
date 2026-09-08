@@ -450,9 +450,179 @@
     return { summaries: sortTraceSummaries(summaries), skipped };
   }
 
+  function normalizeComparisonText(value) {
+    return String(value || "").replace(/\r\n?/g, "\n").trim();
+  }
+
+  function stableComparisonValue(value) {
+    if (typeof value === "string") return normalizeComparisonText(value);
+    if (Array.isArray(value)) return value.map(stableComparisonValue);
+    if (value && typeof value === "object") {
+      return Object.keys(value).sort().reduce((result, key) => {
+        result[key] = stableComparisonValue(value[key]);
+        return result;
+      }, {});
+    }
+    return value;
+  }
+
+  function comparisonInput(records) {
+    const input = (Array.isArray(records) ? records : []).find(
+      (record) => record && record.event === "turn.input",
+    );
+    if (!input || !input.data) return { key: "", preview: "" };
+    const content = normalizeComparisonText(input.data.content);
+    if (content) {
+      return {
+        key: content,
+        preview: content.replace(/\s+/g, " ").slice(0, 240),
+      };
+    }
+    if (input.data.prompt == null) return { key: "", preview: "" };
+    const normalizedPrompt = stableComparisonValue(input.data.prompt);
+    const key = JSON.stringify(normalizedPrompt);
+    return {
+      key,
+      preview: normalizeComparisonText(key).replace(/\s+/g, " ").slice(0, 240),
+    };
+  }
+
+  function normalizedComparisonFileKey(fileName, sourceName) {
+    let stem = String(fileName || "")
+      .toLocaleLowerCase()
+      .replace(/\.jsonl$/i, "")
+      .replace(/[-_.][0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i, "")
+      .replace(/[-_.][0-9a-f]{8,}$/i, "")
+      .replace(/[-_.]run[-_]?\d+$/i, "");
+    const source = String(sourceName || "").toLocaleLowerCase();
+    stem = stem
+      .split(/[-_.]+/)
+      .filter((part) => part && part !== source)
+      .join("-");
+    return stem;
+  }
+
+  function groupComparisonSummaries(summaries) {
+    const groups = [];
+    (Array.isArray(summaries) ? summaries : []).forEach((summary) => {
+      const inputKey = String(summary && summary.inputKey || "");
+      const fileKey = String(
+        summary && summary.fileKey
+        || normalizedComparisonFileKey(summary && summary.fileName, summary && summary.sourceName),
+      );
+      let group = inputKey
+        ? groups.find((candidate) => candidate.inputKeys.has(inputKey))
+        : null;
+      if (!group && fileKey) {
+        group = groups.find((candidate) => (
+          candidate.fileKeys.has(fileKey)
+          && (!inputKey || !candidate.inputKeys.size || candidate.inputKeys.has(inputKey))
+        ));
+      }
+      if (!group) {
+        group = {
+          inputKeys: new Set(),
+          fileKeys: new Set(),
+          traces: [],
+        };
+        groups.push(group);
+      }
+      if (inputKey) group.inputKeys.add(inputKey);
+      if (fileKey) group.fileKeys.add(fileKey);
+      group.traces.push({ ...summary, inputKey, fileKey });
+    });
+
+    return groups.map((group, index) => {
+      const sources = {};
+      [...new Set(group.traces.map((trace) => String(trace.sourceName || "unknown")))]
+        .sort((left, right) => left.localeCompare(right))
+        .forEach((sourceName) => {
+          sources[sourceName] = group.traces
+            .filter((trace) => String(trace.sourceName || "unknown") === sourceName)
+            .sort((left, right) => (
+              (finiteNumber(right.lastModified) || 0) - (finiteNumber(left.lastModified) || 0)
+              || String(left.fileName || "").localeCompare(String(right.fileName || ""))
+            ));
+        });
+      const preview = group.traces.map((trace) => trace.inputPreview).find(Boolean) || "Input unavailable";
+      return {
+        id: `comparison-${index + 1}`,
+        inputPreview: preview,
+        matchedBy: group.inputKeys.size ? "input" : "filename",
+        sources,
+        newestAt: Math.max(...group.traces.map((trace) => finiteNumber(trace.lastModified) || 0)),
+      };
+    }).sort((left, right) => right.newestAt - left.newestAt);
+  }
+
+  async function indexComparisonEntries(entries, maxFileBytes) {
+    const summaries = [];
+    const skipped = [];
+    const limit = finiteNumber(maxFileBytes) || (50 * 1024 * 1024);
+    const sourceNames = new Set();
+    for (const entry of (Array.isArray(entries) ? entries : [])) {
+      const file = entry && entry.file;
+      const sourceName = String(entry && entry.sourceName || "unknown");
+      sourceNames.add(sourceName);
+      if (!file || !String(file.name || "").toLocaleLowerCase().endsWith(".jsonl")) continue;
+      const displayName = String(entry.relativePath || file.name || "trace.jsonl");
+      if (file.size > limit) {
+        skipped.push({ fileName: displayName, reason: "larger than 50 MiB" });
+        continue;
+      }
+      try {
+        const parsed = parseJsonl(await file.text());
+        if (!parsed.records.length) {
+          skipped.push({ fileName: displayName, reason: "no valid records" });
+          continue;
+        }
+        const input = comparisonInput(parsed.records);
+        summaries.push({
+          ...summarizeTrace(parsed.records, file),
+          file,
+          handle: entry.handle || null,
+          sourceName,
+          relativePath: displayName,
+          inputKey: input.key,
+          inputPreview: input.preview,
+          fileKey: normalizedComparisonFileKey(file.name, sourceName),
+          warningCount: parsed.warnings.length,
+        });
+      } catch (error) {
+        skipped.push({
+          fileName: displayName,
+          reason: String(error && error.message || error),
+        });
+      }
+    }
+    return {
+      summaries: sortTraceSummaries(summaries),
+      groups: groupComparisonSummaries(summaries),
+      sources: [...sourceNames].sort((left, right) => left.localeCompare(right)),
+      skipped,
+    };
+  }
+
+  function compareTraceSummaries(reference, candidate) {
+    const delta = (name) => {
+      const referenceValue = Number(reference && reference[name]);
+      const candidateValue = Number(candidate && candidate[name]);
+      return Number.isFinite(referenceValue) && Number.isFinite(candidateValue)
+        ? candidateValue - referenceValue
+        : null;
+    };
+    return {
+      durationMs: delta("durationMs"),
+      llmCalls: delta("llmCalls"),
+      toolCalls: delta("toolCalls"),
+      totalTokens: delta("totalTokens"),
+      errorCount: delta("errorCount"),
+    };
+  }
+
   function directoryEntriesRevision(entries) {
     const metadata = (Array.isArray(entries) ? entries : []).map((entry) => ({
-      name: String(entry && entry.name || ""),
+      name: String(entry && (entry.relativePath || entry.name) || ""),
       size: finiteNumber(entry && entry.size) || 0,
       lastModified: finiteNumber(entry && entry.lastModified) || 0,
     }));
@@ -536,6 +706,11 @@
     sortTraceSummaries,
     summarizeCatalog,
     indexTraceEntries,
+    comparisonInput,
+    normalizedComparisonFileKey,
+    groupComparisonSummaries,
+    indexComparisonEntries,
+    compareTraceSummaries,
     directoryEntriesRevision,
     createDirectoryPoller,
     formatDuration,

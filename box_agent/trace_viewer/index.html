@@ -27,6 +27,7 @@
         <input id="file-input" class="visually-hidden" type="file" accept=".jsonl,application/json">
         <input id="directory-input" class="visually-hidden" type="file" accept=".jsonl,application/json" webkitdirectory multiple>
         <button id="all-traces" class="button" type="button" hidden>All traces</button>
+        <button id="compare-sources" class="button" type="button">Compare sources</button>
         <button id="open-directory" class="button button-primary" type="button">Open folder</button>
         <button id="open-file" class="button" type="button">Open trace</button>
         <button id="follow-file" class="button" type="button" disabled>Follow: off</button>
@@ -71,6 +72,38 @@
           <tbody id="trace-catalog"></tbody>
         </table>
       </div>
+    </section>
+
+    <section id="comparison-view" class="comparison-page" aria-labelledby="comparison-title" hidden>
+      <div class="comparison-hero">
+        <div>
+          <p class="eyebrow">Source comparison</p>
+          <h2 id="comparison-title">Same input, side by side</h2>
+          <p id="comparison-directory-name">Choose a root whose child directories are trace sources.</p>
+        </div>
+        <div class="comparison-actions">
+          <label for="reference-source">
+            <span>Reference source</span>
+            <select id="reference-source" disabled><option value="">—</option></select>
+          </label>
+          <button id="comparison-open-directory" class="button button-primary" type="button">Choose source root</button>
+        </div>
+      </div>
+
+      <section class="comparison-summary" aria-label="Comparison summary">
+        <div><span>Sources</span><strong id="comparison-source-count">—</strong></div>
+        <div><span>Matched inputs</span><strong id="comparison-input-count">—</strong></div>
+        <div><span>Traces</span><strong id="comparison-trace-count">—</strong></div>
+        <div><span>Unmatched</span><strong id="comparison-unmatched-count">—</strong></div>
+      </section>
+
+      <div id="comparison-empty" class="catalog-empty">
+        <span class="catalog-glyph" aria-hidden="true">≋</span>
+        <h3>No source root selected</h3>
+        <p>Use one child directory per source. Traces with equal inputs, or compatible file names when input is missing, are grouped automatically.</p>
+      </div>
+
+      <div id="comparison-grid" class="comparison-grid" hidden></div>
     </section>
 
     <div id="detail-view" hidden>
@@ -185,7 +218,7 @@
         <span>Directory path</span>
         <input id="directory-path" type="text" autocomplete="off" placeholder="D:\path\to\traces">
       </label>
-      <p class="directory-dialog-note">Only top-level <code>.jsonl</code> files are read through the loopback service.</p>
+      <p id="directory-dialog-note" class="directory-dialog-note">Only top-level <code>.jsonl</code> files are read through the loopback service.</p>
       <p id="directory-path-error" class="directory-path-error" role="alert" hidden></p>
       <div class="directory-dialog-actions">
         <button id="dismiss-directory-path" class="button" type="button">Cancel</button>

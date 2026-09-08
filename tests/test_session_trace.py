@@ -480,7 +480,9 @@ async def test_acp_uses_upstream_session_id_without_changing_generated_acp_id(
                 usage=TokenUsage(prompt_tokens=4, completion_tokens=1, total_tokens=5),
             )
 
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    isolated_home = str(tmp_path / "home")
+    monkeypatch.setenv("HOME", isolated_home)
+    monkeypatch.setenv("USERPROFILE", isolated_home)
     monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_ENABLED", "1")
     monkeypatch.setenv("BOX_AGENT_SESSION_TRACE_DIR", str(tmp_path / "traces"))
     config = Config(

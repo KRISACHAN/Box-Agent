@@ -17,6 +17,19 @@
     directoryPoller: null,
     directoryRefreshError: "",
     catalogSkipped: [],
+    comparisonGroups: [],
+    comparisonSources: [],
+    comparisonSummaries: [],
+    comparisonSkipped: [],
+    comparisonDirectoryName: "",
+    comparisonDirectoryPath: "",
+    comparisonRevision: "",
+    comparisonPoller: null,
+    comparisonRefreshError: "",
+    comparisonSelections: new Map(),
+    comparisonReference: "",
+    directoryDialogMode: "ledger",
+    detailReturnScreen: "overview",
     selectedTurnId: "",
     selectedDetail: null,
     inspectorTrigger: null,
@@ -465,10 +478,187 @@
     byId("catalog-ledger").hidden = !state.catalog.length;
   }
 
+  function comparisonWarningText() {
+    const parsingWarnings = state.comparisonSummaries.reduce(
+      (sum, entry) => sum + (entry.warningCount || 0),
+      0,
+    );
+    const parts = [];
+    if (state.comparisonSkipped.length) {
+      parts.push(`${state.comparisonSkipped.length} comparison file${state.comparisonSkipped.length === 1 ? "" : "s"} skipped`);
+    }
+    if (parsingWarnings) {
+      parts.push(`${parsingWarnings} malformed or unknown-schema line${parsingWarnings === 1 ? "" : "s"}`);
+    }
+    return parts.join(" · ");
+  }
+
+  function selectedComparisonTrace(group, sourceName) {
+    const traces = group.sources[sourceName] || [];
+    if (!traces.length) return null;
+    const key = `${group.id}\u0000${sourceName}`;
+    const selectedPath = state.comparisonSelections.get(key);
+    return traces.find((trace) => trace.relativePath === selectedPath) || traces[0];
+  }
+
+  function comparisonDeltaText(value, kind) {
+    if (value == null) return "";
+    if (value === 0) return "same";
+    const sign = value > 0 ? "+" : "−";
+    const magnitude = Math.abs(value);
+    if (kind === "duration") return `${sign}${model.formatDuration(magnitude)}`;
+    return `${sign}${magnitude.toLocaleString()}`;
+  }
+
+  function appendComparisonMetric(parent, label, value, delta, kind) {
+    const row = appendText(parent, "div", "", "comparison-metric");
+    appendText(row, "span", label);
+    appendText(row, "strong", value);
+    const deltaText = comparisonDeltaText(delta, kind);
+    if (deltaText) {
+      const change = appendText(row, "em", deltaText);
+      if ((kind === "duration" || kind === "errors") && delta !== 0) {
+        change.dataset.trend = delta < 0 ? "better" : "worse";
+      }
+    }
+  }
+
+  async function openComparisonTrace(entry) {
+    state.detailReturnScreen = "comparison";
+    await loadSnapshot(entry.file, entry.handle || null);
+  }
+
+  function renderComparison() {
+    const groups = state.comparisonGroups;
+    const matched = groups.filter((group) => Object.keys(group.sources).length > 1).length;
+    const unmatched = groups.length - matched;
+    byId("comparison-source-count").textContent = state.comparisonSources.length.toLocaleString();
+    byId("comparison-input-count").textContent = matched.toLocaleString();
+    byId("comparison-trace-count").textContent = state.comparisonSummaries.length.toLocaleString();
+    byId("comparison-unmatched-count").textContent = unmatched.toLocaleString();
+    byId("comparison-directory-name").textContent = state.comparisonDirectoryName
+      ? `${state.comparisonDirectoryName} · ${state.comparisonSources.length} sources · ${groups.length} input groups`
+      : "Choose a root whose child directories are trace sources.";
+
+    const reference = byId("reference-source");
+    reference.replaceChildren();
+    state.comparisonSources.forEach((sourceName) => {
+      const option = appendText(reference, "option", sourceName);
+      option.value = sourceName;
+    });
+    if (!state.comparisonSources.includes(state.comparisonReference)) {
+      state.comparisonReference = state.comparisonSources.includes("baseline")
+        ? "baseline"
+        : (state.comparisonSources[0] || "");
+    }
+    reference.value = state.comparisonReference;
+    reference.disabled = !state.comparisonSources.length;
+
+    const grid = byId("comparison-grid");
+    grid.replaceChildren();
+    groups.forEach((group, groupIndex) => {
+      const panel = appendText(grid, "article", "", "comparison-group");
+      panel.style.setProperty("--source-count", String(Math.max(1, state.comparisonSources.length)));
+      const input = appendText(panel, "header", "", "comparison-input");
+      appendText(input, "span", `Input ${groupIndex + 1}`, "comparison-index");
+      appendText(input, "h3", group.inputPreview || "Input unavailable");
+      appendText(
+        input,
+        "p",
+        group.matchedBy === "input" ? "Matched by normalized input" : "Matched by compatible file name",
+      );
+
+      const referenceTrace = selectedComparisonTrace(group, state.comparisonReference);
+      state.comparisonSources.forEach((sourceName) => {
+        const lane = appendText(panel, "section", "", "comparison-lane");
+        lane.dataset.source = sourceName;
+        const laneHeader = appendText(lane, "div", "", "comparison-lane-header");
+        appendText(laneHeader, "strong", sourceName);
+        const traces = group.sources[sourceName] || [];
+        if (!traces.length) {
+          appendText(lane, "p", "No matching trace", "comparison-missing");
+          return;
+        }
+        const selected = selectedComparisonTrace(group, sourceName);
+        if (traces.length > 1) {
+          const picker = document.createElement("select");
+          picker.setAttribute("aria-label", `Run for ${sourceName}`);
+          traces.forEach((trace) => {
+            const option = appendText(picker, "option", trace.fileName);
+            option.value = trace.relativePath;
+            option.selected = trace === selected;
+          });
+          picker.addEventListener("change", () => {
+            state.comparisonSelections.set(`${group.id}\u0000${sourceName}`, picker.value);
+            renderComparison();
+          });
+          laneHeader.appendChild(picker);
+        } else {
+          appendText(laneHeader, "span", selected.fileName);
+        }
+
+        const deltas = referenceTrace && selected !== referenceTrace
+          ? model.compareTraceSummaries(referenceTrace, selected)
+          : null;
+        const metrics = appendText(lane, "div", "", "comparison-metrics");
+        appendComparisonMetric(
+          metrics,
+          "Duration",
+          model.formatDuration(selected.durationMs),
+          deltas && deltas.durationMs,
+          "duration",
+        );
+        appendComparisonMetric(
+          metrics,
+          "LLM calls",
+          selected.llmCalls.toLocaleString(),
+          deltas && deltas.llmCalls,
+          "count",
+        );
+        appendComparisonMetric(
+          metrics,
+          "Tool calls",
+          selected.toolCalls.toLocaleString(),
+          deltas && deltas.toolCalls,
+          "count",
+        );
+        appendComparisonMetric(
+          metrics,
+          "Tokens",
+          selected.totalTokens.toLocaleString(),
+          deltas && deltas.totalTokens,
+          "count",
+        );
+        appendComparisonMetric(
+          metrics,
+          "Errors",
+          selected.errorCount.toLocaleString(),
+          deltas && deltas.errorCount,
+          "errors",
+        );
+        const footer = appendText(lane, "div", "", "comparison-lane-footer");
+        const status = appendText(
+          footer,
+          "span",
+          selected.stopReason || "incomplete",
+          "catalog-result",
+        );
+        status.dataset.status = selected.errorCount ? "error" : (selected.stopReason || "incomplete");
+        const open = appendText(footer, "button", "Inspect trace", "button");
+        open.type = "button";
+        open.addEventListener("click", () => openComparisonTrace(selected));
+      });
+      grid.appendChild(panel);
+    });
+    byId("comparison-empty").hidden = Boolean(groups.length);
+    grid.hidden = !groups.length;
+  }
+
   function showOverview() {
     stopFollowing();
     state.screen = "overview";
     byId("overview-view").hidden = false;
+    byId("comparison-view").hidden = true;
     byId("detail-view").hidden = true;
     byId("all-traces").hidden = true;
     byId("follow-file").disabled = true;
@@ -486,15 +676,38 @@
     if (state.directoryPoller) state.directoryPoller.start().catch(() => undefined);
   }
 
+  function showComparison() {
+    stopFollowing();
+    state.screen = "comparison";
+    byId("overview-view").hidden = true;
+    byId("comparison-view").hidden = false;
+    byId("detail-view").hidden = true;
+    byId("all-traces").hidden = true;
+    byId("follow-file").disabled = true;
+    const liveDirectory = Boolean(state.comparisonDirectoryPath);
+    byId("file-mode").textContent = liveDirectory ? "Comparison · Live" : "Comparison";
+    byId("file-mode").dataset.status = liveDirectory ? "live" : "snapshot";
+    byId("file-name").textContent = state.comparisonDirectoryName || "Compare trace sources";
+    closeInspector({ restoreFocus: false });
+    const warning = comparisonWarningText();
+    byId("warning-bar").hidden = !warning;
+    byId("warning-bar").textContent = warning;
+    renderComparison();
+    if (state.comparisonPoller) state.comparisonPoller.start().catch(() => undefined);
+  }
+
   function showDetail() {
     state.screen = "detail";
     byId("overview-view").hidden = true;
+    byId("comparison-view").hidden = true;
     byId("detail-view").hidden = false;
     byId("all-traces").hidden = false;
+    byId("all-traces").textContent = state.detailReturnScreen === "comparison" ? "Comparison" : "All traces";
     byId("follow-file").disabled = !state.fileHandle;
   }
 
   async function openCatalogTrace(entry) {
+    state.detailReturnScreen = "overview";
     await loadSnapshot(entry.file, entry.handle || null);
   }
 
@@ -516,9 +729,45 @@
     return state.catalog;
   }
 
-  function openDirectoryDialog() {
+  async function loadComparisonFiles(entries, directoryName, initialSkipped, sourceNames) {
+    state.comparisonDirectoryName = directoryName || "Selected source root";
+    state.comparisonGroups = [];
+    state.comparisonSummaries = [];
+    state.comparisonSources = [...(sourceNames || [])];
+    state.comparisonSkipped = [...(initialSkipped || [])];
+    showComparison();
+    byId("comparison-directory-name").textContent = `Scanning ${state.comparisonDirectoryName}…`;
+    byId("comparison-empty").hidden = true;
+    byId("comparison-grid").hidden = true;
+
+    const indexed = await model.indexComparisonEntries(entries, LARGE_FILE_BYTES);
+    state.comparisonSummaries = indexed.summaries;
+    state.comparisonGroups = indexed.groups;
+    state.comparisonSources = [...new Set([
+      ...state.comparisonSources,
+      ...indexed.sources,
+    ])].sort((left, right) => left.localeCompare(right));
+    state.comparisonSkipped.push(...indexed.skipped);
+    showComparison();
+    showToast(
+      `Grouped ${state.comparisonSummaries.length.toLocaleString()} traces into ${state.comparisonGroups.length.toLocaleString()} inputs.`,
+    );
+    return state.comparisonGroups;
+  }
+
+  function openDirectoryDialog(mode) {
+    state.directoryDialogMode = mode === "comparison" ? "comparison" : "ledger";
     const dialog = byId("directory-dialog");
     byId("directory-path-error").hidden = true;
+    byId("directory-dialog-title").textContent = state.directoryDialogMode === "comparison"
+      ? "Open comparison source root"
+      : "Open trace directory";
+    byId("directory-dialog-note").textContent = state.directoryDialogMode === "comparison"
+      ? "Each immediate child directory is one source. Only its top-level .jsonl files are read."
+      : "Only top-level .jsonl files are read through the loopback service.";
+    byId("load-directory-path").textContent = state.directoryDialogMode === "comparison"
+      ? "Compare sources"
+      : "Load directory";
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
     window.setTimeout(() => byId("directory-path").focus(), 0);
@@ -530,8 +779,9 @@
     else dialog.removeAttribute("open");
   }
 
-  async function requestServiceDirectory(path, metadataOnly) {
-    const response = await fetch("/api/directory", {
+  async function requestServiceDirectory(path, metadataOnly, comparison) {
+    const endpoint = comparison ? "/api/compare-directory" : "/api/directory";
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, metadataOnly: Boolean(metadataOnly) }),
@@ -541,30 +791,32 @@
     return payload;
   }
 
-  function serviceDirectoryEntries(payload) {
+  function serviceDirectoryEntries(payload, comparison) {
     return (payload.entries || []).map((entry) => ({
       file: new File([entry.text || ""], entry.name || "trace.jsonl", {
         type: "application/x-ndjson",
         lastModified: Number(entry.lastModified) || Date.now(),
       }),
       handle: null,
+      sourceName: comparison ? String(entry.source || "unknown") : undefined,
+      relativePath: comparison ? String(entry.relativePath || entry.name || "trace.jsonl") : undefined,
     }));
   }
 
   async function refreshServiceDirectory() {
     if (!state.serviceDirectoryPath || state.screen !== "overview" || document.hidden) return;
     try {
-      const metadata = await requestServiceDirectory(state.serviceDirectoryPath, true);
+      const metadata = await requestServiceDirectory(state.serviceDirectoryPath, true, false);
       const revision = model.directoryEntriesRevision(metadata.entries || []);
       if (revision === state.directoryRevision) {
         state.directoryRefreshError = "";
         return;
       }
-      const payload = await requestServiceDirectory(state.serviceDirectoryPath, false);
+      const payload = await requestServiceDirectory(state.serviceDirectoryPath, false, false);
       state.directoryRevision = model.directoryEntriesRevision(payload.entries || []);
       state.directoryRefreshError = "";
       await loadDirectoryFiles(
-        serviceDirectoryEntries(payload),
+        serviceDirectoryEntries(payload, false),
         payload.directory && payload.directory.path || state.serviceDirectoryPath,
         null,
         payload.skipped || [],
@@ -595,6 +847,50 @@
     state.directoryPoller.start().catch(() => undefined);
   }
 
+  async function refreshComparisonDirectory() {
+    if (!state.comparisonDirectoryPath || state.screen !== "comparison" || document.hidden) return;
+    try {
+      const metadata = await requestServiceDirectory(state.comparisonDirectoryPath, true, true);
+      const revision = model.directoryEntriesRevision(metadata.entries || []);
+      if (revision === state.comparisonRevision) {
+        state.comparisonRefreshError = "";
+        return;
+      }
+      const payload = await requestServiceDirectory(state.comparisonDirectoryPath, false, true);
+      state.comparisonRevision = model.directoryEntriesRevision(payload.entries || []);
+      state.comparisonRefreshError = "";
+      await loadComparisonFiles(
+        serviceDirectoryEntries(payload, true),
+        payload.directory && payload.directory.path || state.comparisonDirectoryPath,
+        payload.skipped || [],
+        payload.sources || [],
+      );
+    } catch (error) {
+      const message = String(error && error.message || error);
+      if (message !== state.comparisonRefreshError) {
+        state.comparisonRefreshError = message;
+        showToast(`Comparison refresh failed; retrying: ${message}`);
+      }
+    }
+  }
+
+  function stopComparisonDirectoryRefresh() {
+    if (state.comparisonPoller) state.comparisonPoller.stop();
+    state.comparisonPoller = null;
+    state.comparisonRefreshError = "";
+  }
+
+  function startComparisonDirectoryRefresh() {
+    if (!state.comparisonDirectoryPath) return;
+    if (!state.comparisonPoller) {
+      state.comparisonPoller = model.createDirectoryPoller({
+        intervalMs: DIRECTORY_REFRESH_INTERVAL_MS,
+        refresh: refreshComparisonDirectory,
+      });
+    }
+    state.comparisonPoller.start().catch(() => undefined);
+  }
+
   async function loadServiceDirectory() {
     const path = byId("directory-path").value.trim();
     const errorBox = byId("directory-path-error");
@@ -610,31 +906,48 @@
     loadButton.disabled = true;
     loadButton.textContent = "Loading…";
     try {
-      const payload = await requestServiceDirectory(path, false);
-      const entries = serviceDirectoryEntries(payload);
-      stopServiceDirectoryRefresh();
-      state.serviceDirectoryPath = payload.directory && payload.directory.path || path;
-      state.directoryRevision = model.directoryEntriesRevision(payload.entries || []);
-      await loadDirectoryFiles(
-        entries,
-        state.serviceDirectoryPath,
-        null,
-        payload.skipped || [],
-      );
-      startServiceDirectoryRefresh();
+      const comparison = state.directoryDialogMode === "comparison";
+      const payload = await requestServiceDirectory(path, false, comparison);
+      const entries = serviceDirectoryEntries(payload, comparison);
+      if (comparison) {
+        stopComparisonDirectoryRefresh();
+        state.comparisonDirectoryPath = payload.directory && payload.directory.path || path;
+        state.comparisonRevision = model.directoryEntriesRevision(payload.entries || []);
+        await loadComparisonFiles(
+          entries,
+          state.comparisonDirectoryPath,
+          payload.skipped || [],
+          payload.sources || [],
+        );
+        startComparisonDirectoryRefresh();
+      } else {
+        stopServiceDirectoryRefresh();
+        state.serviceDirectoryPath = payload.directory && payload.directory.path || path;
+        state.directoryRevision = model.directoryEntriesRevision(payload.entries || []);
+        await loadDirectoryFiles(
+          entries,
+          state.serviceDirectoryPath,
+          null,
+          payload.skipped || [],
+        );
+        startServiceDirectoryRefresh();
+      }
       closeDirectoryDialog();
     } catch (error) {
       errorBox.textContent = `Could not load directory: ${String(error && error.message || error)}`;
       errorBox.hidden = false;
     } finally {
       loadButton.disabled = false;
-      loadButton.textContent = "Load directory";
+      loadButton.textContent = state.directoryDialogMode === "comparison"
+        ? "Compare sources"
+        : "Load directory";
     }
   }
 
   async function chooseDirectory() {
+    state.directoryDialogMode = "ledger";
     if (location.protocol === "http:" || location.protocol === "https:") {
-      openDirectoryDialog();
+      openDirectoryDialog("ledger");
       return;
     }
     if (typeof globalThis.showDirectoryPicker !== "function") {
@@ -656,6 +969,23 @@
       if (error && error.name === "AbortError") return;
       showToast(`Directory picker failed: ${String(error && error.message || error)}`);
     }
+  }
+
+  function openComparisonDirectoryChooser() {
+    state.directoryDialogMode = "comparison";
+    if (location.protocol === "http:" || location.protocol === "https:") {
+      openDirectoryDialog("comparison");
+      return;
+    }
+    byId("directory-input").click();
+  }
+
+  async function chooseComparisonDirectory() {
+    if (state.comparisonGroups.length || state.comparisonDirectoryName) {
+      showComparison();
+      return;
+    }
+    openComparisonDirectoryChooser();
   }
 
   function showSession(records, warnings, fileName, mode) {
@@ -716,6 +1046,7 @@
   }
 
   async function chooseFile() {
+    state.detailReturnScreen = state.screen === "comparison" ? "comparison" : "overview";
     if (typeof globalThis.showOpenFilePicker !== "function") {
       byId("file-input").click();
       return;
@@ -830,6 +1161,15 @@
   byId("open-file").addEventListener("click", chooseFile);
   byId("open-directory").addEventListener("click", chooseDirectory);
   byId("overview-open-directory").addEventListener("click", chooseDirectory);
+  byId("compare-sources").addEventListener("click", chooseComparisonDirectory);
+  byId("comparison-open-directory").addEventListener(
+    "click",
+    openComparisonDirectoryChooser,
+  );
+  byId("reference-source").addEventListener("change", (event) => {
+    state.comparisonReference = event.target.value;
+    renderComparison();
+  });
   byId("cancel-directory-path").addEventListener("click", closeDirectoryDialog);
   byId("dismiss-directory-path").addEventListener("click", closeDirectoryDialog);
   byId("load-directory-path").addEventListener("click", loadServiceDirectory);
@@ -839,7 +1179,10 @@
       loadServiceDirectory();
     }
   });
-  byId("all-traces").addEventListener("click", showOverview);
+  byId("all-traces").addEventListener("click", () => {
+    if (state.detailReturnScreen === "comparison") showComparison();
+    else showOverview();
+  });
   byId("empty-open-file").addEventListener("click", chooseFile);
   byId("drop-zone").addEventListener("click", chooseFile);
   byId("drop-zone").addEventListener("keydown", (event) => {
@@ -850,6 +1193,7 @@
   });
   byId("file-input").addEventListener("change", async (event) => {
     const file = event.target.files && event.target.files[0];
+    state.detailReturnScreen = state.screen === "comparison" ? "comparison" : "overview";
     if (file) await loadSnapshot(file, null);
     event.target.value = "";
   });
@@ -857,17 +1201,33 @@
     const files = [...(event.target.files || [])];
     const firstPath = files[0] && files[0].webkitRelativePath || "";
     const directoryName = firstPath.split("/")[0] || "Selected directory";
-    const entries = files
-      .filter((file) => {
-        const relative = String(file.webkitRelativePath || "");
-        return !relative || relative.split("/").length <= 2;
-      })
-      .map((file) => ({ file, handle: null }));
+    const comparison = state.directoryDialogMode === "comparison";
+    const entries = files.flatMap((file) => {
+      const relative = String(file.webkitRelativePath || "");
+      const parts = relative.split("/").filter(Boolean);
+      if (comparison) {
+        if (parts.length !== 3) return [];
+        return [{
+          file,
+          handle: null,
+          sourceName: parts[1],
+          relativePath: `${parts[1]}/${parts[2]}`,
+        }];
+      }
+      return !relative || parts.length <= 2 ? [{ file, handle: null }] : [];
+    });
     if (entries.length) {
-      stopServiceDirectoryRefresh();
-      state.serviceDirectoryPath = "";
-      state.directoryRevision = "";
-      await loadDirectoryFiles(entries, directoryName, null);
+      if (comparison) {
+        stopComparisonDirectoryRefresh();
+        state.comparisonDirectoryPath = "";
+        state.comparisonRevision = "";
+        await loadComparisonFiles(entries, directoryName, [], []);
+      } else {
+        stopServiceDirectoryRefresh();
+        state.serviceDirectoryPath = "";
+        state.directoryRevision = "";
+        await loadDirectoryFiles(entries, directoryName, null);
+      }
     }
     event.target.value = "";
   });
@@ -923,9 +1283,13 @@
     showSession,
     loadSnapshot,
     loadDirectoryFiles,
+    loadComparisonFiles,
     refreshServiceDirectory,
+    refreshComparisonDirectory,
     chooseDirectory,
+    chooseComparisonDirectory,
     showOverview,
+    showComparison,
     startFollowing,
     stopFollowing,
     closeInspector,
