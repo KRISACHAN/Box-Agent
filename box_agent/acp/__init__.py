@@ -954,6 +954,7 @@ class SessionState(AgentSession):
     selected_connector_ids: set[str] = field(default_factory=set)
     connector_statuses: tuple[tuple[str, str, str], ...] | None = None
     connector_status_unavailable: bool = False
+    utility_session: bool = False
     expert_context: ExpertSessionContext | None = None
     upstream_session_id: str = ""
     current_task_id: str = ""
@@ -2048,6 +2049,7 @@ class BoxACPAgent:
                 selected_connector_ids=selected_connector_ids,
                 connector_statuses=connector_statuses,
                 connector_status_unavailable=connector_status_unavailable,
+                utility_session=utility,
                 session_llm=session_llm,
                 summary_llm=summary_llm,
                 session_mode=session_mode,
@@ -2360,22 +2362,23 @@ class BoxACPAgent:
         )
         _bind_user_source_text(state, source_binding_text)
         prompt_meta = getattr(params, "field_meta", None) or {}
-        selected_connector_ids = _connector_ids_from_meta(prompt_meta)
-        if selected_connector_ids is not None:
-            state.selected_connector_ids.clear()
-            state.selected_connector_ids.update(selected_connector_ids)
-        connector_statuses = _connector_statuses_from_meta(prompt_meta)
-        if connector_statuses is not None:
-            state.connector_statuses = connector_statuses
-            state.connector_status_unavailable = False
-        else:
-            connector_status_unavailable = _connector_status_unavailable_from_meta(
-                prompt_meta
-            )
-            if connector_status_unavailable is not None:
-                state.connector_status_unavailable = connector_status_unavailable
-                if connector_status_unavailable:
-                    state.connector_statuses = None
+        if not state.utility_session:
+            selected_connector_ids = _connector_ids_from_meta(prompt_meta)
+            if selected_connector_ids is not None:
+                state.selected_connector_ids.clear()
+                state.selected_connector_ids.update(selected_connector_ids)
+            connector_statuses = _connector_statuses_from_meta(prompt_meta)
+            if connector_statuses is not None:
+                state.connector_statuses = connector_statuses
+                state.connector_status_unavailable = False
+            else:
+                connector_status_unavailable = _connector_status_unavailable_from_meta(
+                    prompt_meta
+                )
+                if connector_status_unavailable is not None:
+                    state.connector_status_unavailable = connector_status_unavailable
+                    if connector_status_unavailable:
+                        state.connector_statuses = None
         user_decision_response = _user_decision_response_from_meta(prompt_meta)
         if user_decision_response is not None:
             user_text = (
@@ -2395,12 +2398,13 @@ class BoxACPAgent:
                 "explicitly requests another language.]\n\n"
                 f"{user_text}"
             )
-        connector_status = _connector_status_context(
-            state.selected_connector_ids,
-            state.connector_statuses,
-            state.connector_status_unavailable,
-        )
-        user_text = f"{user_text.rstrip()}\n\n{connector_status}"
+        if not state.utility_session:
+            connector_status = _connector_status_context(
+                state.selected_connector_ids,
+                state.connector_statuses,
+                state.connector_status_unavailable,
+            )
+            user_text = f"{user_text.rstrip()}\n\n{connector_status}"
         requested_llm_binding = _normalize_llm_binding(prompt_meta)
         if requested_llm_binding is not None and requested_llm_binding != state.llm_binding:
             if state.turn_active:

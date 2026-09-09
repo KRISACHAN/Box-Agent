@@ -68,6 +68,9 @@ from box_agent.workspace_registry import WorkspaceRegistry
 from tests.architecture_imports import forbidden_adapter_layer_imports
 
 
+_EMPTY_CONNECTOR_CONTEXT = "\n\n<connector-status>\nnone: selected\n</connector-status>"
+
+
 class DummyConn:
     def __init__(self):
         self.updates = []
@@ -1492,7 +1495,7 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path))
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
@@ -1519,7 +1522,7 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
 
     assert restarted.sessionId != first.sessionId
     assert [(message.role, message.content) for message in state.agent.messages[1:]] == [
-        ("user", "remember this"),
+        ("user", "remember this" + _EMPTY_CONNECTOR_CONTEXT),
         ("assistant", "done"),
     ]
     assert state.agent.session_log.events[-1]["type"] == "session/end-seed"
@@ -1546,7 +1549,7 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
         "stale migration seed"
     ) == 0
     assert [(message.role, message.content) for message in state.agent.messages[-2:]] == [
-        ("user", "continue after restart"),
+        ("user", "continue after restart" + _EMPTY_CONNECTOR_CONTEXT),
         ("assistant", "done"),
     ]
     state.agent.session_log.close()
@@ -1614,7 +1617,9 @@ async def test_acp_resumes_and_answers_when_previous_skills_are_unavailable(
             expected_names = ("available-skill",) if availability == "partial" else ()
             assert state.agent.active_skill_diagnostics()["names"] == expected_names
             assert "Instructions for missing-skill." not in state.agent.system_prompt
-            assert "remember me" in [message.content for message in state.agent.messages]
+            assert "remember me" + _EMPTY_CONNECTOR_CONTEXT in [
+                message.content for message in state.agent.messages
+            ]
             response = await restarted.prompt(
                 SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "continue"}])
             )
@@ -2636,7 +2641,7 @@ async def test_acp_seeds_negotiated_session_continuation_once(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path / "profile"))
     agent, _ = acp_agent
     session = await agent.newSession(
         SimpleNamespace(
@@ -2668,7 +2673,7 @@ async def test_acp_seeds_negotiated_session_continuation_once(
     assert [(message.role, message.content) for message in state.agent.messages[1:4]] == [
         ("user", "制作融资 BP"),
         ("assistant", "已生成 index.html"),
-        ("user", "修改第一页标题"),
+        ("user", "修改第一页标题" + _EMPTY_CONNECTOR_CONTEXT),
     ]
 
     await agent.prompt(
@@ -3585,7 +3590,7 @@ async def test_acp_goal_pause_stops_prompt_injection(tmp_path):
     await agent.prompt(SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "side question"}]))
 
     latest_user = [content for role, content in llm.calls[-1] if role == "user"][-1]
-    assert latest_user == "side question"
+    assert latest_user == "side question" + _EMPTY_CONNECTOR_CONTEXT
 
 
 @pytest.mark.asyncio
@@ -4651,7 +4656,7 @@ async def test_acp_skill_filter_ignores_host_ui_language_instruction(tmp_path):
         "[Host UI language: Chinese. Use this language for user-visible "
         "intermediate summaries, progress updates, and the final response unless the user "
         "explicitly requests another language.]\n\n"
-        "孙宇晨最新的回复是什么"
+        "孙宇晨最新的回复是什么" + _EMPTY_CONNECTOR_CONTEXT
     ]
 
 
