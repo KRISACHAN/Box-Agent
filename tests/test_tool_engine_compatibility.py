@@ -1,7 +1,7 @@
 """C1 characterization of the pre-Engine setup and Agent tool contract.
 
-The fixed C1 fixture remains intact. Only the enumerated C5 name/description
-changes and direct/discoverable sets are applied before exact comparisons.
+The fixed C1 fixture remains intact. Only the enumerated C5 changes and the
+declared session-cwd description migration are applied before exact comparisons.
 Network/runtime discovery is isolated; setup, tools, stores and Agent are real.
 """
 
@@ -51,6 +51,9 @@ _FLAGS_OFF = {
 _SCHEMA_FIXTURE = Path(__file__).parent / "fixtures/tool_engine/c1_schemas.json"
 _C5_SCHEMA_CHANGES = json.loads(
     (Path(__file__).parent / "fixtures/tool_engine/c5_schema_changes.json").read_text()
+)
+_CWD_SCHEMA_CHANGES = json.loads(
+    (Path(__file__).parent / "fixtures/tool_engine/session_cwd_schema_changes.json").read_text()
 )
 _C5_DISCOVERABLE = {
     "append_file", "query_jsonl", "bash_output", "bash_kill", "sandbox_status",
@@ -158,7 +161,7 @@ def _llm(mode):
 async def _assemble(env, *, flags=None, defaults=False, llm_mode="none",
                     memory=False, sandbox=False, image_endpoint=False,
                     defer_skills=False, process_owner_id=None,
-                    workspace_name="workspace", use_output_dir=False):
+                    workspace_name="workspace"):
     config = _config(env, flags, defaults=defaults)
     if image_endpoint:
         config.image_generation.endpoint = "https://image.invalid/generate"
@@ -177,7 +180,7 @@ async def _assemble(env, *, flags=None, defaults=False, llm_mode="none",
         tools, config, workspace,
         sandbox_mode=sandbox, allow_full_access=False, non_interactive=True,
         output=lambda *_: None, llm=llm, skill_loader=loader,
-        use_output_dir=use_output_dir, process_owner_id=process_owner_id,
+        process_owner_id=process_owner_id,
         env_context={"obsidian": {"enabled": False}},
     )
     return SimpleNamespace(
@@ -217,6 +220,13 @@ def _assert_schema_contract(tools, profile, *, child_read_tools=()):
             entry["aliases"] = _C5_SCHEMA_CHANGES["aliases"][tool.name]
         if tool.name in _C5_SCHEMA_CHANGES["descriptions"]:
             entry["schema"]["description"] = _C5_SCHEMA_CHANGES["descriptions"][tool.name]
+        for change in _CWD_SCHEMA_CHANGES.get(tool.name, ()):
+            target = entry["schema"]
+            *parents, field = change["path"]
+            for key in parents:
+                target = target[key]
+            assert target[field] == change["before"], (tool.name, change["path"])
+            target[field] = change["after"]
         if tool.name == "sub_agent":
             # This default is the one capability-dependent schema field. The
             # caller supplies the independently expected read set, never a set
@@ -415,22 +425,29 @@ async def test_setup_agent_discovery_keeps_live_child_tools_and_session_activati
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("use_output_dir", [False, True], ids=["project-root", "output-root"])
-async def test_workspace_root_is_shared_by_file_shell_and_image_tools(isolated_setup, use_output_dir):
+@pytest.mark.parametrize("existing_output_child", [False, True], ids=["empty-cwd", "ordinary-output-child"])
+async def test_workspace_root_is_shared_by_file_shell_and_image_tools(isolated_setup, existing_output_child):
+    if existing_output_child:
+        (isolated_setup.profile / "workspace" / "output").mkdir(parents=True)
     assembly = await _assemble(
         isolated_setup, flags={"enable_file_tools": True, "enable_bash": True},
-        llm_mode="vision", image_endpoint=True, use_output_dir=use_output_dir,
+        llm_mode="vision", image_endpoint=True,
     )
     agent = _agent(assembly)
     tools = agent.tools
-    assert ("append_file" in agent.mcp_tool_exposure.prepare_tools(list(tools.values())).offered_names) is use_output_dir
-    expected_root = assembly.workspace / "output" if use_output_dir else assembly.workspace
+    assert "append_file" not in agent.mcp_tool_exposure.prepare_tools(list(tools.values())).offered_names
+    expected_root = assembly.workspace
     assert Path(tools["bash"].workspace_dir) == expected_root
     assert Path(tools["bash"].scope_root_dir) == assembly.workspace
     assert tools["generate_image"].output_dir == expected_root
     for name in _FILES | {"inspect_images"}:
         assert Path(tools[name].workspace_dir) == assembly.workspace
         assert Path(tools[name].relative_root_dir) == expected_root
+    for relative_path in ("report.txt", "output/report.txt"):
+        result = await tools["write_file"].execute(path=relative_path, content="report")
+        assert result.success
+        assert (expected_root / relative_path).read_text(encoding="utf-8") == "report"
+        assert tools["generate_image"]._resolve_output_path(relative_path) == expected_root / relative_path
 
 
 @pytest.mark.asyncio

@@ -195,9 +195,6 @@ def _session_params(
                 "allowed_directories": list(metadata.allowed_directories),
                 "filesystem_scope": "session_workspace",
             },
-            "workspace_layout": {
-                "artifact_root_dir": str(workspace / "output"),
-            },
             **metadata.session,
         },
     }

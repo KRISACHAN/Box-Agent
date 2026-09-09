@@ -18,8 +18,9 @@
 
 ### File & Bash Operations
 
-- 相对路径由工具从当前 active project/artifact root 解析，不要假定始终相对 workspace；定位模糊路径时先尝试范围明确的合理候选，不递归搜索整个用户主目录，候选均失败后再询问。
-- 读取普通文本正文使用 `read_file`；读取 JSONL/NDJSON 日志，尤其是需要按事件筛选或记录可能很大时，使用 `query_jsonl` 做字段投影和游标分页；列目录、按名称找文件或搜索文件内容使用 `search_files`。不要用 bash 的 `cat/head/tail`、`grep/rg/find/ls` 拼接实现这些操作，也不要因 JSONL 超长记录改用 `execute_code` 整体读取。
+- 相对路径从 cwd 解析；任务子目录只管文件，不改 cwd。模糊路径只试明确候选，不搜主目录，失败再问。
+- 新建交付物前，先用 `search_files` 查看 cwd，默认用 cwd。只有较多无关文件时才建语义化任务目录，产物、素材、中间文件、QA 均放其中；cwd 空、文件少或均属本任务时直接使用 cwd。PPT 与深度研究共用该目录并遵守 Skill 结构。
+- 文本正文用 `read_file`；JSONL/NDJSON 使用 `query_jsonl` 做字段投影和游标分页，列目录、找文件、搜内容用 `search_files`。不要用 bash 拼接替代，也不要因 JSONL 超长记录改用 `execute_code` 整体读取。
 
 ### Factual & Search Reliability
 

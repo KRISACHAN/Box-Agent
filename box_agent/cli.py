@@ -44,7 +44,6 @@ from box_agent.agent_runtime import (
     build_permission_engine,
 )
 from box_agent.cli_renderer import Colors
-from box_agent.artifacts import ensure_output_dir
 from box_agent.agent import (
     Agent,
     GoalState,
@@ -2091,7 +2090,6 @@ async def run_agent(
             if mcp_task is not None and not mcp_task.done()
             else "ready"
         ),
-        use_output_dir=not code_workspace,
         env_context=cli_env_context,
     )
 
@@ -2130,7 +2128,7 @@ async def run_agent(
     if sandbox_mode:
         system_prompt = system_prompt.replace(
             "{SANDBOX_INFO}",
-            build_sandbox_info_prompt(use_output_dir=not code_workspace),
+            build_sandbox_info_prompt(),
         )
         print(f"{Colors.GREEN}✅ Sandbox mode enabled with execute_code tool{Colors.RESET}")
     else:
@@ -2140,9 +2138,7 @@ async def run_agent(
     system_prompt = compose_prompt_segments(
         system_prompt,
         replacements={
-            "{FILE_DELIVERY_INFO}": build_file_delivery_prompt(
-                use_output_dir=not code_workspace
-            )
+            "{FILE_DELIVERY_INFO}": build_file_delivery_prompt()
         },
         segments=(
             PROJECT_WORKSPACE_MODE_PROMPT if code_workspace else None,
@@ -2347,7 +2343,6 @@ async def run_agent(
             "entrypoint": "cli",
             "workspace": str(workspace_dir),
             "session_mode": "code_agent" if code_workspace else "general",
-            "artifact_mode": "project" if code_workspace else "output",
             "model": agent_session.config.llm.model,
             "context_window": agent_session.config.llm.context_window,
             "max_output_tokens": agent_session.config.llm.max_output_tokens,
@@ -2933,11 +2928,6 @@ def main() -> int:
     except WorkspaceRegistryError as exc:
         print(f"{Colors.RED}❌ Workspace config error: {exc}{Colors.RESET}")
         return 1
-    if workspace_profile is None or workspace_profile.task_type != "code":
-        # General tasks keep their canonical output directory. Code workspaces
-        # edit the project tree directly and must not create it implicitly.
-        ensure_output_dir(workspace_dir)
-
     # Run the agent (config always loaded from package directory)
     try:
         return asyncio.run(

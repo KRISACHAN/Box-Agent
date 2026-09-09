@@ -44,9 +44,7 @@ class AgentSession:
     session_llm: SessionBoundLLM | None = None
     summary_llm: SessionBoundLLM | None = None
     cancelled: bool = False
-    output_dir: str | None = None
     skill_scratch_dir: SkillScratchDirectory | None = None
-    artifact_mode: str = "output"
     permission_engine: PermissionEngine | None = None
     grant_store: GrantStore | None = None
     memory_extractor: Any | None = None

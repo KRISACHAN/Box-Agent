@@ -17,14 +17,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Final
 
-from .artifacts import (
-    OUTPUT_SUBDIR,
-    artifact_scan_root as _artifact_scan_root,
-    avoid_collision,
-    ensure_output_dir,
-    make_artifact as _make_artifact,
-    safe_output_name,
-)
+from .artifacts import avoid_collision, make_artifact as _make_artifact, safe_output_name
 from .cache_fingerprint import build_cache_fingerprint
 from .config import AgentConfig, ToolLimitsConfig
 from .composition import run_agent_loop_with_default_services

@@ -93,6 +93,7 @@ from box_agent.user_paths import state_path
 __all__ = ["run_agent_loop"]
 
 _log = logging.getLogger("box_agent.core")
+_WARNED_DEPRECATED_ARTIFACT_ROOT_SESSIONS: set[str] = set()
 _DEFAULT_AGENT_CONFIG = AgentConfig()
 PARALLEL_TOOL_CANCEL_GRACE_SECONDS: Final[float] = 2.0
 LLM_ACTIVITY_INTERVAL_SECONDS: Final[float] = 15.0
@@ -683,17 +684,16 @@ async def _run_agent_loop_impl(
             parallel_safe tool calls. When exceeded, completed results are kept
             and unfinished calls receive synthetic timeout failures so the
             parent turn can continue.
-        artifact_detection_enabled: If False, skip output-directory artifact
-            snapshotting and detection for sessions that edit an existing
-            project tree directly.
+        artifact_detection_enabled: If False, skip cwd-rooted artifact
+            snapshotting and detection.
         truncation_continuation_enabled: If True (default), re-prompt the
             model once when a reply ends mid-sentence while the provider
             reported a normal finish, so the answer completes in the same
             message. See ``loop_guards.looks_like_truncated_output``.
         max_truncation_continuations: Per-turn cap on truncation
             continuations (loop guard against repeated false positives).
-        artifact_root_dir: Optional explicit artifact directory supplied by a
-            host session. Defaults to ``{workspace_dir}/output``.
+        artifact_root_dir: Deprecated compatibility input. It is ignored;
+            artifact discovery always scans ``workspace_dir``.
         cache_fingerprint_context: Optional stable metadata to include with
             cache-sensitive request fingerprints, such as selected skill names.
         cache_fingerprint_sink: Optional callback that receives each fingerprint
@@ -717,6 +717,14 @@ async def _run_agent_loop_impl(
     tools = _services.tool_catalog
     tool_exposure_manager = _services.tool_exposure
     tool_result_storage = _services.tool_result_store
+
+    if artifact_root_dir is not None:
+        warning_key = session_id or workspace_dir or "<anonymous>"
+        if warning_key not in _WARNED_DEPRECATED_ARTIFACT_ROOT_SESSIONS:
+            _WARNED_DEPRECATED_ARTIFACT_ROOT_SESSIONS.add(warning_key)
+            _log.warning(
+                "artifact_root_dir is deprecated and ignored; artifact discovery uses workspace_dir"
+            )
 
     cancelled = is_cancelled or (lambda: False)
     # Capture before memory, repair and continuation messages can change history.
@@ -946,7 +954,7 @@ async def _run_agent_loop_impl(
                 pending_token_estimate=pending,
             ),
             policy_error=browser_intent_policy.tool_call_error,
-            workspace_dir=workspace_dir, artifact_root_dir=artifact_root_dir,
+            workspace_dir=workspace_dir,
             session_id=session_id, turn_id=turn_id,
             permission_negotiator=permission_negotiator, logger=logger,
             resource_ledger=resource_ledger, activate_skill=active_skill_activator,

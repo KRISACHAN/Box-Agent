@@ -18,10 +18,10 @@ uses the same in-band ``session/request_permission`` reverse RPC as
 filesystem and memory escalation, then retries the tool only if the
 host explicitly approves.
 
-**Sandbox**: Enabled by default for ACP sessions.  Each session gets
-a stable ``sandbox_workspace`` path (``{workspace}/sandbox/``) that
-the client can use to retrieve generated files.  The sandbox Jupyter
-kernel persists across prompts within the same session.
+**Sandbox**: Enabled by default for ACP sessions. ``session/new.params.cwd``
+is the stable session working directory and is not replaced by a generated
+output root. The sandbox Jupyter kernel persists across prompts within the
+same session.
 """
 
 from __future__ import annotations
@@ -72,7 +72,6 @@ from box_agent.agent_runtime import (
 )
 from box_agent.agent_run import AgentRunHandle
 from box_agent.acp.stdio_compat import stdio_streams_largebuf
-from box_agent.artifacts import ensure_output_dir
 from box_agent.agent import (
     Agent,
     goal_autopilot_prompt,
@@ -256,7 +255,6 @@ except Exception:  # pragma: no cover - defensive
 
 def _artifact_envelope(
     art: ArtifactEvent,
-    output_dir: str | None,
     session_id: str | None = None,
     task_id: str | None = None,
     turn_id: str | None = None,
@@ -280,8 +278,6 @@ def _artifact_envelope(
         "produced_at": art.produced_at,
         "tool_call_id": art.tool_call_id,
     }
-    if output_dir:
-        payload["output_dir"] = output_dir
     if art.layout_id:
         payload["layout_id"] = art.layout_id
     if art.edit_mode:
@@ -829,27 +825,36 @@ def _update_pending_plan_approval_from_raw(
         state.pending_plan_approval = None
 
 
-def _normalize_artifact_mode(meta: Any) -> str:
-    if isinstance(meta, dict):
-        value = meta.get("artifact_mode") or meta.get("artifactMode")
-        if isinstance(value, str) and value.strip().lower() == "project":
-            return "project"
-    return "output"
-
-
-def _artifact_root_from_meta(meta: Any, workspace: Path) -> Path | None:
+def _deprecated_artifact_fields(meta: Any) -> list[str]:
+    """Return legacy host fields that are accepted but ignored."""
     if not isinstance(meta, dict):
-        return None
+        return []
+    fields: list[str] = []
+    for key in (
+        "artifact_mode",
+        "artifactMode",
+        "artifact_root",
+        "artifactRoot",
+        "artifact_root_dir",
+        "artifactRootDir",
+        "session_workspace_dir",
+        "sessionWorkspaceDir",
+    ):
+        if key in meta:
+            fields.append(key)
     layout = meta.get("workspace_layout") or meta.get("workspaceLayout")
-    if not isinstance(layout, dict):
-        return None
-    raw = layout.get("artifact_root_dir") or layout.get("artifactRootDir")
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    root = Path(raw.strip()).expanduser()
-    if not root.is_absolute():
-        root = workspace / root
-    return root.resolve()
+    if isinstance(layout, dict):
+        for key in (
+            "artifact_root",
+            "artifactRoot",
+            "artifact_root_dir",
+            "artifactRootDir",
+            "session_workspace_dir",
+            "sessionWorkspaceDir",
+        ):
+            if key in layout:
+                fields.append(f"workspace_layout.{key}")
+    return fields
 
 
 def _workspace_layout_path(
@@ -879,57 +884,43 @@ def _workspace_layout_path(
 def _workspace_layout_prompt(
     *,
     workspace: Path,
-    artifact_root: Path,
     layout: Any,
-    artifact_mode: str,
 ) -> str:
-    """Describe host, task, and artifact roots without conflating their roles."""
+    """Describe the selected root without reviving deprecated output roots."""
     selected_root = _workspace_layout_path(
         layout,
         workspace,
         "selected_root_dir",
         "selectedRootDir",
     ) or workspace
-    task_root = _workspace_layout_path(
-        layout,
-        workspace,
-        "session_workspace_dir",
-        "sessionWorkspaceDir",
-    ) or workspace
-    resolved_artifact_root = _workspace_layout_path(
-        layout,
-        workspace,
-        "artifact_root_dir",
-        "artifactRootDir",
-    ) or artifact_root
-
     lines = [
         "## Workspace Layout",
         f"- 工作区（selected workspace root）：`{selected_root}`",
-        f"- 当前任务目录（current task root）：`{task_root}`",
-        f"- 交付物目录（artifact root）：`{resolved_artifact_root}`",
         (
-            "- 目录语义：用户说“工作区”“当前文件夹”或“当前目录”时，默认指 "
-            "selected workspace root；只有明确说“当前任务目录”时才指 current task root；"
-            "只有明确说“输出目录”或“交付物目录”时才指 artifact root。"
+            f"- 当前会话工作目录（cwd）：`{workspace}`。工具相对路径和 artifact 扫描都从"
+            "该目录开始；会话生命周期内不得改变它。"
         ),
         (
-            "- 查看工作区或当前任务内容时，使用上面对应根目录的绝对路径，"
-            "不要根据工具的相对路径根猜测目录身份。"
+            "- 模型为整理产物而创建的子目录只是普通文件组织，不成为新的 workspace，"
+            "也不改变 cwd。"
         ),
         (
             "- 判空规则：必须先使用目标目录的绝对路径实际查询其内容，"
             "只有查询成功且确认无内容时，才可判断该目标目录为空。"
-            "不得用当前任务目录、交付物目录或工具默认目录的空结果推断工作区为空；"
             "查询失败、权限不足或结果被过滤、截断时，不得据此判空。"
         ),
     ]
-    if artifact_mode != "project":
-        lines.append(
-            "- Output 模式下，`pwd`、bash cwd 和文件工具相对路径默认位于 "
-            "artifact root；这只是工具执行/交付边界，不得称为工作区或当前任务目录。"
-        )
     return "\n".join(lines)
+
+
+GENERAL_DIRECTORY_ORGANIZATION_PROMPT = """## General Task Directory Organization
+- 保持当前会话工作目录（cwd）不变。你创建的任务子目录只是文件组织行为，不是新的 workspace。
+- 在写入独立任务的产物前，先查看 cwd 的顶层结构。修改现有项目时直接在项目树中的合适位置工作，不要另建任务目录。
+- 目录选择遵循 File & Bash Operations 的规则，不要使用固定文件数量阈值。
+- 目录通常是 cwd 的直接子目录，使用简短、语义明确的名称。创建前检查同名路径；只在确认属于同一任务时复用，否则添加简短后缀，禁止覆盖无关内容。
+- 用户明确指定输出目录或文件路径时优先遵循用户路径，只要工具权限允许。
+- 目录以任务为生命周期：相关追问继续复用；用户切换到无关任务时重新判断。上下文摘要应保留当前任务采用的目录；若恢复后该信息缺失，重新检查目录，不要自动移动或合并已有文件。
+- PPT 和深度研究任务必须显式把选定目录的绝对路径传给 Skill 或脚本；若未创建独立目录，则显式使用 cwd。不要依赖隐式 output root 或输出目录环境变量。"""
 
 
 def _goal_payload(agent: Agent) -> dict[str, Any] | None:
@@ -962,15 +953,12 @@ def _tool_result_raw_output(
     policy_decision: dict[str, Any] | None,
     *,
     session_id: str | None = None,
-    output_dir: str | None = None,
     task_id: str | None = None,
     turn_id: str | None = None,
 ) -> Any:
     if isinstance(raw_output, dict):
         payload = dict(raw_output)
         if payload.get("type") == "artifact":
-            if output_dir:
-                payload.setdefault("output_dir", output_dir)
             if session_id:
                 payload.setdefault("session_id", session_id)
                 payload.setdefault("sessionId", session_id)
@@ -1465,6 +1453,7 @@ class BoxACPAgent:
         workspace = Path(params.cwd or self._config.agent.workspace_dir).expanduser()
         if not workspace.is_absolute():
             workspace = workspace.resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
 
         # Extract session_mode from _meta (ACP extension point)
         # Pydantic aliases _meta to field_meta
@@ -1478,7 +1467,6 @@ class BoxACPAgent:
         upstream_title = _DEFAULT_AGENT_TITLE
         force_plan_start = False
         require_plan_approval = False
-        artifact_mode = "output"
         initial_goal_request: dict[str, Any] | None = None
         follow_up_suggestions_enabled = False
         skillhub_search_enabled = False
@@ -1504,7 +1492,17 @@ class BoxACPAgent:
                 "require_plan_approval",
                 "requirePlanApproval",
             )
-            artifact_mode = _normalize_artifact_mode(meta)
+            deprecated_artifact_fields = _deprecated_artifact_fields(meta)
+            if deprecated_artifact_fields:
+                log.warn(
+                    "session/deprecated_artifact_paths",
+                    session_id=session_id,
+                    fields=deprecated_artifact_fields,
+                    message=(
+                        "Deprecated artifact path fields are ignored; the session cwd is "
+                        "the only runtime and artifact-scan root"
+                    ),
+                )
             initial_goal_request = _goal_request_from_meta(meta)
             follow_up_suggestions_enabled = _meta_bool(
                 meta,
@@ -1558,11 +1556,6 @@ class BoxACPAgent:
         if workspace_profile is not None and workspace_profile.task_type == "code":
             if session_mode is None:
                 session_mode = "code_agent"
-            if session_mode == "code_agent" and not (
-                isinstance(meta, dict)
-                and ("artifact_mode" in meta or "artifactMode" in meta)
-            ):
-                artifact_mode = "project"
 
         llm_binding = _normalize_llm_binding(meta)
         session_llm = SessionBoundLLM(self._llm_for_binding(llm_binding))
@@ -1589,24 +1582,12 @@ class BoxACPAgent:
             required_input_tokens=session_token_limit,
         )
 
-        # Project tools keep the repository root as cwd, but still receive a
-        # lazy artifact boundary for deliverable-producing Skills. The boundary
-        # is not created until a Skill writes an artifact, so ordinary code
-        # sessions do not gain an implicit output/ directory.
-        output_dir: str | None = None
-        artifact_root_dir = _artifact_root_from_meta(meta, workspace)
-        output_path = artifact_root_dir or (workspace / "output").resolve()
-        if artifact_mode != "project":
-            output_path = artifact_root_dir or ensure_output_dir(workspace)
-            output_path.mkdir(parents=True, exist_ok=True)
-        output_dir = str(output_path)
-
         log.info(
             "session/new",
             session_id=session_id,
             message=(
                 f"Creating session, workspace={workspace}, session_mode={session_mode}, "
-                f"artifact_mode={artifact_mode}, deep_think={deep_think}, "
+                f"deep_think={deep_think}, "
                 f"execution_profile={execution_profile}, "
                 f"force_plan_start={force_plan_start}, "
                 f"require_plan_approval={require_plan_approval}, "
@@ -1615,7 +1596,6 @@ class BoxACPAgent:
                 f"context_window={session_context_window}, "
                 f"max_output_tokens={session_max_output_tokens}, "
                 f"context_token_limit={session_token_limit}, "
-                f"artifact_root={output_dir}, "
                 f"expert={expert_context.to_metadata() if expert_context else None}"
             ),
         )
@@ -1779,12 +1759,13 @@ class BoxACPAgent:
             env_context=env_context,
             skill_runtime_context=skill_runtime_context,
             expert_context=expert_context,
-            artifact_mode=artifact_mode,
-            artifact_root=output_path,
             workspace_layout=(
                 meta.get("workspace_layout") or meta.get("workspaceLayout")
                 if isinstance(meta, dict)
                 else None
+            ),
+            enable_general_directory_policy=(
+                not utility and session_mode in {None, "general"}
             ),
             follow_up_suggestions_enabled=follow_up_suggestions_enabled,
         )
@@ -1857,17 +1838,6 @@ class BoxACPAgent:
                 skill_runtime_context=skill_runtime_context,
                 skill_loader=session_skill_loader,
                 capability_state_provider=self._sub_agent_capability_state,
-                use_output_dir=artifact_mode != "project",
-                artifact_root_dir=output_dir,
-                create_artifact_root=artifact_mode != "project",
-                skill_scratch_root_dir=(
-                    workspace
-                    / ".box-agent"
-                    / "scratch"
-                    / session_id
-                    if artifact_mode == "project"
-                    else None
-                ),
                 env_context=env_context,
                 process_owner_id=session_id,
                 bypass_dangerous_command_approval=permission_mode == "full_access",
@@ -1950,10 +1920,9 @@ class BoxACPAgent:
             utility=utility,
             session_llm=session_llm,
             summary_llm=summary_llm,
-            output_dir=output_dir, session_mode=session_mode,
+            session_mode=session_mode,
             skill_scratch_dir=skill_scratch_dir,
             llm_binding=llm_binding,
-            artifact_mode=artifact_mode,
             permission_engine=perm_engine, grant_store=grant_store,
             memory_block=memory_block,
             thinking_enabled=deep_think,
@@ -2055,7 +2024,6 @@ class BoxACPAgent:
             data={
                 "workspace": str(workspace),
                 "session_mode": session_mode,
-                "artifact_mode": artifact_mode,
                 "execution_profile": execution_profile,
                 "title": upstream_title,
                 "utility": utility,
@@ -2111,8 +2079,6 @@ class BoxACPAgent:
             response_meta["skills"] = skills
         if expert_context is not None:
             response_meta["expert_context"] = expert_context.to_metadata()
-        if artifact_mode == "project":
-            response_meta["artifact_mode"] = artifact_mode
         if agent.goal is not None:
             response_meta["goal"] = _goal_payload(agent)
         if response_meta:
@@ -2201,9 +2167,8 @@ class BoxACPAgent:
         env_context: EnvContext | None = None,
         skill_runtime_context: SkillRuntimeContext | None = None,
         expert_context: ExpertSessionContext | None = None,
-        artifact_mode: str = "output",
-        artifact_root: Path | None = None,
         workspace_layout: Any = None,
+        enable_general_directory_policy: bool = False,
         follow_up_suggestions_enabled: bool = False,
     ) -> str:
         """Build system prompt with conditional mode-specific injection."""
@@ -2212,20 +2177,15 @@ class BoxACPAgent:
             "code_agent": "code_prompt_path",
         }
 
-        use_output_dir = artifact_mode != "project"
         base_prompt = compose_prompt_segments(
             self._system_prompt,
             replacements={
-                "{SANDBOX_INFO}": build_sandbox_info_prompt(
-                    use_output_dir=use_output_dir
-                ),
-                "{FILE_DELIVERY_INFO}": build_file_delivery_prompt(
-                    use_output_dir=use_output_dir
-                ),
+                "{SANDBOX_INFO}": build_sandbox_info_prompt(),
+                "{FILE_DELIVERY_INFO}": build_file_delivery_prompt(),
             },
             segments=(
                 PROJECT_WORKSPACE_MODE_PROMPT
-                if artifact_mode == "project"
+                if session_mode == "code_agent"
                 else None,
             ),
         )
@@ -2236,11 +2196,15 @@ class BoxACPAgent:
             )
             layout_prompt = _workspace_layout_prompt(
                 workspace=workspace,
-                artifact_root=artifact_root or (workspace / "output").resolve(),
                 layout=workspace_layout,
-                artifact_mode=artifact_mode,
             )
             base_prompt = append_prompt_segment(base_prompt, layout_prompt)
+
+        if enable_general_directory_policy:
+            base_prompt = append_prompt_segment(
+                base_prompt,
+                GENERAL_DIRECTORY_ORGANIZATION_PROMPT,
+            )
 
         if session_mode == "code_agent" and workspace is not None:
             base_prompt = append_prompt_segment(
@@ -2593,7 +2557,6 @@ class BoxACPAgent:
             begin_task(
                 state.agent.workspace_dir,
                 task_context,
-                artifact_root_dir=state.output_dir,
             )
         except Exception as exc:
             state.task_registry_error = str(exc)
@@ -3018,7 +2981,6 @@ class BoxACPAgent:
                 state.agent.workspace_dir,
                 task_context,
                 execution_status=execution_status,
-                artifact_root_dir=state.output_dir,
             )
         except Exception as exc:
             state.task_registry_error = str(exc)
@@ -3991,7 +3953,6 @@ class BoxACPAgent:
         artifact_observer = ArtifactObserver(
             workspace_dir=state.agent.workspace_dir,
             task_context=task_context,
-            artifact_root_dir=state.output_dir,
             register_revision=register_artifact_revision,
         )
         usage_tool_call_id = f"turn-usage-{uuid4().hex[:8]}"
@@ -4374,8 +4335,7 @@ class BoxACPAgent:
                 tool_limits=run_handle.config.tool_limits,
                 execution_profile=state.execution_profile,
             ),
-            artifact_detection_enabled=state.output_dir is not None,
-            artifact_root_dir=state.output_dir,
+            artifact_detection_enabled=True,
             cache_fingerprint_sink=lambda fingerprint: self._log_cache_fingerprint(
                 session_id,
                 fingerprint,
@@ -4602,7 +4562,6 @@ class BoxACPAgent:
                                 result_text,
                                 policy_decision,
                                 session_id=state.upstream_session_id,
-                                output_dir=state.output_dir,
                                 task_id=task_context.task_id,
                                 turn_id=task_context.turn_id,
                             )
@@ -4643,7 +4602,6 @@ class BoxACPAgent:
                                 )
                             artifact_meta = _artifact_envelope(
                                 art,
-                                state.output_dir,
                                 session_id=state.upstream_session_id,
                                 task_id=task_context.task_id,
                                 turn_id=task_context.turn_id,
@@ -4816,7 +4774,6 @@ class BoxACPAgent:
                                         )
                                     progress["artifact"] = _artifact_envelope(
                                         art,
-                                        state.output_dir,
                                         session_id=state.upstream_session_id,
                                         task_id=task_context.task_id,
                                         turn_id=task_context.turn_id,
@@ -5533,8 +5490,8 @@ async def run_acp_server(config: Config | None = None) -> None:
         else:
             system_prompt = "You are a helpful AI assistant."
 
-        # SANDBOX_INFO is injected per session because officev3 can mark an ACP
-        # session as an existing project workspace instead of output-artifact mode.
+        # SANDBOX_INFO is injected per session so every session gets the same
+        # cwd-rooted file and sandbox contract.
 
         # NOTE: actual skill list is injected per-turn via SkillSelector
         # (keyword-filtered against the cumulative user query). Here we keep a

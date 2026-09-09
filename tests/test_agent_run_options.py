@@ -138,11 +138,13 @@ async def test_agent_run_events_forwards_host_run_options(
         "memory_extractor",
         "inject_queue",
         "plan_approval",
-        "artifact_root_dir",
         "cache_fingerprint_context",
         "cache_fingerprint_sink",
     }
     for option_field in fields(AgentRunOptions):
+        if option_field.name == "artifact_root_dir":
+            assert option_field.name not in captured
+            continue
         actual = captured[option_field.name]
         expected = getattr(options, option_field.name)
         if option_field.name in identity_fields:
