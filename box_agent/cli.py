@@ -328,6 +328,7 @@ def _config_summary(config: Config, config_path: Path, show_secrets: bool = Fals
             "context_window": config.llm.context_window,
             "max_output_tokens": config.llm.max_output_tokens,
             "timeout": config.llm.timeout,
+            "reasoning_effort_when_disabled": config.llm.reasoning_effort_when_disabled,
             "retry": {
                 "enabled": config.llm.retry.enabled,
                 "max_retries": config.llm.retry.max_retries,
@@ -345,6 +346,7 @@ def _config_summary(config: Config, config_path: Path, show_secrets: bool = Fals
             "auth_file": config.lite_llm.auth_file,
             "max_output_tokens": config.lite_llm.max_output_tokens,
             "timeout": config.lite_llm.timeout,
+            "reasoning_effort_when_disabled": config.lite_llm.reasoning_effort_when_disabled,
         },
         "image_generation": {
             "configured": bool(config.image_generation.endpoint),
@@ -1469,6 +1471,7 @@ async def _doctor_api_status(config: Config | None) -> dict[str, Any]:
             max_output_tokens=config.llm.max_output_tokens,
             auth_file=config.llm.auth_file,
             timeout=config.llm.timeout,
+            reasoning_effort_when_disabled=config.llm.reasoning_effort_when_disabled,
         )
         response = await _probe_llm_api(client)
         if response and response.content:
@@ -1881,6 +1884,7 @@ async def run_agent(
         max_output_tokens=config.llm.max_output_tokens,
         auth_file=config.llm.auth_file,
         timeout=config.llm.timeout,
+        reasoning_effort_when_disabled=config.llm.reasoning_effort_when_disabled,
     )
 
     # Set retry callback
@@ -1904,6 +1908,7 @@ async def run_agent(
                 max_output_tokens=config.llm.max_output_tokens,
                 auth_file=config.llm.auth_file,
                 timeout=config.llm.timeout,
+                reasoning_effort_when_disabled=config.llm.reasoning_effort_when_disabled,
             )
             await _probe_llm_api(_verify_client)
             print(f"{Colors.GREEN}OK{Colors.RESET}")
@@ -1942,6 +1947,7 @@ async def run_agent(
                             max_output_tokens=config.llm.max_output_tokens,
                             auth_file=config.llm.auth_file,
                             timeout=config.llm.timeout,
+                            reasoning_effort_when_disabled=config.llm.reasoning_effort_when_disabled,
                         )
                         if config.llm.retry.enabled:
                             llm_client.retry_callback = on_retry
@@ -1956,6 +1962,7 @@ async def run_agent(
                             max_output_tokens=config.llm.max_output_tokens,
                             auth_file=config.llm.auth_file,
                             timeout=config.llm.timeout,
+                            reasoning_effort_when_disabled=config.llm.reasoning_effort_when_disabled,
                         )
                         await _probe_llm_api(_verify_client2)
                         print(f"{Colors.GREEN}OK{Colors.RESET}")

@@ -79,6 +79,9 @@ def load_model_profile_revision(
     profile_id = _required_text(profile.get("profileId"), field="profileId")
     if _required_text(profile.get("profileRevision"), field="profileRevision") != revision:
         raise ModelProfileUnavailable("model profile revision identity is inconsistent")
+    disabled_effort = profile.get("reasoningEffortWhenDisabled")
+    if disabled_effort not in (None, "none", "low"):
+        raise ModelProfileUnavailable("model profile reasoningEffortWhenDisabled is invalid")
 
     return {
         "profileId": profile_id,
@@ -95,6 +98,7 @@ def load_model_profile_revision(
             profile.get("maxTokens"), field="maxTokens", default=63_999
         ),
         "timeout": float(profile.get("timeout") or 1200.0),
+        **({"reasoningEffortWhenDisabled": disabled_effort} if disabled_effort is not None else {}),
     }
 
 
@@ -123,6 +127,11 @@ def client_for_model_profile(
         max_output_tokens=max_output_tokens,
         auth_file=profile["authFile"],
         timeout=profile["timeout"],
+        **(
+            {"reasoning_effort_when_disabled": profile["reasoningEffortWhenDisabled"]}
+            if profile.get("reasoningEffortWhenDisabled") is not None
+            else {}
+        ),
     )
 
 

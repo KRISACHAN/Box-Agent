@@ -39,6 +39,7 @@ def build_llm_client(
     max_output_tokens: int,
     auth_file: str,
     timeout: float,
+    reasoning_effort_when_disabled: str | None = None,
     client_factory: LLMClientFactory = LLMClient,
     retry_callback: RetryCallback | None = None,
 ) -> LLMClient:
@@ -58,6 +59,11 @@ def build_llm_client(
         max_output_tokens=max_output_tokens,
         auth_file=auth_file,
         timeout=timeout,
+        **(
+            {"reasoning_effort_when_disabled": reasoning_effort_when_disabled}
+            if reasoning_effort_when_disabled is not None
+            else {}
+        ),
     )
     if retry_callback is not None:
         client.retry_callback = retry_callback
