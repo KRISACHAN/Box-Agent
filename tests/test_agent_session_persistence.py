@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -424,7 +425,8 @@ async def test_state_persistence_failure_aborts_before_next_provider_call(
     log.close()
 
 
-def test_active_skill_metadata_restores_only_with_matching_content(tmp_path):
+@pytest.mark.parametrize("current_prompt", ["trusted skill prompt", "updated skill prompt"])
+def test_active_skill_restores_current_content_after_upgrade(tmp_path, current_prompt):
     root = tmp_path / "sessions"
     log = SessionLog.create(root, session_id="skill-restore", cwd=tmp_path)
     agent = Agent(
@@ -457,16 +459,22 @@ def test_active_skill_metadata_restores_only_with_matching_content(tmp_path):
         [
             (
                 "review",
-                "trusted skill prompt",
+                current_prompt,
                 persisted[0]["sha256"],
                 persisted[0]["loadOrder"],
             )
         ]
     )
 
-    assert "trusted skill prompt" in restored.system_prompt
-    with pytest.raises(ValueError, match="content hash changed"):
-        restored.restore_active_skill_instructions(
-            [("review", "changed", persisted[0]["sha256"], 1)]
-        )
+    assert current_prompt in restored.system_prompt
+    before = restored_log.path.read_bytes()
+    restored.activate_skill_instructions("review", current_prompt)
+    assert restored_log.path.read_bytes() == before
+
+    restored.activate_skill_instructions("another-skill", "another prompt")
+    assert restored_log.replay().skills[0] == {
+        "name": "review",
+        "sha256": sha256(current_prompt.encode("utf-8")).hexdigest(),
+        "loadOrder": persisted[0]["loadOrder"],
+    }
     restored_log.close()

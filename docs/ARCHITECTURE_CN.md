@@ -150,6 +150,9 @@ Plugin 配置或 `WorkflowPolicy`。本架构也不表示已完成动态插件�
 `SessionLog` 是 Agent 会话持久化状态的唯一事实源。它记录并恢复消息、工具
 调用与结果、Goal、Plan、Todo、活动 Skill、压缩记录和轮次边界等通用事实。
 
+恢复活动 Skill 时使用当前 SkillLoader 提供的内容，历史内容哈希不同不会阻断
+会话恢复。内存中的哈希同步为当前内容哈希，恢复过程不改写历史日志。
+
 一个 Session 在整个生命周期内只拥有一个规范化 cwd。用不同 workspace 打开
 同一 Session 时，会在修复或修改日志之前失败。语法等价路径可以接受；
 symlink alias 被视为不同的 workspace identity。

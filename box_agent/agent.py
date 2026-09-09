@@ -715,20 +715,18 @@ class Agent:
         self,
         skills: list[tuple[str, str, str, int]],
     ) -> None:
-        """Restore loader-verified active Skill prompts without writing new events."""
+        """Restore current Skill prompts without enforcing historical content hashes."""
 
         restored_prompts: dict[str, str] = {}
         restored_hashes: dict[str, str] = {}
         restored_order: dict[str, int] = {}
-        for name, prompt, prompt_hash, load_order in sorted(
+        for name, prompt, _prompt_hash, load_order in sorted(
             skills,
             key=lambda item: item[3],
         ):
             actual_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-            if actual_hash != prompt_hash:
-                raise ValueError(f"active Skill {name!r} content hash changed")
             restored_prompts[name] = prompt
-            restored_hashes[name] = prompt_hash
+            restored_hashes[name] = actual_hash
             restored_order[name] = load_order
         self._active_skill_prompts = restored_prompts
         self._active_skill_hashes = restored_hashes

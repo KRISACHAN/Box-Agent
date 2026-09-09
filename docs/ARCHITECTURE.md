@@ -165,6 +165,10 @@ not implied by this architecture.
 records and replays generic facts: messages, tool calls and results, goals,
 plans, todos, active Skills, compaction records, and turn boundaries.
 
+Active Skills are restored from the current SkillLoader content. A historical
+content hash mismatch does not block recovery. In-memory hashes reflect the
+current content, and restoration does not rewrite historical logs.
+
 A Session owns one normalized cwd for its entire lifetime. Opening the same
 Session with another workspace fails before the log is repaired or mutated.
 Syntactically equivalent paths are accepted; a symlink alias is a distinct
