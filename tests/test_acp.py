@@ -3996,6 +3996,47 @@ async def test_acp_skill_filter_ignores_host_ui_language_instruction(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_memory_match_ignores_host_ui_language_instruction(tmp_path, monkeypatch):
+    from box_agent.memory import MemoryManager
+
+    memory = MemoryManager(memory_dir=str(tmp_path / "memory"))
+    memory.write_context("- Chinese language: user-visible progress updates.")
+    queries = []
+    auto_match = memory.auto_match_context
+
+    def capture_query(query):
+        queries.append(query)
+        return auto_match(query)
+
+    monkeypatch.setattr(memory, "auto_match_context", capture_query)
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(),
+    )
+    conn = DummyConn()
+    llm = CaptureMessagesLLM()
+    agent = BoxACPAgent(conn, config, llm, [], "system", memory_manager=memory)
+    session = await agent.newSession(
+        SimpleNamespace(cwd=None, field_meta={"session_mode": "general"})
+    )
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "用户问题：把这份对比做成ppt"}],
+            field_meta={"ui_language": "zh"},
+        )
+    )
+
+    assert queries == ["把这份对比做成ppt"]
+    user_messages = [content for role, content in llm.calls[0] if role == "user"]
+    assert any("[Host UI language:" in content for content in user_messages)
+    assert not any("Possibly relevant memory" in content for content in user_messages)
+    assert "memory-auto-match" not in str(conn.updates)
+
+
+@pytest.mark.asyncio
 async def test_acp_preloads_matched_pptx_skill_for_deliverable(tmp_path):
     skills_dir = tmp_path / "skills"
     pptx_dir = skills_dir / "pptx"

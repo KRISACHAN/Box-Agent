@@ -677,6 +677,51 @@ def test_auto_match_context_keeps_substantive_memory_about_same_topic(mgr: Memor
 # ── Containment length guard ─────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    ("query", "memory", "matches"),
+    [
+        ("user", "/Users/malin1/DEV/Box-Agent", False),
+        ("use", "/Users/malin1/DEV/Box-Agent", False),
+        ("and", "Understand-Anything", False),
+        ("notebook", "notebooks", False),
+        ("english guide", "xenglish guidebook", False),
+        ("cache", "cache_store", False),
+        ("agent", "box-agent", False),
+        ("user", "用户User配置", True),
+        ("box-agent", "/DEV/Box-Agent/README.md", True),
+        ("cache_store", "Use cache_store.json", True),
+        ("english guide", "Read the English guide.", True),
+        ("科技公司入职培训", "此前的科技公司入职培训材料", True),
+    ],
+)
+def test_memory_scoring_matches_whole_english_tokens(query, memory, matches):
+    from box_agent.memory import (
+        _extract_match_terms,
+        _extract_search_terms,
+        _score_memory_match,
+        _score_memory_search,
+    )
+
+    query = query.lower()
+    memory = memory.lower()
+    auto_score = _score_memory_match(query, _extract_match_terms(query), memory)
+    search_score, _ = _score_memory_search(query, _extract_search_terms(query), memory)
+
+    assert (auto_score > 0) is matches
+    assert (search_score > 0) is matches
+
+
+def test_auto_match_context_does_not_match_language_words_inside_graph_paths(mgr):
+    mgr.write_context(
+        '- Box-Agent 图谱优先使用官方预构建 Viewer 启动：`npx --yes '
+        '"https://github.com/Egonex-AI/Understand-Anything/releases/latest/'
+        'download/understand-anything-viewer.tgz" "/Users/malin1/DEV/Box-Agent"`；'
+        '源码 Vite 启动仅作回退。'
+    )
+
+    assert mgr.auto_match_context("user use and") == []
+
+
 def test_score_memory_match_short_containment_not_overweighted(mgr: MemoryManager):
     """Short query strings must not score 10.0 just because they appear
     inside a longer memory line."""

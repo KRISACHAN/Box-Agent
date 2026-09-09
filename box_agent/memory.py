@@ -2058,22 +2058,37 @@ def _is_short_cjk_entity_term(term: str) -> bool:
     )
 
 
+def _memory_match_count(term: str, memory: str) -> int:
+    """Match Chinese substrings, but require complete ASCII tokens at boundaries."""
+    if not term or term not in memory:
+        return 0
+    # Match the ASCII token alphabet used by _extract_match_terms, including
+    # compound names such as box-agent and cache_store. CJK remains unsegmented.
+    prefix = r"(?<![a-z0-9_-])" if re.match(r"[a-z0-9_-]", term[0]) else ""
+    suffix = r"(?![a-z0-9_-])" if re.match(r"[a-z0-9_-]", term[-1]) else ""
+    if not prefix and not suffix:
+        return memory.count(term)
+    return sum(1 for _ in re.finditer(prefix + re.escape(term) + suffix, memory))
+
+
 def _score_memory_search(query_lower: str, query_terms: list[str], memory_lower: str) -> tuple[float, int]:
     """Score explicit memory_search matches.
 
-    Exact substring matches stay dominant for short deliberate queries.  Longer
+    Exact matches stay dominant for short deliberate queries. Longer
     natural-language queries can still recall entries through several stable
     overlapping terms, but a single weak term such as "ppt" is not enough.
     """
     normalized_query = query_lower.strip()
-    occurrences = memory_lower.count(normalized_query) if normalized_query else 0
+    occurrences = _memory_match_count(normalized_query, memory_lower)
     if occurrences:
         return float(occurrences * 100), occurrences
 
     if not query_terms:
         return 0.0, 0
 
-    matched = _dedupe_contained_terms([term for term in query_terms if term in memory_lower])
+    matched = _dedupe_contained_terms([
+        term for term in query_terms if _memory_match_count(term, memory_lower)
+    ])
     if not matched:
         return 0.0, 0
 
@@ -2188,10 +2203,10 @@ def _score_memory_match(query_lower: str, query_terms: list[str], memory_lower: 
     # Full containment is a strong signal but only when the query is
     # substantial.  Short queries like "下载" would otherwise score 10 against
     # any memory line that mentions the word.
-    if query_lower and len(query_lower.strip()) >= 8 and query_lower in memory_lower:
+    if len(query_lower.strip()) >= 8 and _memory_match_count(query_lower, memory_lower):
         return 10.0
 
-    matched = [term for term in query_terms if term in memory_lower]
+    matched = [term for term in query_terms if _memory_match_count(term, memory_lower)]
     if not matched:
         return 0.0
 
