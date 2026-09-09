@@ -11,6 +11,7 @@ import box_agent.cli as cli
 import box_agent.composition as composition_module
 import box_agent.runtime as runtime_module
 from box_agent.agent import Agent
+from box_agent.agent_session import AgentSession
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
 from box_agent.events import DoneEvent, StopReason
 from box_agent.kernel.ports import KernelServices
@@ -30,7 +31,7 @@ def _make_executable(path: Path) -> None:
     path.chmod(0o755)
 
 
-def test_cli_uses_public_agent_api_without_kernel_or_plugin_imports() -> None:
+def test_cli_uses_session_event_api_without_kernel_or_plugin_imports() -> None:
     source_path = Path(cli.__file__)
     source = source_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(source_path))
@@ -39,16 +40,25 @@ def test_cli_uses_public_agent_api_without_kernel_or_plugin_imports() -> None:
         inspected_module="box_agent.cli",
     ) == []
     assert cli.Agent is Agent
-    agent_run_calls = [
+    assert cli.AgentSession is AgentSession
+    session_run_calls = [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "agent"
-        and node.func.attr == "run"
+        and node.func.value.id == "session"
+        and node.func.attr == "run_events"
     ]
-    assert agent_run_calls
+    assert len(session_run_calls) == 1
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "agent"
+        and node.func.attr in {"run", "run_events"}
+        for node in ast.walk(tree)
+    )
 
 
 def test_cli_public_path_reaches_plugin_composition_and_agent_loop_kernel(
@@ -442,7 +452,7 @@ def test_interactive_cli_preloads_explicit_skill_without_completion_gate(
                 "system_prompt": self.messages[0].content,
             }
         )
-        return "done"
+        yield DoneEvent(stop_reason=StopReason.END_TURN, final_content="done")
 
     monkeypatch.setattr(
         cli.Config,
@@ -461,7 +471,7 @@ def test_interactive_cli_preloads_explicit_skill_without_completion_gate(
     monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
     monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "PromptSession", _ExplicitSkillPromptSession)
-    monkeypatch.setattr(cli.Agent, "run", fake_run)
+    monkeypatch.setattr(cli.Agent, "run_events", fake_run)
     _ExplicitSkillPromptSession.prompt_count = 0
 
     exit_code = asyncio.run(
@@ -825,15 +835,17 @@ def test_cli_json_reports_waiting_for_user_without_completion(
         return [], None, None, None
 
     async def fake_run(self, *args, **kwargs):
-        self.last_stop_reason = "waiting_for_user"
-        return "Waiting for user input."
+        yield DoneEvent(
+            stop_reason=StopReason.WAITING_FOR_USER,
+            final_content="Waiting for user input.",
+        )
 
     monkeypatch.setattr(cli.Config, "get_default_config_path", staticmethod(lambda: config_path))
     monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
     monkeypatch.setattr(cli, "LLMClient", _CaptureStreamLLM)
     monkeypatch.setattr(cli, "initialize_base_tools", fake_initialize_base_tools)
     monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
-    monkeypatch.setattr(cli.Agent, "run", fake_run)
+    monkeypatch.setattr(cli.Agent, "run_events", fake_run)
 
     exit_code = asyncio.run(
         cli.run_agent(
@@ -908,7 +920,10 @@ def _exercise_cli_source_binding(
         ).decode("utf-8"))
         if on_run:
             await on_run(bash, workspace)
-        return "assistant interpretation is not a user source"
+        yield DoneEvent(
+            stop_reason=StopReason.END_TURN,
+            final_content="assistant interpretation is not a user source",
+        )
 
     monkeypatch.setattr(cli.Config, "get_default_config_path", staticmethod(lambda: config_path))
     monkeypatch.setattr(cli.Config, "from_yaml", staticmethod(lambda _path: config))
@@ -917,7 +932,7 @@ def _exercise_cli_source_binding(
     monkeypatch.setattr(cli, "initialize_base_tools", base_tools)
     monkeypatch.setattr(cli, "add_workspace_tools", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "PromptSession", InputSession)
-    monkeypatch.setattr(cli.Agent, "run", run)
+    monkeypatch.setattr(cli.Agent, "run_events", run)
     if autopilot:
         monkeypatch.setattr(
             cli, "should_continue_goal_autopilot",

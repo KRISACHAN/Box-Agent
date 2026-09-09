@@ -1,6 +1,6 @@
 """ACP (Agent Client Protocol) bridge for Box-Agent.
 
-Consumes the public ``Agent.run_events`` facade instead of maintaining its own
+Consumes the shared ``AgentSession.run_events`` facade instead of maintaining its own
 agent loop or importing the core implementation.  This gives ACP access to
 summarization, logging, and safety — features the old ``_run_turn``
 reimplementation was missing.
@@ -32,6 +32,7 @@ import logging
 import platform
 import signal
 import sys
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -61,7 +62,7 @@ from pydantic import field_validator
 from acp.schema import AgentCapabilities, Implementation, McpCapabilities
 
 from box_agent import __version__
-from box_agent.agent_service import AgentService
+from box_agent.agent_session import AgentSession
 from box_agent.agent_runtime import (
     build_agent,
     build_llm_client,
@@ -992,68 +993,20 @@ def _tool_result_raw_output(
 
 
 @dataclass
-class SessionState:
-    agent: Agent
+class SessionState(AgentSession):
+    """ACP metadata layered over the independent Agent session state."""
+
     trace_writer: SessionTraceWriter | None = None
-    session_llm: SessionBoundLLM | None = None
-    summary_llm: SessionBoundLLM | None = None
-    cancelled: bool = False
-    output_dir: str | None = None  # ``{workspace}/output/`` — the canonical artifact root
-    skill_scratch_dir: SkillScratchDirectory | None = None
-    artifact_mode: str = "output"
-    session_mode: str | None = None  # e.g. "data_analysis" for /analysis pages
-    llm_binding: dict[str, Any] | None = None  # host-owned model binding for this ACP session
-    permission_engine: PermissionEngine | None = None
-    grant_store: GrantStore | None = None  # in-band permission grants
-    memory_extractor: Any | None = None  # per-session instance to avoid cross-session state leaks
-    inject_queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # in-stream message injection
-    turn_active: bool = False  # True while _run_turn is executing; guards inject_queue
-    seen_injection_ids: set[str] = field(default_factory=set)  # per-turn dedup of inject IDs (idempotent retries)
-    memory_block: str | None = None  # cached memory recall, re-applied when mode switches
-    thinking_enabled: bool = False  # extended thinking toggle from _meta.deep_think
-    execution_profile: ExecutionProfile = "standard"
-    explicitly_allowed_skill_names: set[str] = field(default_factory=set)
-    env_context: "EnvContext | None" = None  # cached env_context, re-applied when mode switches
-    skill_runtime_context: "SkillRuntimeContext | None" = None
-    skill_loader: Any | None = None  # session-local loader for expert-only recommended skills
-    skill_selector: Any | None = None  # SkillSelector — filters skill metadata per turn
+    session_mode: str | None = None
+    llm_binding: dict[str, Any] | None = None
+    seen_injection_ids: set[str] = field(default_factory=set)
     expert_context: ExpertSessionContext | None = None
-    upstream_session_id: str = ""  # caller-owned session id from _meta.session_id
+    upstream_session_id: str = ""
     current_task_id: str = ""
     task_registry_error: str = ""
     upstream_title: str = _DEFAULT_AGENT_TITLE
-    force_plan_start: bool = False  # host-controlled deterministic plan skeleton toggle
-    require_plan_approval: bool = False  # host requires approval after plan_write before execution
-    pending_plan_approval: dict[str, Any] | None = None
-    preloaded_skill_names: list[str] = field(default_factory=list)
-    preloaded_skill_hashes: dict[str, str] = field(default_factory=dict)
-    preloaded_skill_attributions: dict[str, SkillPreloadAttribution] = field(
-        default_factory=dict
-    )
     follow_up_suggestions_enabled: bool = False
     follow_up_suggestions_task: asyncio.Task[None] | None = None
-    waiting_for_user_input: bool = False
-    turn_counter: int = 0
-    continuation_applied: bool = False
-    current_turn_id: str = ""
-    source_text: str = ""  # accumulated real user requests for source-bound artifact checks
-    last_error: str | None = None
-    last_error_code: int | str | None = None
-    last_error_category: str | None = None
-    last_error_details: dict[str, Any] | None = None
-    mcp_fallback_tools: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        # Transitional facade for the shared Agent Runtime state.  Keep the
-        # handle out of the dataclass field list so ``asdict``/equality and
-        # existing ACP state snapshots retain their historical shape.
-        self._run_handle = AgentRunHandle(self)
-
-    @property
-    def run_handle(self) -> AgentRunHandle:
-        """Return the shared-state facade without adding a new state owner."""
-
-        return self._run_handle
 
 
 _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 4_096
@@ -1134,19 +1087,29 @@ class BoxACPAgent:
             max_output_tokens=binding.get("maxTokens"),
         )
 
+    def _config_for_session(self, state: SessionState) -> Config:
+        """Bind adapter defaults once for legacy states wrapping an Agent."""
+
+        if state.config is None:
+            state.config = self._config
+        return state.config
+
     def _context_capabilities_for_binding(
         self,
         binding: dict[str, Any] | None,
+        *,
+        config: Config | None = None,
     ) -> tuple[int, int]:
         """Resolve active-model capabilities with config fallback."""
 
+        config = config if config is not None else self._config
         context_window = (binding or {}).get(
             "contextWindow",
-            self._config.llm.context_window,
+            config.llm.context_window,
         )
         max_output_tokens = (binding or {}).get(
             "maxTokens",
-            self._config.llm.max_output_tokens,
+            config.llm.max_output_tokens,
         )
         return context_window, max_output_tokens
 
@@ -1975,35 +1938,42 @@ class BoxACPAgent:
 
         # Resolve the module-level factory at session creation time, matching
         # the historical direct ``Agent(...)`` call and its test hook.
-        agent = AgentService(agent_factory=Agent).create_agent(
+        state = SessionState.create(
+            config=self._config,
+            agent_factory=Agent,
             llm_client=session_llm,
             system_prompt=system_prompt,
             tools=tools,
-            max_steps=self._config.agent.max_steps,
-            tool_limits=self._config.tool_limits,
             workspace_dir=str(workspace),
             token_limit=session_token_limit,
-            thinking_enabled=deep_think,
-            max_parallel_tools=self._config.agent.max_parallel_tools,
-            parallel_tool_timeout_seconds=self._config.agent.parallel_tool_timeout_seconds,
-            provider_stale_seconds=self._config.agent.provider_stale_seconds,
-            memory_promotion_enabled=self._config.agent.memory_promotion_proposal_enabled,
-            memory_promotion_hit_threshold=self._config.agent.memory_promotion_hit_threshold,
-            memory_promotion_cooldown_days=self._config.agent.memory_promotion_cooldown_days,
-            truncation_continuation_enabled=self._config.agent.retry_on_suspected_truncation,
-            max_truncation_continuations=self._config.agent.max_truncation_continuations,
-            max_truncated_tool_call_retries=self._config.agent.max_truncated_tool_call_retries,
-            truncated_tool_call_boost_cap=self._config.agent.truncated_tool_call_boost_cap,
-            context_resource_dedup_enabled=(
-                self._config.agent.context_resource_dedup_enabled
-            ),
-            deferred_mcp_loading_enabled=(
-                not utility
-                and self._config.tools.enable_mcp
-                and self._config.tools.mcp.deferred_loading_enabled
-            ),
             session_log=session_log,
+            utility=utility,
+            session_llm=session_llm,
+            summary_llm=summary_llm,
+            output_dir=output_dir, session_mode=session_mode,
+            skill_scratch_dir=skill_scratch_dir,
+            llm_binding=llm_binding,
+            artifact_mode=artifact_mode,
+            permission_engine=perm_engine, grant_store=grant_store,
+            memory_block=memory_block,
+            thinking_enabled=deep_think,
+            execution_profile=execution_profile,
+            explicitly_allowed_skill_names=explicitly_allowed_skill_names,
+            env_context=env_context,
+            skill_runtime_context=skill_runtime_context,
+            skill_loader=session_skill_loader,
+            expert_context=expert_context,
+            upstream_session_id=upstream_session_id,
+            current_task_id=initial_task_id,
+            upstream_title=upstream_title,
+            force_plan_start=force_plan_start,
+            require_plan_approval=require_plan_approval,
+            preloaded_skill_hashes=preloaded_skill_hashes,
+            follow_up_suggestions_enabled=follow_up_suggestions_enabled,
+            continuation_applied=session_log_restored,
+            mcp_fallback_tools=dict(self._base_mcp_fallback_tools),
         )
+        agent = state.agent
 
         if skillhub_search_tool is not None:
             skillhub_search_tool.set_snapshot_provider(
@@ -2062,14 +2032,14 @@ class BoxACPAgent:
 
         # Per-session MemoryExtractor to avoid cross-session state leaks
         session_extractor = None
-        if self._memory and self._config.agent.enable_memory_extraction and not utility:
+        if self._memory and state.config.agent.enable_memory_extraction and not utility:
             from box_agent.memory import MemoryExtractor
             session_extractor = build_memory_extractor(
                 llm=session_llm,
                 memory_manager=self._memory,
                 session_id=upstream_session_id,
-                cooldown=self._config.agent.memory_extraction_cooldown,
-                step_interval=self._config.agent.memory_extraction_step_interval,
+                cooldown=state.config.agent.memory_extraction_cooldown,
+                step_interval=state.config.agent.memory_extraction_step_interval,
                 extractor_factory=MemoryExtractor,
             )
 
@@ -2077,34 +2047,9 @@ class BoxACPAgent:
             session_id=upstream_session_id or session_id,
             acp_session_id=session_id,
         )
-        self._sessions[session_id] = SessionState(
-            agent=agent, session_llm=session_llm,
-            summary_llm=summary_llm,
-            trace_writer=trace_writer,
-            output_dir=output_dir, session_mode=session_mode,
-            skill_scratch_dir=skill_scratch_dir,
-            llm_binding=llm_binding,
-            artifact_mode=artifact_mode,
-            permission_engine=perm_engine, grant_store=grant_store,
-            memory_extractor=session_extractor,
-            memory_block=memory_block,
-            thinking_enabled=deep_think,
-            execution_profile=execution_profile,
-            explicitly_allowed_skill_names=explicitly_allowed_skill_names,
-            env_context=env_context,
-            skill_runtime_context=skill_runtime_context,
-            skill_loader=session_skill_loader,
-            expert_context=expert_context,
-            upstream_session_id=upstream_session_id,
-            current_task_id=initial_task_id,
-            upstream_title=upstream_title,
-            force_plan_start=force_plan_start,
-            require_plan_approval=require_plan_approval,
-            preloaded_skill_hashes=preloaded_skill_hashes,
-            follow_up_suggestions_enabled=follow_up_suggestions_enabled,
-            continuation_applied=session_log_restored,
-            mcp_fallback_tools=dict(self._base_mcp_fallback_tools),
-        )
+        state.memory_extractor = session_extractor
+        state.trace_writer = trace_writer
+        self._sessions[session_id] = state
         trace_writer.write(
             "session.start",
             data={
@@ -2515,6 +2460,8 @@ class BoxACPAgent:
                 log.error("session/prompt", session_id=session_id, message="Failed to auto-create session")
                 return PromptResponse(stopReason="refusal")
 
+        self._config_for_session(state)
+
         # Prompt-scoped grants cover both deterministic attachment processing
         # and the subsequent agent loop. Clear them once at the actual prompt
         # boundary, not again between goal-autopilot continuations.
@@ -2562,7 +2509,9 @@ class BoxACPAgent:
                 raise ValueError("session LLM binding is unavailable")
             requested_llm = self._llm_for_binding(requested_llm_binding)
             requested_context_window, requested_max_output_tokens = (
-                self._context_capabilities_for_binding(requested_llm_binding)
+                self._context_capabilities_for_binding(
+                    requested_llm_binding, config=state.config,
+                )
             )
             requested_token_limit = derive_context_token_limit(
                 requested_context_window,
@@ -2906,14 +2855,14 @@ class BoxACPAgent:
         browser_owner = f"{session_id}:{turn_id}"
         browser_owner_token = set_browser_runtime_owner(browser_owner)
         auto_enabled = (
-            self._config.agent.goal_autopilot_enabled
-            and self._config.agent.goal_autopilot_max_turns > 0
+            state.config.agent.goal_autopilot_enabled
+            and state.config.agent.goal_autopilot_max_turns > 0
         )
         autopilot = GoalAutopilotController(
             started_at=prompt_start,
-            max_turns=self._config.agent.goal_autopilot_max_turns,
-            max_seconds=self._config.agent.goal_autopilot_max_seconds,
-            no_progress_limit=self._config.agent.goal_autopilot_no_progress_turns,
+            max_turns=state.config.agent.goal_autopilot_max_turns,
+            max_seconds=state.config.agent.goal_autopilot_max_seconds,
+            no_progress_limit=state.config.agent.goal_autopilot_no_progress_turns,
         )
         try:
             stop_reason = await self._run_turn(
@@ -2944,13 +2893,13 @@ class BoxACPAgent:
                 continuation = goal_autopilot_prompt(
                     state.agent.goal,
                     autopilot.continuations,
-                    self._config.agent.goal_autopilot_max_turns,
+                    state.config.agent.goal_autopilot_max_turns,
                 )
                 log.info(
                     "goal_autopilot/continue",
                     session_id=session_id,
                     continuation=autopilot.continuations,
-                    max_continuations=self._config.agent.goal_autopilot_max_turns,
+                    max_continuations=state.config.agent.goal_autopilot_max_turns,
                 )
                 state.agent.add_user_message(continuation)
                 before_signature = goal_autopilot_progress_signature(state.agent.goal)
@@ -3205,7 +3154,7 @@ class BoxACPAgent:
                     "turn.cancel_requested",
                     turn_id=state.current_turn_id,
                 )
-            state.cancelled = True
+            state.request_cancel()
             pending_suggestions = state.follow_up_suggestions_task
             if pending_suggestions is not None and not pending_suggestions.done():
                 pending_suggestions.cancel()
@@ -3752,16 +3701,20 @@ class BoxACPAgent:
         session_id = params.get("sessionId", "")
         if session_id and session_id not in self._sessions:
             return {"error": "session_not_found"}
+        config = (
+            self._config_for_session(self._sessions[session_id])
+            if session_id else self._config
+        )
         if self._memory is None:
             return {"candidates": []}
         cooldown_days = (
             0
             if bool(params.get("includeCooldown"))
-            else self._config.agent.memory_promotion_cooldown_days
+            else config.agent.memory_promotion_cooldown_days
         )
         entries = await asyncio.to_thread(
             self._memory.list_promotion_candidates,
-            hit_threshold=self._config.agent.memory_promotion_hit_threshold,
+            hit_threshold=config.agent.memory_promotion_hit_threshold,
             cooldown_days=cooldown_days,
         )
         candidates = [
@@ -3980,6 +3933,7 @@ class BoxACPAgent:
         clear_prompt_grants: bool = True,
     ) -> str:
         """Consume the shared execution core and translate events to ACP updates."""
+        self._config_for_session(state)
         if task_context is None:
             fallback_turn_id = turn_id or state.run_handle.current_turn_id or session_id
             task_context = TaskContext(
@@ -4388,15 +4342,11 @@ class BoxACPAgent:
 
         run_options = run_handle.build_run_options(
             llm=llm,
-            summary_llm=state.summary_llm,
-            is_cancelled=lambda: run_handle.cancelled,
             logger=None,  # ACP uses its own logging via the connection
             permission_negotiator=negotiator,
             hooks=self._hooks,
             memory_manager=self._memory,
-            memory_extractor=state.memory_extractor,
             memory_turn_id=turn_id,
-            inject_queue=run_handle.inject_queue,
             session_id=state.upstream_session_id,
             turn_id=turn_id,
             title=state.upstream_title,
@@ -4421,7 +4371,7 @@ class BoxACPAgent:
                         )
                     )
                 ),
-                tool_limits=self._config.tool_limits,
+                tool_limits=run_handle.config.tool_limits,
                 execution_profile=state.execution_profile,
             ),
             artifact_detection_enabled=state.output_dir is not None,
@@ -4432,385 +4382,233 @@ class BoxACPAgent:
             ),
             current_turn_text=plan_start_text,
         )
-        events = agent.run_events(options=run_options)
+        events = state.run_events(options=run_options)
         if observer.trace_writer is not None:
             events = scoped_session_trace(
                 events,
                 writer=observer.trace_writer,
                 turn_id=turn_id,
             )
-        async for event in events:
-            try:
-                match event:
-                    case ThinkingEvent() if event._streaming:
-                        # Stream thinking deltas in real-time
-                        if not event._header and event.content:
-                            log.debug("thinking_stream", session_id=session_id, chars=len(event.content))
-                            await self._send(session_id, update_agent_thought(text_block(event.content)))
+        async with aclosing(events):
+            async for event in events:
+                try:
+                    match event:
+                        case ThinkingEvent() if event._streaming:
+                            # Stream thinking deltas in real-time
+                            if not event._header and event.content:
+                                log.debug("thinking_stream", session_id=session_id, chars=len(event.content))
+                                await self._send(session_id, update_agent_thought(text_block(event.content)))
 
-                    case ThinkingEvent(content=text):
-                        log.debug("thinking", session_id=session_id, content=text)
-                        await self._send(session_id, update_agent_thought(text_block(text)))
+                        case ThinkingEvent(content=text):
+                            log.debug("thinking", session_id=session_id, content=text)
+                            await self._send(session_id, update_agent_thought(text_block(text)))
 
-                    case ContentEvent() if event._streaming:
-                        # Stream content deltas in real-time
-                        if not event._header and event.content:
-                            log.debug(
-                                "content/stream",
-                                session_id=session_id,
-                                chars=len(event.content),
-                                content=event.content,
+                        case ContentEvent() if event._streaming:
+                            # Stream content deltas in real-time
+                            if not event._header and event.content:
+                                log.debug(
+                                    "content/stream",
+                                    session_id=session_id,
+                                    chars=len(event.content),
+                                    content=event.content,
+                                )
+                                await self._send(session_id, update_agent_message(text_block(event.content)))
+
+                        case ContentEvent(content=text):
+                            log.debug("content/final", session_id=session_id, chars=len(text), content=text)
+                            log.debug("content", session_id=session_id, content=text)
+                            await self._send(session_id, update_agent_message(text_block(text)))
+
+                        case ProgressEvent(step=s, content=text):
+                            payload = {
+                                "type": "agent_progress",
+                                "step": s,
+                                "content": text,
+                            }
+                            log.debug("progress", session_id=session_id, step=s, content=text)
+                            await self._send(
+                                session_id,
+                                update_tool_call(f"agent-progress-{s}", raw_output=payload),
                             )
-                            await self._send(session_id, update_agent_message(text_block(event.content)))
 
-                    case ContentEvent(content=text):
-                        log.debug("content/final", session_id=session_id, chars=len(text), content=text)
-                        log.debug("content", session_id=session_id, content=text)
-                        await self._send(session_id, update_agent_message(text_block(text)))
+                        case PlanSnapshotEvent(payload=payload):
+                            log.debug("plan/snapshot", session_id=session_id, payload=payload)
+                            _update_pending_plan_approval_from_raw(state, payload)
+                            plan_call_id = f"plan-snapshot-start-{uuid4().hex[:8]}"
+                            title = str((payload.get("plan") or {}).get("title") or "执行方案")
+                            if title == "正在制定执行方案":
+                                title = {
+                                    "en": "Preparing execution plan",
+                                    "ja": "実行計画を作成中",
+                                }.get(ui_language, title)
+                            await self._send(
+                                session_id,
+                                start_tool_call(
+                                    plan_call_id,
+                                    title,
+                                    kind="execute",
+                                    raw_input={"action": payload.get("action")},
+                                ),
+                            )
+                            await self._send(
+                                session_id,
+                                update_tool_call(
+                                    plan_call_id,
+                                    status="completed",
+                                    content=[tool_content(text_block(title))],
+                                    raw_output=payload,
+                                ),
+                            )
 
-                    case ProgressEvent(step=s, content=text):
-                        payload = {
-                            "type": "agent_progress",
-                            "step": s,
-                            "content": text,
-                        }
-                        log.debug("progress", session_id=session_id, step=s, content=text)
-                        await self._send(
-                            session_id,
-                            update_tool_call(f"agent-progress-{s}", raw_output=payload),
-                        )
-
-                    case PlanSnapshotEvent(payload=payload):
-                        log.debug("plan/snapshot", session_id=session_id, payload=payload)
-                        _update_pending_plan_approval_from_raw(state, payload)
-                        plan_call_id = f"plan-snapshot-start-{uuid4().hex[:8]}"
-                        title = str((payload.get("plan") or {}).get("title") or "执行方案")
-                        if title == "正在制定执行方案":
-                            title = {
-                                "en": "Preparing execution plan",
-                                "ja": "実行計画を作成中",
-                            }.get(ui_language, title)
-                        await self._send(
-                            session_id,
-                            start_tool_call(
-                                plan_call_id,
-                                title,
-                                kind="execute",
-                                raw_input={"action": payload.get("action")},
-                            ),
-                        )
-                        await self._send(
-                            session_id,
-                            update_tool_call(
-                                plan_call_id,
-                                status="completed",
-                                content=[tool_content(text_block(title))],
-                                raw_output=payload,
-                            ),
-                        )
-
-                    case LLMOutputEvent(
-                        step=s,
-                        content=content,
-                        thinking=thinking,
-                        tool_calls=tool_calls,
-                        finish_reason=finish_reason,
-                        usage=usage,
-                        provider_request_id=provider_request_id,
-                    ):
-                        payload = {
-                            "type": "llm_output",
-                            "step": s,
-                            "content": content,
-                            "thinking": thinking,
-                            "tool_calls": tool_calls,
-                            "finish_reason": finish_reason,
-                            "usage": usage,
-                            "provider_request_id": provider_request_id,
-                        }
-                        log.debug(
-                            "llm/output",
-                            session_id=session_id,
+                        case LLMOutputEvent(
                             step=s,
+                            content=content,
+                            thinking=thinking,
+                            tool_calls=tool_calls,
                             finish_reason=finish_reason,
-                            payload=payload,
-                        )
-                        await self._send(
-                            session_id,
-                            update_tool_call(f"llm-output-{s}", raw_output=payload),
-                        )
-                        if _record_token_usage(usage):
-                            await _send_turn_usage()
+                            usage=usage,
+                            provider_request_id=provider_request_id,
+                        ):
+                            payload = {
+                                "type": "llm_output",
+                                "step": s,
+                                "content": content,
+                                "thinking": thinking,
+                                "tool_calls": tool_calls,
+                                "finish_reason": finish_reason,
+                                "usage": usage,
+                                "provider_request_id": provider_request_id,
+                            }
+                            log.debug(
+                                "llm/output",
+                                session_id=session_id,
+                                step=s,
+                                finish_reason=finish_reason,
+                                payload=payload,
+                            )
+                            await self._send(
+                                session_id,
+                                update_tool_call(f"llm-output-{s}", raw_output=payload),
+                            )
+                            if _record_token_usage(usage):
+                                await _send_turn_usage()
 
-                    case LLMActivityEvent(step=s, payload=activity):
-                        payload = {
-                            **activity,
-                            "type": "agent_activity_v1",
-                            "step": s,
-                        }
-                        await self._send(
-                            session_id,
-                            update_tool_call(
-                                f"agent-activity-{s}",
-                                raw_output=payload,
-                            ),
-                        )
+                        case LLMActivityEvent(step=s, payload=activity):
+                            payload = {
+                                **activity,
+                                "type": "agent_activity_v1",
+                                "step": s,
+                            }
+                            await self._send(
+                                session_id,
+                                update_tool_call(
+                                    f"agent-activity-{s}",
+                                    raw_output=payload,
+                                ),
+                            )
 
-                    case ToolCallStartEvent(
-                        tool_call_id=tid,
-                        tool_name=name,
-                        arguments=args,
-                        user_visible=user_visible,
-                        tool_id=tool_id,
-                        server_name=server_name,
-                    ):
-                        log.info(
-                            "tool/start",
-                            session_id=session_id,
+                        case ToolCallStartEvent(
                             tool_call_id=tid,
                             tool_name=name,
                             arguments=args,
                             user_visible=user_visible,
                             tool_id=tool_id,
                             server_name=server_name,
-                        )
-                        if name == "get_skill":
-                            skill_name = _get_skill_name_from_args(args)
-                            if skill_name:
-                                skill_name_by_tool_call_id[tid] = skill_name
-                        tool_usage_current = _record_tool_usage(name, user_visible=user_visible)
-                        if tool_usage_current:
-                            await _send_turn_usage(tool_usage_current)
-                        if not user_visible:
-                            continue
-                        if name == "sub_agent" and isinstance(args, dict):
-                            # Surface the short distinct label as the title so the
-                            # host doesn't fall back to the long, near-identical task.
-                            sub_title = " ".join(str(args.get("title") or "").split())
-                            label = f"🔧 sub_agent: {sub_title}" if sub_title else "🔧 sub_agent()"
-                        else:
-                            args_preview = (
-                                ", ".join(f"{k}={repr(v)[:50]}" for k, v in list(args.items())[:2])
-                                if isinstance(args, dict) else ""
-                            )
-                            label = f"🔧 {name}({args_preview})" if args_preview else f"🔧 {name}()"
-                        await self._send(session_id, start_tool_call(tid, label, kind="execute", raw_input=args))
-
-                    case ToolCallResultEvent(
-                        tool_call_id=tid,
-                        tool_name=tname,
-                        success=ok,
-                        content=text,
-                        error=err,
-                        raw_output=raw_output,
-                        user_visible=user_visible,
-                        policy_decision=policy_decision,
-                        tool_id=tool_id,
-                        server_name=server_name,
-                    ):
-                        if ok:
+                        ):
                             log.info(
-                                "tool/end",
+                                "tool/start",
                                 session_id=session_id,
                                 tool_call_id=tid,
-                                tool_name=tname,
+                                tool_name=name,
+                                arguments=args,
+                                user_visible=user_visible,
                                 tool_id=tool_id,
                                 server_name=server_name,
-                                result=text,
-                                user_visible=user_visible,
                             )
-                        else:
-                            log.warn(
-                                "tool/fail",
-                                session_id=session_id,
-                                tool_call_id=tid,
-                                tool_name=tname,
-                                tool_id=tool_id,
-                                server_name=server_name,
-                                error=err,
-                                user_visible=user_visible,
-                            )
-                        _update_pending_plan_approval_from_raw(state, raw_output)
-                        skill_usage_payload = (
-                            _record_skill_usage(skill_name_by_tool_call_id.get(tid))
-                            if tname == "get_skill" and ok
-                            else None
-                        )
-                        if not user_visible:
-                            if skill_usage_payload:
-                                await _send_skill_usage(tid, skill_usage_payload)
-                                await _send_turn_usage(
-                                    {"type": "skill", "name": skill_usage_payload["current"]}
-                                )
-                            continue
-                        status = "completed" if ok else "failed"
-                        prefix = "[OK]" if ok else "[ERROR]"
-                        result_text = f"{prefix} {text if ok else err or 'Tool execution failed'}"
-                        output = _tool_result_raw_output(
-                            raw_output,
-                            result_text,
-                            policy_decision,
-                            session_id=state.upstream_session_id,
-                            output_dir=state.output_dir,
-                            task_id=task_context.task_id,
-                            turn_id=task_context.turn_id,
-                        )
-                        await self._send(
-                            session_id,
-                            update_tool_call(tid, status=status, content=[tool_content(text_block(result_text))], raw_output=output),
-                        )
-                        if skill_usage_payload:
-                            await _send_skill_usage(tid, skill_usage_payload)
-                            await _send_turn_usage(
-                                {"type": "skill", "name": skill_usage_payload["current"]}
-                            )
-
-                    case ArtifactEvent() as art:
-                        log.info(
-                            "artifact",
-                            session_id=session_id,
-                            tool_call_id=art.tool_call_id,
-                            kind=art.kind,
-                            rel_path=art.rel_path,
-                            size=art.size,
-                            sha256=art.sha256,
-                        )
-                        # ACP SessionUpdate has no native "artifact" variant —
-                        # we ride on tool_call_update.rawOutput, with a stable
-                        # ``type: "artifact"`` discriminator the host dispatches on.
-                        artifact_observation = artifact_observer.observe(art)
-                        lineage = artifact_observation.lineage
-                        if artifact_observation.error is not None:
-                            exc = artifact_observation.error
-                            state.task_registry_error = str(exc)
-                            log.warn(
-                                "task_registry/artifact_failed",
-                                session_id=session_id,
-                                task_id=task_context.task_id,
-                                rel_path=art.rel_path,
-                                error=str(exc),
-                            )
-                        artifact_meta = _artifact_envelope(
-                            art,
-                            state.output_dir,
-                            session_id=state.upstream_session_id,
-                            task_id=task_context.task_id,
-                            turn_id=task_context.turn_id,
-                            lineage=lineage,
-                        )
-                        log.debug("artifact/payload", session_id=session_id, tool_call_id=art.tool_call_id, payload=artifact_meta)
-                        try:
-                            await self._send(
-                                session_id,
-                                update_tool_call(art.tool_call_id, raw_output=artifact_meta),
-                            )
-                        except Exception as exc:
-                            log.exception("artifact/send_error", exc, session_id=session_id, tool_call_id=art.tool_call_id, payload=artifact_meta)
-
-                    case WebSearchEvent(tool_call_id=tid, payload=payload):
-                        web_search_payload = {**payload, "type": "web_search"}
-                        log.debug("web_search/payload", session_id=session_id, tool_call_id=tid, payload=web_search_payload)
-                        await self._send(session_id, update_tool_call(tid, raw_output=web_search_payload))
-
-                    case ErrorEvent(
-                        message=msg,
-                        is_fatal=is_fatal,
-                        exception=exc,
-                        error_code=error_code,
-                        error_category=error_category,
-                        error_details=error_details,
-                    ) if is_fatal or isinstance(exc, StreamInterrupted):
-                        log.error("error", session_id=session_id, message=msg, is_fatal=is_fatal)
-                        state.last_error = msg
-                        state.last_error_code = error_code
-                        state.last_error_category = error_category
-                        state.last_error_details = error_details
-                        observer.trace(
-                            "turn.error",
-                            data={
-                                "message": msg,
-                                "error_code": error_code,
-                                "error_category": error_category,
-                                "error_details": error_details,
-                            },
-                        )
-                        await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))
-                        # Don't return yet — let the loop consume the subsequent DoneEvent
-                        # so the async generator is properly exhausted.
-
-                    case InjectedMessageEvent(content=text, injection_id=injection_id, user_visible=user_visible):
-                        log.info(
-                            "session/injected",
-                            session_id=session_id,
-                            injection_id=injection_id,
-                            user_visible=user_visible,
-                            text=text[:80],
-                        )
-                        if not user_visible:
-                            continue
-                        await self._send(
-                            session_id,
-                            update_agent_message(text_block(_injected_marker(text, injection_id))),
-                        )
-
-                    case StepEnd(step=s, elapsed_seconds=el, total_elapsed_seconds=tot):
-                        log.debug("step/end", session_id=session_id, step=s, duration_ms=int(el * 1000), total_ms=int(tot * 1000))
-
-                    case DoneEvent(stop_reason=reason, final_content=final_content):
-                        log.debug("done", session_id=session_id, stop_reason=reason.value)
-                        observer.trace(
-                            "turn.output",
-                            data={
-                                "content": final_content,
-                                "stop_reason": reason.value,
-                            },
-                        )
-                        suggestions = getattr(llm, "follow_up_suggestions", [])
-                        if (
-                            state.follow_up_suggestions_enabled
-                            and reason == StopReason.END_TURN
-                            and state.pending_plan_approval is None
-                            and (state.agent.goal is None or state.agent.goal.status != "active")
-                        ):
-                            if suggestions:
-                                await self._send(
-                                    session_id,
-                                    update_tool_call(
-                                        f"follow-up-suggestions-{uuid4().hex[:8]}",
-                                        raw_output={
-                                            "type": "follow_up_suggestions",
-                                            "suggestions": suggestions,
-                                        },
-                                    ),
-                                )
-                            else:
-                                _schedule_follow_up_suggestions(final_content)
-                        await _send_turn_usage()
-                        return reason.value
-
-                    case SubAgentEvent(parent_tool_call_id=tid, task_preview=preview, event=inner, sub_agent_id=sub_agent_id, title=sub_title):
-                        if (
-                            isinstance(inner, ToolCallStartEvent)
-                            and inner.tool_name == "get_skill"
-                        ):
-                            skill_name = _get_skill_name_from_args(inner.arguments)
-                            if skill_name:
-                                skill_name_by_tool_call_id[inner.tool_call_id] = skill_name
-                        if isinstance(inner, ToolCallStartEvent):
-                            tool_usage_current = _record_tool_usage(
-                                inner.tool_name,
-                                user_visible=inner.user_visible,
-                            )
+                            if name == "get_skill":
+                                skill_name = _get_skill_name_from_args(args)
+                                if skill_name:
+                                    skill_name_by_tool_call_id[tid] = skill_name
+                            tool_usage_current = _record_tool_usage(name, user_visible=user_visible)
                             if tool_usage_current:
                                 await _send_turn_usage(tool_usage_current)
+                            if not user_visible:
+                                continue
+                            if name == "sub_agent" and isinstance(args, dict):
+                                # Surface the short distinct label as the title so the
+                                # host doesn't fall back to the long, near-identical task.
+                                sub_title = " ".join(str(args.get("title") or "").split())
+                                label = f"🔧 sub_agent: {sub_title}" if sub_title else "🔧 sub_agent()"
+                            else:
+                                args_preview = (
+                                    ", ".join(f"{k}={repr(v)[:50]}" for k, v in list(args.items())[:2])
+                                    if isinstance(args, dict) else ""
+                                )
+                                label = f"🔧 {name}({args_preview})" if args_preview else f"🔧 {name}()"
+                            await self._send(session_id, start_tool_call(tid, label, kind="execute", raw_input=args))
 
-                        if (
-                            isinstance(inner, ToolCallResultEvent)
-                            and inner.tool_name == "get_skill"
-                            and inner.success
+                        case ToolCallResultEvent(
+                            tool_call_id=tid,
+                            tool_name=tname,
+                            success=ok,
+                            content=text,
+                            error=err,
+                            raw_output=raw_output,
+                            user_visible=user_visible,
+                            policy_decision=policy_decision,
+                            tool_id=tool_id,
+                            server_name=server_name,
                         ):
-                            skill_usage_payload = _record_skill_usage(
-                                skill_name_by_tool_call_id.get(inner.tool_call_id)
+                            if ok:
+                                log.info(
+                                    "tool/end",
+                                    session_id=session_id,
+                                    tool_call_id=tid,
+                                    tool_name=tname,
+                                    tool_id=tool_id,
+                                    server_name=server_name,
+                                    result=text,
+                                    user_visible=user_visible,
+                                )
+                            else:
+                                log.warn(
+                                    "tool/fail",
+                                    session_id=session_id,
+                                    tool_call_id=tid,
+                                    tool_name=tname,
+                                    tool_id=tool_id,
+                                    server_name=server_name,
+                                    error=err,
+                                    user_visible=user_visible,
+                                )
+                            _update_pending_plan_approval_from_raw(state, raw_output)
+                            skill_usage_payload = (
+                                _record_skill_usage(skill_name_by_tool_call_id.get(tid))
+                                if tname == "get_skill" and ok
+                                else None
+                            )
+                            if not user_visible:
+                                if skill_usage_payload:
+                                    await _send_skill_usage(tid, skill_usage_payload)
+                                    await _send_turn_usage(
+                                        {"type": "skill", "name": skill_usage_payload["current"]}
+                                    )
+                                continue
+                            status = "completed" if ok else "failed"
+                            prefix = "[OK]" if ok else "[ERROR]"
+                            result_text = f"{prefix} {text if ok else err or 'Tool execution failed'}"
+                            output = _tool_result_raw_output(
+                                raw_output,
+                                result_text,
+                                policy_decision,
+                                session_id=state.upstream_session_id,
+                                output_dir=state.output_dir,
+                                task_id=task_context.task_id,
+                                turn_id=task_context.turn_id,
+                            )
+                            await self._send(
+                                session_id,
+                                update_tool_call(tid, status=status, content=[tool_content(text_block(result_text))], raw_output=output),
                             )
                             if skill_usage_payload:
                                 await _send_skill_usage(tid, skill_usage_payload)
@@ -4818,115 +4616,268 @@ class BoxACPAgent:
                                     {"type": "skill", "name": skill_usage_payload["current"]}
                                 )
 
-                        if isinstance(inner, LLMOutputEvent) and _record_token_usage(inner.usage):
-                            await _send_turn_usage()
-
-                        if getattr(inner, "user_visible", True) is False:
-                            continue
-                        if isinstance(inner, WebSearchEvent):
-                            web_search_payload = {**inner.payload, "type": "web_search"}
-                            log.debug("sub_agent/web_search", session_id=session_id, tool_call_id=tid, payload=web_search_payload)
-                            await self._send(session_id, update_tool_call(tid, raw_output=web_search_payload))
-                            continue
-
-                        # Send structured progress so officev3 can render sub-agent activity
-                        progress: dict = {
-                            "type": "sub_agent_progress",
-                            "parent_tool_call_id": tid,
-                            "sub_agent_id": sub_agent_id,
-                            "task_preview": preview,
-                            "title": sub_title or preview,
-                        }
-                        match inner:
-                            case StepStart(step=s, max_steps=mx):
-                                progress["event"] = "step_start"
-                                progress["step"] = s
-                                progress["max_steps"] = mx
-                            case ToolCallStartEvent(tool_name=name):
-                                progress["event"] = "tool_start"
-                                progress["tool_name"] = name
-                            case ToolCallResultEvent(tool_name=name, success=ok):
-                                progress["event"] = "tool_result"
-                                progress["tool_name"] = name
-                                progress["success"] = ok
-                            case ArtifactEvent() as art:
-                                progress["event"] = "artifact"
-                                artifact_observation = artifact_observer.observe(art)
-                                lineage = artifact_observation.lineage
-                                if artifact_observation.error is not None:
-                                    exc = artifact_observation.error
-                                    state.task_registry_error = str(exc)
-                                    log.warn(
-                                        "task_registry/sub_agent_artifact_failed",
-                                        session_id=session_id,
-                                        task_id=task_context.task_id,
-                                        rel_path=art.rel_path,
-                                        error=str(exc),
-                                    )
-                                progress["artifact"] = _artifact_envelope(
-                                    art,
-                                    state.output_dir,
-                                    session_id=state.upstream_session_id,
+                        case ArtifactEvent() as art:
+                            log.info(
+                                "artifact",
+                                session_id=session_id,
+                                tool_call_id=art.tool_call_id,
+                                kind=art.kind,
+                                rel_path=art.rel_path,
+                                size=art.size,
+                                sha256=art.sha256,
+                            )
+                            # ACP SessionUpdate has no native "artifact" variant —
+                            # we ride on tool_call_update.rawOutput, with a stable
+                            # ``type: "artifact"`` discriminator the host dispatches on.
+                            artifact_observation = artifact_observer.observe(art)
+                            lineage = artifact_observation.lineage
+                            if artifact_observation.error is not None:
+                                exc = artifact_observation.error
+                                state.task_registry_error = str(exc)
+                                log.warn(
+                                    "task_registry/artifact_failed",
+                                    session_id=session_id,
                                     task_id=task_context.task_id,
-                                    turn_id=task_context.turn_id,
-                                    lineage=lineage,
+                                    rel_path=art.rel_path,
+                                    error=str(exc),
                                 )
-                            case ErrorEvent(message=msg):
-                                progress["event"] = "error"
-                                progress["message"] = msg
-                            case ProgressEvent(step=s, content=content):
-                                progress["event"] = "agent_progress"
-                                progress["step"] = s
-                                progress["content"] = content
-                            case LLMOutputEvent(
-                                step=s,
-                                content=content,
-                                thinking=thinking,
-                                tool_calls=tool_calls,
-                                finish_reason=finish_reason,
-                                usage=usage,
-                                provider_request_id=provider_request_id,
-                            ):
-                                progress["event"] = "llm_output"
-                                progress["step"] = s
-                                progress["content"] = content
-                                progress["thinking"] = thinking
-                                progress["tool_calls"] = tool_calls
-                                progress["finish_reason"] = finish_reason
-                                progress["usage"] = usage
-                                progress["provider_request_id"] = provider_request_id
-                            case _:
-                                progress["event"] = type(inner).__name__
-                        log.debug("sub_agent/progress", session_id=session_id, tool_call_id=tid, progress=progress)
-                        try:
+                            artifact_meta = _artifact_envelope(
+                                art,
+                                state.output_dir,
+                                session_id=state.upstream_session_id,
+                                task_id=task_context.task_id,
+                                turn_id=task_context.turn_id,
+                                lineage=lineage,
+                            )
+                            log.debug("artifact/payload", session_id=session_id, tool_call_id=art.tool_call_id, payload=artifact_meta)
+                            try:
+                                await self._send(
+                                    session_id,
+                                    update_tool_call(art.tool_call_id, raw_output=artifact_meta),
+                                )
+                            except Exception as exc:
+                                log.exception("artifact/send_error", exc, session_id=session_id, tool_call_id=art.tool_call_id, payload=artifact_meta)
+
+                        case WebSearchEvent(tool_call_id=tid, payload=payload):
+                            web_search_payload = {**payload, "type": "web_search"}
+                            log.debug("web_search/payload", session_id=session_id, tool_call_id=tid, payload=web_search_payload)
+                            await self._send(session_id, update_tool_call(tid, raw_output=web_search_payload))
+
+                        case ErrorEvent(
+                            message=msg,
+                            is_fatal=is_fatal,
+                            exception=exc,
+                            error_code=error_code,
+                            error_category=error_category,
+                            error_details=error_details,
+                        ) if is_fatal or isinstance(exc, StreamInterrupted):
+                            log.error("error", session_id=session_id, message=msg, is_fatal=is_fatal)
+                            state.last_error = msg
+                            state.last_error_code = error_code
+                            state.last_error_category = error_category
+                            state.last_error_details = error_details
+                            observer.trace(
+                                "turn.error",
+                                data={
+                                    "message": msg,
+                                    "error_code": error_code,
+                                    "error_category": error_category,
+                                    "error_details": error_details,
+                                },
+                            )
+                            await self._send(session_id, update_agent_message(text_block(f"Error: {msg}")))
+                            # Don't return yet — let the loop consume the subsequent DoneEvent
+                            # so the async generator is properly exhausted.
+
+                        case InjectedMessageEvent(content=text, injection_id=injection_id, user_visible=user_visible):
+                            log.info(
+                                "session/injected",
+                                session_id=session_id,
+                                injection_id=injection_id,
+                                user_visible=user_visible,
+                                text=text[:80],
+                            )
+                            if not user_visible:
+                                continue
                             await self._send(
                                 session_id,
-                                update_tool_call(tid, raw_output=progress),
+                                update_agent_message(text_block(_injected_marker(text, injection_id))),
                             )
-                        except Exception as exc:
-                            log.exception("sub_agent/send_error", exc, session_id=session_id, tool_call_id=tid)
 
-                    # PermissionRequestEvent: handled inline in core.py via negotiator.
-                    # Falls through to case _: pass (no ACP notification sent).
+                        case StepEnd(step=s, elapsed_seconds=el, total_elapsed_seconds=tot):
+                            log.debug("step/end", session_id=session_id, step=s, duration_ms=int(el * 1000), total_ms=int(tot * 1000))
 
-                    case MemoryProposalEvent():
-                        if self._memory is not None:
-                            negotiator_mem = _MemoryProposalNegotiator(
-                                conn=self._conn,
-                                session_id=session_id,
-                                memory_manager=self._memory,
+                        case DoneEvent(stop_reason=reason, final_content=final_content):
+                            log.debug("done", session_id=session_id, stop_reason=reason.value)
+                            observer.trace(
+                                "turn.output",
+                                data={
+                                    "content": final_content,
+                                    "stop_reason": reason.value,
+                                },
                             )
+                            suggestions = getattr(llm, "follow_up_suggestions", [])
+                            if (
+                                state.follow_up_suggestions_enabled
+                                and reason == StopReason.END_TURN
+                                and state.pending_plan_approval is None
+                                and (state.agent.goal is None or state.agent.goal.status != "active")
+                            ):
+                                if suggestions:
+                                    await self._send(
+                                        session_id,
+                                        update_tool_call(
+                                            f"follow-up-suggestions-{uuid4().hex[:8]}",
+                                            raw_output={
+                                                "type": "follow_up_suggestions",
+                                                "suggestions": suggestions,
+                                            },
+                                        ),
+                                    )
+                                else:
+                                    _schedule_follow_up_suggestions(final_content)
+                            await _send_turn_usage()
+                            return reason.value
+
+                        case SubAgentEvent(parent_tool_call_id=tid, task_preview=preview, event=inner, sub_agent_id=sub_agent_id, title=sub_title):
+                            if (
+                                isinstance(inner, ToolCallStartEvent)
+                                and inner.tool_name == "get_skill"
+                            ):
+                                skill_name = _get_skill_name_from_args(inner.arguments)
+                                if skill_name:
+                                    skill_name_by_tool_call_id[inner.tool_call_id] = skill_name
+                            if isinstance(inner, ToolCallStartEvent):
+                                tool_usage_current = _record_tool_usage(
+                                    inner.tool_name,
+                                    user_visible=inner.user_visible,
+                                )
+                                if tool_usage_current:
+                                    await _send_turn_usage(tool_usage_current)
+
+                            if (
+                                isinstance(inner, ToolCallResultEvent)
+                                and inner.tool_name == "get_skill"
+                                and inner.success
+                            ):
+                                skill_usage_payload = _record_skill_usage(
+                                    skill_name_by_tool_call_id.get(inner.tool_call_id)
+                                )
+                                if skill_usage_payload:
+                                    await _send_skill_usage(tid, skill_usage_payload)
+                                    await _send_turn_usage(
+                                        {"type": "skill", "name": skill_usage_payload["current"]}
+                                    )
+
+                            if isinstance(inner, LLMOutputEvent) and _record_token_usage(inner.usage):
+                                await _send_turn_usage()
+
+                            if getattr(inner, "user_visible", True) is False:
+                                continue
+                            if isinstance(inner, WebSearchEvent):
+                                web_search_payload = {**inner.payload, "type": "web_search"}
+                                log.debug("sub_agent/web_search", session_id=session_id, tool_call_id=tid, payload=web_search_payload)
+                                await self._send(session_id, update_tool_call(tid, raw_output=web_search_payload))
+                                continue
+
+                            # Send structured progress so officev3 can render sub-agent activity
+                            progress: dict = {
+                                "type": "sub_agent_progress",
+                                "parent_tool_call_id": tid,
+                                "sub_agent_id": sub_agent_id,
+                                "task_preview": preview,
+                                "title": sub_title or preview,
+                            }
+                            match inner:
+                                case StepStart(step=s, max_steps=mx):
+                                    progress["event"] = "step_start"
+                                    progress["step"] = s
+                                    progress["max_steps"] = mx
+                                case ToolCallStartEvent(tool_name=name):
+                                    progress["event"] = "tool_start"
+                                    progress["tool_name"] = name
+                                case ToolCallResultEvent(tool_name=name, success=ok):
+                                    progress["event"] = "tool_result"
+                                    progress["tool_name"] = name
+                                    progress["success"] = ok
+                                case ArtifactEvent() as art:
+                                    progress["event"] = "artifact"
+                                    artifact_observation = artifact_observer.observe(art)
+                                    lineage = artifact_observation.lineage
+                                    if artifact_observation.error is not None:
+                                        exc = artifact_observation.error
+                                        state.task_registry_error = str(exc)
+                                        log.warn(
+                                            "task_registry/sub_agent_artifact_failed",
+                                            session_id=session_id,
+                                            task_id=task_context.task_id,
+                                            rel_path=art.rel_path,
+                                            error=str(exc),
+                                        )
+                                    progress["artifact"] = _artifact_envelope(
+                                        art,
+                                        state.output_dir,
+                                        session_id=state.upstream_session_id,
+                                        task_id=task_context.task_id,
+                                        turn_id=task_context.turn_id,
+                                        lineage=lineage,
+                                    )
+                                case ErrorEvent(message=msg):
+                                    progress["event"] = "error"
+                                    progress["message"] = msg
+                                case ProgressEvent(step=s, content=content):
+                                    progress["event"] = "agent_progress"
+                                    progress["step"] = s
+                                    progress["content"] = content
+                                case LLMOutputEvent(
+                                    step=s,
+                                    content=content,
+                                    thinking=thinking,
+                                    tool_calls=tool_calls,
+                                    finish_reason=finish_reason,
+                                    usage=usage,
+                                    provider_request_id=provider_request_id,
+                                ):
+                                    progress["event"] = "llm_output"
+                                    progress["step"] = s
+                                    progress["content"] = content
+                                    progress["thinking"] = thinking
+                                    progress["tool_calls"] = tool_calls
+                                    progress["finish_reason"] = finish_reason
+                                    progress["usage"] = usage
+                                    progress["provider_request_id"] = provider_request_id
+                                case _:
+                                    progress["event"] = type(inner).__name__
+                            log.debug("sub_agent/progress", session_id=session_id, tool_call_id=tid, progress=progress)
                             try:
-                                await negotiator_mem.negotiate(event)
+                                await self._send(
+                                    session_id,
+                                    update_tool_call(tid, raw_output=progress),
+                                )
                             except Exception as exc:
-                                log.exception("memory/proposal_unhandled", exc, session_id=session_id)
+                                log.exception("sub_agent/send_error", exc, session_id=session_id, tool_call_id=tid)
 
-                    case _:
-                        pass  # StepStart, SummarizationEvent, PermissionRequestEvent, etc.
+                        # PermissionRequestEvent: handled inline in core.py via negotiator.
+                        # Falls through to case _: pass (no ACP notification sent).
 
-            except Exception as exc:
-                log.exception("event/error", exc, session_id=session_id, event=type(event).__name__)
-                # Don't break the loop — continue processing events
+                        case MemoryProposalEvent():
+                            if self._memory is not None:
+                                negotiator_mem = _MemoryProposalNegotiator(
+                                    conn=self._conn,
+                                    session_id=session_id,
+                                    memory_manager=self._memory,
+                                )
+                                try:
+                                    await negotiator_mem.negotiate(event)
+                                except Exception as exc:
+                                    log.exception("memory/proposal_unhandled", exc, session_id=session_id)
+
+                        case _:
+                            pass  # StepStart, SummarizationEvent, PermissionRequestEvent, etc.
+
+                except Exception as exc:
+                    log.exception("event/error", exc, session_id=session_id, event=type(event).__name__)
+                    # Don't break the loop — continue processing events
 
         return "end_turn"
 

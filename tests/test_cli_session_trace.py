@@ -10,6 +10,9 @@ import pytest
 
 import box_agent.cli as cli
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
+from box_agent.agent_session import AgentSession
+from box_agent.events import DoneEvent, StopReason
+from box_agent.hooks import BaseHook
 from box_agent.llm.llm_wrapper import LLMClient
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage, ToolCall
 from box_agent.session_trace import (
@@ -47,6 +50,13 @@ class ToolThenAnswerProvider:
 
     async def generate(self, messages, tools=None, **kwargs):
         return LLMResponse(content='{"continue": false}', finish_reason="stop")
+
+
+class RecordingSessionHook(BaseHook):
+    starts = []
+
+    async def on_agent_start(self, *, messages, tools, max_steps):
+        self.starts.append(max_steps)
 
 
 @pytest.fixture
@@ -103,6 +113,95 @@ async def run_task(workspace, **kwargs):
         workspace, task="echo ping", sandbox_mode=False, verify_api=False,
         goal_autopilot_enabled=False, **kwargs,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interactive", [False, True])
+async def test_cli_turns_use_one_configured_agent_session(
+    cli_trace_setup, monkeypatch, interactive,
+):
+    workspace, trace_dir = cli_trace_setup
+    seen = []
+    original = AgentSession.run_events
+
+    async def tracked_events(self, *, options=None):
+        seen.append((self, self.config, self.source_text, options))
+        async for event in original(self, options=options):
+            assert self.turn_active
+            yield event
+
+    inputs = iter(["first message", "/clear", "second message", "/exit"])
+
+    class Prompts:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def prompt_async(self, *args, **kwargs):
+            return next(inputs)
+
+    monkeypatch.setattr(AgentSession, "run_events", tracked_events)
+    monkeypatch.setattr(cli, "PromptSession", Prompts)
+    assert await cli.run_agent(
+        workspace, task=None if interactive else "echo ping",
+        sandbox_mode=False, verify_api=False, goal_autopilot_enabled=False,
+    ) == 0
+
+    assert len(seen) == (2 if interactive else 1)
+    session, config, _, _ = seen[0]
+    assert all(item[0] is session and item[1] is config for item in seen)
+    assert all(item[3].inject_queue is session.inject_queue for item in seen)
+    assert [item[2] for item in seen] == (
+        ["first message", "second message"] if interactive else ["echo ping"]
+    )
+    assert session.agent.max_steps == config.agent.max_steps
+    assert session.turn_active is False
+    records = read_records(next(trace_dir.glob("*.jsonl")))
+    outputs = [r["data"] for r in records if r["event"] == "turn.output"]
+    assert all(item["content"] == "native trace answer" for item in outputs)
+
+
+@pytest.mark.asyncio
+async def test_cli_configured_hooks_reach_loop_through_session(cli_trace_setup, monkeypatch):
+    workspace, _ = cli_trace_setup
+    config = cli.Config.from_yaml(None)
+    config.hooks.hooks = ["tests.test_cli_session_trace.RecordingSessionHook"]
+    monkeypatch.setattr(RecordingSessionHook, "starts", [])
+
+    assert await run_task(workspace) == 0
+    assert RecordingSessionHook.starts == [config.agent.max_steps]
+
+
+@pytest.mark.asyncio
+async def test_cli_session_cancellation_does_not_cancel_next_turn(cli_trace_setup, monkeypatch):
+    workspace, trace_dir = cli_trace_setup
+    inputs = iter(["cancel first", "complete second", "/exit"])
+    sessions = []
+    original = AgentSession.run_events
+
+    class Prompts:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def prompt_async(self, *args, **kwargs):
+            return next(inputs)
+
+    async def cancel_first(self, *, options=None):
+        sessions.append(self)
+        async for event in original(self, options=options):
+            if len(sessions) == 1:
+                self.request_cancel()
+            yield event
+
+    monkeypatch.setattr(cli, "PromptSession", Prompts)
+    monkeypatch.setattr(AgentSession, "run_events", cancel_first)
+    assert await cli.run_agent(workspace, sandbox_mode=False, verify_api=False) == 0
+
+    assert len(sessions) == 2 and sessions[0] is sessions[1]
+    assert not sessions[0].turn_active and not sessions[0].cancelled
+    records = read_records(next(trace_dir.glob("*.jsonl")))
+    assert [r["data"]["stop_reason"] for r in records if r["event"] == "turn.end"] == [
+        "cancelled", "end_turn",
+    ]
 
 
 @pytest.mark.asyncio
@@ -216,10 +315,10 @@ async def test_cli_interactive_cancellation_settles_run_before_ending_trace(cli_
             await asyncio.sleep(0.05)
         finally:
             emit_session_trace("test.child_settled")
-        return "should not finish normally"
+        yield DoneEvent(stop_reason=StopReason.END_TURN, final_content="should not finish normally")
 
     monkeypatch.setattr(cli, "PromptSession", Prompts)
-    monkeypatch.setattr(cli.Agent, "run", cancelled_run)
+    monkeypatch.setattr(cli.Agent, "run_events", cancelled_run)
     try:
         assert await cli.run_agent(workspace, sandbox_mode=False, verify_api=False) == 0
     finally:
@@ -238,10 +337,9 @@ async def test_cli_trace_preserves_internal_stop_reason(cli_trace_setup, monkeyp
     workspace, trace_dir = cli_trace_setup
 
     async def stopped_run(agent, *args, **kwargs):
-        agent.last_stop_reason = reason
-        return "observed result"
+        yield DoneEvent(stop_reason=StopReason(reason), final_content="observed result")
 
-    monkeypatch.setattr(cli.Agent, "run", stopped_run)
+    monkeypatch.setattr(cli.Agent, "run_events", stopped_run)
     assert await run_task(workspace) == (1 if reason == "error" else 0)
     records = read_records(next(trace_dir.glob("*.jsonl")))
     assert records[-1]["data"]["stop_reason"] == reason
@@ -258,8 +356,9 @@ async def test_cli_trace_closes_failed_turn_and_restores_context(cli_trace_setup
     async def fail_run(agent, *args, **kwargs):
         emit_session_trace("test.inside")
         raise failure_type("trace failure probe")
+        yield  # Make this a failing event stream without emitting an event.
 
-    monkeypatch.setattr(cli.Agent, "run", fail_run)
+    monkeypatch.setattr(cli.Agent, "run_events", fail_run)
     if failure_type is RuntimeError:
         assert await run_task(workspace) == 1
     else:
@@ -287,12 +386,11 @@ async def test_cli_goal_continuations_keep_one_input_and_only_final_output(cli_t
     async def goal_run(agent, *args, **kwargs):
         answer = next(answers)
         emit_session_trace("test.goal_step", data={"answer": answer})
-        agent.last_stop_reason = "end_turn"
         if answer == "completed goal":
             agent.goal.status = "complete"
-        return answer
+        yield DoneEvent(stop_reason=StopReason.END_TURN, final_content=answer)
 
-    monkeypatch.setattr(cli.Agent, "run", goal_run)
+    monkeypatch.setattr(cli.Agent, "run_events", goal_run)
     assert await cli.run_agent(
         workspace, task="finish the goal", initial_goal="finish the goal",
         sandbox_mode=False, verify_api=False, goal_autopilot_enabled=True,

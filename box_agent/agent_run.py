@@ -1,34 +1,28 @@
-"""Host-neutral run-state facade used during the adapter migration.
-
-``AgentRunHandle`` is intentionally a small compatibility layer for the first
-Run Handle migration slice.  ACP still owns its existing ``SessionState``
-object and fields, while this facade exposes the state that is shared by a
-future CLI/ACP/SDK run service through one stable surface.  Properties proxy
-the original object rather than copying values, so existing adapter code and
-new callers observe the same cancellation, queue, goal, and Skill state.
-"""
+"""Run-state facade over an independent Agent session or legacy state object."""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .config import Config
 
 
 @dataclass(slots=True)
 class AgentRunHandle:
     """A protocol-independent view over one session's mutable run state.
 
-    The wrapped state remains the compatibility owner for now.  Keeping the
-    proxy deliberately boring lets adapters migrate field-by-field without
-    changing their public state shape or turn method signatures.
+    AgentSession owns the state. This facade also accepts legacy state objects
+    so adapters can retain their existing field access and turn signatures.
     """
 
     _state: Any
 
     @property
     def state(self) -> Any:
-        """Return the compatibility state object being proxied."""
+        """Return the owning session or legacy state object being proxied."""
 
         return self._state
 
@@ -36,14 +30,18 @@ class AgentRunHandle:
     def agent(self) -> Any:
         return self._state.agent
 
+    @property
+    def config(self) -> Config | None:
+        """Return the owning session's config, if wrapping configured state."""
+
+        return getattr(self._state, "config", None)
+
     def build_run_options(self, **overrides: Any) -> Any:
-        """Snapshot Agent defaults with host-resolved per-turn overrides.
+        """Build session options, retaining the Agent fallback for legacy state."""
 
-        The adapter still supplies every protocol-specific option.  Keeping
-        the dataclass snapshot here gives future adapters one shared entry
-        point without changing ``Agent.default_run_options`` or its contract.
-        """
-
+        build_options = getattr(self._state, "build_run_options", None)
+        if callable(build_options):
+            return build_options(**overrides)
         return replace(self.agent.default_run_options(), **overrides)
 
     @property

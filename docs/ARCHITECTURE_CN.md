@@ -7,7 +7,8 @@ Box-Agent 采用稳定公共 API、宿主无关 Kernel 与静态装配边界。�
 
 ```mermaid
 flowchart TB
-    H["宿主适配层<br/>CLI / ACP / 自建 UI"]
+    H["宿主适配层<br/>ACP / CLI / 自建 UI"]
+    SS["AgentSession<br/>Config + 会话运行状态"]
     A["稳定公共 API<br/>Agent / AgentRunOptions / AgentEvent"]
     R["运行时桥接<br/>box_agent.runtime"]
     C["兼容门面<br/>box_agent.core"]
@@ -18,23 +19,25 @@ flowchart TB
     E["Kernel 服务<br/>上下文 / 模型流 / 工具消息提交"]
     T["工具能力<br/>tools/engine：准备 / 执行 / 结果"]
 
-    H --> A --> R --> C --> O --> P --> S --> L --> E
+    H --> SS --> A --> R --> C --> O --> P --> S --> L --> E
     L -->|ToolEnginePort| T
     T -->|提交回调| E
 ```
 
-生产调用路径因此固定为：**CLI/ACP → Agent → runtime → core 兼容门面 →
+宿主调用路径因此为：**ACP/CLI → AgentSession → Agent → runtime → core 兼容门面 →
 外层 composition/PluginHost → 不可变 KernelServices → AgentLoopKernel**。
 依赖方向指向 Kernel 自己拥有的契约。`box_agent/kernel/` 绝不导入
 PluginHost、composition、ACP、CLI、officev3 或其他产品适配器。Plugin 依赖
 `kernel.ports`；Kernel 只接收已经解析的服务，不查询 Registry。产品层与能力层
-也不能直接导入 `box_agent.core`。
+也不能直接导入 `box_agent.core`。两个内置适配器都创建并运行 `AgentSession`；
+配置流转、会话状态与宿主编排的边界见 [Agent Session](AGENT_SESSION.md)。
 
 ## 层级与职责
 
 | 层级 | 主要代码 | 职责 |
 | --- | --- | --- |
 | 产品 / 接入层 | `box_agent/acp/`、`box_agent/cli.py`、宿主代码 | 协议转换、宿主元数据、ACP 协议渲染、CLI 入口接线与宿主明确选择 Skill |
+| 共享会话层 | `agent_session.py`、`agent_run.py` | 会话配置、Agent 运行状态、运行选项绑定与事件流入口 |
 | 能力层 | `box_agent/tools/`（除 `base.py`）、`box_agent/skills/`、`box_agent/llm/` 中的 Provider、`memory.py` | Tool、自包含 Skill、Provider、存储与领域校验器 |
 | 稳定公共 API | `agent.py`、`runtime.py`、`core.py`、`events.py`、`schema.py` | 向后兼容的调用方式与事件/schema 契约 |
 | 外层装配 | `composition.py`、`plugins/` | 显式 Descriptor、校验、依赖解析、分 Scope 激活、不可变服务装配与释放 |
@@ -44,21 +47,21 @@ PluginHost、composition、ACP、CLI、officev3 或其他产品适配器。Plugi
 
 ## 公共接入方式
 
-产品适配器通过 `Agent.run_events()` 执行一轮，并提供完整的
+产品适配器通过 `AgentSession.run_events()` 执行一轮，并提供完整的
 `AgentRunOptions` 快照：
 
 ```python
-from dataclasses import replace
+from contextlib import aclosing
 
-options = replace(
-    agent.default_run_options(),
+options = session.build_run_options(
     session_id=host_session_id,
     permission_negotiator=permission_adapter,
     hooks=host_hooks,
 )
 
-async for event in agent.run_events(options=options):
-    await render_for_host(event)
+async with aclosing(session.run_events(options=options)) as events:
+    async for event in events:
+        await render_for_host(event)
 ```
 
 确实需要独立低层循环的框架能力（例如 `SubAgentTool`）可以从
@@ -68,11 +71,14 @@ async for event in agent.run_events(options=options):
 `Agent.run_events()`、`Agent.run()`、`box_agent.runtime.run_agent_loop()`、
 `box_agent.runtime.invoke_tool_with_permissions()` 和
 `box_agent.core.run_agent_loop()` 的原调用形式与默认值保持兼容。独立调用
-`invoke_tool_with_permissions` 新增可选 `invocation_context` / `is_cancelled`，原 tuple 返回不变。调用方不会新增
-PluginHost、Registry 或 `KernelServices` 参数。ACP 仍消费
-`Agent.run_events(options=...)` 并把事件渲染成协议更新；CLI 仍调用
-`Agent.run()`，终端渲染由其中的 `Agent._render_event()` 负责。Kernel 与
-composition 只产生事件，均不负责渲染。
+`invoke_tool_with_permissions` 新增可选 `invocation_context` / `is_cancelled`，
+原 tuple 返回不变。调用方不会新增
+PluginHost、Registry 或 `KernelServices` 参数。ACP 消费
+`AgentSession.run_events(options=...)`，由它委派给
+`Agent.run_events(options=...)`，再把事件渲染成协议更新。CLI 通过
+`cli_renderer.py` 中的 `render_agent_events` 消费相同的会话事件流。
+旧入口 `Agent.run()` 复用该消费者，保留签名、终端渲染、记忆提案协商与返回值。
+Kernel 与 composition 只产生事件，均不负责渲染。
 
 ## Kernel 模块与调用关系
 

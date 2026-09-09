@@ -34,7 +34,8 @@ from prompt_toolkit.styles import Style
 import yaml
 
 from box_agent import LLMClient, __version__
-from box_agent.agent_service import AgentService
+from box_agent.agent_session import AgentSession
+from box_agent.cli_renderer import render_agent_events
 from box_agent.agent_runtime import (
     build_agent,
     build_llm_client,
@@ -1767,6 +1768,15 @@ async def _quiet_cleanup():
         pass
 
 
+async def _run_session_turn(session: AgentSession, **overrides: Any) -> str:
+    """Render the shared session event stream with the existing CLI behavior."""
+
+    return await render_agent_events(
+        session.agent,
+        session.run_events(options=session.build_run_options(**overrides)),
+    )
+
+
 async def run_agent(
     workspace_dir: Path,
     task: str | None = None,
@@ -2172,43 +2182,39 @@ async def run_agent(
             print(f"{Colors.GREEN}✅ Loaded CLI environment context{Colors.RESET}")
 
     # 6.6 Inject Memory context
+    memory_block = None
     if memory_mgr:
         memory_block = await asyncio.to_thread(memory_mgr.recall)
         if memory_block:
             system_prompt = append_prompt_segment(system_prompt, memory_block)
             print(f"{Colors.GREEN}✅ Loaded memory context{Colors.RESET}")
 
-    # 7. Create Agent
+    # 7. Create the shared Agent session
     from box_agent.hooks import load_hooks
     hooks = load_hooks(config.hooks.hooks) if config.hooks.hooks else None
-    agent = AgentService(agent_factory=Agent).create_agent(
+    agent_session = AgentSession.create(
+        config=config,
+        agent_factory=Agent,
         llm_client=llm_client,
         system_prompt=system_prompt,
         tools=tools,
-        max_steps=config.agent.max_steps,
-        tool_limits=config.tool_limits,
         workspace_dir=str(workspace_dir),
-        token_limit=config.llm.context_token_limit,
         hooks=hooks,
         thinking_enabled=deep_think,
-        max_parallel_tools=config.agent.max_parallel_tools,
-        parallel_tool_timeout_seconds=config.agent.parallel_tool_timeout_seconds,
-        provider_stale_seconds=config.agent.provider_stale_seconds,
-        memory_promotion_enabled=config.agent.memory_promotion_proposal_enabled,
-        memory_promotion_hit_threshold=config.agent.memory_promotion_hit_threshold,
-        memory_promotion_cooldown_days=config.agent.memory_promotion_cooldown_days,
-        truncation_continuation_enabled=config.agent.retry_on_suspected_truncation,
-        max_truncation_continuations=config.agent.max_truncation_continuations,
-        max_truncated_tool_call_retries=config.agent.max_truncated_tool_call_retries,
-        truncated_tool_call_boost_cap=config.agent.truncated_tool_call_boost_cap,
-        context_resource_dedup_enabled=config.agent.context_resource_dedup_enabled,
-        deferred_mcp_loading_enabled=(
-            config.tools.enable_mcp
-            and config.tools.mcp.deferred_loading_enabled
-        ),
+        memory_extractor=memory_extractor,
+        memory_block=memory_block,
+        permission_engine=perm_engine,
+        grant_store=grant_store,
+        skill_scratch_dir=skill_scratch_dir,
+        skill_runtime_context=skill_runtime_context,
+        skill_loader=skill_loader,
+        env_context=cli_env_context,
+        preloaded_skill_hashes=cli_preloaded_skill_hashes,
+        force_plan_start=force_plan_start,
     )
+    agent = agent_session.agent
 
-    user_source_text = bind_user_source_text(agent.tools, "", "")
+    agent_session.source_text = bind_user_source_text(agent.tools, "", "")
     restored_goal = _restore_cli_goal(agent, workspace_dir)
     if initial_goal and initial_goal.strip():
         restored_goal = agent.set_goal(initial_goal)
@@ -2225,7 +2231,7 @@ async def run_agent(
 
     # Wire memory promotion negotiator (interactive prompts).
     # Non-interactive `--task` mode skips it to avoid blocking on stdin.
-    if memory_mgr and config.agent.memory_promotion_proposal_enabled and not task:
+    if memory_mgr and agent_session.config.agent.memory_promotion_proposal_enabled and not task:
         from box_agent.cli_memory_proposal import CLIMemoryProposalNegotiator
         agent.set_memory_proposal_negotiator(CLIMemoryProposalNegotiator(memory_mgr))
 
@@ -2233,46 +2239,44 @@ async def run_agent(
         agent.set_system_prompt(system_prompt)
 
     # 7.5 Skill selector: filter skill metadata per turn based on cumulative user query
-    skill_selector = None
-    if skill_loader:
+    if agent_session.skill_loader:
         from box_agent.tools.skill_loader import SkillSelector, move_skill_slot_to_end
 
         relocated_prompt = move_skill_slot_to_end(agent.messages[0].content)
         if relocated_prompt != agent.messages[0].content:
             _set_agent_system_prompt(relocated_prompt)
-        skill_selector = SkillSelector(skill_loader)
-        skill_selector.bind(agent.messages[0].content)
-    cli_preloaded_skill_names: list[str] = []
+        agent_session.skill_selector = SkillSelector(agent_session.skill_loader)
+        agent_session.skill_selector.bind(agent.messages[0].content)
 
     def _sync_cli_cache_fingerprint_context() -> None:
         sync_skill_cache_fingerprint_context(
             agent.cache_fingerprint_context,
             matched_skill_names=(
-                skill_selector.matched_skill_names
-                if skill_selector is not None
+                agent_session.skill_selector.matched_skill_names
+                if agent_session.skill_selector is not None
                 else None
             ),
-            preloaded_skill_names=cli_preloaded_skill_names,
+            preloaded_skill_names=agent_session.preloaded_skill_names,
         )
 
     def _apply_skill_filter(user_input: str) -> tuple[str, ...]:
-        if skill_selector is None:
+        if agent_session.skill_selector is None:
             _sync_cli_cache_fingerprint_context()
             return ()
-        new_prompt = skill_selector.update(user_input)
+        new_prompt = agent_session.skill_selector.update(user_input)
         if new_prompt is not None:
             _set_agent_system_prompt(new_prompt)
         _sync_cli_cache_fingerprint_context()
-        return skill_selector.matched_skill_names
+        return agent_session.skill_selector.matched_skill_names
 
     def _apply_cli_auto_loaded_skills(user_input: str) -> None:
-        if skill_loader is None or skill_selector is None:
+        if agent_session.skill_loader is None or agent_session.skill_selector is None:
             _sync_cli_cache_fingerprint_context()
             return
-        explicit_skill = resolve_explicit_skill_invocation(skill_loader, user_input)
+        explicit_skill = resolve_explicit_skill_invocation(agent_session.skill_loader, user_input)
         preload_names = turn_preload_skill_names(
-            skill_selector.matched_skill_names,
-            cli_env_context,
+            agent_session.skill_selector.matched_skill_names,
+            agent_session.env_context,
             user_input,
             selected_skill_names=(
                 (explicit_skill.name,)
@@ -2280,15 +2284,15 @@ async def run_agent(
                 else ()
             ),
         )
-        if not preload_names and not cli_preloaded_skill_names:
+        if not preload_names and not agent_session.preloaded_skill_names:
             _sync_cli_cache_fingerprint_context()
             return
         result, unloaded_skill_names = prepare_auto_loaded_skills(
-            skill_loader,
+            agent_session.skill_loader,
             agent.system_prompt,
             preload_names,
-            preloaded_skill_names=cli_preloaded_skill_names,
-            preloaded_skill_hashes=cli_preloaded_skill_hashes,
+            preloaded_skill_names=agent_session.preloaded_skill_names,
+            preloaded_skill_hashes=agent_session.preloaded_skill_hashes,
             prompt_builder=build_auto_loaded_skills_prompt,
         )
         _sync_cli_cache_fingerprint_context()
@@ -2311,7 +2315,7 @@ async def run_agent(
         results = await reconnect_auth_failed_mcp_servers_if_token_changed()
         if not results:
             return
-        if not config.tools.mcp.deferred_loading_enabled:
+        if not agent_session.config.tools.mcp.deferred_loading_enabled:
             register_mcp_tools(agent.tools, get_all_mcp_tools())
         for result in results:
             name = result["name"]
@@ -2344,17 +2348,17 @@ async def run_agent(
             "workspace": str(workspace_dir),
             "session_mode": "code_agent" if code_workspace else "general",
             "artifact_mode": "project" if code_workspace else "output",
-            "model": config.llm.model,
-            "context_window": config.llm.context_window,
-            "max_output_tokens": config.llm.max_output_tokens,
-            "context_token_limit": config.llm.context_token_limit,
+            "model": agent_session.config.llm.model,
+            "context_window": agent_session.config.llm.context_window,
+            "max_output_tokens": agent_session.config.llm.max_output_tokens,
+            "context_token_limit": agent_session.config.llm.context_token_limit,
         },
     )
 
     # 8. Display welcome information
     if not task:
         print_banner()
-        print_session_info(agent, workspace_dir, config.llm.model)
+        print_session_info(agent, workspace_dir, agent_session.config.llm.model)
         if restored_goal is not None:
             print(f"{Colors.DIM}Loaded workspace goal: {restored_goal.status} — {restored_goal.objective}{Colors.RESET}\n")
 
@@ -2363,32 +2367,35 @@ async def run_agent(
         print(f"\n{Colors.BRIGHT_BLUE}Agent{Colors.RESET} {Colors.DIM}›{Colors.RESET} {Colors.DIM}Executing task...{Colors.RESET}\n")
         # Block on MCP only when user is actually about to run
         loaded_mcp_tools = await await_mcp_tools(mcp_task)
-        if not config.tools.mcp.deferred_loading_enabled:
+        if not agent_session.config.tools.mcp.deferred_loading_enabled:
             register_mcp_tools(agent.tools, loaded_mcp_tools)
         await _refresh_mcp_after_auth_change()
         _apply_skill_filter(task)
         _apply_cli_auto_loaded_skills(task)
-        user_source_text = bind_user_source_text(agent.tools, user_source_text, task)
+        agent_session.source_text = bind_user_source_text(
+            agent.tools, agent_session.source_text, task,
+        )
         agent.add_user_message(task)
         ok = True
         error: str | None = None
         final_content = ""
         auto_enabled = (
             goal_autopilot_enabled
-            and config.agent.goal_autopilot_enabled
-            and config.agent.goal_autopilot_max_turns > 0
+            and agent_session.config.agent.goal_autopilot_enabled
+            and agent_session.config.agent.goal_autopilot_max_turns > 0
         )
         auto_started = perf_counter()
         autopilot = GoalAutopilotController(
             started_at=auto_started,
-            max_turns=config.agent.goal_autopilot_max_turns,
-            max_seconds=config.agent.goal_autopilot_max_seconds,
-            no_progress_limit=config.agent.goal_autopilot_no_progress_turns,
+            max_turns=agent_session.config.agent.goal_autopilot_max_turns,
+            max_seconds=agent_session.config.agent.goal_autopilot_max_seconds,
+            no_progress_limit=agent_session.config.agent.goal_autopilot_no_progress_turns,
         )
         try:
             with traced_session_turn(trace_writer, content=task) as traced_turn:
-                final_content = await agent.run(
-                    force_plan_start=force_plan_start,
+                final_content = await _run_session_turn(
+                    agent_session,
+                    force_plan_start=agent_session.force_plan_start,
                     current_turn_text=task,
                 )
                 while auto_enabled and should_continue_goal_autopilot(agent, agent.last_stop_reason):
@@ -2399,17 +2406,17 @@ async def run_agent(
                     autopilot.begin_continuation()
                     print(
                         f"\n{Colors.DIM}Goal autopilot continuing "
-                        f"{autopilot.continuations}/{config.agent.goal_autopilot_max_turns}...{Colors.RESET}\n"
+                        f"{autopilot.continuations}/{agent_session.config.agent.goal_autopilot_max_turns}...{Colors.RESET}\n"
                     )
                     agent.add_user_message(
                         goal_autopilot_prompt(
                             agent.goal,
                             autopilot.continuations,
-                            config.agent.goal_autopilot_max_turns,
+                            agent_session.config.agent.goal_autopilot_max_turns,
                         )
                     )
                     before_signature = goal_autopilot_progress_signature(agent.goal)
-                    final_content = await agent.run()
+                    final_content = await _run_session_turn(agent_session)
                     after_signature = goal_autopilot_progress_signature(agent.goal)
                     if should_continue_goal_autopilot(agent, agent.last_stop_reason):
                         if autopilot.record_progress(before_signature, after_signature):
@@ -2435,9 +2442,9 @@ async def run_agent(
                     f"{autopilot.no_progress_turns} continuation(s) without recorded goal progress.{Colors.RESET}"
                 )
             _save_goal_state(workspace_dir, agent.goal)
-            if skill_scratch_dir is not None:
+            if agent_session.skill_scratch_dir is not None:
                 try:
-                    cleanup_skill_scratch_dir(skill_scratch_dir)
+                    cleanup_skill_scratch_dir(agent_session.skill_scratch_dir)
                 except Exception as cleanup_error:
                     print(
                         f"{Colors.YELLOW}⚠️  Failed to clean Skill scratch: "
@@ -2540,7 +2547,6 @@ async def run_agent(
     )
 
     # 10. Interactive loop
-    force_plan_next_turn = force_plan_start
     while True:
         try:
             # Build prompt with optional sandbox session_id
@@ -2594,7 +2600,7 @@ async def run_agent(
                 elif command == "/clear":
                     # Clear message history but keep system prompt
                     cleared_count = agent.clear_history()
-                    user_source_text = bind_user_source_text(agent.tools, "", "")
+                    agent_session.source_text = bind_user_source_text(agent.tools, "", "")
                     print(f"{Colors.GREEN}✅ Cleared {cleared_count} messages, starting new session{Colors.RESET}\n")
                     if sandbox_mode:
                         print(f"{Colors.YELLOW}⚠️  Note: /clear does not clear sandbox state.{Colors.RESET}")
@@ -2604,7 +2610,7 @@ async def run_agent(
                 elif command == "/clear_all":
                     # Clear both message history AND sandbox kernel
                     cleared_count = agent.clear_history()
-                    user_source_text = bind_user_source_text(agent.tools, "", "")
+                    agent_session.source_text = bind_user_source_text(agent.tools, "", "")
                     if sandbox_mode:
                         await JupyterSandboxTool.shutdown_all()
                         print(f"{Colors.GREEN}✅ Cleared {cleared_count} messages and shut down sandbox kernel{Colors.RESET}\n")
@@ -2663,7 +2669,7 @@ async def run_agent(
                             from box_agent.events import MemoryProposalEvent, MemoryPromotionCandidate
                             entries = await asyncio.to_thread(
                                 memory_mgr.list_promotion_candidates,
-                                hit_threshold=config.agent.memory_promotion_hit_threshold,
+                                hit_threshold=agent_session.config.agent.memory_promotion_hit_threshold,
                                 cooldown_days=0,  # manual review bypasses cooldown
                             )
                             if not entries:
@@ -2703,7 +2709,7 @@ async def run_agent(
             # Finish background MCP discovery. Deferred mode leaves ordinary
             # MCP tools catalog-only; legacy eager mode registers them here.
             loaded_mcp_tools = await await_mcp_tools(mcp_task)
-            if not config.tools.mcp.deferred_loading_enabled:
+            if not agent_session.config.tools.mcp.deferred_loading_enabled:
                 register_mcp_tools(agent.tools, loaded_mcp_tools)
             await _refresh_mcp_after_auth_change()
             mcp_task = None  # clear so we don't re-await the cached result each turn
@@ -2714,14 +2720,13 @@ async def run_agent(
             )
             _apply_skill_filter(user_input)
             _apply_cli_auto_loaded_skills(user_input)
-            user_source_text = bind_user_source_text(
-                agent.tools, user_source_text, user_input
+            agent_session.source_text = bind_user_source_text(
+                agent.tools, agent_session.source_text, user_input
             )
             agent.add_user_message(user_input)
 
-            # Create cancellation event
-            cancel_event = asyncio.Event()
-            agent.cancel_event = cancel_event
+            # Reset the shared session cancellation flag for this user turn.
+            agent_session.cancelled = False
 
             esc_listener_stop = threading.Event()
             esc_cancelled = [False]
@@ -2738,7 +2743,7 @@ async def run_agent(
                                 if char == b"\x1b":  # Esc
                                     print(f"\n{Colors.BRIGHT_YELLOW}⏹️  Esc pressed, cancelling...{Colors.RESET}")
                                     esc_cancelled[0] = True
-                                    cancel_event.set()
+                                    agent_session.request_cancel()
                                     break
                             esc_listener_stop.wait(0.05)
                     except Exception:
@@ -2763,7 +2768,7 @@ async def run_agent(
                                 if char == "\x1b":  # Esc
                                     print(f"\n{Colors.BRIGHT_YELLOW}⏹️  Esc pressed, cancelling...{Colors.RESET}")
                                     esc_cancelled[0] = True
-                                    cancel_event.set()
+                                    agent_session.request_cancel()
                                     break
                     finally:
                         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -2776,17 +2781,18 @@ async def run_agent(
             try:
                 with traced_session_turn(trace_writer, content=user_input) as traced_turn:
                     agent_task = asyncio.create_task(
-                        agent.run(
-                            force_plan_start=force_plan_next_turn,
+                        _run_session_turn(
+                            agent_session,
+                            force_plan_start=agent_session.force_plan_start,
                             current_turn_text=user_input,
                         )
                     )
                     try:
-                        force_plan_next_turn = False
+                        agent_session.force_plan_start = False
 
                         while not agent_task.done():
                             if esc_cancelled[0]:
-                                cancel_event.set()
+                                agent_session.request_cancel()
                             await asyncio.sleep(0.1)
 
                         traced_turn.content = agent_task.result()
@@ -2801,13 +2807,13 @@ async def run_agent(
             except asyncio.CancelledError:
                 print(f"\n{Colors.BRIGHT_YELLOW}⚠️  Agent execution cancelled{Colors.RESET}")
             finally:
-                agent.cancel_event = None
+                agent_session.cancelled = False
                 esc_listener_stop.set()
                 esc_thread.join(timeout=0.2)
                 _save_goal_state(workspace_dir, agent.goal)
-                if skill_scratch_dir is not None:
+                if agent_session.skill_scratch_dir is not None:
                     try:
-                        cleanup_skill_scratch_dir(skill_scratch_dir)
+                        cleanup_skill_scratch_dir(agent_session.skill_scratch_dir)
                     except Exception as cleanup_error:
                         print(
                             f"{Colors.YELLOW}⚠️  Failed to clean Skill scratch: "

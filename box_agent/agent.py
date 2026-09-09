@@ -55,7 +55,7 @@ from .tools.mcp_tool_search import (
 )
 from .tools.skill_preload import build_active_skills_prompt
 from .tool_result_storage import ToolResultStorage
-from .cli_renderer import CliRenderer, Colors, _format_size
+from .cli_renderer import CliRenderer, Colors, _format_size, render_agent_events
 from .session_continuation import ContinuationMessage
 
 from box_agent.user_paths import state_path
@@ -1224,12 +1224,10 @@ class Agent:
         Signature and return value are unchanged from before the refactor.
         Internally it now consumes ``run_events()``.
         """
-        final_content = ""
-        self.last_stop_reason = None
         options = self.default_run_options()
         if current_turn_text is not None:
             options = replace(options, current_turn_text=current_turn_text)
-        async for event in self.run_events(
+        events = self.run_events(
             cancel_event,
             options=options,
             force_plan_start=force_plan_start,
@@ -1237,17 +1235,8 @@ class Agent:
             plan_approval=plan_approval,
             pause_after_plan_write=pause_after_plan_write,
             artifact_detection_enabled=artifact_detection_enabled,
-        ):
-            self._render_event(event)
-            if isinstance(event, MemoryProposalEvent) and self._proposal_negotiator is not None:
-                try:
-                    await self._proposal_negotiator.negotiate(event)
-                except Exception:
-                    pass
-            if isinstance(event, DoneEvent):
-                final_content = event.final_content
-                self.last_stop_reason = event.stop_reason.value
-        return final_content
+        )
+        return await render_agent_events(self, events)
 
     # ── Terminal renderer ───────────────────────────────────
 
