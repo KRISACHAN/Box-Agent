@@ -1162,6 +1162,11 @@ def _materialize_server_config(definition: ResolvedMcpServer) -> dict:
     return server_config
 
 
+def _waiting_for_credential(definition: ResolvedMcpServer) -> bool:
+    credential_ref = definition.config.get("credentialRef")
+    return isinstance(credential_ref, str) and not _mcp_runtime_credentials.get(credential_ref)
+
+
 def _build_connection(definition: ResolvedMcpServer) -> "MCPServerConnection":
     server_config = _materialize_server_config(definition)
     conn_type = _determine_connection_type(server_config)
@@ -1349,6 +1354,13 @@ async def load_mcp_tools_async(
                 _record_status(server_name, "disabled", definition=definition)
                 continue
 
+            if _waiting_for_credential(definition):
+                _record_status(
+                    server_name, "connecting",
+                    error="Waiting for host credential", definition=definition,
+                )
+                continue
+
             conn_type = _determine_connection_type(server_config)
             url = server_config.get("url")
             command = server_config.get("command")
@@ -1441,7 +1453,13 @@ async def reconnect_mcp_server(name: str) -> dict:
     async with lock:
         if _mcp_config_path:
             try:
-                _mcp_server_definitions = _resolve_registered_sources(_mcp_config_path)
+                # Reading another server's new credential version does not mean
+                # its existing connection has used it. Update this server only.
+                current = _resolve_registered_sources(_mcp_config_path)
+                if name in current:
+                    _mcp_server_definitions[name] = current[name]
+                else:
+                    _mcp_server_definitions.pop(name, None)
             except Exception as error:
                 return {"success": False, "error": str(error)}
         return await _reconnect_mcp_server_locked(name)
@@ -1458,7 +1476,9 @@ async def reconcile_mcp_sources(source: str | None = None) -> dict:
         return await _reconcile_mcp_sources_locked(source)
 
 
-async def replace_mcp_source(source: str, config: dict) -> dict:
+async def replace_mcp_source(
+    source: str, config: dict, connector_ids: list[str] | None = None,
+) -> dict:
     """Replace a host-managed MCP source in memory and reconcile its connections."""
 
     if source != "connector":
@@ -1474,10 +1494,41 @@ async def replace_mcp_source(source: str, config: dict) -> dict:
             return {"success": False, "error": "Invalid MCP server entry"}
         servers[name] = dict(server_config)
 
+    if connector_ids is not None and (
+        not isinstance(connector_ids, list) or not connector_ids
+        or any(not isinstance(item, str) or not item.strip() for item in connector_ids)
+    ):
+        return {"success": False, "error": "connectorIds must be a non-empty list for the connector source"}
+
     async with _mcp_source_reconcile_lock:
         previous = _mcp_source_overrides.get(source)
+        if connector_ids is not None:
+            targets = {item.strip().lower() for item in connector_ids}
+            connector_ids = sorted(targets)
+            # A connector update is a scoped replacement, including removals.
+            # Never publish another connector's half-restored configuration.
+            existing = previous
+            if existing is None:
+                existing = {
+                    name: definition.config
+                    for name, definition in _mcp_server_definitions.items()
+                    if definition.owner == source
+                }
+            servers = {
+                **{
+                    name: value for name, value in existing.items()
+                    if str(value.get("_connectorId", "")).strip().lower() not in targets
+                },
+                **{
+                    name: value for name, value in servers.items()
+                    if str(value.get("_connectorId", "")).strip().lower() in targets
+                },
+            }
         _mcp_source_overrides[source] = servers
-        result = await _reconcile_mcp_sources_locked(source)
+        if connector_ids is not None:
+            result = await _reconcile_mcp_sources_locked(source, connector_ids)
+        else:
+            result = await _reconcile_mcp_sources_locked(source)
         if result.get("error") and not result.get("results"):
             if previous is None:
                 _mcp_source_overrides.pop(source, None)
@@ -1486,33 +1537,42 @@ async def replace_mcp_source(source: str, config: dict) -> dict:
         return result
 
 
-async def _reconcile_mcp_sources_locked(source: str | None = None) -> dict:
+async def _reconcile_mcp_sources_locked(
+    source: str | None = None, connector_ids: list[str] | None = None,
+) -> dict:
     global _mcp_server_definitions
     if source is not None and source not in {"system", "connector", "user"}:
         return {"success": False, "error": f"Unknown MCP source: {source}"}
     if not _mcp_config_path:
         return {"success": False, "error": "MCP source paths are not initialized"}
 
-    previous = _mcp_server_definitions
+    previous = dict(_mcp_server_definitions)
     try:
         current = _resolve_registered_sources(_mcp_config_path)
     except Exception as error:
         return {"success": False, "error": str(error)}
-    _mcp_server_definitions = current
 
     results: list[dict] = []
+    reconnects: list[tuple[str, str]] = []
     all_names = sorted(set(previous) | set(current))
     for name in all_names:
         before = previous.get(name)
         after = current.get(name)
+        definition = after or before
+        if source is not None and definition.owner != source:
+            continue
+        if connector_ids is not None and definition.connector_id not in connector_ids:
+            continue
         if after is None:
             result = await disconnect_mcp_server(name)
             if before is not None:
                 _record_status(name, "disabled", definition=before)
+            _mcp_server_definitions.pop(name, None)
             results.append({"name": name, "action": "removed", **result})
             continue
 
         if after.config.get("disabled", False):
+            _mcp_server_definitions[name] = after
             if before is None or not before.config.get("disabled", False) or any(
                 connection.name == name for connection in _mcp_connections
             ):
@@ -1524,11 +1584,24 @@ async def _reconcile_mcp_sources_locked(source: str | None = None) -> dict:
             continue
 
         if before is not None and before.fingerprint == after.fingerprint:
-            continue
+            status = _mcp_status.get(name)
+            # An unchanged configuration is not proof of a successful connection.
+            # Retry failures, but leave healthy or still-loading servers alone.
+            if status is None or status.state != "failed":
+                continue
 
-        result = await reconnect_mcp_server(name)
         action = "added" if before is None else "modified"
-        results.append({"name": name, "action": action, **result})
+        reconnects.append((name, action))
+
+    async def reconnect(name: str, action: str) -> dict:
+        result = await reconnect_mcp_server(name)
+        return {"name": name, "action": action, **result}
+
+    # Each server has its own lock and timeout. A slow provider must not delay
+    # starting independent connectors whose credentials are already available.
+    results.extend(await asyncio.gather(
+        *(reconnect(name, action) for name, action in reconnects)
+    ))
 
     return {
         "success": all(result.get("success", False) for result in results),
@@ -1598,6 +1671,15 @@ async def _reconnect_mcp_server_locked(name: str) -> dict:
         url = server_config.get("url")
         command = server_config.get("command")
         transport_label = url or command or ""
+        if _waiting_for_credential(definition):
+            _record_status(
+                name, "connecting", transport=transport_label,
+                error="Waiting for host credential", definition=definition,
+            )
+            return {
+                "success": False, "waitingForCredential": True,
+                "error": "Waiting for host credential", "configPath": definition.source_path,
+            }
         conn = _build_connection(definition)
 
         _record_status(name, "connecting", transport=transport_label)

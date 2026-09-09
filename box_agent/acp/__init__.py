@@ -3320,7 +3320,11 @@ class BoxACPAgent:
                 config = params.get("config")
                 if not isinstance(source, str) or not isinstance(config, dict):
                     return {"success": False, "error": "source and config are required"}
-                result = await replace_mcp_source(source, config)
+                connector_ids = params.get("connectorIds")
+                if connector_ids is not None:
+                    result = await replace_mcp_source(source, config, connector_ids)
+                else:
+                    result = await replace_mcp_source(source, config)
             else:
                 result = await reconcile_mcp_sources(source)
             if not self._config.tools.mcp.deferred_loading_enabled:

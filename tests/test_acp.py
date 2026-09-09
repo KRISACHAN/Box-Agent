@@ -2537,7 +2537,8 @@ async def test_mcp_reconcile_delegates_source_diff_to_loader(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_mcp_source_replace_delegates_runtime_config_to_loader(tmp_path, monkeypatch):
+@pytest.mark.parametrize("connector_ids", [None, ["pkulaw"]])
+async def test_mcp_source_replace_delegates_runtime_config_to_loader(tmp_path, monkeypatch, connector_ids):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(workspace_dir=str(tmp_path)),
@@ -2546,8 +2547,10 @@ async def test_mcp_source_replace_delegates_runtime_config_to_loader(tmp_path, m
     agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
     captured = {}
 
-    async def replace(source, source_config):
+    async def replace(source, source_config, ids=None):
         captured.update({"source": source, "config": source_config})
+        if ids is not None:
+            captured["connectorIds"] = ids
         return {"success": True, "source": source, "results": []}
 
     monkeypatch.setattr("box_agent.tools.mcp_loader.replace_mcp_source", replace)
@@ -2557,12 +2560,12 @@ async def test_mcp_source_replace_delegates_runtime_config_to_loader(tmp_path, m
             "law": {"url": "https://example.test/mcp", "_connectorId": "pkulaw"}
         }
     }
-    result = await agent.extMethod(
-        "mcp/source/replace",
-        {"source": "connector", "config": source_config},
-    )
+    params = {"source": "connector", "config": source_config}
+    if connector_ids is not None:
+        params["connectorIds"] = connector_ids
+    result = await agent.extMethod("mcp/source/replace", params)
 
-    assert captured == {"source": "connector", "config": source_config}
+    assert captured == params
     assert result == {"success": True, "source": "connector", "results": []}
 
 
