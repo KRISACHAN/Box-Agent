@@ -5844,7 +5844,7 @@ async def test_stream_interrupted_preserves_partial_assistant_message(tmp_path):
     errors = [e for e in events if isinstance(e, ErrorEvent)]
     assert len(errors) == 1, f"expected exactly one ErrorEvent, got {errors}"
     assert errors[0].is_fatal is False, "stream interruption must not be fatal"
-    assert "interrupted" in errors[0].message.lower()
+    assert "任务尚未完成" in errors[0].message
 
     done = [e for e in events if isinstance(e, DoneEvent)]
     assert done and done[0].stop_reason == StopReason.INTERRUPTED

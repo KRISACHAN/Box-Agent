@@ -11,6 +11,27 @@ from time import perf_counter
 from ..schema import StreamEvent
 
 
+class StreamInterruptionRecovery:
+    """Allow one continuation after a transport interruption per agent turn."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    def request(self, *, step: int, max_steps: int) -> str | None:
+        if self.attempts >= 1 or step + 1 >= max_steps:
+            return None
+        self.attempts += 1
+        return (
+            "[System recovery: The previous model response was interrupted by a "
+            "connection failure and is incomplete. Continue the unfinished work now. "
+            "The partial text has already been shown; do not repeat it. Preserve "
+            "completed tool results and do not repeat successful tool actions. "
+            "Tool calls from the interrupted response were not executed; regenerate "
+            "any needed tool call with complete arguments. Return a final answer "
+            "only after completing the requested work and verification.]"
+        )
+
+
 def resolve_provider_stale_seconds(
     config_value: float | None = None,
     *,

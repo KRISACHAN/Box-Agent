@@ -6288,6 +6288,50 @@ async def test_acp_prompt_response_marks_done_error_as_failure(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acp_exhausted_stream_recovery_reports_unfinished_task(tmp_path):
+    from box_agent.retry import StreamInterrupted
+
+    class DroppingLLM(DoneLLM):
+        calls = 0
+
+        async def generate_stream(self, *args, **kwargs):
+            self.calls += 1
+            yield StreamEvent(type="text", delta="准备写大纲。")
+            raise StreamInterrupted(
+                ConnectionError("connection reset"), partial_text="准备写大纲。",
+            )
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=5, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_todo=False),
+    )
+    conn = DummyConn()
+    llm = DroppingLLM()
+    agent = BoxACPAgent(conn, config, llm, [], "system")
+    session = await agent.newSession(SimpleNamespace(cwd=None, field_meta={"session_mode": "general"}))
+    response = await agent.prompt(SimpleNamespace(
+        sessionId=session.sessionId, prompt=[{"text": "Create the outline."}],
+    ))
+
+    assert llm.calls == 2
+    assert response.stopReason == "end_turn"  # ACP has no interrupted enum value.
+    assert response.field_meta["ok"] is False
+    assert response.field_meta["completed"] is False
+    assert response.field_meta["runStatus"] == "error"
+    assert response.field_meta["lastStopReason"] == "interrupted"
+    assert "任务尚未完成" in response.field_meta["error"]
+    assert any(
+        "任务尚未完成" in str(update.model_dump())
+        for update in conn.updates
+    )
+    workspace = Path(agent._sessions[session.sessionId].agent.workspace_dir)
+    records = list((workspace / ".box-agent/task-registry/tasks").glob("*.json"))
+    assert len(records) == 1
+    assert json.loads(records[0].read_text())["execution_status"] == "error"
+
+
+@pytest.mark.asyncio
 async def test_acp_prompt_converts_unexpected_cancelled_error_to_terminal_failure(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),

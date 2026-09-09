@@ -205,6 +205,7 @@ from box_agent.execution_profile import (
 )
 from box_agent.memory import MemoryManager
 from box_agent.retry import RetryConfig as RetryConfigBase
+from box_agent.retry import StreamInterrupted
 from box_agent.schema import LLMProvider, Message
 from box_agent.tools.permissions import CapabilityPolicy, GrantStore, PermissionEngine
 from box_agent.tools.runtime import (
@@ -3060,7 +3061,7 @@ class BoxACPAgent:
             "waiting_for_user"
             if waiting_for_user
             else "error"
-            if stop_reason == StopReason.ERROR.value
+            if stop_reason in {StopReason.ERROR.value, StopReason.INTERRUPTED.value}
             else "completed"
         )
         try:
@@ -3130,7 +3131,7 @@ class BoxACPAgent:
         ):
             acp_stop_reason = "max_turn_requests"
         failed = (
-            stop_reason == StopReason.ERROR.value
+            stop_reason in {StopReason.ERROR.value, StopReason.INTERRUPTED.value}
             or bool(state.task_registry_error)
         )
         # ACP has no generic error stop reason. Keep stopReason protocol-valid
@@ -4713,12 +4714,13 @@ class BoxACPAgent:
 
                     case ErrorEvent(
                         message=msg,
-                        is_fatal=True,
+                        is_fatal=is_fatal,
+                        exception=exc,
                         error_code=error_code,
                         error_category=error_category,
                         error_details=error_details,
-                    ):
-                        log.error("error", session_id=session_id, message=msg, is_fatal=True)
+                    ) if is_fatal or isinstance(exc, StreamInterrupted):
+                        log.error("error", session_id=session_id, message=msg, is_fatal=is_fatal)
                         state.last_error = msg
                         state.last_error_code = error_code
                         state.last_error_category = error_category

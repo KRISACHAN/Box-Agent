@@ -112,6 +112,7 @@ from .permission_gateway import (
 )
 from .ports import KernelServices
 from .stream_controller import (
+    StreamInterruptionRecovery,
     resolve_provider_stale_seconds as _kernel_resolve_provider_stale_seconds,
     stream_with_activity as _kernel_stream_with_activity,
 )
@@ -1045,6 +1046,7 @@ async def _run_agent_loop_impl(
     # preserve existing behavior.
     no_progress_steps = 0
     turn_continuation = TurnContinuationController()
+    stream_recovery = StreamInterruptionRecovery()
 
     plan_write_succeeded = False
     # Suspected-truncation continuation (opt-in via
@@ -1808,10 +1810,48 @@ async def _run_agent_loop_impl(
                             tool_calls=None,
                         )
                     )
+                if cancelled():
+                    if hook_mgr.hooks:
+                        await hook_mgr.fire_done(
+                            stop_reason=StopReason.CANCELLED,
+                            final_content="Task cancelled by user.",
+                        )
+                    yield DoneEvent(
+                        stop_reason=StopReason.CANCELLED,
+                        final_content="Task cancelled by user.",
+                    )
+                    return
+                recovery_text = stream_recovery.request(step=step, max_steps=max_steps)
+                if recovery_text is not None:
+                    messages.append(Message(role="user", content=recovery_text))
+                    yield InjectedMessageEvent(
+                        content=recovery_text, injection_id=None, user_visible=False,
+                    )
+                    yield ProgressEvent(
+                        step=step + 1, content="模型连接中断，正在自动恢复（1/1）。",
+                    )
+                    _log.warning(
+                        "stream_interruption/recovery attempt=1/1 session_id=%s error=%s",
+                        session_id, exc.last_exception,
+                    )
+                    elapsed = perf_counter() - step_start
+                    total = perf_counter() - run_start
+                    if hook_mgr.hooks:
+                        await hook_mgr.fire_step_end(
+                            step=step + 1,
+                            elapsed_seconds=elapsed,
+                            total_elapsed_seconds=total,
+                        )
+                    yield StepEnd(
+                        step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total,
+                    )
+                    continue
                 msg = (
-                    f"LLM stream interrupted: {exc.last_exception!s} "
-                    f"(preserved partial content: {len(partial_text)} chars text, "
-                    f"{len(partial_thinking)} chars thinking)"
+                    "模型连接中断，任务尚未完成。已保留当前进度，请稍后发送“继续”重试。"
+                )
+                _log.warning(
+                    "stream_interruption/stopped attempts=%d session_id=%s error=%s",
+                    stream_recovery.attempts, session_id, exc.last_exception,
                 )
                 if hook_mgr.hooks:
                     await hook_mgr.fire_error(message=msg, is_fatal=False, exception=exc)
