@@ -5,6 +5,7 @@ Provides unified configuration loading and management functionality
 
 import shutil
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 import yaml
@@ -87,6 +88,9 @@ class LLMConfig(BaseModel):
     # stalls before the first token.
     timeout: float = 1200.0
     retry: RetryConfig = Field(default_factory=RetryConfig)
+    # Endpoint-specific fallback when its reasoning dialect normally sends
+    # "none". "low" requests reduced reasoning; it does not disable reasoning.
+    reasoning_effort_when_disabled: Literal["none", "low"] | None = None
 
     @property
     def context_token_limit(self) -> int:
@@ -123,6 +127,7 @@ class LiteLLMConfig(BaseModel):
     # the main model's long-running agent allowance.
     timeout: float = 600.0
     retry: RetryConfig = Field(default_factory=RetryConfig)
+    reasoning_effort_when_disabled: Literal["none", "low"] | None = None
 
 
 class ImageGenerationConfig(BaseModel):
@@ -483,6 +488,7 @@ class Config(BaseModel):
             max_output_tokens=data.get("max_output_tokens", default_max_output_tokens),
             timeout=float(data.get("timeout", 1200.0) or 1200.0),
             retry=retry_config,
+            reasoning_effort_when_disabled=data.get("reasoning_effort_when_disabled"),
         )
 
         # Parse optional lite_llm block. Mirrors the main LLM auth rules:
@@ -534,6 +540,7 @@ class Config(BaseModel):
                 max_output_tokens=lite_max_output_tokens,
                 timeout=float(lite_llm_data.get("timeout", 600.0) or 600.0),
                 retry=lite_retry,
+                reasoning_effort_when_disabled=lite_llm_data.get("reasoning_effort_when_disabled"),
             )
             lite_llm_config._present = True
 

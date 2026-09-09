@@ -269,9 +269,11 @@ class SubAgentTool(EventEmittingTool):
         artifact_detection_enabled: bool = True,
         artifact_root_dir: str | None = None,
         provider_stale_seconds: float | None = None,
+        thinking_enabled: bool = False,
     ):
         super().__init__()
         self._llm = llm
+        self._thinking_enabled = thinking_enabled
         # Snapshot taken at construction time. Used as a fallback only; the
         # live parent tool map is preferred (see ``set_tool_provider``) so that
         # tools that load *after* construction — notably MCP tools such as
@@ -308,6 +310,10 @@ class SubAgentTool(EventEmittingTool):
         """Attach the parent's canonical log so children can persist lineage."""
 
         self._parent_session_log = session_log
+
+    def set_thinking_enabled(self, enabled: bool) -> None:
+        """Bind the parent session's current thinking setting before a turn."""
+        self._thinking_enabled = enabled
 
     def _create_child_session_log(
         self,
@@ -768,6 +774,7 @@ class SubAgentTool(EventEmittingTool):
                 llm=llm,
                 messages=messages,
                 tools=child_tools,
+                thinking_enabled=self._thinking_enabled,
                 max_steps=max_steps,
                 max_tool_calls=max_tool_calls,
                 tool_limits=self._tool_limits,
@@ -1166,7 +1173,7 @@ class SubAgentTool(EventEmittingTool):
             synthesis = llm.generate(
                 messages=messages,
                 tools=None,
-                thinking_enabled=False,
+                thinking_enabled=self._thinking_enabled,
                 call_kind="subagent_step",
             )
             if self._batch_synthesis_timeout_seconds > 0:

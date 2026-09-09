@@ -5448,6 +5448,7 @@ async def run_acp_server(config: Config | None = None) -> None:
             max_output_tokens=config.llm.max_output_tokens,
             auth_file=config.llm.auth_file,
             timeout=config.llm.timeout,
+            reasoning_effort_when_disabled=config.llm.reasoning_effort_when_disabled,
         )
 
         # Kept as a constructor compatibility alias only. Internal calls now

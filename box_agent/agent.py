@@ -1030,6 +1030,9 @@ class Agent:
             self.local_tool_exposure.require_tools(("plan_read", "plan_write"))
 
         sub_agent_tool = self.tools.get("sub_agent")
+        set_child_thinking = getattr(sub_agent_tool, "set_thinking_enabled", None)
+        if callable(set_child_thinking):
+            set_child_thinking(self.thinking_enabled)
         set_child_negotiator = getattr(
             sub_agent_tool,
             "set_permission_negotiator",

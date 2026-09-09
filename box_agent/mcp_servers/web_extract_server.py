@@ -37,6 +37,7 @@ def _create_configured_llm() -> LLMClient:
         max_output_tokens=config.llm.max_output_tokens,
         auth_file=config.llm.auth_file,
         timeout=config.llm.timeout,
+        reasoning_effort_when_disabled=config.llm.reasoning_effort_when_disabled,
     )
 
 

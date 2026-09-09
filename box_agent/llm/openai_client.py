@@ -114,6 +114,7 @@ def _apply_thinking_params(
     *,
     model: str | None,
     thinking_enabled: bool,
+    reasoning_effort_when_disabled: str | None = None,
 ) -> None:
     """Map the session deep-think flag to the provider request dialect."""
     normalized_model = (model or "").strip().casefold()
@@ -135,13 +136,13 @@ def _apply_thinking_params(
         if thinking_enabled:
             params["reasoning_effort"] = _DEEP_THINK_REASONING_EFFORT
         elif not any(marker in normalized_model for marker in _GEMINI_NO_DISABLE_MARKERS):
-            params["reasoning_effort"] = "none"
+            params["reasoning_effort"] = reasoning_effort_when_disabled or "none"
         return
     if thinking_enabled:
         params["reasoning_effort"] = _DEEP_THINK_REASONING_EFFORT
         return
     if _is_sensenova_model(model):
-        params["reasoning_effort"] = "none"
+        params["reasoning_effort"] = reasoning_effort_when_disabled or "none"
 
 
 def _tool_parameter_types(
@@ -487,6 +488,7 @@ class OpenAIClient(LLMClientBase):
         auth_token: str = "",
         auth_file: str = "",
         timeout: float = 600.0,
+        reasoning_effort_when_disabled: str | None = None,
     ):
         """Initialize OpenAI client.
 
@@ -499,6 +501,9 @@ class OpenAIClient(LLMClientBase):
             auth_token: Optional in-memory product login token.
             auth_file: Optional auth.json path read before every request.
             timeout: Wall-clock cap (seconds) for each request to the API.
+            reasoning_effort_when_disabled: Endpoint override for dialects that
+                normally send "none" when thinking is disabled. "low" reduces
+                reasoning; it does not guarantee that reasoning is disabled.
         """
         super().__init__(
             api_key, api_base, model, retry_config,
@@ -510,6 +515,9 @@ class OpenAIClient(LLMClientBase):
         # room to finish tool-call JSON, then it clears itself after the
         # next generate/generate_stream call.
         self._ephemeral_max_output_tokens: int | None = None
+        if reasoning_effort_when_disabled not in (None, "none", "low"):
+            raise ValueError("reasoning_effort_when_disabled must be null, 'none' or 'low'")
+        self.reasoning_effort_when_disabled = reasoning_effort_when_disabled
 
         # Initialize OpenAI client
         self.client = AsyncOpenAI(
@@ -574,6 +582,7 @@ class OpenAIClient(LLMClientBase):
             params,
             model=self.model,
             thinking_enabled=thinking_enabled,
+            reasoning_effort_when_disabled=getattr(self, "reasoning_effort_when_disabled", None),
         )
 
         auth_headers = await self._auth_headers(
@@ -950,6 +959,7 @@ class OpenAIClient(LLMClientBase):
             params,
             model=self.model,
             thinking_enabled=thinking_enabled,
+            reasoning_effort_when_disabled=getattr(self, "reasoning_effort_when_disabled", None),
         )
 
         should_buffer_sensenova_tool_markup = bool(
@@ -1021,7 +1031,11 @@ class OpenAIClient(LLMClientBase):
                 response_stream = await _open_stream()
             except Exception as exc:
                 log_llm_error_meta(provider="openai", mode="stream", exc=exc)
-                if attempt < max_attempts - 1 and is_retryable_stream_error(exc):
+                if (
+                    attempt < max_attempts - 1
+                    and is_retryable_llm_error(exc)
+                    and is_retryable_stream_error(exc)
+                ):
                     delay = self.retry_config.calculate_delay(attempt)
                     logger.warning(
                         "openai generate_stream open attempt %d/%d failed: %s; retrying in %.2fs",
@@ -1161,7 +1175,7 @@ class OpenAIClient(LLMClientBase):
                             break
             except Exception as exc:
                 log_llm_error_meta(provider="openai", mode="stream", exc=exc)
-                if is_retryable_stream_error(exc):
+                if is_retryable_llm_error(exc) and is_retryable_stream_error(exc):
                     if any_user_yield:
                         # Once we've yielded deltas to the consumer we cannot
                         # rewind — surface partial content instead of retrying.
