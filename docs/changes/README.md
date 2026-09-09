@@ -60,6 +60,7 @@ decision, read those entries together.
 | Agent kernel and plugin composition | `box_agent/kernel/`, `box_agent/plugins/`, `composition.py`, `KernelServices`, `AgentLoopKernel`, `PluginHost` | ACP/CLI public entry points keep their signatures while the shared loop consumes an immutable Port bundle resolved by an explicit startup-static plugin host. | Pending implementation; reorganizes ownership without adding discovery, hot reload, or a protocol migration. | [2026-09-03 kernel/plugin boundary](#2026-09-03--stable-kernel-and-static-plugin-composition) |
 | MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 | Sub-agent delegation | `sub_agent_tool.py`, `sub_agent_capabilities.py`, `required_tools`, `write_scope`, `files` | The public request is flat; runtime-derived policy limits implicit tools to trusted local readers, keeps process/external/unknown MCP capabilities fail-closed, and scopes path writes. | Supersedes the caller-authored nested constraint contract while retaining its runtime enforcement goals. | [2026-08-19 flattened contract](#2026-08-19--flattened-sub-agent-contract-with-derived-policy) |
+| Shared live session ownership | `agent_session.py`, `agent_run.py`, `cli.py`, `acp/` | AgentSession owns live state and a retained Config reference; both adapters consume its event stream. Legacy Agent APIs and Session Log persistence remain unchanged. | Extends the shared runtime extraction; does not replace Session Log or introduce general configuration hot reload. | [2026-09-09 AgentSession](#2026-09-09--shared-agent-session-state-and-configuration) |
 | Session and workflow ownership | `session_log.py`, explicit Skills, `WAITING_FOR_USER`, legacy workflow files | Session Log is the sole durable Agent-session source. Skills/plugins own domain progress and recovery instructions; legacy checkpoint and owner files are ignored but not deleted. | PR #100 supersedes the proposed runtime owner/checkpoint lifecycle while retaining generic Tool safety boundaries. | [PR #100](#2026-09-02--session-log-only-recovery-pr-100), [earlier owner design](#2026-08-20--workflow-owner-precedence-for-third-party-skills) |
 | Native CLI session traces | `box_agent/cli.py`, `box_agent/session_trace.py`, `SessionTraceWriter`, `BOX_AGENT_SESSION_TRACE_ENABLED` | CLI creates best-effort v1 traces by default, with one file per invocation and one scope per user turn; Session Log remains the only durable recovery source. Existing opt-out, redaction and retention apply. | Adds native CLI production of traces; read together with the existing viewer and Session Log contracts, not as a replacement for them. | [2026-09-08 native CLI tracing](#2026-09-08--native-cli-session-tracing) |
 | Agent Trace diagnostics | `box_agent/trace_viewer/`, `box-agent trace-viewer`, `box-agent-session-trace/v1` | The packaged viewer is a read-only v1 trace consumer; static access stays browser-local and the optional directory service is loopback-only, authority-validated, explicit-path, and size-bounded. Flat ledgers stay top-level; comparison roots add exactly one `source / trace` level with input-first, filename-assisted grouping. | The 2026-09-04 comparison extension preserves the original writer, Core, provider, ACP, and flat-ledger contracts. | [2026-09-04 multi-source comparison](#2026-09-04--input-matched-multi-source-agent-trace-comparison), [2026-08-20 trace viewer](#2026-08-20--local-agent-trace-diagnostics) |
@@ -105,6 +106,30 @@ Release, provider API, and ACP compatibility have their own sources under
   status are recorded separately in the verification record.
 - **Rollback:** revert the Tool phase as one unit. There is no Session Log
   migration, new public configuration requirement, or new Skill scheduler.
+
+### 2026-09-09 — shared Agent session state and configuration
+
+- **Change:** `refactor(session): share configured Agent sessions across adapters`
+  on `codex/kernel-plugin-refactor`; this entry records the implementation before
+  a new PR or merge reference is available. See [Agent Session](../AGENT_SESSION.md).
+- **Durable effect:** `AgentSession` owns live cancellation, injection, Skill,
+  turn state, and the session Config reference. ACP's `SessionState` extends it
+  with protocol metadata; CLI and ACP use the same session event entrypoint.
+  Streams close before host completion so interrupted-turn persistence and
+  cancellation cleanup finish before a later turn starts.
+- **Compatibility:** `Agent.run()` and `Agent.run_events()` remain available.
+  Existing sessions retain their Config reference when an adapter replaces its
+  defaults; constructor values remain resolved at creation. This is not a
+  general hot-reload API. Session Log stays the sole durable session-state
+  source, with no schema or user-config migration.
+- **Proof anchors:** `tests/test_agent_session.py`, `tests/test_cli_runtime.py`,
+  `tests/test_cli_session_trace.py`, `tests/test_architecture_boundaries.py`,
+  and the existing Agent/ACP/kernel/persistence suites. Exact execution results
+  belong in the submitting PR's Proof section.
+- **Runtime and rollback:** source changes require a runtime rebuild, install,
+  host restart, and fresh live-task verification before packaged behavior is
+  established. Revert the session extraction and adapter wiring together;
+  existing Session Logs need no migration.
 
 ### 2026-09-08 — native CLI session tracing
 

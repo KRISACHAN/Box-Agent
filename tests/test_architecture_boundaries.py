@@ -15,6 +15,7 @@ NEUTRAL_RUNTIME_MODULES = (
     "agent_runtime.py",
     "agent_run.py",
     "agent_service.py",
+    "agent_session.py",
     "cli_renderer.py",
     "env_context.py",
     "goal_runtime.py",

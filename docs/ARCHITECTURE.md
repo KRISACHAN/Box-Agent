@@ -8,7 +8,8 @@ belong outside `box_agent/core.py` and `box_agent/kernel/`.
 
 ```mermaid
 flowchart TB
-    H["Host adapters<br/>CLI / ACP / custom UI"]
+    H["Host adapters<br/>ACP / CLI / custom UI"]
+    SS["AgentSession<br/>Config + live session state"]
     A["Stable public API<br/>Agent / AgentRunOptions / AgentEvent"]
     R["Runtime bridge<br/>box_agent.runtime"]
     C["Compatibility facade<br/>box_agent.core"]
@@ -19,24 +20,28 @@ flowchart TB
     E["Kernel services<br/>context / stream / tool messages"]
     T["Tool capability<br/>tools/engine: prepare / execute / results"]
 
-    H --> A --> R --> C --> O --> P --> S --> L --> E
+    H --> SS --> A --> R --> C --> O --> P --> S --> L --> E
     L -->|ToolEnginePort| T
     T -->|commit callback| E
 ```
 
-The production call path is therefore **CLI/ACP → Agent → runtime → core
+The host call path is therefore **ACP/CLI → AgentSession → Agent → runtime → core
 compatibility facade → outer composition/PluginHost → immutable
 KernelServices → AgentLoopKernel**. Dependencies point toward kernel-owned
 contracts. `box_agent/kernel/` never imports PluginHost, composition, ACP, CLI,
 officev3, or another product adapter. Plugins depend on `kernel.ports`; the
 kernel receives already resolved services and never queries a registry.
 Application and capability modules must not import `box_agent.core` directly.
+Both built-in adapters create and run `AgentSession` instances. See
+[Agent Session](AGENT_SESSION.md) for configuration flow
+and the boundary between session state and host orchestration.
 
 ## Layers and ownership
 
 | Layer | Main code | Responsibility |
 | --- | --- | --- |
 | Product / integration | `box_agent/acp/`, `box_agent/cli.py`, host code | Protocol translation, host metadata, ACP protocol rendering, CLI entrypoint wiring, and host-selected Skills |
+| Shared session | `agent_session.py`, `agent_run.py` | Session configuration, live Agent state, run-option binding, and the event-stream entrypoint |
 | Capability | `box_agent/tools/` except `base.py`, `box_agent/skills/`, provider implementations in `box_agent/llm/`, `memory.py` | Tools, self-contained Skills, providers, storage, and domain validators |
 | Stable public API | `agent.py`, `runtime.py`, `core.py`, `events.py`, `schema.py` | Backward-compatible calls and event/schema contracts |
 | Outer composition | `composition.py`, `plugins/` | Explicit descriptors, validation, dependency resolution, scoped activation, immutable service assembly, and disposal |
@@ -47,21 +52,21 @@ not mean these files can never change.
 
 ## Public entry points
 
-Application adapters run a turn through `Agent.run_events()` and provide a
-complete `AgentRunOptions` snapshot:
+Application adapters run a turn through `AgentSession.run_events()` and provide
+a complete `AgentRunOptions` snapshot:
 
 ```python
-from dataclasses import replace
+from contextlib import aclosing
 
-options = replace(
-    agent.default_run_options(),
+options = session.build_run_options(
     session_id=host_session_id,
     permission_negotiator=permission_adapter,
     hooks=host_hooks,
 )
 
-async for event in agent.run_events(options=options):
-    await render_for_host(event)
+async with aclosing(session.run_events(options=options)) as events:
+    async for event in events:
+        await render_for_host(event)
 ```
 
 Framework capabilities that intentionally create an isolated low-level loop,
@@ -72,10 +77,13 @@ such as `SubAgentTool`, may import `run_agent_loop` from
 Existing call forms and defaults remain compatible.
 `runtime.invoke_tool_with_permissions()` additionally accepts optional
 `invocation_context` and `is_cancelled`; its tuple return is unchanged. In particular, callers do
-not pass a PluginHost, Registry, or `KernelServices`. ACP still consumes
-`Agent.run_events(options=...)` and renders those events into protocol updates.
-CLI still calls `Agent.run()`, whose `Agent._render_event()` owns terminal
-rendering. Kernel and composition only produce events; neither renders them.
+not pass a PluginHost, Registry, or `KernelServices`. ACP consumes
+`AgentSession.run_events(options=...)`, which delegates to
+`Agent.run_events(options=...)`, and renders those events into protocol updates.
+CLI consumes the same session event stream through `render_agent_events` in
+`cli_renderer.py`. Legacy `Agent.run()` reuses that consumer, preserving its
+signature, terminal rendering, memory-proposal negotiation, and return value.
+Kernel and composition only produce events; neither renders them.
 
 ## Kernel modules and call relationships
 

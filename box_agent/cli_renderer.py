@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 
 from box_agent.events import (
     AgentEvent,
@@ -13,6 +14,7 @@ from box_agent.events import (
     ErrorEvent,
     InjectedMessageEvent,
     LogFileEvent,
+    MemoryProposalEvent,
     PermissionRequestEvent,
     StepEnd,
     StepStart,
@@ -24,6 +26,32 @@ from box_agent.events import (
     ToolCallStart,
 )
 from box_agent.utils import calculate_display_width
+
+if TYPE_CHECKING:
+    from box_agent.agent import Agent
+
+
+async def render_agent_events(agent: Agent, events: AsyncIterator[AgentEvent]) -> str:
+    """Consume a turn with the terminal behavior shared by CLI and Agent.run."""
+
+    final_content = ""
+    agent.last_stop_reason = None
+    try:
+        async for event in events:
+            agent._render_event(event)
+            if isinstance(event, MemoryProposalEvent) and agent._proposal_negotiator is not None:
+                try:
+                    await agent._proposal_negotiator.negotiate(event)
+                except Exception:
+                    pass
+            if isinstance(event, DoneEvent):
+                final_content = event.final_content
+                agent.last_stop_reason = event.stop_reason.value
+    finally:
+        close = getattr(events, "aclose", None)
+        if callable(close):
+            await close()
+    return final_content
 
 
 class Colors:
@@ -255,4 +283,4 @@ class CliRenderer:
             print(f"{Colors.DIM}🧠 Matched memories: none for {query}{Colors.RESET}")
 
 
-__all__ = ["CliRenderer", "Colors", "_format_size"]
+__all__ = ["CliRenderer", "Colors", "_format_size", "render_agent_events"]
