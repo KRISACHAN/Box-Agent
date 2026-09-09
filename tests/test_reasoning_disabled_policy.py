@@ -256,15 +256,18 @@ async def test_cli_doctor_preserves_explicit_endpoint_policy(tmp_path, monkeypat
     assert captured[0]["reasoning_effort_when_disabled"] == "low"
 
 
-def test_cli_config_reports_endpoint_policy_and_validates_updates(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("set_key", ["reasoning_effort_when_disabled", "llm.reasoning_effort_when_disabled"])
+@pytest.mark.parametrize("get_key", ["reasoning_effort_when_disabled", "llm.reasoning_effort_when_disabled"])
+def test_cli_config_reports_endpoint_policy_and_validates_updates(tmp_path, monkeypatch, capsys, set_key, get_key):
     from box_agent import cli
     path = tmp_path / "config.yaml"
     path.write_text("api_key: test\nprovider: openai\nmodel: SenseNova-Flash-test\n")
     monkeypatch.setattr(cli.Config, "find_config_file", lambda _name: path)
-    assert cli.cmd_config(set_pair=("reasoning_effort_when_disabled", "low")) == 0
+    assert cli.cmd_config(set_pair=(set_key, "low")) == 0
     capsys.readouterr()
-    assert cli.cmd_config(get_key="llm.reasoning_effort_when_disabled") == 0
+    assert Config.from_yaml(path).llm.reasoning_effort_when_disabled == "low"
+    assert cli.cmd_config(get_key=get_key) == 0
     assert capsys.readouterr().out.strip() == "low"
     previous = path.read_text()
-    assert cli.cmd_config(set_pair=("reasoning_effort_when_disabled", "medium")) == 1
+    assert cli.cmd_config(set_pair=(set_key, "medium")) == 1
     assert path.read_text() == previous

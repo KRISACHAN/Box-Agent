@@ -225,6 +225,7 @@ MAIN_LLM_KEYS = {
     "context_window",
     "max_output_tokens",
     "timeout",
+    "reasoning_effort_when_disabled",
 }
 
 AGENT_KEYS = frozenset(AgentConfig.model_fields)
