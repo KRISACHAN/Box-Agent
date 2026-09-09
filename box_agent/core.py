@@ -341,6 +341,8 @@ async def run_agent_loop(
     cache_fingerprint_context: dict[str, Any] | None = None,
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None,
     active_skill_activator: ActiveSkillActivator | None = None,
+    skill_engine: Any = None,
+    context_engine: Any = None,
     current_turn_text: str | None = None,
     context_resource_ledger: ContextResourceLedger | None = None,
     context_resource_dedup_enabled: bool = True,

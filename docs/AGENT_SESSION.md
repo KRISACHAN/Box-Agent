@@ -62,6 +62,7 @@ owned by the session. It still owns closing the kernel event stream.
 | `Config` | Existing configuration object, retained by reference through SessionContext and RunContext |
 | `SessionOptions` | Stable workspace cwd, execution/session mode, utility flag, permission policy and session state |
 | `HostBindings` | Borrowed model clients, application tool catalog, SkillLoader, memory, hooks, SessionLog, discovery tasks and host callbacks |
+| Skill Engine | Optional `skill_runtime` is forwarded to Agent; otherwise its loader is resolved from the final prepared Skill tools. |
 | `PluginRuntime` | Optional application-owned runtime shared across sessions; `open` creates a private runtime when omitted |
 
 Constructor settings keep their existing read timing. Step limits, tool limits,
@@ -104,6 +105,14 @@ Duplicate active session keys and overlapping runs are rejected.
 Borrowed clients, catalogs, discovery tasks and SessionLog are closed by their
 existing owners. `LLMClient.aclose()` closes its SDK transport; `for_model()`
 views sharing that transport must not close it independently.
+
+`AgentSession.create(skill_runtime=...)` forwards the supplied instance to Agent;
+it does not create a second set of Skill read or recovery records. The similarly
+named `skill_runtime_context` describes the Python/Node execution environment.
+CLI and ACP share the session's explicit Skill allowance set with directory and
+reading tools. Legacy `preloaded_*` fields describe actual delivery, not selection,
+current body visibility, or permission. The final run composition binds Context
+to the session's SkillRuntime and SessionLog while preserving managed capabilities.
 
 ## Managed Python use
 
@@ -163,6 +172,13 @@ CLI retains configuration setup/probing, terminal input, commands and rendering.
 One managed session serves task mode, interactive turns and goal continuations.
 `/clear` and `/clear_all` reuse that session. The CLI closes its session and every
 model client it created, including probe/reconfiguration clients, on exit.
+
+Skill names and descriptions may enter the system catalog. Context assembles
+main-Agent Skill bodies into ordinary request material, or a reading tool returns
+them as tool content. Restore validation precedes SessionLog resume repair, and
+the session preserves Agent's retry and request-commit boundaries. Connector
+catalog and read permissions remain separate session gates; required dependencies
+and delegated reads obey those gates too.
 
 Skill content loading, matching and MCP discovery retain their existing lazy or
 deferred behavior. Moving preparation to session plugins does not eagerly load

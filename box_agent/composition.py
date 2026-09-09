@@ -15,6 +15,7 @@ from .plugins.defaults import (
     compose_default_services,
     create_default_plugin_host,
     kernel_services_from_registry,
+    skill_loader_from_catalog,
 )
 from .plugins.host import PluginActivation, PluginCleanupError, PluginHost
 from .plugins.hooks import HookOwner, HookProviderPort
@@ -34,6 +35,8 @@ _SERVICE_OWNED_RUN_ARGUMENTS = frozenset(
         "tool_exposure_manager",
         "tool_result_storage",
         "kernel_services",
+        "skill_engine",
+        "context_engine",
     }
 )
 
@@ -42,6 +45,13 @@ def _default_capabilities(run_arguments: Mapping[str, Any]) -> dict[str, Any]:
     """Translate legacy run arguments without copying capability instances."""
 
     memory_manager = run_arguments.get("memory_manager")
+    skill_engine = run_arguments.get("skill_engine")
+    if skill_engine is None:
+        from .skill_runtime import SkillRuntime
+        loader = skill_loader_from_catalog(run_arguments["tools"])
+        if loader is not None:
+            # Bind persistence only after SessionStorePort replacement.
+            skill_engine = SkillRuntime(loader)
     return {
         "llm": run_arguments["llm"],
         "summary_llm": run_arguments.get("summary_llm"),
@@ -61,6 +71,8 @@ def _default_capabilities(run_arguments: Mapping[str, Any]) -> dict[str, Any]:
         "tool_catalog": run_arguments["tools"],
         "tool_exposure": run_arguments.get("tool_exposure_manager"),
         "tool_result_store": run_arguments.get("tool_result_storage"),
+        "skill_engine": skill_engine,
+        "context_engine": run_arguments.get("context_engine"),
     }
 
 
@@ -120,6 +132,8 @@ def compose_default_kernel_services(
     _register_legacy_hooks(bus, run_arguments.get("hooks") or ())
     bus.freeze()
     services = compose_default_services(**capabilities)
+    if services.context_engine is not None:
+        services.context_engine.bind_history(run_arguments.get("messages") or [])
     return replace(
         services,
         hook_context=bus.context,
@@ -345,6 +359,18 @@ async def run_agent_loop_with_default_services(
         _validate_managed_services(managed_services, run_arguments)
 
     capabilities = _default_capabilities(run_arguments)
+    if managed_services is not None:
+        for name in ("skill_engine", "context_engine"):
+            supplied = getattr(managed_services, name)
+            if supplied is not None and supplied is not capabilities[name]:
+                raise ValueError(f"kernel_services contradict effective run capabilities: {name}")
+        bound = compose_default_services(**capabilities)
+        managed_services = replace(
+            managed_services, skill_engine=bound.skill_engine,
+            context_engine=bound.context_engine,
+        )
+        capabilities["skill_engine"] = bound.skill_engine
+        capabilities["context_engine"] = bound.context_engine
     bus = capabilities["hook_bus"]
     plugins = tuple(run_arguments.get("plugins") or ())
     host: PluginHost | None = None
@@ -384,6 +410,8 @@ async def run_agent_loop_with_default_services(
             managed_services if managed_services is not None else resolved,
             hook_bus=bus, hook_dispatch=bus, hook_context=bus.context,
         )
+        if services.context_engine is not None:
+            services.context_engine.bind_history(run_arguments.get("messages") or [])
         kernel = AgentLoopKernel(
             _services=services,
             _runtime_defaults=runtime_defaults,

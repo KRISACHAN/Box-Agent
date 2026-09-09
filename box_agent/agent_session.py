@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from .agent import Agent, AgentRunOptions
 from .agent_run import AgentRunHandle
-from .agent_runtime import AgentFactory
+from .agent_runtime import AgentFactory, _UNSET
 from .agent_service import AgentService
 from .config import Config
 from .events import AgentEvent, DoneEvent, StopReason
@@ -110,6 +110,7 @@ class AgentSession:
         hooks: list[Any] | None = None,
         plugins: tuple[Any, ...] = (),
         session_log: SessionLog | None = None,
+        skill_runtime: Any = _UNSET,
         utility: bool = False,
         allowed_connector_ids_provider: Callable[[], frozenset[str]] | None = None,
         agent_factory: AgentFactory = Agent,
@@ -122,6 +123,9 @@ class AgentSession:
         """
 
         settings = config.agent
+        capabilities = {}
+        if skill_runtime is not _UNSET:
+            capabilities["skill_runtime"] = skill_runtime
         agent = AgentService(agent_factory=agent_factory).create_agent(
             llm_client=llm_client,
             system_prompt=system_prompt,
@@ -156,6 +160,7 @@ class AgentSession:
             session_log=session_log,
             **({"enable_builtin_tools": False} if utility else {}),
             **({"plugins": plugins} if plugins else {}),
+            **capabilities,
         )
         return cls(agent=agent, config=config, **state)
 

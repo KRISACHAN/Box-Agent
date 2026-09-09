@@ -27,6 +27,8 @@ _SUMMARY_OUTPUT_CHAR_LIMIT = 8_000
 _RECENT_MESSAGE_LIMIT = 5
 _RECENT_MESSAGE_CHAR_LIMIT = 20000
 _RUNTIME_STATE_CHAR_LIMIT = 12_000
+# Request serialization/envelope headroom, independent of model output tokens.
+REQUEST_INPUT_HEADROOM_TOKENS = 1_024
 _SUMMARY_MARKER = (
     "This session is being continued from a previous conversation that ran "
     "out of context. The summary below covers the earlier portion of the "
@@ -142,7 +144,7 @@ def _summary_message_text(msg: Message) -> str:
     if isinstance(msg.content, str):
         content = msg.content
     else:
-        content = json.dumps(msg.content, ensure_ascii=False, default=str)
+        content = _budget_content_json(msg.content)
 
     details = [f"role={msg.role}"]
     if msg.name:
@@ -256,7 +258,7 @@ def _message_chars(message: Message) -> int:
     if isinstance(message.content, str):
         total = len(message.content)
     else:
-        total = len(json.dumps(message.content, ensure_ascii=False, default=str))
+        total = len(_budget_content_json(message.content)) + _budget_image_tokens(message.content) * 4
     if message.thinking:
         total += len(message.thinking)
     if message.tool_calls:
@@ -268,6 +270,50 @@ def _message_chars(message: Message) -> int:
             )
         )
     return total + 16
+
+
+def _image_token_estimate(block: dict[str, Any]) -> int:
+    """Estimate provider input tokens for one canonical image block."""
+
+    try:
+        width = max(0, int(block.get("width") or 0))
+        height = max(0, int(block.get("height") or 0))
+    except (TypeError, ValueError):
+        width = height = 0
+    image_tokens = (
+        math.ceil((width * height) / TRANSIENT_IMAGE_PIXEL_TOKEN_DIVISOR)
+        if width and height
+        else TRANSIENT_IMAGE_DEFAULT_TOKENS
+    )
+    return min(TRANSIENT_IMAGE_MAX_TOKENS, max(512, image_tokens))
+
+
+def _budget_content_json(content: Any) -> str:
+    """Serialize content for budgeting without charging base64 image bytes."""
+
+    if not isinstance(content, list):
+        return json.dumps(content, ensure_ascii=False, default=str)
+    sanitized: list[Any] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "input_image":
+            item = {key: value for key, value in block.items() if key != "data"}
+            item["_estimated_image_tokens"] = _image_token_estimate(block)
+            sanitized.append(item)
+        else:
+            sanitized.append(block)
+    return json.dumps(sanitized, ensure_ascii=False, default=str)
+
+
+def _budget_image_tokens(content: Any) -> int:
+    """Return the pixel-based token charge for canonical image blocks."""
+
+    if not isinstance(content, list):
+        return 0
+    return sum(
+        _image_token_estimate(block)
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "input_image"
+    )
 
 
 def _transient_followup_token_estimate(blocks: list[dict[str, Any]]) -> int:
@@ -289,20 +335,7 @@ def _transient_followup_token_estimate(blocks: list[dict[str, Any]]) -> int:
             or not data
         ):
             raise ValueError("invalid canonical transient input_image block")
-        try:
-            width = max(0, int(block.get("width") or 0))
-            height = max(0, int(block.get("height") or 0))
-        except (TypeError, ValueError):
-            width = height = 0
-        image_tokens = (
-            math.ceil((width * height) / TRANSIENT_IMAGE_PIXEL_TOKEN_DIVISOR)
-            if width and height
-            else TRANSIENT_IMAGE_DEFAULT_TOKENS
-        )
-        total += min(
-            TRANSIENT_IMAGE_MAX_TOKENS,
-            max(512, image_tokens),
-        )
+        total += _image_token_estimate(block)
     return total
 
 
@@ -624,18 +657,22 @@ async def _maybe_summarize(
     session_log: SessionLog | None = None,
     session_turn: int | None = None,
     session_step: int | None = None,
+    force: bool = False,
+    estimate_tools: dict[str, Any] | None = None,
+    summary_input_token_limit: int | None = None,
 ) -> CompactionOutcome:
     """Compact once when the complete next request exceeds its safe limit."""
     if skip_check:
         return CompactionOutcome(None, 0, 0)
 
+    budget_tools = tools if estimate_tools is None else estimate_tools
     estimated, trigger_source = _estimate_context_from_latest_response(
         messages,
-        tools,
+        budget_tools,
         api_total_tokens=api_total_tokens,
         api_prompt_tokens=api_prompt_tokens,
     )
-    if estimated < token_limit:
+    if estimated < token_limit and not force:
         return CompactionOutcome(
             None,
             estimated,
@@ -695,6 +732,11 @@ async def _maybe_summarize(
     try:
         if not allow_llm_summary:
             raise RuntimeError("LLM summary disabled")
+        if (summary_input_token_limit is not None
+                and _fallback_context_estimate(
+                    [*messages, Message(role="user", content=_SUMMARY_REQUEST)], None,
+                ) > summary_input_token_limit):
+            raise RuntimeError("Summary request exceeds the safe input budget")
         summary_calls = 1
         summary = await _create_summary(
             summary_llm or llm,
@@ -737,7 +779,7 @@ async def _maybe_summarize(
         return rebuilt
 
     new_messages = build_compacted_messages(bounded_summary)
-    estimated_after = _fallback_context_estimate(new_messages, tools)
+    estimated_after = _fallback_context_estimate(new_messages, budget_tools)
     for summary_limit in (8_000, 4_000, 2_000):
         if estimated_after <= token_limit or len(bounded_summary) <= summary_limit:
             continue
@@ -747,7 +789,7 @@ async def _maybe_summarize(
             label="summary",
         )
         new_messages = build_compacted_messages(bounded_summary)
-        estimated_after = _fallback_context_estimate(new_messages, tools)
+        estimated_after = _fallback_context_estimate(new_messages, budget_tools)
     if estimated_after > token_limit:
         mode = "blocked"
     _log.info(
@@ -796,3 +838,22 @@ def _is_compaction_metadata(msg: Message) -> bool:
             _WORKFLOW_CHECKPOINT_MARKER,
         )
     )
+
+
+def request_input_tokens(messages: list[Message], tools: Any) -> int:
+    """Estimate the current input with the exact offered schemas and usage guard."""
+    tool_map = tools if isinstance(tools, dict) else {tool.name: tool for tool in (tools or ())}
+    estimated, _ = _estimate_context_from_latest_response(messages, tool_map)
+    return estimated
+
+
+def skill_reference_budget_chars(messages: list[Message], tools: Any, token_limit: int,
+                                 output_tokens: int = 0) -> int:
+    """Allocate from the safe *input* limit; model output was already reserved.
+
+    ``output_tokens`` remains accepted for caller compatibility. The fixed
+    headroom covers request assembly, not another output-token reservation.
+    """
+    estimated = request_input_tokens(messages, tools)
+    spare_tokens = max(0, token_limit - estimated - REQUEST_INPUT_HEADROOM_TOKENS)
+    return min(50_000, spare_tokens * 4)

@@ -54,6 +54,8 @@ from ..events import (
     ToolCallResult,
 )
 from .context_engine import (
+    REQUEST_INPUT_HEADROOM_TOKENS,
+    _fallback_context_estimate,
     _is_compaction_metadata,
     _maybe_summarize,
     _validate_transient_followup_result,
@@ -717,6 +719,9 @@ async def _run_agent_loop_impl(
     tools = _services.tool_catalog
     tool_exposure_manager = _services.tool_exposure
     tool_result_storage = _services.tool_result_store
+    context_engine = _services.context_engine
+    if context_engine is not None:
+        context_engine.bind_history(messages)
 
     if artifact_root_dir is not None:
         warning_key = session_id or workspace_dir or "<anonymous>"
@@ -935,6 +940,9 @@ async def _run_agent_loop_impl(
     )
     pending_transient_followup_blocks: list[dict[str, Any]] = []
     pending_transient_followup_tokens = 0
+    request_overlay_tokens = 0
+    request_context_messages: list[Message] = []
+    tool_list: list[Any] = []
 
     # Per-turn guard for tools that can be repeatedly requested by the model
     # after it already has enough evidence. Once a budget is reached, later
@@ -943,6 +951,16 @@ async def _run_agent_loop_impl(
     tool_engine = _services.tool_engine
     assert tool_engine is not None
     tool_messages = ToolMessageCommitter(messages, session_log, session_turn)
+
+    def validate_followup(result, tool, pending):
+        accepted, blocks, tokens = _validate_transient_followup_result(
+            result=result, tool=tool, llm=llm, token_limit=token_limit,
+            pending_token_estimate=pending,
+        )
+        if blocks and context_engine is not None:
+            context_engine.reserve_followup(blocks)
+        return accepted, blocks, tokens
+
     tool_engine.configure_run(
         ToolRunContext(
             messages=messages, hooks=hook_mgr, result_storage=result_storage,
@@ -950,15 +968,13 @@ async def _run_agent_loop_impl(
             is_cancelled=cancelled, record_call=tool_messages.record_call,
             flush_calls=tool_messages.flush_calls,
             commit_result=tool_messages.commit_result,
-            validate_followup=lambda result, tool, pending: _validate_transient_followup_result(
-                result=result, tool=tool, llm=llm, token_limit=token_limit,
-                pending_token_estimate=pending,
-            ),
+            validate_followup=validate_followup,
             policy_error=browser_intent_policy.tool_call_error,
             workspace_dir=workspace_dir,
             session_id=session_id, turn_id=turn_id,
             permission_negotiator=permission_negotiator, logger=logger,
             resource_ledger=resource_ledger, activate_skill=active_skill_activator,
+            skill_reader=context_engine.tool_reader if context_engine is not None else None,
         ),
         ToolExecutionOptions(
             tool_call_limits=tool_call_limits, max_tool_calls=max_tool_calls,
@@ -987,6 +1003,120 @@ async def _run_agent_loop_impl(
         f"{run_start}:{_latest_user_text(messages)}".encode("utf-8", errors="ignore")
     ).hexdigest()[:10]
 
+    async def cancellation_done_event() -> DoneEvent:
+        if hook_mgr.hooks:
+            await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
+        return DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
+
+    async def compact_context(history_token_limit, *, force=False, estimate_tools=None):
+        """Apply one compaction through the same durable surface/event path."""
+        nonlocal summary_failure_cooldown_steps
+        # Context may project effective rules before estimation and summary.
+        # Older custom contexts retain the identity projection.
+        project_history = getattr(context_engine, "project_history", None)
+        effective_messages = project_history(messages) if callable(project_history) else messages
+        result = await _maybe_summarize(
+            llm,
+            effective_messages,
+            history_token_limit,
+            api_total_tokens,
+            False,
+            session_id=session_id,
+            turn_id=turn_id,
+            title=title,
+            api_prompt_tokens=api_prompt_tokens,
+            tools=tools,
+            summary_llm=summary_llm,
+            allow_llm_summary=summary_failure_cooldown_steps == 0,
+            session_log=session_log,
+            session_turn=session_turn,
+            session_step=step + 1,
+            force=force,
+            estimate_tools=estimate_tools,
+            summary_input_token_limit=token_limit if force else None,
+        )
+        if result.mode == "fallback" and result.summary_calls > 0 and result.error:
+            summary_failure_cooldown_steps = (
+                max_steps
+                if result.error_type
+                in {
+                    "BadRequestError",
+                    "AuthenticationError",
+                    "PermissionDeniedError",
+                }
+                else 3
+            )
+        elif summary_failure_cooldown_steps > 0:
+            summary_failure_cooldown_steps -= 1
+        event = None
+        new_msgs, _skip_next_token_check, est_before = result
+        if new_msgs is not None:
+            # The compacted surface retains the host's original system record;
+            # effective rules are projected again for every request.
+            new_msgs[0] = messages[0]
+            # Snapshot messages before compression, then extract in background
+            if memory_extractor:
+                _snapshot = list(messages)
+                asyncio.create_task(
+                    memory_extractor.maybe_extract(
+                        _snapshot,
+                        "pre_summarize",
+                        turn_id=memory_turn_id,
+                    )
+                )
+            if session_log is not None and session_turn is not None:
+                session_log.append(
+                    "compaction/summary",
+                    {
+                        "turn": session_turn,
+                        "step": step + 1,
+                        "mode": result.mode,
+                        "message": new_msgs[1].model_dump(
+                            mode="json",
+                            exclude_none=True,
+                        ),
+                        "estimatedBefore": est_before,
+                        "estimatedAfter": result.estimated_after,
+                        "error": result.error,
+                    },
+                )
+                session_log.replace_surface(
+                    new_msgs[1:],
+                    turn=session_turn,
+                    step=step + 1,
+                )
+                session_log.append(
+                    "compaction/end",
+                    {
+                        "turn": session_turn,
+                        "step": step + 1,
+                        "mode": result.mode,
+                        "error": result.error,
+                    },
+                )
+                session_log.flush()
+            messages.clear()
+            messages.extend(new_msgs)
+            if resource_ledger is not None:
+                resource_ledger.rotate_epoch()
+                _log.info(
+                    "context_resource/epoch_rotated transform=summary epoch=%d",
+                    resource_ledger.epoch,
+                )
+            event = SummarizationEvent(
+                estimated_tokens=est_before,
+                api_tokens=api_prompt_tokens,
+                token_limit=token_limit,
+                estimated_after=result.estimated_after,
+                mode=result.mode,
+                summary_calls=result.summary_calls,
+                micro_compacted=0,
+                error=result.error,
+                error_type=result.error_type,
+                trigger_source=result.trigger_source,
+            )
+        return result, event
+
     for step in range(max_steps):
         if resource_ledger is not None:
             invalidated = resource_ledger.reconcile(messages)
@@ -1003,9 +1133,7 @@ async def _run_agent_loop_impl(
         # ── Cancellation check (top of step) ────────────────
         # No cleanup needed here — messages are consistent at step boundaries.
         if cancelled():
-            if hook_mgr.hooks:
-                await hook_mgr.fire_done(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
-            yield DoneEvent(stop_reason=StopReason.CANCELLED, final_content="Task cancelled by user.")
+            yield await cancellation_done_event()
             return
 
         step_start = perf_counter()
@@ -1111,6 +1239,17 @@ async def _run_agent_loop_impl(
                 result_storage.aggregate_budget,
             )
         # ── Usage-driven context summarization (Layer 2) ───
+        prepared_tools = _services.tool_engine.prepare_tools(
+            is_tool_visible=browser_intent_policy.is_tool_visible,
+        )
+        tool_list = list(prepared_tools.definitions)
+        offered_tools_by_name = prepared_tools.targets
+        budget_tools_by_name = {tool.name: tool for tool in tool_list}
+        request_context_messages = [
+            message
+            for message in (auto_memory_context_message,)
+            if message is not None
+        ]
         transient_message = (
             Message(
                 role="user",
@@ -1120,103 +1259,26 @@ async def _run_agent_loop_impl(
             if pending_transient_followup_blocks
             else None
         )
+        extra_tokens = (_fallback_context_estimate(request_context_messages, {})
+                        if request_context_messages else 0)
+        transient_tokens = (max(pending_transient_followup_tokens,
+            _fallback_context_estimate([transient_message], {})) if transient_message is not None else 0)
         history_token_limit = max(
             1,
-            token_limit - pending_transient_followup_tokens,
+            token_limit - extra_tokens - transient_tokens,
         )
-        result = await _maybe_summarize(
-            llm,
-            messages,
-            history_token_limit,
-            api_total_tokens,
-            False,
-            session_id=session_id,
-            turn_id=turn_id,
-            title=title,
-            api_prompt_tokens=api_prompt_tokens,
-            tools=tools,
-            summary_llm=summary_llm,
-            allow_llm_summary=summary_failure_cooldown_steps == 0,
-            session_log=session_log,
-            session_turn=session_turn,
-            session_step=step + 1,
+        if cancelled():
+            yield await cancellation_done_event()
+            return
+        result, summarization_event = await compact_context(
+            history_token_limit, estimate_tools=budget_tools_by_name,
         )
-        if result.mode == "fallback" and result.summary_calls > 0 and result.error:
-            summary_failure_cooldown_steps = (
-                max_steps
-                if result.error_type
-                in {
-                    "BadRequestError",
-                    "AuthenticationError",
-                    "PermissionDeniedError",
-                }
-                else 3
-            )
-        elif summary_failure_cooldown_steps > 0:
-            summary_failure_cooldown_steps -= 1
-        new_msgs, _skip_next_token_check, est_before = result
-        if new_msgs is not None:
-            # Snapshot messages before compression, then extract in background
-            if memory_extractor:
-                _snapshot = list(messages)
-                asyncio.create_task(
-                    memory_extractor.maybe_extract(
-                        _snapshot,
-                        "pre_summarize",
-                        turn_id=memory_turn_id,
-                    )
-                )
-            if session_log is not None and session_turn is not None:
-                session_log.append(
-                    "compaction/summary",
-                    {
-                        "turn": session_turn,
-                        "step": step + 1,
-                        "mode": result.mode,
-                        "message": new_msgs[1].model_dump(
-                            mode="json",
-                            exclude_none=True,
-                        ),
-                        "estimatedBefore": est_before,
-                        "estimatedAfter": result.estimated_after,
-                        "error": result.error,
-                    },
-                )
-                session_log.replace_surface(
-                    new_msgs[1:],
-                    turn=session_turn,
-                    step=step + 1,
-                )
-                session_log.append(
-                    "compaction/end",
-                    {
-                        "turn": session_turn,
-                        "step": step + 1,
-                        "mode": result.mode,
-                        "error": result.error,
-                    },
-                )
-                session_log.flush()
-            messages.clear()
-            messages.extend(new_msgs)
-            if resource_ledger is not None:
-                resource_ledger.rotate_epoch()
-                _log.info(
-                    "context_resource/epoch_rotated transform=summary epoch=%d",
-                    resource_ledger.epoch,
-                )
-            yield SummarizationEvent(
-                estimated_tokens=est_before,
-                api_tokens=api_prompt_tokens,
-                token_limit=token_limit,
-                estimated_after=result.estimated_after,
-                mode=result.mode,
-                summary_calls=result.summary_calls,
-                micro_compacted=0,
-                error=result.error,
-                error_type=result.error_type,
-                trigger_source=result.trigger_source,
-            )
+        context_compacted = result.messages is not None
+        if summarization_event is not None:
+            yield summarization_event
+        if cancelled():
+            yield await cancellation_done_event()
+            return
         if result.blocked:
             msg = (
                 "Context remains above the safe input limit after bounded compaction "
@@ -1265,30 +1327,79 @@ async def _run_agent_loop_impl(
 
         # ── Step start ──────────────────────────────────────
         yield StepStart(step=step + 1, max_steps=max_steps)
+        if cancelled():
+            yield await cancellation_done_event()
+            return
         if hook_mgr.hooks:
             await hook_mgr.fire_step_start(step=step + 1, max_steps=max_steps)
+        if cancelled():
+            yield await cancellation_done_event()
+            return
 
         # ── LLM call (streaming) ──────────────────────────────
-        prepared_tools = _services.tool_engine.prepare_tools(
-            is_tool_visible=browser_intent_policy.is_tool_visible,
-        )
-        tool_list = list(prepared_tools.definitions)
-        offered_tools_by_name = prepared_tools.targets
-        request_context_messages = [
-            message
-            for message in (auto_memory_context_message,)
-            if message is not None
-        ]
-        request_messages = (
-            [*messages, *request_context_messages]
-            if request_context_messages
-            else messages
-        )
-        provider_request_messages = (
-            [*request_messages, transient_message]
-            if transient_message is not None
-            else request_messages
-        )
+        request_overlay_tokens = pending_transient_followup_tokens if transient_message is not None else 0
+        skill_references = ()
+        on_request_committed = None
+        on_response_received = None
+        if context_engine is not None:
+            output_budget = getattr(llm, "max_output_tokens", 0)
+            projection = context_engine.prepare_request(
+                messages, prepared_tools=prepared_tools, token_limit=token_limit,
+                output_tokens=output_budget if isinstance(output_budget, int) else 0,
+                extra_messages=tuple(request_context_messages),
+                transient_message=transient_message,
+                transient_tokens=pending_transient_followup_tokens,
+            )
+            recovery_blocked = False
+            if (projection.blocked_reason and getattr(projection, "budget_blocked", False)
+                    and not context_compacted):
+                # The final request includes schemas, overlays and guidance
+                # added after the regular history check. Retry this projection
+                # once, without replaying step hooks, tools or delivery commits.
+                result, summarization_event = await compact_context(
+                    max(1, token_limit - extra_tokens - transient_tokens - REQUEST_INPUT_HEADROOM_TOKENS),
+                    force=True, estimate_tools=budget_tools_by_name,
+                )
+                if summarization_event is not None:
+                    yield summarization_event
+                if cancelled():
+                    yield await cancellation_done_event()
+                    return
+                recovery_blocked = result.blocked
+                # Rebinding is mandatory: persistent read facts do not prove
+                # the corresponding tool text survived compaction.
+                projection = context_engine.prepare_request(
+                    messages, prepared_tools=prepared_tools, token_limit=token_limit,
+                    output_tokens=output_budget if isinstance(output_budget, int) else 0,
+                    extra_messages=tuple(request_context_messages),
+                    transient_message=transient_message,
+                    transient_tokens=pending_transient_followup_tokens,
+                )
+            if projection.blocked_reason or recovery_blocked:
+                msg = projection.blocked_reason or "Context remains above the safe input limit after bounded compaction."
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                    await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+                yield ErrorEvent(message=msg, is_fatal=True)
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
+            request_messages = projection.context_messages
+            provider_request_messages = projection.messages
+            skill_references = projection.references
+            request_overlay_tokens = projection.request_only_input_tokens
+            on_request_committed = getattr(projection, "on_committed", None)
+            on_response_received = getattr(projection, "on_response", None)
+        else:
+            # Legacy manually constructed service bundles may omit Context.
+            request_messages = [*messages, *request_context_messages]
+            provider_request_messages = ([*request_messages, transient_message]
+                                         if transient_message is not None else request_messages)
+
+        # Hooks and compaction can yield control after the step-start check.
+        # Honour cancellation before committing Skill delivery or any request.
+        if cancelled():
+            yield await cancellation_done_event()
+            return
 
         if session_log is not None and session_turn is not None:
             request_provider = getattr(llm, "provider", None)
@@ -1329,6 +1440,7 @@ async def _run_agent_loop_impl(
                     "provider": request_provider,
                     "model": request_model,
                     "tokenLimit": token_limit,
+                    "skillReferences": list(skill_references),
                     **(
                         {
                             "autoMemoryContext": {
@@ -1344,7 +1456,6 @@ async def _run_agent_loop_impl(
                 },
             )
             session_log.flush()
-
 
         cache_fingerprint = build_cache_fingerprint(
             messages=request_messages,
@@ -1362,6 +1473,14 @@ async def _run_agent_loop_impl(
                 tools=tool_list,
                 cache_fingerprint=cache_fingerprint,
             )
+
+        # Request diagnostics can fail too. Keep restored material pending until
+        # all request logging succeeds, immediately before the provider call.
+        if cancelled():
+            yield await cancellation_done_event()
+            return
+        if callable(on_request_committed):
+            on_request_committed()
 
         llm_debug_sink_token = (
             set_llm_debug_sink(logger.log_llm_debug_record)
@@ -1394,11 +1513,7 @@ async def _run_agent_loop_impl(
             }
             if call_kind:
                 stream_kwargs["call_kind"] = call_kind
-            request_only_input_tokens = (
-                pending_transient_followup_tokens
-                if transient_message is not None
-                else 0
-            )
+            request_only_input_tokens = request_overlay_tokens
             llm_stream = llm.generate_stream(**stream_kwargs)
             async for chunk in _stream_with_activity(
                 llm_stream,
@@ -1688,6 +1803,12 @@ async def _run_agent_loop_impl(
         # persisted when we plan to retry — feeding a half-baked tool_call
         # back to the model just teaches it to keep producing them. Build the
         # message here, then append only in the branches that keep it.
+        if (callable(on_response_received)
+                and response.finish_reason not in {"provider_stale", "length", "max_tokens"}
+                and not (response.truncated_tool_calls or response.stream_dropped_mid_tool or response.oversized_tool_calls)
+                and ((response.content or "").strip() or response.tool_calls)):
+            on_response_received()
+
         assistant_msg = Message(
             role="assistant",
             content=response.content,
