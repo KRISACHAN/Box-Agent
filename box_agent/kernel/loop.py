@@ -557,23 +557,31 @@ def _plan_start_payload(approval: dict[str, Any] | None = None) -> dict[str, Any
 async def _auto_match_memory_for_latest_prompt(
     messages: list[Message],
     memory_manager: Any,
+    *,
+    current_turn_text: str | None = None,
 ) -> tuple[ToolCallResult | None, Message | None]:
     """Conservatively match v2 experience memory against the latest user prompt.
 
+    Prefer the host-sanitized current request over wrapped message history.
     Matches are injected as weak, one-turn context: the model is told these
     memories may be relevant and must ignore them when the user is starting a
     new task.  This avoids depending on the model deciding to call
     ``memory_search`` while keeping the memory signal non-authoritative.
     """
-    latest_user = next((msg for msg in reversed(messages) if msg.role == "user"), None)
-    if latest_user is None:
-        return None, None
+    if current_turn_text is not None:
+        user_text = current_turn_text
+    else:
+        latest_user = next((msg for msg in reversed(messages) if msg.role == "user"), None)
+        if latest_user is None:
+            return None, None
 
-    user_text = (
-        latest_user.content
-        if isinstance(latest_user.content, str)
-        else str(latest_user.content)
-    )
+        user_text = (
+            latest_user.content
+            if isinstance(latest_user.content, str)
+            else str(latest_user.content)
+        )
+    if not user_text.strip():
+        return None, None
     try:
         matches = await asyncio.to_thread(
             memory_manager.auto_match_context,
@@ -833,9 +841,9 @@ async def _run_agent_loop_impl(
             cache-sensitive request fingerprints, such as selected skill names.
         cache_fingerprint_sink: Optional callback that receives each fingerprint
             before the LLM request, for hosts that do not use ``AgentLogger``.
-        current_turn_text: Optional host-sanitized latest user request used to
-            gate tools that access the user's active browser tab. When omitted,
-            the latest user message is used.
+        current_turn_text: Optional host-sanitized latest user request used for
+            automatic memory matching and gating tools that access the user's
+            active browser tab. When omitted, the latest user message is used.
         context_resource_ledger: Optional caller-owned ledger. Agent sessions
             pass a persistent instance; direct and child loops get a local one.
         context_resource_dedup_enabled: Disable the first-batch resource-history
@@ -902,6 +910,7 @@ async def _run_agent_loop_impl(
         injected, auto_memory_context_message = await _auto_match_memory_for_latest_prompt(
             messages,
             memory_lookup,
+            current_turn_text=current_turn_text,
         )
         if injected is not None:
             yield injected

@@ -2952,6 +2952,69 @@ async def test_auto_memory_match_injects_weak_request_context_without_mutating_s
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("current_turn_text", "expects_memory"),
+    [
+        ("查询内马尔近况", False),
+        ("Box-Agent 图谱启动方式", True),
+        (None, True),
+        ("", False),
+        ("   ", False),
+    ],
+)
+async def test_auto_memory_match_uses_current_request_instead_of_wrapped_history(
+    tmp_path, monkeypatch, current_turn_text, expects_memory,
+):
+    from box_agent.memory import MemoryManager
+
+    memory_text = "- Box-Agent 图谱启动方式：优先使用官方预构建 Viewer，通过 npx 启动。"
+    memory = MemoryManager(memory_dir=str(tmp_path / "memory"))
+    memory.write_context(memory_text, topic="project")
+    wrapped_prompt = (
+        "[Host UI language: Chinese.]\n"
+        "历史用户问题：Box-Agent 图谱启动方式 Viewer npx\n"
+        "当前用户问题：查询内马尔近况"
+    )
+    queries = []
+    auto_match = memory.auto_match_context
+
+    def capture_query(query):
+        queries.append(query)
+        return auto_match(query)
+
+    monkeypatch.setattr(memory, "auto_match_context", capture_query)
+    llm = CapturingStreamLLM([LLMResponse(content="done", finish_reason="stop")])
+    messages = [Message(role="user", content=wrapped_prompt)]
+    events = await collect(
+        run_agent_loop(
+            llm=llm,
+            messages=messages,
+            tools={},
+            max_steps=1,
+            memory_manager=memory,
+            current_turn_text=current_turn_text,
+        )
+    )
+
+    expected_query = wrapped_prompt if current_turn_text is None else current_turn_text
+    assert queries == ([expected_query] if expected_query.strip() else [])
+    results = [
+        event for event in events
+        if isinstance(event, ToolCallResult) and event.tool_call_id == "memory-auto-match"
+    ]
+    contexts = [
+        message for message in llm.message_calls[0]
+        if "Possibly relevant memory" in str(message.content)
+    ]
+    assert bool(results) is expects_memory
+    assert bool(contexts) is expects_memory
+    if expects_memory:
+        assert results[0].raw_output["query"] == expected_query
+        assert memory_text in contexts[0].content
+    assert messages[0].content == wrapped_prompt
+
+
+@pytest.mark.asyncio
 async def test_auto_memory_match_waits_off_event_loop_for_memory_snapshot(tmp_path):
     from box_agent.memory import MemoryManager
 
