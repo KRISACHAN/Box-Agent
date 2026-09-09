@@ -702,6 +702,9 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                 ),
             ]
         )
+        for tool in tools:
+            if tool.name == "append_file":
+                tool._model_exposure_direct = use_output_dir
         _out(
             f"{Colors.GREEN}✅ Loaded file operation tools "
             f"(relative root: {relative_root}, scope: {workspace_dir}){Colors.RESET}"
@@ -734,7 +737,9 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
 
     # Host-neutral execution receipt. External workflow identity, task context,
     # versions, and submission remain the host's responsibility.
-    tools.append(ReportExecutionResultTool())
+    receipt_tool = ReportExecutionResultTool()
+    receipt_tool._model_exposure_direct = process_owner_id is not None
+    tools.append(receipt_tool)
     _out(f"{Colors.GREEN}✅ Loaded execution result reporting tool{Colors.RESET}")
 
     # Jupyter sandbox tool - Python code execution environment

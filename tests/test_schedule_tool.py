@@ -32,6 +32,7 @@ def tool():
 
 def test_metadata(tool):
     assert tool.name == "create_scheduled_task"
+    assert tool.aliases == ()
     assert tool.parallel_safe is False
     schema = tool.parameters
     assert schema["required"] == ["name", "prompt"]
