@@ -58,7 +58,7 @@ from .context_engine import (
     _validate_transient_followup_result,
 )
 from .ports import KernelServices
-from .tool_messages import ToolMessageCommitter
+from .tool_messages import ToolMessageCommitter, session_log_messages
 from ..tools.engine.call_contracts import (
     ToolExecutionOptions, ToolRunContext, ToolStepControl, ToolStepSummary,
 )
@@ -1280,7 +1280,7 @@ async def _run_agent_loop_impl(
             if not isinstance(request_max_output, int):
                 request_max_output = None
             session_log.append_unlogged_messages(
-                messages[1:],
+                session_log_messages(messages),
                 turn=session_turn,
                 step=step + 1,
             )
@@ -1994,7 +1994,7 @@ async def _run_agent_loop_impl(
         messages.append(assistant_msg)
         if session_log is not None and session_turn is not None:
             session_log.append_unlogged_messages(
-                messages[1:],
+                session_log_messages(messages),
                 turn=session_turn,
                 step=step + 1,
             )
