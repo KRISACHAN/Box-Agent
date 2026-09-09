@@ -1,12 +1,17 @@
 """Behavior tests for the durable append-only Session Log."""
 
 import json
+import ntpath
 import os
+import posixpath
 import subprocess
 import sys
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 
+import box_agent.session_log as session_log_module
 from box_agent.schema import FunctionCall, Message, ToolCall
 from box_agent.session_log import (
     SessionLog,
@@ -171,6 +176,50 @@ def test_session_log_accepts_only_equivalent_cwd_syntax(tmp_path):
     restored = SessionLog.open(root, session_id="normalized-cwd", cwd=workspace)
     assert restored.header["cwd"] == os.path.abspath(os.fspath(workspace))
     restored.close()
+
+
+@pytest.mark.parametrize(
+    "path_module,stored_cwd,requested_cwd,matches",
+    [
+        (ntpath, r"D:\Workspace", r"D:\Workspace", True),
+        (ntpath, r"D:\Workspace", r"d:\workspace", True),
+        (ntpath, r"d:\workspace", r"D:\Workspace", True),
+        (ntpath, r"D:\Workspace", r"D:\Other", False),
+        (ntpath, r"D:\Workspace", r"E:\Workspace", False),
+        (posixpath, "/Workspace", "/Workspace", True),
+        (posixpath, "/Workspace", "/workspace", False),
+    ],
+)
+def test_session_log_restores_legacy_workspace_without_rewriting_header(
+    tmp_path, monkeypatch, path_module, stored_cwd, requested_cwd, matches
+):
+    # Exercise platform path rules while keeping real host filesystem/lock APIs.
+    platform_os = SimpleNamespace(**vars(os))
+    platform_os.path = path_module
+    monkeypatch.setattr(session_log_module, "os", platform_os)
+    log = SessionLog.create(tmp_path, session_id="legacy-cwd", cwd=stored_cwd)
+    log.header["cwd"] = stored_cwd
+    try:
+        with nullcontext() if matches else pytest.raises(SessionLogWorkspaceMismatch):
+            log.assert_workspace(requested_cwd)
+        assert log.header["cwd"] == stored_cwd
+    finally:
+        log.close()
+
+    # Older releases stored the resolved path without normalizing its case.
+    header = json.loads(log.path.read_text(encoding="utf-8"))
+    header["cwd"] = stored_cwd
+    log.path.write_text(json.dumps(header) + "\n", encoding="utf-8")
+    before = log.path.read_bytes()
+    with nullcontext() if matches else pytest.raises(SessionLogWorkspaceMismatch):
+        restored = SessionLog.open(
+            tmp_path, session_id="legacy-cwd", cwd=requested_cwd
+        )
+        try:
+            assert restored.header["cwd"] == stored_cwd
+        finally:
+            restored.close()
+    assert log.path.read_bytes() == before
 
 
 def test_replay_filters_only_known_legacy_workflow_context(tmp_path):

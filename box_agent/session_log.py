@@ -197,7 +197,7 @@ class SessionLog:
 
         stored_cwd = self.header.get("cwd")
         requested_cwd = _normalize_cwd(cwd)
-        if stored_cwd != requested_cwd:
+        if _normalize_cwd(stored_cwd) != requested_cwd:
             raise SessionLogWorkspaceMismatch(
                 "session cwd does not match the immutable workspace "
                 f"(stored={stored_cwd!r}, requested={requested_cwd!r})"
@@ -284,7 +284,7 @@ class SessionLog:
                 if not isinstance(stored_cwd, str) or not stored_cwd:
                     raise SessionLogCorrupted("session log header has an invalid cwd")
                 requested_cwd = _normalize_cwd(cwd)
-                if stored_cwd != requested_cwd:
+                if _normalize_cwd(stored_cwd) != requested_cwd:
                     raise SessionLogWorkspaceMismatch(
                         "session cwd does not match the immutable workspace "
                         f"(stored={stored_cwd!r}, requested={requested_cwd!r})"
