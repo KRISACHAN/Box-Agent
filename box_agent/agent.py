@@ -42,6 +42,7 @@ from .context_resources import ContextResourceLedger
 from .config import AgentConfig, ToolLimitsConfig
 from .llm import LLMClient
 from .logger import AgentLogger
+from .kernel.ports import KernelServices
 from .runtime import run_agent_loop
 from .schema import Message
 from .session_log import SessionLog
@@ -103,6 +104,7 @@ class AgentRunOptions:
     cache_fingerprint_context: dict[str, Any] | None = None
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None
     current_turn_text: str | None = None
+    kernel_services: KernelServices | None = None
 
 
 @dataclass
@@ -1066,7 +1068,7 @@ class Agent:
             )
             self._deprecated_artifact_root_warned = True
 
-        events = run_agent_loop(
+        run_arguments = dict(
             llm=effective_options.llm,
             summary_llm=effective_options.summary_llm,
             messages=self.messages,
@@ -1118,6 +1120,9 @@ class Agent:
             session_log=self.session_log,
             session_turn=session_turn,
         )
+        if effective_options.kernel_services is not None:
+            run_arguments["kernel_services"] = effective_options.kernel_services
+        events = run_agent_loop(**run_arguments)
         try:
             async for event in events:
                 if self.session_log is not None and session_turn is not None:

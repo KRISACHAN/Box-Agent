@@ -30,6 +30,7 @@ _SERVICE_OWNED_RUN_ARGUMENTS = frozenset(
         "session_log",
         "tool_exposure_manager",
         "tool_result_storage",
+        "kernel_services",
     }
 )
 
@@ -84,6 +85,62 @@ def compose_default_kernel_services(
             tool_result_store=services.tool_result_store,
         ),
     )
+
+
+def _validate_managed_services(
+    services: KernelServices,
+    run_arguments: Mapping[str, Any],
+) -> None:
+    """Reject contradictory legacy capabilities before kernel execution."""
+
+    memory_manager = run_arguments.get("memory_manager")
+    expected = {
+        "llm": ("llm", run_arguments["llm"]),
+        "summary_llm": ("summary_llm", run_arguments.get("summary_llm")),
+        "permission_gateway": (
+            "permission_negotiator",
+            run_arguments.get("permission_negotiator"),
+        ),
+        "memory_lookup": ("memory_manager", memory_manager),
+        "memory_extraction": (
+            "memory_extractor",
+            run_arguments.get("memory_extractor"),
+        ),
+        "memory_promotion": (
+            "memory promotion gate",
+            memory_manager
+            if run_arguments.get("memory_promotion_enabled", False)
+            else None,
+        ),
+        "session_store": ("session_log", run_arguments.get("session_log")),
+        "tool_catalog": ("tools", run_arguments["tools"]),
+        "tool_exposure": (
+            "tool_exposure_manager",
+            run_arguments.get("tool_exposure_manager"),
+        ),
+        "tool_result_store": (
+            "tool_result_storage",
+            run_arguments.get("tool_result_storage"),
+        ),
+    }
+    mismatches = [
+        public_name
+        for field_name, (public_name, value) in expected.items()
+        if getattr(services, field_name) is not value
+    ]
+    effective_hooks = list(run_arguments.get("hooks") or ())
+    if not isinstance(services.hook_bus, HookManager):
+        mismatches.append("hooks")
+    elif len(services.hook_bus.hooks) != len(effective_hooks) or any(
+        actual is not expected
+        for actual, expected in zip(services.hook_bus.hooks, effective_hooks)
+    ):
+        mismatches.append("hooks")
+    if mismatches:
+        names = ", ".join(mismatches)
+        raise ValueError(
+            f"kernel_services contradict effective run capabilities: {names}"
+        )
 
 
 def _add_cleanup_note(error: BaseException, note: str) -> None:
@@ -172,6 +229,35 @@ async def run_agent_loop_with_default_services(
     runtime_defaults: Any,
 ) -> AsyncIterator[AgentEvent]:
     """Resolve defaults lazily, then delegate one run to the pure kernel."""
+
+    managed_services = run_arguments.get("kernel_services")
+    if managed_services is not None:
+        if not isinstance(managed_services, KernelServices):
+            raise TypeError("kernel_services must be a KernelServices instance")
+        _validate_managed_services(managed_services, run_arguments)
+        kernel = AgentLoopKernel(
+            _services=managed_services,
+            _runtime_defaults=runtime_defaults,
+            **_kernel_run_arguments(run_arguments),
+        )
+        events = kernel.run()
+        primary_error: BaseException | None = None
+        try:
+            async for event in events:
+                yield event
+        except GeneratorExit:
+            raise
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            try:
+                await events.aclose()
+            except BaseException as cleanup_error:
+                if primary_error is None:
+                    raise
+                _attach_cleanup_error(primary_error, cleanup_error)
+        return
 
     host = create_default_plugin_host(**_default_capabilities(run_arguments))
     activation: PluginActivation | None = None

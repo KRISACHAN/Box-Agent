@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import box_agent.acp as acp_module
+import box_agent.session_assembly as session_assembly
 from box_agent.acp import BoxACPAgent
 from box_agent.acp.project_context import build_project_startup_context_prompt as acp_project_prompt
 from box_agent.project_context import (
@@ -69,19 +69,20 @@ def test_acp_session_prompt_builder_preserves_overlay_order(monkeypatch, tmp_pat
 
     agent = object.__new__(BoxACPAgent)
     agent._system_prompt = "base {SANDBOX_INFO} {FILE_DELIVERY_INFO}"
+    agent._memory = None
     agent._config = SimpleNamespace(
         agent=SimpleNamespace(code_prompt_path=None, analysis_prompt_path=None),
     )
 
-    monkeypatch.setattr(acp_module, "build_sandbox_info_prompt", lambda: "sandbox")
-    monkeypatch.setattr(acp_module, "build_file_delivery_prompt", lambda: "delivery")
-    monkeypatch.setattr(acp_module, "_workspace_layout_prompt", lambda **_: "layout")
-    monkeypatch.setattr(acp_module, "build_project_startup_context_prompt", lambda _: "startup")
-    monkeypatch.setattr(acp_module, "build_env_context_prompt", lambda _: "env")
-    monkeypatch.setattr(acp_module, "build_skill_runtime_prompt", lambda _: "skills")
-    monkeypatch.setattr(acp_module, "build_follow_up_suggestions_prompt", lambda: "follow-up")
-    monkeypatch.setattr(agent, "_filesystem_access_prompt", lambda *_: "filesystem")
-    monkeypatch.setattr(agent, "_build_action_hints_prompt", lambda *_: "hints")
+    monkeypatch.setattr(session_assembly, "build_sandbox_info_prompt", lambda: "sandbox")
+    monkeypatch.setattr(session_assembly, "build_file_delivery_prompt", lambda: "delivery")
+    monkeypatch.setattr(session_assembly, "_workspace_layout_prompt", lambda **_: "layout")
+    monkeypatch.setattr(session_assembly, "build_project_startup_context_prompt", lambda _: "startup")
+    monkeypatch.setattr(session_assembly, "build_env_context_prompt", lambda _: "env")
+    monkeypatch.setattr(session_assembly, "build_skill_runtime_prompt", lambda _: "skills")
+    monkeypatch.setattr(session_assembly, "build_follow_up_suggestions_prompt", lambda: "follow-up")
+    monkeypatch.setattr(session_assembly, "_filesystem_access_prompt", lambda *_: "filesystem")
+    monkeypatch.setattr(session_assembly, "_build_action_hints_prompt", lambda *_: "hints")
 
     actual = agent._build_session_prompt(
         session_mode="code_agent",

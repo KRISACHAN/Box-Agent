@@ -46,6 +46,10 @@ def configured_adapter(tmp_path, monkeypatch, llm):
     workspace = profile / "workspace"
     workspace.mkdir(exist_ok=True)
     monkeypatch.setenv("BOX_AGENT_HOME", str(profile))
+    # The isolated profile owns its browser cache. Do not let a host or CI
+    # level override escape that profile while this fixture builds an adapter
+    # directly instead of going through run_acp_server().
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
     config = Config(
         llm=LLMConfig(api_key="test-key", model=llm.model),
         agent=AgentConfig(workspace_dir=str(workspace), enable_memory=False),

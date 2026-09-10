@@ -32,7 +32,7 @@ import logging
 import platform
 import signal
 import sys
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -63,6 +63,9 @@ from acp.schema import AgentCapabilities, Implementation, McpCapabilities
 
 from box_agent import __version__
 from box_agent.agent_session import AgentSession
+from box_agent.session_context import HostBindings, SessionOptions
+from box_agent.session_prompts import GENERAL_DIRECTORY_ORGANIZATION_PROMPT
+from box_agent.session_assembly import create_application_runtime
 from box_agent.agent_runtime import (
     build_agent,
     build_llm_client,
@@ -857,70 +860,27 @@ def _deprecated_artifact_fields(meta: Any) -> list[str]:
     return fields
 
 
-def _workspace_layout_path(
-    layout: Any,
-    workspace: Path,
-    *keys: str,
-) -> Path | None:
+def _normalize_workspace_layout(layout):
     if not isinstance(layout, dict):
         return None
-    raw = None
-    for key in keys:
-        value = layout.get(key)
-        if isinstance(value, str) and value.strip():
-            raw = value.strip()
-            break
-    if raw is None:
-        return None
-    try:
-        path = Path(raw).expanduser()
-        if not path.is_absolute():
-            path = workspace / path
-        return path.resolve()
-    except (OSError, RuntimeError):
-        return None
+    normalized = {}
+    for canonical, alias in (
+        ("selected_root_dir", "selectedRootDir"),
+        ("session_workspace_dir", "sessionWorkspaceDir"),
+        ("artifact_root_dir", "artifactRootDir"),
+    ):
+        for key in (canonical, alias):
+            value = layout.get(key)
+            if isinstance(value, str) and value.strip():
+                normalized[canonical] = value.strip()
+                break
+    return normalized
 
 
-def _workspace_layout_prompt(
-    *,
-    workspace: Path,
-    layout: Any,
-) -> str:
-    """Describe the selected root without reviving deprecated output roots."""
-    selected_root = _workspace_layout_path(
-        layout,
-        workspace,
-        "selected_root_dir",
-        "selectedRootDir",
-    ) or workspace
-    lines = [
-        "## Workspace Layout",
-        f"- 工作区（selected workspace root）：`{selected_root}`",
-        (
-            f"- 当前会话工作目录（cwd）：`{workspace}`。工具相对路径和 artifact 扫描都从"
-            "该目录开始；会话生命周期内不得改变它。"
-        ),
-        (
-            "- 模型为整理产物而创建的子目录只是普通文件组织，不成为新的 workspace，"
-            "也不改变 cwd。"
-        ),
-        (
-            "- 判空规则：必须先使用目标目录的绝对路径实际查询其内容，"
-            "只有查询成功且确认无内容时，才可判断该目标目录为空。"
-            "查询失败、权限不足或结果被过滤、截断时，不得据此判空。"
-        ),
-    ]
-    return "\n".join(lines)
-
-
-GENERAL_DIRECTORY_ORGANIZATION_PROMPT = """## General Task Directory Organization
-- 保持当前会话工作目录（cwd）不变。你创建的任务子目录只是文件组织行为，不是新的 workspace。
-- 在写入独立任务的产物前，先查看 cwd 的顶层结构。修改现有项目时直接在项目树中的合适位置工作，不要另建任务目录。
-- 目录选择遵循 File & Bash Operations 的规则，不要使用固定文件数量阈值。
-- 目录通常是 cwd 的直接子目录，使用简短、语义明确的名称。创建前检查同名路径；只在确认属于同一任务时复用，否则添加简短后缀，禁止覆盖无关内容。
-- 用户明确指定输出目录或文件路径时优先遵循用户路径，只要工具权限允许。
-- 目录以任务为生命周期：相关追问继续复用；用户切换到无关任务时重新判断。上下文摘要应保留当前任务采用的目录；若恢复后该信息缺失，重新检查目录，不要自动移动或合并已有文件。
-- PPT 和深度研究任务必须显式把选定目录的绝对路径传给 Skill 或脚本；若未创建独立目录，则显式使用 cwd。不要依赖隐式 output root 或输出目录环境变量。"""
+def _workspace_layout_prompt(**kwargs):
+    from box_agent.session_assembly import _workspace_layout_prompt as build
+    kwargs["layout"] = _normalize_workspace_layout(kwargs.get("layout"))
+    return build(**kwargs)
 
 
 def _goal_payload(agent: Agent) -> dict[str, Any] | None:
@@ -996,6 +956,15 @@ class SessionState(AgentSession):
     follow_up_suggestions_enabled: bool = False
     follow_up_suggestions_task: asyncio.Task[None] | None = None
 
+    async def aclose(self) -> None:
+        task = self.follow_up_suggestions_task
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self.follow_up_suggestions_task = None
+        await super().aclose()
+
 
 _CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 4_096
 _TITLE_MAX_OUTPUT_TOKENS = 8_000
@@ -1030,6 +999,7 @@ class BoxACPAgent:
         lite_llm: LLMClient | None = None,
     ):
         self._conn = conn
+        self._plugin_runtime = create_application_runtime()
         self._config = config
         self._llm = llm
         self._lite_llm = lite_llm or llm
@@ -1055,12 +1025,40 @@ class BoxACPAgent:
         # prompts while the first one is still awaiting the background load.
         # Distinct from `_mcp_loaded` — see `_ensure_mcp_loaded` for why.
         self._mcp_finalize_scheduled = False
+        self._mcp_finalize_task = None
         # Background skill discovery: awaited before the first turn's
         # SkillSelector runs. See `_ensure_skills_loaded`. When None,
         # discovery ran inline in initialize_base_tools (CLI path only —
         # ACP always defers).
         self._skill_task = skill_task
         self._skills_loaded = skill_task is None
+
+    async def aclose(self) -> None:
+        """Release sessions and application plugins, retaining interrupted owners."""
+        errors = []
+        for handle, state in list(self._sessions.items()):
+            try:
+                await state.aclose()
+            except BaseException as error:
+                errors.append(error)
+            if state._closed:
+                if state.agent.session_log is not None:
+                    state.agent.session_log.close()
+                del self._sessions[handle]
+        if self._mcp_finalize_task is not None:
+            self._mcp_finalize_task.cancel()
+            await asyncio.gather(self._mcp_finalize_task, return_exceptions=True)
+            self._mcp_finalize_task = None
+        try:
+            await self._plugin_runtime.aclose()
+        except BaseException as error:
+            errors.append(error)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            from box_agent.session_assembly import combine_cleanup_errors
+
+            raise combine_cleanup_errors(errors)
 
     def _llm_for_binding(self, binding: dict[str, Any] | None) -> LLMClient:
         if binding is None:
@@ -1297,7 +1295,7 @@ class BoxACPAgent:
             # prompts that also arrive before the load returns.
             if not self._mcp_finalize_scheduled:
                 self._mcp_finalize_scheduled = True
-                asyncio.create_task(self._finalize_mcp_load(), name="mcp-finalize")
+                self._mcp_finalize_task = asyncio.create_task(self._finalize_mcp_load(), name="mcp-finalize")
             return
         mcp_tools = await await_mcp_tools(self._mcp_task)
         if not self._config.tools.mcp.deferred_loading_enabled:
@@ -1642,22 +1640,6 @@ class BoxACPAgent:
             and (self._has_officev3_policy() or permission_mode == "default")
         ):
             try:
-                base_policy = (
-                    CapabilityPolicy.from_config(self._config)
-                    if self._has_officev3_policy()
-                    else CapabilityPolicy()
-                )
-                if permission_mode == "default":
-                    # Explicit session-default mode must fail closed even when
-                    # the host omits its filesystem context. Host-provided
-                    # values below may narrow or extend this session baseline.
-                    base_policy = base_policy.with_filesystem_overrides(
-                        session_workspace_root=str(workspace),
-                        allowed_directories=[],
-                        filesystem_scope="session_workspace",
-                        replace_allowed_directories=True,
-                    )
-
                 # officev3_permissions_override is DEPRECATED — kept for parsing only.
                 # In-band permission/request negotiation handles escalation now.
                 permission_overrides = meta.get("officev3_permissions_override") if isinstance(meta, dict) else None
@@ -1688,11 +1670,10 @@ class BoxACPAgent:
                         extra_dirs = None
                     if not isinstance(fs_scope, str):
                         fs_scope = None
-                    base_policy = base_policy.with_filesystem_overrides(
+                    fs_meta = dict(
                         session_workspace_root=swr,
                         allowed_directories=extra_dirs,
                         filesystem_scope=fs_scope,
-                        replace_allowed_directories=permission_mode == "default",
                     )
                     log.info(
                         "session/permissions",
@@ -1703,7 +1684,11 @@ class BoxACPAgent:
                         ),
                     )
 
-                effective_policy = base_policy
+                from box_agent.session_assembly import build_session_permission_policy
+                effective_policy = build_session_permission_policy(
+                    self._config, workspace, permission_mode,
+                    fs_meta if isinstance(fs_meta, dict) else None,
+                )
 
                 perm_engine = build_permission_engine(
                     effective_policy,
@@ -1741,112 +1726,9 @@ class BoxACPAgent:
                 ),
             )
 
-        skill_runtime_context = build_skill_runtime_context(
-            sandbox_mode=session_sandbox_mode,
-            env_context=env_context,
-        )
+        # RPC tools are host bindings; session tools and prompt are prepared by plugins.
+        tools: list = []
         session_skill_loader = self._skill_loader
-        if expert_context is not None and self._skill_loader is not None:
-            session_skill_loader = self._skill_loader.with_expert_skill_sources(
-                expert_context.skill_names()
-            )
-
-        # Build per-session system prompt with conditional mode injection
-        system_prompt = self._build_session_prompt(
-            session_mode,
-            workspace=workspace,
-            policy=effective_policy,
-            env_context=env_context,
-            skill_runtime_context=skill_runtime_context,
-            expert_context=expert_context,
-            workspace_layout=(
-                meta.get("workspace_layout") or meta.get("workspaceLayout")
-                if isinstance(meta, dict)
-                else None
-            ),
-            enable_general_directory_policy=(
-                not utility and session_mode in {None, "general"}
-            ),
-            follow_up_suggestions_enabled=follow_up_suggestions_enabled,
-        )
-
-        # Inject memory context (skipped for lightweight utility sessions)
-        memory_block: str | None = None
-        if self._memory and not utility:
-            recalled = await asyncio.to_thread(self._memory.recall)
-            if recalled:
-                memory_block = recalled
-                system_prompt = append_prompt_segment(system_prompt, memory_block)
-                log.info("session/memory", session_id=session_id, message="Memory context injected")
-
-        preloaded_skill_hashes: dict[str, str] = {}
-        skill_scratch_dir = None
-        explicitly_allowed_skill_names: set[str] = set()
-        blocked_skill_names = (
-            FAST_OPTIONAL_SKILLS if execution_profile == "fast" else frozenset()
-        )
-        if utility:
-            # Pure text transform: no base tools, no workspace/sandbox tools.
-            tools: list = []
-            log.info("session/new", session_id=session_id,
-                     message="Utility session: tools disabled (no memory recall/extraction)")
-        else:
-            tools = list(self._base_tools)
-            if session_skill_loader:
-                from box_agent.tools.skill_tool import GetSkillTool
-
-                tools = [
-                    GetSkillTool(
-                        session_skill_loader,
-                        include_disabled=expert_context is not None,
-                        preloaded_skill_hashes=preloaded_skill_hashes,
-                        blocked_skill_names=blocked_skill_names,
-                        explicitly_allowed_skill_names=(
-                            explicitly_allowed_skill_names
-                        ),
-                    )
-                    if isinstance(tool, GetSkillTool)
-                    or (
-                        expert_context is not None
-                        and getattr(tool, "name", "") == "get_skill"
-                    )
-                    else tool
-                    for tool in tools
-                ]
-            if perm_engine is None:
-                message = (
-                    f"Using explicit session permission mode: {permission_mode}"
-                    if permission_mode in elevated_permission_modes
-                    else "No officev3 policy — using legacy allow_full_access mode"
-                )
-                log.info(
-                    "session/permissions",
-                    session_id=session_id,
-                    message=message,
-                )
-            # Enable sandbox mode and restrict to workspace for ACP sessions
-            skill_scratch_dir = add_workspace_tools(
-                tools,
-                self._config,
-                workspace,
-                sandbox_mode=session_sandbox_mode,
-                allow_full_access=session_allow_full_access,
-                non_interactive=True,  # ACP cannot do interactive terminal prompts
-                output=lambda msg: sys.stderr.write(msg + "\n"),
-                llm=session_llm,
-                permission_engine=perm_engine,
-                skill_runtime_context=skill_runtime_context,
-                skill_loader=session_skill_loader,
-                capability_state_provider=self._sub_agent_capability_state,
-                env_context=env_context,
-                process_owner_id=session_id,
-                bypass_dangerous_command_approval=permission_mode == "full_access",
-            )
-            system_prompt = (
-                f"{system_prompt.rstrip()}\n\n"
-                f"{build_image_generation_prompt(self._config)}"
-            )
-
         skillhub_search_tool: SkillHubSearchTool | None = None
         if skillhub_search_enabled and not utility:
 
@@ -1871,9 +1753,8 @@ class BoxACPAgent:
                         skill_loader=session_skill_loader,
                     )
                 )
-            system_prompt = (
-                f"{system_prompt.rstrip()}\n\n{HARD_CAPABILITY_GAP_PROMPT.strip()}"
-            )
+
+        recovery_prompt: str | None = None
         session_log: SessionLog | None = None
         session_log_restored = False
         if upstream_session_id:
@@ -1887,6 +1768,8 @@ class BoxACPAgent:
                 existing_log = existing_state.agent.session_log
                 if existing_log is not None:
                     existing_log.assert_workspace(workspace)
+                await existing_state.aclose()
+                if existing_log is not None:
                     existing_log.close()
                 del self._sessions[existing_handle]
             session_root = state_path('sessions')
@@ -1911,7 +1794,7 @@ class BoxACPAgent:
                     session_log.close()
                     raise
                 if session_log.recovery_source is not None:
-                    system_prompt += (
+                    recovery_prompt = (
                         "\n\nThe previous session runtime log could not be fully restored. "
                         "Use supplied conversation history for context, but verify existing "
                         "artifacts and outcomes before repeating earlier actions with side effects."
@@ -1921,76 +1804,80 @@ class BoxACPAgent:
                         source=str(session_log.recovery_source),
                     )
 
+        diagnostic_events = []
+        trace_writer = None
+
+        def emit_diagnostic(event, data):
+            if trace_writer is None:
+                diagnostic_events.append((event, data))
+            else:
+                trace_writer.write(event, data=data)
+
         # Resolve the module-level factory at session creation time, matching
         # the historical direct ``Agent(...)`` call and its test hook.
-        state = SessionState.create(
-            config=self._config,
-            agent_factory=Agent,
-            llm_client=session_llm,
-            system_prompt=system_prompt,
-            tools=tools,
-            workspace_dir=str(workspace),
-            token_limit=session_token_limit,
-            session_log=session_log,
-            utility=utility,
-            session_llm=session_llm,
-            summary_llm=summary_llm,
-            session_mode=session_mode,
-            skill_scratch_dir=skill_scratch_dir,
-            llm_binding=llm_binding,
-            permission_engine=perm_engine, grant_store=grant_store,
-            memory_block=memory_block,
-            thinking_enabled=deep_think,
-            execution_profile=execution_profile,
-            explicitly_allowed_skill_names=explicitly_allowed_skill_names,
-            env_context=env_context,
-            skill_runtime_context=skill_runtime_context,
-            skill_loader=session_skill_loader,
-            expert_context=expert_context,
-            upstream_session_id=upstream_session_id,
-            current_task_id=initial_task_id,
-            upstream_title=upstream_title,
-            force_plan_start=force_plan_start,
-            require_plan_approval=require_plan_approval,
-            preloaded_skill_hashes=preloaded_skill_hashes,
-            follow_up_suggestions_enabled=follow_up_suggestions_enabled,
-            continuation_applied=session_log_restored,
-            mcp_fallback_tools=dict(self._base_mcp_fallback_tools),
-        )
+        try:
+            state = await SessionState.open(
+                config=self._config,
+                runtime=self._plugin_runtime,
+                options=SessionOptions(
+                    profile="acp", workspace_dir=workspace, token_limit=session_token_limit,
+                    utility=utility, sandbox_mode=session_sandbox_mode,
+                    session_mode=session_mode, allow_full_access=session_allow_full_access,
+                    permission_mode=permission_mode, effective_policy=effective_policy,
+                    process_owner_id=session_id,
+                    workspace_layout=_normalize_workspace_layout(meta.get("workspace_layout") or meta.get("workspaceLayout") if isinstance(meta, dict) else None),
+                    follow_up_suggestions_enabled=follow_up_suggestions_enabled,
+                ),
+                host=HostBindings(
+                    llm_client=session_llm, summary_llm=summary_llm,
+                    base_tools=self._base_tools, system_prompt=self._system_prompt,
+                    memory_manager=self._memory, hooks=self._hooks,
+                    skill_loader=self._skill_loader, mcp_task=self._mcp_task,
+                    skill_task=self._skill_task, session_log=session_log,
+                    workspace_tools_factory=add_workspace_tools,
+                    capability_state_provider=self._sub_agent_capability_state,
+                    extra_tools=tools,
+                    prompt_suffix="\n\n".join(part for part in (
+                        HARD_CAPABILITY_GAP_PROMPT if skillhub_search_tool else None,
+                        recovery_prompt,
+                    ) if part) or None,
+                    output=lambda msg: sys.stderr.write(msg + "\n"),
+                    diagnostics=emit_diagnostic,
+                ),
+                agent_factory=Agent,
+                session_llm=session_llm,
+                summary_llm=summary_llm,
+                session_mode=session_mode,
+                llm_binding=llm_binding,
+                permission_engine=perm_engine, grant_store=grant_store,
+                thinking_enabled=deep_think,
+                execution_profile=execution_profile,
+                env_context=env_context,
+                expert_context=expert_context,
+                upstream_session_id=upstream_session_id,
+                current_task_id=initial_task_id,
+                upstream_title=upstream_title,
+                force_plan_start=force_plan_start,
+                require_plan_approval=require_plan_approval,
+                follow_up_suggestions_enabled=follow_up_suggestions_enabled,
+                continuation_applied=session_log_restored,
+                mcp_fallback_tools=dict(self._base_mcp_fallback_tools),
+            )
+        except BaseException:
+            if session_log is not None:
+                session_log.close()
+            raise
         agent = state.agent
+        session_skill_loader = state.skill_loader
+        tools = list(agent.tools.values())
+        for tool in tools:
+            if isinstance(tool, SkillHubInstallTool):
+                tool._skill_loader = session_skill_loader
 
         if skillhub_search_tool is not None:
             skillhub_search_tool.set_snapshot_provider(
                 lambda: capability_snapshot(agent, session_skill_loader)
             )
-
-        if agent.restored_skills and session_skill_loader is not None:
-            try:
-                restored_skill_prompts: list[tuple[str, str, str, int]] = []
-                for order, item in enumerate(agent.restored_skills, start=1):
-                    if not isinstance(item, dict):
-                        continue
-                    name = item.get("name")
-                    if not isinstance(name, str) or not name.strip():
-                        continue
-                    prompt_hash = item.get("sha256", "")
-                    load_order = item.get("loadOrder", order)
-                    if not isinstance(load_order, int):
-                        load_order = order
-                    skill = session_skill_loader.get_skill(
-                        name,
-                        include_disabled=expert_context is not None,
-                    )
-                    if skill is None:
-                        continue
-                    restored_skill_prompts.append(
-                        (name, skill.to_prompt(), prompt_hash, load_order)
-                    )
-                agent.restore_active_skill_instructions(restored_skill_prompts)
-            except Exception:
-                if session_log is not None:
-                    session_log.close()
-                raise
 
         if initial_goal_request is not None:
             goal_result = self._apply_goal_action(agent, initial_goal_request)
@@ -2008,24 +1895,10 @@ class BoxACPAgent:
                     status=goal_payload.get("status"),
                 )
 
-        # Per-session MemoryExtractor to avoid cross-session state leaks
-        session_extractor = None
-        if self._memory and state.config.agent.enable_memory_extraction and not utility:
-            from box_agent.memory import MemoryExtractor
-            session_extractor = build_memory_extractor(
-                llm=session_llm,
-                memory_manager=self._memory,
-                session_id=upstream_session_id,
-                cooldown=state.config.agent.memory_extraction_cooldown,
-                step_interval=state.config.agent.memory_extraction_step_interval,
-                extractor_factory=MemoryExtractor,
-            )
-
         trace_writer = SessionTraceWriter(
             session_id=upstream_session_id or session_id,
             acp_session_id=session_id,
         )
-        state.memory_extractor = session_extractor
         state.trace_writer = trace_writer
         self._sessions[session_id] = state
         trace_writer.write(
@@ -2042,25 +1915,9 @@ class BoxACPAgent:
             },
         )
 
-        # Skill selector: per-turn keyword-based filter on the skill catalog.
-        # Agent.__init__ appends session/runtime/workspace context first; then
-        # the skill slot is moved to the tail to keep catalog churn localized.
-        if session_skill_loader:
-            from box_agent.tools.skill_loader import SkillSelector, move_skill_slot_to_end
-
-            relocated_prompt = move_skill_slot_to_end(agent.messages[0].content)
-            if relocated_prompt != agent.messages[0].content:
-                self._set_agent_system_prompt(agent, relocated_prompt)
-            selector = SkillSelector(
-                session_skill_loader,
-                include_disabled=expert_context is not None,
-            )
-            selector.bind(agent.messages[0].content)
-            if expert_context:
-                expert_skill_prompt = selector.update(expert_context.skill_query())
-                if expert_skill_prompt is not None:
-                    self._set_agent_system_prompt(agent, expert_skill_prompt)
-            self._sessions[session_id].skill_selector = selector
+        for event, data in diagnostic_events:
+            trace_writer.write(event, data=data)
+        diagnostic_events.clear()
 
         tool_names = [t.name for t in tools]
         log.info("session/new", session_id=session_id, message=f"Session ready, {len(tools)} tools: {', '.join(tool_names)}")
@@ -2094,176 +1951,21 @@ class BoxACPAgent:
             kwargs["field_meta"] = response_meta
         return NewSessionResponse(**kwargs)
 
-    def _filesystem_access_prompt(self, workspace: Path, policy: CapabilityPolicy | None) -> str:
-        """Build per-session filesystem guidance for the model.
+    def _filesystem_access_prompt(self, workspace, policy):
+        from box_agent.session_assembly import _filesystem_access_prompt
+        return _filesystem_access_prompt(workspace, policy)
 
-        Tools still enforce permissions. This prompt only prevents the model
-        from assuming workspace-only access when officev3 has granted extra
-        roots such as ~/Documents.
-        """
-        if policy is None:
-            return (
-                "## File Access Context\n"
-                f"- Current workspace: `{workspace}`\n"
-                "- File tools and bash may access paths allowed by the active runtime policy.\n"
-                "- If a file is outside the allowed scope, the tool will return a permission error; "
-                "try the tool instead of assuming denial."
-            )
+    def _build_action_hints_prompt(self, env_context=None):
+        from box_agent.session_assembly import _build_action_hints_prompt
+        return _build_action_hints_prompt(self._config, self._memory, env_context)
 
-        allowed_roots = [workspace]
-        if policy.session_workspace_root:
-            allowed_roots.append(Path(policy.session_workspace_root).expanduser())
-        for directory in policy.allowed_directories:
-            allowed_roots.append(Path(directory).expanduser())
-
-        seen: set[str] = set()
-        root_lines: list[str] = []
-        for root in allowed_roots:
-            root_s = str(root)
-            if root_s not in seen:
-                seen.add(root_s)
-                root_lines.append(f"- `{root_s}`")
-
-        if policy.filesystem_scope == "user_home":
-            scope_line = "- Active filesystem scope: `user_home`; paths under the user home directory are allowed."
-        elif policy.filesystem_scope in ("session_workspace", "custom"):
-            scope_line = (
-                f"- Active filesystem scope: `{policy.filesystem_scope}`; the workspace, "
-                "session workspace root, and configured allowed directories are allowed."
-            )
-        else:
-            scope_line = f"- Active filesystem scope: `{policy.filesystem_scope}`; unknown scopes fail closed in tools."
-
-        return (
-            "## File Access Context\n"
-            f"{scope_line}\n"
-            "- Allowed filesystem roots for this session include:\n"
-            + "\n".join(root_lines)
-            + "\n- These are currently pre-authorized roots, not the complete set of paths that may be requested."
-            + "\n- When the task requires it, you may try a specific, narrow path outside these roots; "
-            "the runtime will request permission when appropriate."
-            + "\n- A permission denial applies only to the requested path. "
-            "Do not generalize it to other specific candidate paths."
-            + "\n- Prefer absolute paths when the user names a location such as ~/Documents."
-            + "\n- Do not claim you can only access the workspace based only on the listed "
-            "roots or a denial for another path."
+    def _build_session_prompt(self, session_mode, **kwargs):
+        from box_agent.session_assembly import build_acp_session_prompt
+        if "workspace_layout" in kwargs:
+            kwargs["workspace_layout"] = _normalize_workspace_layout(kwargs["workspace_layout"])
+        return build_acp_session_prompt(
+            self._config, self._system_prompt, self._memory, session_mode, **kwargs,
         )
-
-    def _build_action_hints_prompt(self, env_context: EnvContext | None = None) -> str:
-        """Detect onboarding / browser-tools scenarios and build the hint contract."""
-        memory_scarce = is_memory_scarce(self._memory.read_core() if self._memory else None)
-
-        try:
-            _user_mcp = state_path('config/mcp.json')
-            mcp_path = _user_mcp if _user_mcp.exists() else Config.find_config_file(self._config.tools.mcp_config_path)
-        except Exception:
-            mcp_path = None
-        playwright_unavailable = is_playwright_unavailable(
-            mcp_path,
-            mcp_globally_enabled=self._config.tools.enable_mcp,
-        ) or is_playwright_unavailable_from_env_context(env_context)
-
-        return build_action_hints_prompt(
-            memory_scarce=memory_scarce,
-            playwright_unavailable=playwright_unavailable,
-        )
-
-    def _build_session_prompt(
-        self,
-        session_mode: str | None,
-        workspace: Path | None = None,
-        policy: CapabilityPolicy | None = None,
-        env_context: EnvContext | None = None,
-        skill_runtime_context: SkillRuntimeContext | None = None,
-        expert_context: ExpertSessionContext | None = None,
-        workspace_layout: Any = None,
-        enable_general_directory_policy: bool = False,
-        follow_up_suggestions_enabled: bool = False,
-    ) -> str:
-        """Build system prompt with conditional mode-specific injection."""
-        _MODE_PROMPT_MAP = {
-            "data_analysis": "analysis_prompt_path",
-            "code_agent": "code_prompt_path",
-        }
-
-        base_prompt = compose_prompt_segments(
-            self._system_prompt,
-            replacements={
-                "{SANDBOX_INFO}": build_sandbox_info_prompt(),
-                "{FILE_DELIVERY_INFO}": build_file_delivery_prompt(),
-            },
-            segments=(
-                PROJECT_WORKSPACE_MODE_PROMPT
-                if session_mode == "code_agent"
-                else None,
-            ),
-        )
-        if workspace is not None:
-            base_prompt = append_prompt_segment(
-                base_prompt,
-                self._filesystem_access_prompt(workspace, policy),
-            )
-            layout_prompt = _workspace_layout_prompt(
-                workspace=workspace,
-                layout=workspace_layout,
-            )
-            base_prompt = append_prompt_segment(base_prompt, layout_prompt)
-
-        if enable_general_directory_policy:
-            base_prompt = append_prompt_segment(
-                base_prompt,
-                GENERAL_DIRECTORY_ORGANIZATION_PROMPT,
-            )
-
-        if session_mode == "code_agent" and workspace is not None:
-            base_prompt = append_prompt_segment(
-                base_prompt,
-                build_project_startup_context_prompt(workspace),
-            )
-
-        env_prompt = build_env_context_prompt(env_context)
-        if env_prompt:
-            base_prompt = append_prompt_segment(base_prompt, env_prompt)
-
-        runtime_context = skill_runtime_context or build_skill_runtime_context(
-            sandbox_mode=True,
-            env_context=env_context,
-        )
-        base_prompt = append_prompt_segment(
-            base_prompt,
-            build_skill_runtime_prompt(runtime_context),
-        )
-
-        hints_prompt = self._build_action_hints_prompt(env_context)
-        if hints_prompt:
-            base_prompt = append_prompt_segment(base_prompt, hints_prompt)
-
-        if follow_up_suggestions_enabled:
-            base_prompt = append_prompt_segment(
-                base_prompt,
-                build_follow_up_suggestions_prompt(),
-            )
-
-        attr = _MODE_PROMPT_MAP.get(session_mode or "")
-        if attr:
-            prompt_filename = getattr(self._config.agent, attr, None)
-            if prompt_filename:
-                mode_path = Config.find_config_file(prompt_filename)
-                if mode_path and mode_path.exists():
-                    mode_prompt = mode_path.read_text(encoding="utf-8").strip()
-                    base_prompt = append_prompt_segment(
-                        base_prompt,
-                        mode_prompt,
-                        skip_empty=False,
-                    )
-                else:
-                    log.warn("session/prompt", message=f"Mode prompt not found: {prompt_filename}")
-
-        if expert_context:
-            expert_prompt = expert_context.render_prompt()
-            if expert_prompt:
-                base_prompt = append_prompt_segment(base_prompt, expert_prompt)
-        return base_prompt
 
     def _has_officev3_policy(self) -> bool:
         """Check if officev3 capability policy is configured (not just defaults)."""
@@ -5386,6 +5088,9 @@ async def run_acp_server(config: Config | None = None) -> None:
         sys.stderr.flush()
 
     shutdown_event = asyncio.Event()
+    server_adapter: BoxACPAgent | None = None
+    llm = lite_llm = None
+    mcp_task = skill_task = memory_bootstrap_task = None
     loop = asyncio.get_running_loop()
     installed_signal_handlers: list[signal.Signals] = []
     for shutdown_signal in (signal.SIGINT, signal.SIGTERM):
@@ -5547,7 +5252,16 @@ async def run_acp_server(config: Config | None = None) -> None:
         _hooks = load_hooks(config.hooks.hooks) if config.hooks.hooks else None
 
         sys.stdout = sys.stderr
-        AgentSideConnection(lambda conn: BoxACPAgent(conn, config, llm, base_tools, system_prompt, memory_manager=memory_mgr, hooks=_hooks, skill_loader=skill_loader, mcp_task=mcp_task, skill_task=skill_task, lite_llm=lite_llm), writer, reader)
+        def create_adapter(conn):
+            nonlocal server_adapter
+            server_adapter = BoxACPAgent(
+                conn, config, llm, base_tools, system_prompt,
+                memory_manager=memory_mgr, hooks=_hooks, skill_loader=skill_loader,
+                mcp_task=mcp_task, skill_task=skill_task, lite_llm=lite_llm,
+            )
+            return server_adapter
+
+        AgentSideConnection(create_adapter, writer, reader)
 
         log.info("server/ready", message="ACP server ready, listening on stdio")
         _stderr_print("✅ ACP protocol ready; MCP loading continues in background")
@@ -5558,15 +5272,44 @@ async def run_acp_server(config: Config | None = None) -> None:
         log.exception("server/error", exc, message="ACP server failed to start")
         raise
     finally:
-        terminated_bash_ids = await BackgroundShellManager.terminate_all()
-        if terminated_bash_ids:
-            log.info(
-                "bash/runtime_cleanup",
-                count=len(terminated_bash_ids),
-                bash_ids=terminated_bash_ids,
-            )
-        for shutdown_signal in installed_signal_handlers:
-            loop.remove_signal_handler(shutdown_signal)
+        from box_agent.session_assembly import close_owned_clients
+        from box_agent.tools.mcp_loader import cleanup_mcp_connections
+        from box_agent.tools.jupyter_tool import JupyterSandboxTool
+
+        async def stop_background_task(task):
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        async def stop_background_shells():
+            terminated_bash_ids = await BackgroundShellManager.terminate_all()
+            if terminated_bash_ids:
+                log.info(
+                    "bash/runtime_cleanup", count=len(terminated_bash_ids),
+                    bash_ids=terminated_bash_ids,
+                )
+
+        from box_agent.session_assembly import attach_cleanup_error
+
+        primary_error = sys.exc_info()[1]
+        try:
+            # ExitStack runs all releases even when an earlier resource fails.
+            async with AsyncExitStack() as shutdown:
+                for shutdown_signal in installed_signal_handlers:
+                    shutdown.callback(loop.remove_signal_handler, shutdown_signal)
+                shutdown.push_async_callback(stop_background_shells)
+                shutdown.push_async_callback(close_owned_clients, (llm, lite_llm))
+                shutdown.push_async_callback(cleanup_mcp_connections)
+                shutdown.push_async_callback(JupyterSandboxTool.shutdown_all)
+                for task in (mcp_task, skill_task, memory_bootstrap_task):
+                    if task is not None:
+                        shutdown.push_async_callback(stop_background_task, task)
+                if server_adapter is not None:
+                    shutdown.push_async_callback(server_adapter.aclose)
+        except BaseException as cleanup_error:
+            if primary_error is None:
+                raise
+            attach_cleanup_error(primary_error, cleanup_error)
 
 
 def main() -> None:

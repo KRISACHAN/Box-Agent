@@ -181,6 +181,7 @@ LOOP_SIGNATURE = (
     ("tool_result_storage", inspect.Parameter.KEYWORD_ONLY, None),
     ("session_log", inspect.Parameter.KEYWORD_ONLY, None),
     ("session_turn", inspect.Parameter.KEYWORD_ONLY, None),
+    ("kernel_services", inspect.Parameter.KEYWORD_ONLY, None),
 )
 
 INVOKE_TOOL_SIGNATURE = (
@@ -320,6 +321,7 @@ def test_kernel_exports_agent_loop_implementation_entrypoints() -> None:
         "tool_result_storage",
         "session_log",
         "session_turn",
+        "kernel_services",
     )
     kernel_services = inspect.signature(kernel.run_agent_loop).parameters["_services"]
     assert kernel_services.kind is inspect.Parameter.KEYWORD_ONLY
