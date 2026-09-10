@@ -308,12 +308,16 @@ async def _wait_for_hook_cleanup(task: asyncio.Task, *, settle: bool) -> None:
             break
         except asyncio.CancelledError as error:
             if not settle or task.cancelled():
+                if task.done() and not task.cancelled():
+                    completed_error = task.result()
+                    if completed_error is not None:
+                        raise _combined_cleanup_error([completed_error, error])
                 raise
             if cancellation is None:
                 cancellation = error
     if cancellation is not None:
         if cleanup_error is not None:
-            _attach_cleanup_error(cancellation, cleanup_error)
+            raise _combined_cleanup_error([cleanup_error, cancellation])
         raise cancellation
     if cleanup_error is not None:
         raise cleanup_error
