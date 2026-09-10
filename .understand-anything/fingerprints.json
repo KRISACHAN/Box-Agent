@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "b7b884768974bb5ca5103a1740349eef9e3e7c0f",
-  "generatedAt": "2026-09-10T21:00:36.250Z",
+  "gitCommitHash": "d715ff42905edaa44541efcfc4797564bcb56024",
+  "generatedAt": "2026-09-10T21:15:39.701Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -1923,7 +1923,7 @@
     },
     "box_agent/agent_runtime.py": {
       "filePath": "box_agent/agent_runtime.py",
-      "contentHash": "b8cfe73b28d22f1453d47ad0f0813d5f804203f807d62d928a5ca318b17cb19a",
+      "contentHash": "c31efa566f0bee4d328e2198a7dd301837ee8079cdd95d68e7d0f949bccc340c",
       "functions": [
         {
           "name": "build_llm_client",
@@ -1973,11 +1973,12 @@
             "session_log",
             "enable_builtin_tools",
             "skill_runtime",
+            "session_id",
             "agent_factory"
           ],
           "returnType": "Agent",
           "exported": true,
-          "lineCount": 72
+          "lineCount": 75
         },
         {
           "name": "build_permission_engine",
@@ -2083,7 +2084,7 @@
         "build_memory_manager",
         "build_memory_extractor"
       ],
-      "totalLines": 216,
+      "totalLines": 219,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent_service.py": {
@@ -2132,7 +2133,7 @@
     },
     "box_agent/agent_session.py": {
       "filePath": "box_agent/agent_session.py",
-      "contentHash": "9c27e9ec8091cb3d1e20670c15f622cc9e174b72115686390ae3be5d7555cc3d",
+      "contentHash": "141f1a666aaf081c0b0ef16c7d9ffd4eb49c200d5f6c4b58c837fe045d0fd93e",
       "functions": [],
       "classes": [
         {
@@ -2186,7 +2187,7 @@
             "mcp_fallback_tools"
           ],
           "exported": true,
-          "lineCount": 382
+          "lineCount": 385
         }
       ],
       "imports": [
@@ -2273,12 +2274,12 @@
       "exports": [
         "AgentSession"
       ],
-      "totalLines": 417,
+      "totalLines": 420,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent.py": {
       "filePath": "box_agent/agent.py",
-      "contentHash": "8eda3ef74f2b98583c0e22916b30ca88876236bd00d0ef6f956e9b1062a2cfe2",
+      "contentHash": "763e588316928ca3cd441fe7ef297ea1259d3e99b30024667c25d18d0b9153d4",
       "functions": [
         {
           "name": "_clean_goal_text",
@@ -2492,7 +2493,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 845
+          "lineCount": 853
         }
       ],
       "imports": [
@@ -2716,7 +2717,7 @@
         "_GoalWriteTool",
         "Agent"
       ],
-      "totalLines": 1282,
+      "totalLines": 1290,
       "hasStructuralAnalysis": true
     },
     "box_agent/artifacts.py": {
@@ -3514,7 +3515,7 @@
     },
     "box_agent/cli.py": {
       "filePath": "box_agent/cli.py",
-      "contentHash": "5768eff0c406a1777a7364beb0cca729d5ab51a414b487c053d3a469e4fb8fe2",
+      "contentHash": "20a7780244fd734281568041a1d068bab6749f22e4668ea9ef985cc1df399847",
       "functions": [
         {
           "name": "run_setup_wizard",
@@ -3779,11 +3780,12 @@
             "text",
             "evidence",
             "progress",
-            "json_output"
+            "json_output",
+            "session_id"
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 110
+          "lineCount": 130
         },
         {
           "name": "_workspace_from_args",
@@ -3799,7 +3801,7 @@
           "params": [],
           "returnType": "argparse.Namespace",
           "exported": true,
-          "lineCount": 222
+          "lineCount": 232
         },
         {
           "name": "cmd_setup",
@@ -4021,6 +4023,7 @@
             "workspace_dir",
             "task",
             "initial_goal",
+            "session_id",
             "sandbox_mode",
             "verify_api",
             "json_summary",
@@ -4030,14 +4033,14 @@
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 846
+          "lineCount": 872
         },
         {
           "name": "main",
           "params": [],
           "returnType": "int",
           "exported": true,
-          "lineCount": 104
+          "lineCount": 106
         }
       ],
       "classes": [],
@@ -4366,6 +4369,13 @@
           ]
         },
         {
+          "source": "box_agent.session_log",
+          "specifiers": [
+            "SessionLog",
+            "default_session_root"
+          ]
+        },
+        {
           "source": "box_agent.user_paths",
           "specifiers": [
             "state_path"
@@ -4434,7 +4444,7 @@
         "run_agent",
         "main"
       ],
-      "totalLines": 2735,
+      "totalLines": 2794,
       "hasStructuralAnalysis": true
     },
     "box_agent/client_info.py": {
@@ -4564,7 +4574,7 @@
     },
     "box_agent/composition.py": {
       "filePath": "box_agent/composition.py",
-      "contentHash": "0e38a813eaa6cf64ce2e029590913e4451c495dc2fdc49f5c26de59f9b6ff223",
+      "contentHash": "9c5c726f4f729a7afda7415cb4447deafec1e830417ed6e71265e98223e23476",
       "functions": [
         {
           "name": "_default_capabilities",
@@ -4573,7 +4583,7 @@
           ],
           "returnType": "dict[str, Any]",
           "exported": true,
-          "lineCount": 33
+          "lineCount": 34
         },
         {
           "name": "_kernel_run_arguments",
@@ -4701,7 +4711,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 100
+          "lineCount": 109
         }
       ],
       "classes": [],
@@ -4802,7 +4812,7 @@
         "_cleanup_task_finished",
         "run_agent_loop_with_default_services"
       ],
-      "totalLines": 455,
+      "totalLines": 466,
       "hasStructuralAnalysis": true
     },
     "box_agent/config.py": {
@@ -7591,9 +7601,45 @@
       "totalLines": 6,
       "hasStructuralAnalysis": true
     },
+    "box_agent/kernel/compact_engine.py": {
+      "filePath": "box_agent/kernel/compact_engine.py",
+      "contentHash": "44e953f467744efe3d72253c398b1edcdabb08442c796249042c37203c8dcb19",
+      "functions": [],
+      "classes": [
+        {
+          "name": "DefaultCompactEngine",
+          "methods": [
+            "compact_if_needed"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 15
+        }
+      ],
+      "imports": [
+        {
+          "source": ".context_engine",
+          "specifiers": [
+            "_maybe_summarize"
+          ]
+        },
+        {
+          "source": ".context_types",
+          "specifiers": [
+            "CompactionInput",
+            "CompactionOutcome"
+          ]
+        }
+      ],
+      "exports": [
+        "DefaultCompactEngine"
+      ],
+      "totalLines": 23,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/kernel/context_engine.py": {
       "filePath": "box_agent/kernel/context_engine.py",
-      "contentHash": "a50a4acdb6612500be270d3a794f02e97fd434cf5c4e67ea06511611204bcc0e",
+      "contentHash": "38b53400f15e3a4ac244718ca670328125ff131333ff2619204af6d6645d6018",
       "functions": [
         {
           "name": "_summary_message_text",
@@ -7777,11 +7823,12 @@
             "session_step",
             "force",
             "estimate_tools",
-            "summary_input_token_limit"
+            "summary_input_token_limit",
+            "before_summary"
           ],
           "returnType": "CompactionOutcome",
           "exported": true,
-          "lineCount": 175
+          "lineCount": 179
         },
         {
           "name": "_is_summary_marker",
@@ -7824,27 +7871,7 @@
           "lineCount": 10
         }
       ],
-      "classes": [
-        {
-          "name": "CompactionOutcome",
-          "methods": [
-            "blocked",
-            "__iter__"
-          ],
-          "properties": [
-            "messages",
-            "estimated_before",
-            "estimated_after",
-            "mode",
-            "summary_calls",
-            "error",
-            "error_type",
-            "trigger_source"
-          ],
-          "exported": true,
-          "lineCount": 25
-        }
-      ],
+      "classes": [],
       "imports": [
         {
           "source": "json",
@@ -7871,15 +7898,10 @@
           ]
         },
         {
-          "source": "dataclasses",
-          "specifiers": [
-            "dataclass"
-          ]
-        },
-        {
           "source": "typing",
           "specifiers": [
             "Any",
+            "Callable",
             "Final"
           ]
         },
@@ -7908,10 +7930,15 @@
             "Tool",
             "ToolResult"
           ]
+        },
+        {
+          "source": ".context_types",
+          "specifiers": [
+            "CompactionOutcome"
+          ]
         }
       ],
       "exports": [
-        "CompactionOutcome",
         "_summary_message_text",
         "_create_summary",
         "_deterministic_history_fallback",
@@ -7934,7 +7961,98 @@
         "request_input_tokens",
         "skill_reference_budget_chars"
       ],
-      "totalLines": 860,
+      "totalLines": 838,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/kernel/context_types.py": {
+      "filePath": "box_agent/kernel/context_types.py",
+      "contentHash": "2bd49b4c66a6cd620cde2eecabe9adfc356dc8d870eda31d30e8ee7f903b6d5e",
+      "functions": [],
+      "classes": [
+        {
+          "name": "CompactionInput",
+          "methods": [],
+          "properties": [
+            "history",
+            "token_limit",
+            "llm",
+            "summary_llm",
+            "tools",
+            "api_total_tokens",
+            "api_prompt_tokens",
+            "skip_check",
+            "allow_llm_summary",
+            "session_id",
+            "turn_id",
+            "title",
+            "before_summary",
+            "force",
+            "estimate_tools",
+            "summary_input_token_limit"
+          ],
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "CompactionOutcome",
+          "methods": [
+            "__post_init__",
+            "blocked",
+            "__iter__"
+          ],
+          "properties": [
+            "messages",
+            "estimated_before",
+            "estimated_after",
+            "mode",
+            "summary_calls",
+            "error",
+            "error_type",
+            "trigger_source",
+            "protected_messages",
+            "still_over_limit"
+          ],
+          "exported": true,
+          "lineCount": 33
+        }
+      ],
+      "imports": [
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Callable"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "..schema",
+          "specifiers": [
+            "Message"
+          ]
+        },
+        {
+          "source": "..tools.base",
+          "specifiers": [
+            "Tool"
+          ]
+        }
+      ],
+      "exports": [
+        "CompactionInput",
+        "CompactionOutcome"
+      ],
+      "totalLines": 72,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/hook_types.py": {
@@ -8154,7 +8272,7 @@
     },
     "box_agent/kernel/loop.py": {
       "filePath": "box_agent/kernel/loop.py",
-      "contentHash": "ba5d3bca8374a7ae46d87d5a5f2313d8c045d846725a8dd7a12db398707706a6",
+      "contentHash": "b21c7c2bad452c96e7813196e120331965f2516b788df22db1cce0d0359f7170",
       "functions": [
         {
           "name": "_resolve_provider_stale_seconds",
@@ -8345,7 +8463,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 2029
+          "lineCount": 2038
         },
         {
           "name": "run_agent_loop",
@@ -8576,7 +8694,6 @@
             "REQUEST_INPUT_HEADROOM_TOKENS",
             "_fallback_context_estimate",
             "_is_compaction_metadata",
-            "_maybe_summarize",
             "_validate_transient_followup_result"
           ]
         },
@@ -8729,7 +8846,7 @@
         "AgentLoopKernel",
         "run_agent_loop"
       ],
-      "totalLines": 2762,
+      "totalLines": 2770,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/permission_gateway.py": {
@@ -8757,7 +8874,7 @@
     },
     "box_agent/kernel/ports.py": {
       "filePath": "box_agent/kernel/ports.py",
-      "contentHash": "d9c4a164e190b7840008470bf9f1cbf4c4727ccbcbfda51f88d7995c81bf45e3",
+      "contentHash": "2f0406b77e7a5d3f2559c2622aa8e726520156890e4fe2826f6b3f1619655a32",
       "functions": [],
       "classes": [
         {
@@ -8976,6 +9093,15 @@
           "lineCount": 29
         },
         {
+          "name": "CompactEnginePort",
+          "methods": [
+            "compact_if_needed"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
           "name": "KernelServices",
           "methods": [],
           "properties": [
@@ -8994,10 +9120,11 @@
             "hook_dispatch",
             "hook_context",
             "skill_engine",
-            "context_engine"
+            "context_engine",
+            "compact_engine"
           ],
           "exported": true,
-          "lineCount": 19
+          "lineCount": 20
         }
       ],
       "imports": [
@@ -9049,6 +9176,13 @@
             "Tool",
             "ToolResult"
           ]
+        },
+        {
+          "source": ".context_types",
+          "specifiers": [
+            "CompactionInput",
+            "CompactionOutcome"
+          ]
         }
       ],
       "exports": [
@@ -9070,9 +9204,10 @@
         "PreparedContextPort",
         "SkillEnginePort",
         "ContextEnginePort",
+        "CompactEnginePort",
         "KernelServices"
       ],
-      "totalLines": 437,
+      "totalLines": 452,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/state.py": {
@@ -13206,7 +13341,7 @@
     },
     "box_agent/plugins/defaults.py": {
       "filePath": "box_agent/plugins/defaults.py",
-      "contentHash": "4a5a5f6c81faa9b9bfb2ffd91635356d4d81733d76cd3fc55c1a763ba3335278",
+      "contentHash": "e16d2e5d77a6f2b0b827c82c3c588d4314339a40a4a0c240151e9af1e6c41414",
       "functions": [
         {
           "name": "skill_loader_from_catalog",
@@ -13253,11 +13388,12 @@
             "tool_result_store",
             "tool_engine",
             "skill_engine",
-            "context_engine"
+            "context_engine",
+            "compact_engine"
           ],
           "returnType": "tuple[PluginDescriptor, ...]",
           "exported": true,
-          "lineCount": 68
+          "lineCount": 78
         },
         {
           "name": "create_default_plugin_host",
@@ -13276,11 +13412,12 @@
             "tool_engine",
             "plugins",
             "skill_engine",
-            "context_engine"
+            "context_engine",
+            "compact_engine"
           ],
           "returnType": "PluginHost",
           "exported": true,
-          "lineCount": 42
+          "lineCount": 44
         },
         {
           "name": "_bind_skill_store",
@@ -13299,7 +13436,7 @@
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 26
+          "lineCount": 27
         },
         {
           "name": "compose_default_services",
@@ -13317,11 +13454,12 @@
             "tool_result_store",
             "tool_engine",
             "skill_engine",
-            "context_engine"
+            "context_engine",
+            "compact_engine"
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 43
+          "lineCount": 49
         }
       ],
       "classes": [],
@@ -13349,6 +13487,7 @@
             "ToolEnginePort",
             "SkillEnginePort",
             "ContextEnginePort",
+            "CompactEnginePort",
             "ToolExposurePort",
             "ToolResultStorePort"
           ]
@@ -13393,7 +13532,7 @@
         "kernel_services_from_registry",
         "compose_default_services"
       ],
-      "totalLines": 314,
+      "totalLines": 335,
       "hasStructuralAnalysis": true
     },
     "box_agent/plugins/descriptors.py": {
@@ -14743,7 +14882,7 @@
     },
     "box_agent/session_assembly.py": {
       "filePath": "box_agent/session_assembly.py",
-      "contentHash": "b3dd8fe98a6fd070504f18f0f4f3ae2ef617a1dcbbf2a657b4af9230cfc45ac3",
+      "contentHash": "09b4bf98e01454852cda70db186a67622c4afd116d27dc10b496963a01cbb8b8",
       "functions": [
         {
           "name": "_prepared",
@@ -14788,7 +14927,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 13
+          "lineCount": 19
         },
         {
           "name": "prepare_tools",
@@ -15035,12 +15174,12 @@
         "build_session_permission_policy",
         "close_owned_clients"
       ],
-      "totalLines": 663,
+      "totalLines": 669,
       "hasStructuralAnalysis": true
     },
     "box_agent/session_context.py": {
       "filePath": "box_agent/session_context.py",
-      "contentHash": "afb5575b27e6f2f6adbd78846ffde7f75b5920b846bdb1d3bbcd0188684eeb37",
+      "contentHash": "8fe6ddf1788070a018af9b714a329ed5213337dce7316f6ea19a2a70309d9ae6",
       "functions": [],
       "classes": [
         {
@@ -15050,6 +15189,7 @@
             "workspace_dir",
             "token_limit",
             "utility",
+            "resume_session_log",
             "profile",
             "sandbox_mode",
             "non_interactive",
@@ -15064,7 +15204,7 @@
             "state"
           ],
           "exported": true,
-          "lineCount": 18
+          "lineCount": 19
         },
         {
           "name": "HostBindings",
@@ -15164,7 +15304,7 @@
         "SessionContext",
         "RunContext"
       ],
-      "totalLines": 98,
+      "totalLines": 99,
       "hasStructuralAnalysis": true
     },
     "box_agent/session_continuation.py": {
@@ -15231,7 +15371,7 @@
     },
     "box_agent/session_log.py": {
       "filePath": "box_agent/session_log.py",
-      "contentHash": "3207b60d7abdb4bea332ff0a4a875bbf832c5b4744c6e041011cbd81fab3c18d",
+      "contentHash": "8366c4c6727a503aa0c0e5e5ac4c091569fb2f0c51ec4fb030a5149868be7e7f",
       "functions": [
         {
           "name": "_encode_record",
@@ -15251,6 +15391,13 @@
           "returnType": "Path",
           "exported": true,
           "lineCount": 3
+        },
+        {
+          "name": "default_session_root",
+          "params": [],
+          "returnType": "Path",
+          "exported": true,
+          "lineCount": 7
         },
         {
           "name": "_normalize_cwd",
@@ -15319,17 +15466,14 @@
           "lineCount": 2
         },
         {
-          "name": "SessionProjection",
+          "name": "SessionOpenResult",
           "methods": [],
           "properties": [
-            "messages",
-            "goal",
-            "plan",
-            "todos",
-            "skills"
+            "log",
+            "resumed"
           ],
           "exported": true,
-          "lineCount": 8
+          "lineCount": 5
         },
         {
           "name": "SessionLog",
@@ -15338,6 +15482,7 @@
             "events",
             "failed",
             "assert_workspace",
+            "open_or_create",
             "create",
             "open",
             "_recover_log",
@@ -15350,6 +15495,7 @@
             "_surface_nodes",
             "_append_surface_message",
             "replace_surface",
+            "reset_surface",
             "replay",
             "repair_interrupted_turn",
             "prepare_resume",
@@ -15357,7 +15503,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 755
+          "lineCount": 805
         }
       ],
       "imports": [
@@ -15451,6 +15597,12 @@
           "specifiers": [
             "Message"
           ]
+        },
+        {
+          "source": ".session_projection",
+          "specifiers": [
+            "SessionProjection"
+          ]
         }
       ],
       "exports": [
@@ -15458,16 +15610,76 @@
         "SessionLogDurabilityError",
         "SessionLogInUseError",
         "SessionLogWorkspaceMismatch",
-        "SessionProjection",
+        "SessionOpenResult",
         "_encode_record",
         "_session_dir",
+        "default_session_root",
         "_normalize_cwd",
         "_is_legacy_workflow_context",
         "_acquire_writer_lock",
         "_release_writer_lock",
         "SessionLog"
       ],
-      "totalLines": 925,
+      "totalLines": 983,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/session_projection.py": {
+      "filePath": "box_agent/session_projection.py",
+      "contentHash": "0379bf86b91d6d040efd0ff2abcbf6f1d7656c590431808856edba8b3632a238",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SessionProjection",
+          "methods": [
+            "__init__",
+            "messages",
+            "goal",
+            "plan",
+            "todos",
+            "skills"
+          ],
+          "properties": [
+            "_messages",
+            "_goal",
+            "_plan",
+            "_todos",
+            "_skills"
+          ],
+          "exported": true,
+          "lineCount": 47
+        }
+      ],
+      "imports": [
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "copy",
+          "specifiers": [
+            "deepcopy"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Sequence"
+          ]
+        },
+        {
+          "source": ".schema",
+          "specifiers": [
+            "Message"
+          ]
+        }
+      ],
+      "exports": [
+        "SessionProjection"
+      ],
+      "totalLines": 68,
       "hasStructuralAnalysis": true
     },
     "box_agent/session_prompts.py": {
@@ -33981,12 +34193,12 @@
     },
     "docs/AGENT_SESSION.md": {
       "filePath": "docs/AGENT_SESSION.md",
-      "contentHash": "f66a8c5e32d77b4056449b1842ea0aa8ad2b2cbb4242bf8559dd1ee6c826489e",
+      "contentHash": "76b0c530cc393579a3ab27764273920dca7ff436fb059507fe889c10c5ca43f4",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 201,
+      "totalLines": 235,
       "hasStructuralAnalysis": true
     },
     "docs/ARCHITECTURE_CN.md": {
@@ -34061,22 +34273,22 @@
     },
     "docs/CONTEXT_COMPRESSION_CN.md": {
       "filePath": "docs/CONTEXT_COMPRESSION_CN.md",
-      "contentHash": "de9a23c299a179e743bbafc4eb470e163a2984a941f74db21ecb53754b0c0fb3",
+      "contentHash": "f9cc1090cb26ead4d455291fc7ea1ef12ba78818ba206341fe33b6674e1ba79f",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 165,
+      "totalLines": 177,
       "hasStructuralAnalysis": true
     },
     "docs/CONTEXT_COMPRESSION.md": {
       "filePath": "docs/CONTEXT_COMPRESSION.md",
-      "contentHash": "7036f8f712b02862663915e65ec146fb2f6b82764986bca733c3069db26babf2",
+      "contentHash": "f3c22cd7d90fd24d48cdd968c252b7f1aa2a72727867740da2637f1ca89f8f13",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 207,
+      "totalLines": 224,
       "hasStructuralAnalysis": true
     },
     "docs/design/README.md": {

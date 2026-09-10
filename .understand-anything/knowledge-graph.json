@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T20:59:08.389Z",
-    "gitCommitHash": "b7b884768974bb5ca5103a1740349eef9e3e7c0f"
+    "analyzedAt": "2026-09-10T21:15:38.894Z",
+    "gitCommitHash": "d715ff42905edaa44541efcfc4797564bcb56024"
   },
   "nodes": [
     {
@@ -2502,8 +2502,8 @@
       "name": "_summary_message_text",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        141,
-        167
+        115,
+        141
       ],
       "summary": "把消息正文、角色、工具调用、调用标识和思考文本序列化为确定性摘要输入；多模态正文用预算序列化器替换图片 base64 数据。",
       "tags": [
@@ -2521,8 +2521,8 @@
       "name": "_create_summary",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        170,
-        204
+        144,
+        178
       ],
       "summary": "实现 create summary 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2540,8 +2540,8 @@
       "name": "_deterministic_history_fallback",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        207,
-        252
+        181,
+        226
       ],
       "summary": "实现 deterministic history fallback 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2559,8 +2559,8 @@
       "name": "_message_chars",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        255,
-        272
+        229,
+        246
       ],
       "summary": "估算消息正文、思考、工具调用及信封的字符成本，图片内容额外按像素 token 量换算字符成本而不计入 base64 长度。",
       "tags": [
@@ -2578,8 +2578,8 @@
       "name": "_transient_followup_token_estimate",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        319,
-        339
+        293,
+        313
       ],
       "summary": "验证一次性跟进内容的 text／input_image 块并估算请求 token；图片使用统一像素估算，非法类型、格式或空图片数据会被拒绝。",
       "tags": [
@@ -2597,8 +2597,8 @@
       "name": "_validate_transient_followup_result",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        342,
-        411
+        316,
+        385
       ],
       "summary": "实现 validate transient followup result 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2616,8 +2616,8 @@
       "name": "_bound_text_middle",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        414,
-        433
+        388,
+        407
       ],
       "summary": "实现 bound text middle 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2635,8 +2635,8 @@
       "name": "_bound_retained_messages",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        436,
-        482
+        410,
+        456
       ],
       "summary": "实现 bound retained messages 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2654,8 +2654,8 @@
       "name": "_fallback_context_estimate",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        485,
-        503
+        459,
+        477
       ],
       "summary": "实现 fallback context estimate 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2673,8 +2673,8 @@
       "name": "_estimate_context_from_latest_response",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        506,
-        546
+        480,
+        520
       ],
       "summary": "实现 estimate context from latest response 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2692,8 +2692,8 @@
       "name": "_recent_message_groups",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        549,
-        569
+        523,
+        543
       ],
       "summary": "实现 recent message groups 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2711,8 +2711,8 @@
       "name": "_select_recent_messages",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        572,
-        599
+        546,
+        573
       ],
       "summary": "实现 select recent messages 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2730,8 +2730,8 @@
       "name": "_restore_runtime_state",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        602,
-        640
+        576,
+        614
       ],
       "summary": "实现 restore runtime state 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
@@ -2749,10 +2749,10 @@
       "name": "_maybe_summarize",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        643,
-        817
+        617,
+        795
       ],
-      "summary": "依据完整工具定义估算或 force 标记触发一次历史压缩，在摘要输入超限或生成失败时使用确定性回退。保留近期完整消息组与可信工具状态，逐步压缩摘要并在重建请求仍超预算时返回 blocked 结果。",
+      "summary": "依据完整工具定义估算或 force 标记触发压缩，在模型摘要或确定性回退之前优先调用 before_summary，未提供回调时保留旧 SessionLog 参数兼容路径，回调失败直接向调用方传播。原有近期消息组、可信工具状态、摘要预算及 blocked 规则保持有效，结果新增受保护消息数并使用 context_types 中的 CompactionOutcome。",
       "tags": [
         "function",
         "kernel",
@@ -2768,31 +2768,12 @@
       "name": "_is_compaction_metadata",
       "filePath": "box_agent/kernel/context_engine.py",
       "lineRange": [
-        828,
-        840
+        806,
+        818
       ],
       "summary": "实现 is compaction metadata 处理，是该文件职责中的一个可复用步骤。",
       "tags": [
         "function",
-        "kernel",
-        "context-compaction",
-        "history",
-        "validation"
-      ],
-      "complexity": "simple"
-    },
-    {
-      "id": "class:box_agent/kernel/context_engine.py:CompactionOutcome",
-      "type": "class",
-      "name": "CompactionOutcome",
-      "filePath": "box_agent/kernel/context_engine.py",
-      "lineRange": [
-        114,
-        138
-      ],
-      "summary": "封装 Compaction Outcome 的状态与行为，是该文件职责中的可复用类型。",
-      "tags": [
-        "class",
         "kernel",
         "context-compaction",
         "history",
@@ -14331,7 +14312,7 @@
       "type": "document",
       "name": "CONTEXT_COMPRESSION.md",
       "filePath": "docs/CONTEXT_COMPRESSION.md",
-      "summary": "英文说明上下文压缩触发、摘要保真、恢复与观测事件；普通 Skill 读取正文留在历史 tool 消息中，可随历史压缩重新读取，不因读取成功固定在 system。",
+      "summary": "英文说明上下文压缩、摘要保真、恢复与观测；CompactEnginePort 沿用既有算法，Kernel 保留 before_summary 和先持久化再更新 live surface 的责任。完整工具估算、强制重试、摘要预算、tuple 兼容与 falsey 借用压缩器均保留；Skill 正文继续作为普通可压缩资料。",
       "tags": [
         "documentation",
         "protocol",
@@ -14344,7 +14325,7 @@
       "type": "document",
       "name": "CONTEXT_COMPRESSION_CN.md",
       "filePath": "docs/CONTEXT_COMPRESSION_CN.md",
-      "summary": "中文说明上下文压缩触发、摘要保真、恢复与观测事件；普通 Skill 读取正文留在历史 tool 消息中，可随历史压缩重新读取，不因读取成功固定在 system。",
+      "summary": "中文说明上下文压缩、摘要保真、恢复与观测；CompactEnginePort 沿用既有算法，Kernel 保留 before_summary 和先持久化再更新 live surface 的责任。完整工具估算、强制重试、摘要预算、tuple 兼容与 falsey 借用压缩器均保留；Skill 正文继续作为普通可压缩资料。",
       "tags": [
         "documentation",
         "protocol",
@@ -21010,7 +20991,7 @@
       "type": "file",
       "name": "session_log.py",
       "filePath": "box_agent/session_log.py",
-      "summary": "以追加式 JSONL 持久化会话事实，提供写锁、投影、cwd 校验和中断修复。为请求资料保存按 SHA-256 寻址的不可变 UTF-8 快照，校验路径、符号链接及内容哈希，先同步快照再由调用方提交请求事件。",
+      "summary": "追加式 JSONL 保存唯一持久会话事实，提供写锁、cwd 校验、open_or_create 和中断恢复；读取返回独立防御性 SessionProjection。必需 surface/reset 清除两个 reducer 的消息 surface并保留目标、计划、Todo、Skill 与审计事件；内容寻址的不可变 Skill 请求快照和持久化错误边界保持。",
       "tags": [
         "持久化",
         "会话恢复",
@@ -21024,8 +21005,8 @@
       "name": "_encode_record",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        82,
-        91
+        81,
+        90
       ],
       "summary": "将会话事件编码为一行 UTF-8 JSON，保持日志记录可独立解析。",
       "tags": [
@@ -21042,8 +21023,8 @@
       "name": "_session_dir",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        94,
-        96
+        93,
+        95
       ],
       "summary": "以会话 ID 的 SHA-256 十六进制摘要作为目录名，在指定根目录下定位会话日志。",
       "tags": [
@@ -21060,8 +21041,8 @@
       "name": "_normalize_cwd",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        99,
-        102
+        107,
+        110
       ],
       "summary": "通过绝对路径和平台大小写规则规范 cwd，保留符号链接身份而不解析链接目标。",
       "tags": [
@@ -21078,8 +21059,8 @@
       "name": "_is_legacy_workflow_context",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        116,
-        126
+        124,
+        134
       ],
       "summary": "识别旧版工作流上下文，避免将过期派生状态重放为当前事实。",
       "tags": [
@@ -21096,8 +21077,8 @@
       "name": "_acquire_writer_lock",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        129,
-        152
+        137,
+        160
       ],
       "summary": "获取会话文件的跨进程写锁，拒绝同时写入同一日志。",
       "tags": [
@@ -21114,8 +21095,8 @@
       "name": "_release_writer_lock",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        155,
-        167
+        163,
+        175
       ],
       "summary": "释放平台对应的文件锁并关闭锁句柄。",
       "tags": [
@@ -21132,8 +21113,8 @@
       "name": "SessionLogCorrupted",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        55,
-        56
+        57,
+        58
       ],
       "summary": "标识会话日志格式或记录内容损坏而无法可靠恢复。",
       "tags": [
@@ -21150,8 +21131,8 @@
       "name": "SessionLogDurabilityError",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        59,
-        60
+        61,
+        62
       ],
       "summary": "标识追加或刷新日志失败，防止把未持久化事实当作成功。",
       "tags": [
@@ -21168,8 +21149,8 @@
       "name": "SessionLogInUseError",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        63,
-        64
+        65,
+        66
       ],
       "summary": "标识会话日志已由另一个写入者持有。",
       "tags": [
@@ -21186,28 +21167,10 @@
       "name": "SessionLogWorkspaceMismatch",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        67,
-        68
+        69,
+        70
       ],
       "summary": "标识恢复会话的工作目录与原日志记录不一致。",
-      "tags": [
-        "数据模型",
-        "持久化",
-        "会话恢复",
-        "jsonl"
-      ],
-      "complexity": "simple"
-    },
-    {
-      "id": "class:box_agent/session_log.py:SessionProjection",
-      "type": "class",
-      "name": "SessionProjection",
-      "filePath": "box_agent/session_log.py",
-      "lineRange": [
-        72,
-        79
-      ],
-      "summary": "保存事件重放得到的消息、目标及会话派生状态。",
       "tags": [
         "数据模型",
         "持久化",
@@ -21222,10 +21185,10 @@
       "name": "SessionLog",
       "filePath": "box_agent/session_log.py",
       "lineRange": [
-        170,
-        924
+        178,
+        982
       ],
-      "summary": "管理单写入者 JSONL 日志及消息、目标和派生状态投影，可选恢复先备份损坏字节再替换日志。新增按内容 hash 寻址的不可变 Skill 请求快照，拒绝越界或符号链接路径，核验 UTF-8 与字节哈希并同步文件及目录；Todo/Skill 非列表投影仍回退为空。",
+      "summary": "管理单写入者 JSONL 与内容寻址的 Skill 请求快照；open_or_create 区分真正的新会话和缺少主文件的损坏目录，恢复失败释放写锁。必需 reset 同时清除 replay 与增量 surface reducer 的消息，保留目标、计划、Todo、Skill 事实和审计历史，replay 返回防御性投影。",
       "tags": [
         "数据模型",
         "持久化",
@@ -27507,7 +27470,7 @@
       "type": "file",
       "name": "session_assembly.py",
       "filePath": "box_agent/session_assembly.py",
-      "summary": "按共享插件顺序准备模型、工具、提示和恢复状态，绑定会话 SkillRuntime，并仅为 ACP 开启旧记录的可用子集恢复。Get/List 工具保留范围与宿主访问、目录过滤器；恢复后的连接器 grant 从 Agent 已验证的读取状态派生，来源和权限策略仍归宿主及能力模块。",
+      "summary": "按共享插件顺序准备模型、工具、提示与恢复状态，绑定会话唯一 SkillRuntime并保留 Get/List 范围和宿主过滤。resume_session_log 路径先按 profile 校验 Skill 记录再 prepare_resume；CLI 严格恢复，ACP 保留可用子集策略，connector grant 从已验证的 Agent 状态派生。",
       "tags": [
         "session",
         "composition",
@@ -27597,8 +27560,8 @@
       "name": "prepare_tools",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        140,
-        249
+        146,
+        255
       ],
       "summary": "装配 cwd 下工具并登记清理，保留 Get/List 原有允许和阻止范围、宿主访问及目录过滤器；随后绑定会话 SkillRuntime，utility 继续不自动注册工具。",
       "tags": [
@@ -27616,8 +27579,8 @@
       "name": "prepare_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        252,
-        341
+        258,
+        347
       ],
       "summary": "按 CLI、ACP 或 Python profile 组合 cwd、模式、运行时与环境提示；utility 跳过自动记忆和生图，但 ACP 宿主附加提示仍可携带恢复信息。",
       "tags": [
@@ -27635,8 +27598,8 @@
       "name": "prepare_hooks",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        344,
-        351
+        350,
+        357
       ],
       "summary": "优先借用宿主 Hook 列表，仅在适用的非 ACP、未预备入口按配置加载 Hook。",
       "tags": [
@@ -27654,8 +27617,8 @@
       "name": "finish_session",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        354,
-        385
+        360,
+        391
       ],
       "summary": "使用 Agent 已验证的活动 Skill 派生 connector 会话 grant，避免第二次恢复；再以宿主目录过滤器绑定 SkillSelector，禁用条目不因专家会话自动放开。",
       "tags": [
@@ -27673,8 +27636,8 @@
       "name": "_workspace_layout_path",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        388,
-        409
+        394,
+        415
       ],
       "summary": "规范共享工作区布局中的目录值，用于提示路径约定。",
       "tags": [
@@ -27692,8 +27655,8 @@
       "name": "_workspace_layout_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        412,
-        441
+        418,
+        447
       ],
       "summary": "描述宿主选定工作区与稳定会话 cwd，明确工具相对路径、产物扫描和目录判空规则；不恢复旧输出根目录语义。",
       "tags": [
@@ -27711,8 +27674,8 @@
       "name": "_filesystem_access_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        444,
-        497
+        450,
+        503
       ],
       "summary": "根据能力策略与工作区生成可访问范围和目录授权提示。",
       "tags": [
@@ -27730,8 +27693,8 @@
       "name": "_build_action_hints_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        500,
-        522
+        506,
+        528
       ],
       "summary": "结合记忆与 Playwright 可用性生成宿主引导提示，优先使用 BOX_AGENT_MCP_CONFIG_PATH 指向的 MCP 配置。",
       "tags": [
@@ -27749,8 +27712,8 @@
       "name": "build_acp_session_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        525,
-        619
+        531,
+        625
       ],
       "summary": "集中组合 ACP 模式、固定 cwd、访问策略、运行环境、专家和后续建议提示，并按显式开关加入通用任务目录组织规则。",
       "tags": [
@@ -27768,8 +27731,8 @@
       "name": "create_application_runtime",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        622,
-        625
+        628,
+        631
       ],
       "summary": "创建应用级 PluginRuntime，避免宿主适配器直接依赖插件初始化细节。",
       "tags": [
@@ -27787,8 +27750,8 @@
       "name": "build_session_permission_policy",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        628,
-        640
+        634,
+        646
       ],
       "summary": "将配置能力与已规范的宿主文件系统上下文合并，在默认模式下重建会话工作区边界。",
       "tags": [
@@ -27806,8 +27769,8 @@
       "name": "close_owned_clients",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        643,
-        662
+        649,
+        668
       ],
       "summary": "按对象身份去重并逆序关闭进程拥有的模型客户端，继续尝试全部清理并保留原始异常。",
       "tags": [
@@ -29338,7 +29301,7 @@
       "type": "file",
       "name": "agent.py",
       "filePath": "box_agent/agent.py",
-      "summary": "提供 Agent 公共 API、消息与目标状态，由 Agent 持有会话唯一的 SkillRuntime；旧激活接口改为注册普通参考资料，每轮构造 Context 处理正文投影。SessionLog 继续保存持久事实，plugins、连接器许可回调及稳定 cwd 约束沿原运行入口传递。公共构造只在 Runtime 为 None 时新建实例，并复用共享 Store 绑定检查，保留 falsey 借用实例及已有持久化归属。",
+      "summary": "提供 Agent 公共 API、消息与目标状态，持有会话唯一 SkillRuntime，每轮构造 Context 处理普通资料投影。逻辑 Session ID 进入默认运行选项；clear_history 先提交并 flush 必需的 surface/reset，再清除内存消息和轮转资源账本。SessionLog、plugins、连接器许可及稳定 cwd 边界保留。公共构造只在 Runtime 为 None 时新建实例，并复用共享 Store 绑定检查，保留 falsey 借用实例及已有持久化归属。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29588,9 +29551,9 @@
       "filePath": "box_agent/agent.py",
       "lineRange": [
         437,
-        1281
+        1289
       ],
-      "summary": "持有消息、目标与会话唯一 SkillRuntime，旧 Skill 激活接口登记普通宿主资料，每轮创建 Context 并通过通用组合入口执行。直接 API 恢复严格验证当前来源；连接器许可继续约束 MCP 目录和搜索，受管能力沿 KernelServices 传递。公共构造复用 _bind_skill_store，拒绝更换或清空借用 SkillRuntime 已绑定的 Store；仅 None 触发默认创建，falsey 实例保持身份。",
+      "summary": "持有消息、目标与会话唯一 SkillRuntime，旧激活接口登记普通宿主资料，每轮通过 Context 和组合入口执行。逻辑 Session ID 随默认选项传递；清除历史先经 Store append/flush 提交必需 reset，再修改内存。严格 Skill 恢复、连接器许可和受管服务边界保持。公共构造复用 _bind_skill_store，拒绝更换或清空借用 SkillRuntime 已绑定的 Store；仅 None 触发默认创建，falsey 实例保持身份。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29604,7 +29567,7 @@
       "type": "file",
       "name": "agent_runtime.py",
       "filePath": "box_agent/agent_runtime.py",
-      "summary": "集中构造 LLM、Agent、权限和记忆对象，保留可注入工厂及兼容参数转发；显式传递会话 SkillRuntime、plugins、连接器许可和内置工具门控。",
+      "summary": "集中构造 LLM、Agent、权限和记忆对象，保留可注入工厂和兼容参数转发；仅显式提供时传递逻辑 Session ID、会话 SkillRuntime、plugins、连接器许可与内置工具门控。",
       "tags": [
         "runtime",
         "依赖注入",
@@ -29637,9 +29600,9 @@
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
         73,
-        144
+        147
       ],
-      "summary": "通过可替换工厂构造 Agent，集中转发 SessionLog、工具门控、连接器许可和显式 SkillRuntime；仅在调用方提供时加入可选能力参数，保留兼容构造路径。",
+      "summary": "通过可替换工厂构造 Agent，转发 SessionLog、工具门控、连接器许可与显式 SkillRuntime；仅在提供时加入逻辑 Session ID 和其他可选参数，保留旧工厂兼容性。",
       "tags": [
         "工具函数",
         "runtime",
@@ -29654,8 +29617,8 @@
       "name": "build_permission_engine",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        147,
-        161
+        150,
+        164
       ],
       "summary": "使用宿主解析的策略、工作目录和授权存储创建共享权限引擎。",
       "tags": [
@@ -29672,8 +29635,8 @@
       "name": "build_memory_manager",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        164,
-        175
+        167,
+        178
       ],
       "summary": "根据显式记忆配置创建共享 MemoryManager，保留可注入构造工厂。",
       "tags": [
@@ -29690,8 +29653,8 @@
       "name": "build_memory_extractor",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        178,
-        200
+        181,
+        203
       ],
       "summary": "为记忆管理器绑定 LLM、冷却时间与步骤间隔，创建共享提取器。",
       "tags": [
@@ -29707,7 +29670,7 @@
       "type": "file",
       "name": "agent_session.py",
       "filePath": "box_agent/agent_session.py",
-      "summary": "统一活跃会话状态、配置引用和插件生命周期，为每轮绑定 KernelServices 并按所有权释放资源。创建入口可转交调用方 SkillRuntime，继续保留连接器许可、utility 工具门控和稳定 cwd，不复制 Skill 读取状态。",
+      "summary": "统一会话状态、配置和插件生命周期，为每轮绑定 KernelServices 并按所有权释放资源。创建入口可传递逻辑 Session ID 与调用方 SkillRuntime，保留 utility 门控、连接器许可和稳定 cwd，不复制 Skill 读取状态。",
       "tags": [
         "session-lifecycle",
         "plugin-runtime",
@@ -29722,9 +29685,9 @@
       "filePath": "box_agent/agent_session.py",
       "lineRange": [
         32,
-        413
+        416
       ],
-      "summary": "统一活跃会话状态、配置引用和插件生命周期，为每轮绑定 KernelServices 并按所有权释放资源。创建入口可转交调用方 SkillRuntime，继续保留连接器许可、utility 工具门控和稳定 cwd，不复制 Skill 读取状态。",
+      "summary": "统一会话状态、配置和插件生命周期，为每轮绑定 KernelServices 并按所有权释放资源。创建入口可传递逻辑 Session ID 与调用方 SkillRuntime，保留 utility 门控、连接器许可和稳定 cwd，不复制 Skill 读取状态。",
       "tags": [
         "数据模型",
         "会话",
@@ -29738,7 +29701,7 @@
       "type": "file",
       "name": "cli.py",
       "filePath": "box_agent/cli.py",
-      "summary": "实现 CLI 配置、诊断与交互，经 AgentSession.open 复用共享能力装配和生命周期。目录匹配仅更新元数据，slash 显式选择交给 Agent 的 SkillRuntime；普通输入不自动预载正文，通用和代码会话仍保留用户选定 cwd。",
+      "summary": "实现 CLI 配置、诊断与交互，通过 AgentSession 复用共享装配和清理；--session-id/--resume 创建或恢复逻辑 SessionLog，Agent、运行选项、trace 和命名目标共享同一 ID。恢复严格校验 Skill 后才修复中断调用，CLI 关闭自身日志；只有新建未命名会话兼容旧工作区目标文件。目录匹配与显式 Skill 选择仍保持分工。",
       "tags": [
         "cli",
         "entry-point",
@@ -29753,8 +29716,8 @@
       "name": "run_setup_wizard",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        116,
-        211
+        117,
+        212
       ],
       "summary": "引导用户配置模型接口与关键运行参数，并保存可启动的 YAML 配置。",
       "tags": [
@@ -29771,8 +29734,8 @@
       "name": "_mask_secret",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        231,
-        238
+        232,
+        239
       ],
       "summary": "把敏感值转换为受限掩码，避免配置输出泄漏完整凭据。",
       "tags": [
@@ -29789,8 +29752,8 @@
       "name": "_is_secret_path",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        241,
-        242
+        242,
+        243
       ],
       "summary": "判断配置键路径是否属于 API key 或 token 等敏感字段。",
       "tags": [
@@ -29807,8 +29770,8 @@
       "name": "_normalize_config_path",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        245,
-        258
+        246,
+        259
       ],
       "summary": "规范点分配置键路径，供 get/set 子命令访问嵌套字段。",
       "tags": [
@@ -29825,8 +29788,8 @@
       "name": "_normalize_display_path",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        261,
-        273
+        262,
+        274
       ],
       "summary": "把配置路径格式化为便于终端展示的字符串。",
       "tags": [
@@ -29843,8 +29806,8 @@
       "name": "_get_nested",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        276,
-        282
+        277,
+        283
       ],
       "summary": "沿配置键列表读取嵌套字典中的值。",
       "tags": [
@@ -29861,8 +29824,8 @@
       "name": "_set_nested",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        285,
-        295
+        286,
+        296
       ],
       "summary": "按点分路径更新嵌套配置，并创建缺失的中间映射。",
       "tags": [
@@ -29879,8 +29842,8 @@
       "name": "_parse_config_value",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        298,
-        301
+        299,
+        302
       ],
       "summary": "解析命令行配置值为 YAML 支持的布尔、数字、列表或字符串。",
       "tags": [
@@ -29897,8 +29860,8 @@
       "name": "_load_config_yaml",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        304,
-        309
+        305,
+        310
       ],
       "summary": "读取当前 YAML 配置并校验顶层映射，返回配置路径与数据。",
       "tags": [
@@ -29915,8 +29878,8 @@
       "name": "_config_summary",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        312,
-        406
+        313,
+        407
       ],
       "summary": "生成经过敏感字段遮蔽的配置摘要，供文本和 JSON 输出复用。",
       "tags": [
@@ -29933,8 +29896,8 @@
       "name": "_print_config_summary",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        409,
-        470
+        410,
+        471
       ],
       "summary": "在终端输出当前配置文件和主要配置项。",
       "tags": [
@@ -29951,8 +29914,8 @@
       "name": "_json_print",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        473,
-        474
+        474,
+        475
       ],
       "summary": "以统一 JSON 格式输出 CLI 的机器可读结果。",
       "tags": [
@@ -29969,8 +29932,8 @@
       "name": "_config_exit_error",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        477,
-        482
+        478,
+        483
       ],
       "summary": "输出配置子命令错误并设置非零退出状态。",
       "tags": [
@@ -29987,8 +29950,8 @@
       "name": "get_log_directory",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        485,
-        487
+        486,
+        488
       ],
       "summary": "根据当前用户 profile 定位 Agent 日志目录。",
       "tags": [
@@ -30005,8 +29968,8 @@
       "name": "show_log_directory",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        490,
-        532
+        491,
+        533
       ],
       "summary": "打印日志位置并按需调用文件管理器打开目录。",
       "tags": [
@@ -30023,8 +29986,8 @@
       "name": "_open_directory_in_file_manager",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        535,
-        549
+        536,
+        550
       ],
       "summary": "针对 Windows、macOS 或 Linux 调用系统目录打开命令。",
       "tags": [
@@ -30041,8 +30004,8 @@
       "name": "read_log_file",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        552,
-        575
+        553,
+        576
       ],
       "summary": "读取指定日志文件并以 CLI 可用格式返回内容。",
       "tags": [
@@ -30059,8 +30022,8 @@
       "name": "print_banner",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        578,
-        595
+        579,
+        596
       ],
       "summary": "显示 Box-Agent 启动横幅与版本信息。",
       "tags": [
@@ -30077,8 +30040,8 @@
       "name": "print_help",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        598,
-        633
+        599,
+        634
       ],
       "summary": "显示交互模式支持的命令和使用提示。",
       "tags": [
@@ -30095,8 +30058,8 @@
       "name": "print_session_info",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        636,
-        671
+        637,
+        672
       ],
       "summary": "输出当前模型、工作区和会话运行配置。",
       "tags": [
@@ -30113,8 +30076,8 @@
       "name": "print_stats",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        674,
-        695
+        675,
+        696
       ],
       "summary": "打印当前会话的 token 用量、工具调用和运行统计。",
       "tags": [
@@ -30131,8 +30094,8 @@
       "name": "_session_stats",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        698,
-        710
+        699,
+        711
       ],
       "summary": "从 Agent 历史与运行状态汇总终端所需统计字段。",
       "tags": [
@@ -30149,8 +30112,8 @@
       "name": "print_goal_status",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        713,
-        743
+        714,
+        744
       ],
       "summary": "展示当前持久目标的状态、进度和阻塞信息。",
       "tags": [
@@ -30167,8 +30130,8 @@
       "name": "_goal_store_path",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        746,
-        748
+        747,
+        749
       ],
       "summary": "解析当前 profile 和工作区对应的 CLI 目标存储文件。",
       "tags": [
@@ -30185,8 +30148,8 @@
       "name": "_load_goal_state",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        751,
-        760
+        752,
+        761
       ],
       "summary": "从目标存储读取并恢复可用的 GoalState。",
       "tags": [
@@ -30203,8 +30166,8 @@
       "name": "_save_goal_state",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        763,
-        776
+        764,
+        777
       ],
       "summary": "将 CLI 目标状态保存到其工作区关联的存储位置。",
       "tags": [
@@ -30221,8 +30184,8 @@
       "name": "_restore_cli_goal",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        779,
-        784
+        780,
+        785
       ],
       "summary": "为 CLI Agent 恢复先前保存的持久目标。",
       "tags": [
@@ -30239,8 +30202,8 @@
       "name": "handle_goal_command",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        787,
-        873
+        788,
+        874
       ],
       "summary": "处理交互式目标创建、查看、暂停、继续和清除命令。",
       "tags": [
@@ -30257,10 +30220,10 @@
       "name": "cmd_goal",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        876,
-        985
+        877,
+        1006
       ],
-      "summary": "执行非交互 goal 子命令并输出目标状态。",
+      "summary": "对命名 SessionLog 与旧工作区目标文件复用同一动作和输出策略；命名目标从自己的日志投影读取，修改 append/flush 后关闭日志，未提供 ID 时保持旧文件兼容。",
       "tags": [
         "工具函数",
         "cli",
@@ -30275,8 +30238,8 @@
       "name": "_workspace_from_args",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        988,
-        991
+        1009,
+        1012
       ],
       "summary": "从 CLI 参数和配置解析当前工作目录。",
       "tags": [
@@ -30293,10 +30256,10 @@
       "name": "parse_args",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        994,
-        1215
+        1015,
+        1246
       ],
-      "summary": "定义并解析启动参数和 setup、config、doctor、安装、goal 等子命令。",
+      "summary": "解析 CLI 配置、任务和子命令，支持 --session-id 与 --resume 指向同一逻辑会话；goal 子命令继承相同 ID 选择及原动作参数。",
       "tags": [
         "工具函数",
         "cli",
@@ -30311,8 +30274,8 @@
       "name": "cmd_setup",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1218,
-        1222
+        1249,
+        1253
       ],
       "summary": "确保用户配置存在并启动首次设置向导。",
       "tags": [
@@ -30329,8 +30292,8 @@
       "name": "cmd_config",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1225,
-        1313
+        1256,
+        1344
       ],
       "summary": "执行配置查看、get/set 与编辑操作，对敏感值进行掩码并维护 YAML 文件。",
       "tags": [
@@ -30347,8 +30310,8 @@
       "name": "build_cli_env_context",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1316,
-        1329
+        1347,
+        1360
       ],
       "summary": "探测终端宿主和工具运行时能力，构造共享 EnvContext。",
       "tags": [
@@ -30365,8 +30328,8 @@
       "name": "_resolve_obsidian_cli",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1332,
-        1336
+        1363,
+        1367
       ],
       "summary": "从配置和环境确定可用的 Obsidian CLI。",
       "tags": [
@@ -30383,8 +30346,8 @@
       "name": "_doctor_check",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1339,
-        1342
+        1370,
+        1373
       ],
       "summary": "创建带名称、状态与说明的 doctor 检查结果。",
       "tags": [
@@ -30401,8 +30364,8 @@
       "name": "_doctor_status_prefix",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1345,
-        1351
+        1376,
+        1382
       ],
       "summary": "将健康检查状态映射为终端前缀。",
       "tags": [
@@ -30419,8 +30382,8 @@
       "name": "_doctor_line",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1354,
-        1355
+        1385,
+        1386
       ],
       "summary": "把单项诊断结果格式化为可阅读的终端行。",
       "tags": [
@@ -30437,8 +30400,8 @@
       "name": "_doctor_obsidian_status",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1358,
-        1411
+        1389,
+        1442
       ],
       "summary": "汇总 Obsidian 配置及 CLI 可用性诊断。",
       "tags": [
@@ -30455,8 +30418,8 @@
       "name": "_doctor_obsidian_status_line",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1414,
-        1415
+        1445,
+        1446
       ],
       "summary": "生成 Obsidian 状态的终端摘要。",
       "tags": [
@@ -30473,8 +30436,8 @@
       "name": "_doctor_check_obsidian",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1418,
-        1419
+        1449,
+        1450
       ],
       "summary": "执行 Obsidian 能力检查并返回标准 doctor 结果。",
       "tags": [
@@ -30491,8 +30454,8 @@
       "name": "_doctor_config_status",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1422,
-        1431
+        1453,
+        1462
       ],
       "summary": "读取并校验主配置，生成模型及配置可用性诊断。",
       "tags": [
@@ -30509,8 +30472,8 @@
       "name": "_probe_llm_api",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1434,
-        1448
+        1465,
+        1479
       ],
       "summary": "对配置的模型接口执行有界请求，验证认证和响应是否可用。",
       "tags": [
@@ -30527,8 +30490,8 @@
       "name": "_doctor_api_status",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1451,
-        1483
+        1482,
+        1514
       ],
       "summary": "将模型 API 探测结果转换成成功或失败诊断。",
       "tags": [
@@ -30545,8 +30508,8 @@
       "name": "_doctor_sandbox_status",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1486,
-        1502
+        1517,
+        1533
       ],
       "summary": "检查 Python 沙箱环境及运行时依赖准备情况。",
       "tags": [
@@ -30563,8 +30526,8 @@
       "name": "_doctor_mcp_status",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1505,
-        1510
+        1536,
+        1541
       ],
       "summary": "检查 MCP 配置、服务器及工具加载状态。",
       "tags": [
@@ -30581,8 +30544,8 @@
       "name": "cmd_doctor",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1513,
-        1549
+        1544,
+        1580
       ],
       "summary": "组合配置、API、MCP、沙箱和浏览器检查并输出诊断报告。",
       "tags": [
@@ -30599,8 +30562,8 @@
       "name": "_default_browsers_path",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1552,
-        1554
+        1583,
+        1585
       ],
       "summary": "解析当前 profile 下默认 Playwright 浏览器缓存路径。",
       "tags": [
@@ -30617,8 +30580,8 @@
       "name": "_playwright_env",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1557,
-        1563
+        1588,
+        1594
       ],
       "summary": "为 Playwright 安装和诊断构造浏览器缓存环境变量。",
       "tags": [
@@ -30635,8 +30598,8 @@
       "name": "_cli_node_execution_env",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1566,
-        1575
+        1597,
+        1606
       ],
       "summary": "组合托管 Node 可执行路径及环境供 CLI 安装命令使用。",
       "tags": [
@@ -30653,8 +30616,8 @@
       "name": "_doctor_browser_status",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1578,
-        1622
+        1609,
+        1653
       ],
       "summary": "检测 Playwright 浏览器安装与可执行路径状态。",
       "tags": [
@@ -30671,8 +30634,8 @@
       "name": "_doctor_check_browser",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1625,
-        1626
+        1656,
+        1657
       ],
       "summary": "将浏览器检测结果包装为标准 doctor 检查项。",
       "tags": [
@@ -30689,8 +30652,8 @@
       "name": "cmd_install_browser",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1629,
-        1669
+        1660,
+        1700
       ],
       "summary": "安装所需 Playwright 浏览器并报告安装结果。",
       "tags": [
@@ -30707,8 +30670,8 @@
       "name": "cmd_install_node",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1672,
-        1692
+        1703,
+        1723
       ],
       "summary": "安装当前平台的托管 Node runtime，供 Skill 和浏览器工具使用。",
       "tags": [
@@ -30725,8 +30688,8 @@
       "name": "_ensure_user_mcp_config",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1695,
-        1708
+        1726,
+        1739
       ],
       "summary": "初始化或定位当前用户 profile 的 MCP 配置文件。",
       "tags": [
@@ -30743,8 +30706,8 @@
       "name": "_enable_playwright_in_mcp",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1711,
-        1746
+        1742,
+        1777
       ],
       "summary": "更新 MCP 配置以启用 Playwright 服务。",
       "tags": [
@@ -30761,8 +30724,8 @@
       "name": "_quiet_cleanup",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1749,
-        1767
+        1780,
+        1798
       ],
       "summary": "执行退出清理并抑制不应覆盖主运行结果的清理异常。",
       "tags": [
@@ -30779,8 +30742,8 @@
       "name": "_run_session_turn",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1770,
-        1776
+        1801,
+        1807
       ],
       "summary": "通过 AgentSession 消费并渲染单轮事件，同时记录用量与 trace。",
       "tags": [
@@ -30797,10 +30760,10 @@
       "name": "run_agent",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        1779,
-        2624
+        1810,
+        2681
       ],
-      "summary": "经 AgentSession.open 装配 CLI 会话并处理单次任务与交互轮次；目录匹配只更新发现信息，slash 显式选择交给 SkillRuntime。复用目标续跑、MCP 对账、稳定 cwd 和生命周期清理。",
+      "summary": "创建或恢复逻辑 SessionLog，以同一 ID 启动 AgentSession、运行选项和 trace；共享预备先严格验证 Skill 再修复中断调用。命名目标只使用本日志，新建未命名会话保留旧目标文件镜像，所有退出与启动失败路径都关闭 CLI 拥有的日志和客户端。",
       "tags": [
         "cli",
         "entry-point",
@@ -30815,8 +30778,8 @@
       "name": "main",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        2627,
-        2730
+        2684,
+        2789
       ],
       "summary": "分派 CLI 管理子命令，解析工作区与代码会话模式后启动 Agent，不再预创建隐式 output 目录。",
       "tags": [
@@ -31323,7 +31286,7 @@
       "type": "file",
       "name": "loop.py",
       "filePath": "box_agent/kernel/loop.py",
-      "summary": "经服务端口驱动模型、上下文、计划和工具步骤。先冻结 PreparedTools，再由 Context 预算和投影请求资料；Kernel 持久化真实历史及请求关联，在日志提交后调用通用确认回调，并在有效响应后调用消费回调。保留 Hook 与工具提交边界，完整输入超预算及异常重复流均走有界恢复。",
+      "summary": "经服务端口推进模型与工具，Context 消费同一 PreparedTools 并投影普通请求资料；独立 CompactEnginePort 决定压缩。Kernel 提供 before_summary 持久化前缀与 compaction/start，提交返回 surface 并 flush 后才更新内存历史；请求提交、有效响应回调及有界恢复保持原边界。",
       "tags": [
         "kernel",
         "对话控制",
@@ -31337,8 +31300,8 @@
       "name": "_resolve_provider_stale_seconds",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        131,
-        150
+        130,
+        149
       ],
       "summary": "调用共享解析器，按环境变量、配置和默认值确定模型静默超时。",
       "tags": [
@@ -31354,8 +31317,8 @@
       "name": "_stream_with_activity",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        153,
-        170
+        152,
+        169
       ],
       "summary": "为模型流绑定 kernel 心跳间隔与静默超时控制。",
       "tags": [
@@ -31371,8 +31334,8 @@
       "name": "final_summary_wrapup_text",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        251,
-        264
+        250,
+        263
       ],
       "summary": "生成工具调用预算耗尽后的最终总结提示，要求交付已完成结果。",
       "tags": [
@@ -31388,8 +31351,8 @@
       "name": "empty_final_answer_retry_text",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        267,
-        273
+        266,
+        272
       ],
       "summary": "生成空最终回答的重试提示，使模型补充用户可见答复。",
       "tags": [
@@ -31405,8 +31368,8 @@
       "name": "_message_text",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        281,
-        290
+        280,
+        289
       ],
       "summary": "从消息内容块提取文本，用于计划和上下文判断。",
       "tags": [
@@ -31422,8 +31385,8 @@
       "name": "_latest_user_text",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        293,
-        297
+        292,
+        296
       ],
       "summary": "从历史消息逆序寻找最近一条用户文本。",
       "tags": [
@@ -31439,8 +31402,8 @@
       "name": "_should_emit_plan_start",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        300,
-        309
+        299,
+        308
       ],
       "summary": "根据执行选项及最近请求判断是否触发计划开始事件。",
       "tags": [
@@ -31456,8 +31419,8 @@
       "name": "_plan_approval_is_approved",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        312,
-        326
+        311,
+        325
       ],
       "summary": "规范识别计划审批载荷中的批准状态。",
       "tags": [
@@ -31473,8 +31436,8 @@
       "name": "_plan_approval_payload",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        329,
-        342
+        328,
+        341
       ],
       "summary": "生成包含审批请求 ID、计划 ID 与状态的结构化计划审批载荷。",
       "tags": [
@@ -31490,8 +31453,8 @@
       "name": "_attach_plan_approval_payload",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        345,
-        381
+        344,
+        380
       ],
       "summary": "将计划审批载荷合并到工具原始输出，保留现有工具数据并规范化审批字段。",
       "tags": [
@@ -31507,8 +31470,8 @@
       "name": "_plan_start_payload",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        384,
-        413
+        383,
+        412
       ],
       "summary": "构建计划开始事件，携带用户请求及需要审批的计划状态。",
       "tags": [
@@ -31524,8 +31487,8 @@
       "name": "_auto_match_memory_for_latest_prompt",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        418,
-        485
+        417,
+        484
       ],
       "summary": "为最近用户请求检索相关记忆并注入上下文，避免无关检索和重复匹配。",
       "tags": [
@@ -31541,8 +31504,8 @@
       "name": "_signed_web_image_url_map",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        498,
-        540
+        497,
+        539
       ],
       "summary": "从网页提取工具结果收集带签名图片 URL 与安全展示 URL 的对应关系。",
       "tags": [
@@ -31558,8 +31521,8 @@
       "name": "_restore_signed_web_image_urls",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        542,
-        559
+        541,
+        558
       ],
       "summary": "将回答中的简化图片地址恢复为原始可访问签名 URL。",
       "tags": [
@@ -31575,10 +31538,10 @@
       "name": "_run_agent_loop_impl",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        604,
-        2632
+        603,
+        2640
       ],
-      "summary": "推进模型和工具步骤，先冻结 PreparedTools 再预算历史及请求投影；真实调用、回复和请求关联经 Store 提交，日志成功后调用通用 on_committed，有效响应后调用 on_response。超预算仅有界压缩重试，异常重复流最多恢复一次，不重放工具或 Step Hook。",
+      "summary": "先冻结 PreparedTools，再由 Context 处理完整请求输入；独立 CompactEngine 接收 CompactionInput 与 Kernel 的 before_summary 回调。Kernel 先持久化摘要前缀与 start，再提交返回 surface 和 flush，最后替换内存；请求交付和有效响应确认、有界压缩重试及重复流恢复保持。",
       "tags": [
         "kernel",
         "对话控制",
@@ -31592,8 +31555,8 @@
       "name": "run_agent_loop",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        2702,
-        2761
+        2710,
+        2769
       ],
       "summary": "通过已组装的 AgentLoopKernel 执行循环并保留公共异步迭代接口。",
       "tags": [
@@ -31609,8 +31572,8 @@
       "name": "_LoopRuntimeDefaults",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        116,
-        125
+        115,
+        124
       ],
       "summary": "保存 kernel 心跳间隔、提供商静默阈值等默认运行参数。",
       "tags": [
@@ -31626,8 +31589,8 @@
       "name": "_SignedWebImageUrlStreamRewriter",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        561,
-        601
+        560,
+        600
       ],
       "summary": "跨流式文本片段缓存可能被截断的图片地址，并恢复签名 URL。",
       "tags": [
@@ -31643,8 +31606,8 @@
       "name": "AgentLoopKernel",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        2652,
-        2699
+        2660,
+        2707
       ],
       "summary": "以外层装配的 KernelServices 配置稳定循环，拒绝在运行参数中重复传入 hooks、plugins 等能力实现；兼容旧服务束时补齐工具引擎，并在退出时关闭事件流及本轮工具引擎。",
       "tags": [
@@ -34213,7 +34176,7 @@
       "type": "file",
       "name": "composition.py",
       "filePath": "box_agent/composition.py",
-      "summary": "在外层为每个 Run 注册、冻结和注入 HookBus，并为最终借用的 Skill 与 Store 绑定运行级 Context。managed 路径保留既有模型、工具和连接器能力身份；额外 Provider 由独立 RUN 宿主拥有。关闭先排空总线，再清理 Provider，即使总线完成关闭后报告迟到持久化错误也继续清理并保留错误。",
+      "summary": "为每 Run 注册冻结 HookBus，并绑定最终借用的 Skill、Store、Context 与 CompactEngine；managed 保留模型、工具及连接器身份，显式压缩器即使布尔值为假也不被替换。额外 Provider 仍由独立 RUN 宿主拥有，关闭先排空总线再清理 Provider并传播迟到持久化错误。",
       "tags": [
         "composition",
         "hooks",
@@ -34227,10 +34190,10 @@
       "name": "_default_capabilities",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        44,
-        76
+        45,
+        78
       ],
-      "summary": "收集借用能力并创建本 Run HookBus；缺失 SkillEngine 时从内置 Get/List 的同一 Loader 创建 Runtime，Store 绑定留到最终能力替换完成后。",
+      "summary": "收集借用模型、工具、Skill、Context 和 Compact 能力并创建本 Run HookBus；缺失 SkillEngine 时解析共同 Loader，Store 归属在最终能力替换后绑定。",
       "tags": [
         "function",
         "composition",
@@ -34246,8 +34209,8 @@
       "name": "_kernel_run_arguments",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        79,
-        86
+        81,
+        88
       ],
       "summary": "过滤已由 KernelServices 拥有的能力和 plugins 参数，只向纯内核转交运行控制参数。",
       "tags": [
@@ -34265,8 +34228,8 @@
       "name": "compose_default_kernel_services",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        121,
-        145
+        123,
+        147
       ],
       "summary": "同步构造默认服务与本 Run HookBus，注册冻结旧 Hook并将真实历史绑定到 Context；拒绝异步静态插件，保留借用工具的默认执行器。",
       "tags": [
@@ -34284,8 +34247,8 @@
       "name": "_validate_managed_services",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        148,
-        201
+        150,
+        203
       ],
       "summary": "按对象身份核对受管服务与有效运行能力及 Hook 列表，拒绝互相矛盾的旧参数覆盖。",
       "tags": [
@@ -34303,8 +34266,8 @@
       "name": "_add_cleanup_note",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        204,
-        213
+        206,
+        215
       ],
       "summary": "实现 `add-cleanup-note` 对应的模块职责；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
       "tags": [
@@ -34322,8 +34285,8 @@
       "name": "_combined_cleanup_error",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        216,
-        248
+        218,
+        250
       ],
       "summary": "展开插件清理失败并保留原始取消对象，把普通错误挂为原因或注释，兼容 Python 3.10。",
       "tags": [
@@ -34341,8 +34304,8 @@
       "name": "_cleanup_plugin_run",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        251,
-        269
+        253,
+        271
       ],
       "summary": "依次尝试释放当前激活与关闭宿主，收集各阶段失败并保留取消的因果关系。",
       "tags": [
@@ -34360,8 +34323,8 @@
       "name": "_attach_cleanup_error",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        272,
-        281
+        274,
+        283
       ],
       "summary": "实现 `attach-cleanup-error` 对应的模块职责；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
       "tags": [
@@ -34379,10 +34342,10 @@
       "name": "run_agent_loop_with_default_services",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        349,
-        448
+        351,
+        459
       ],
-      "summary": "验证 managed 能力一致性，绑定最终 Skill/Store/Context 并将同一历史交给 Context，再注册冻结本 Run Hook。其余借用服务保留身份，额外 Provider 使用独立 RUN 宿主；关闭后先排空总线再清理 Provider。",
+      "summary": "核对 managed 能力身份并绑定最终 Skill/Store/Context/Compact；冲突压缩器明确拒绝，存在但布尔值为假的实例仍保留。其余借用服务和 connector 身份保持，额外 Provider 由私有 RUN 宿主清理，关闭先排空 HookBus。",
       "tags": [
         "function",
         "composition",
@@ -34486,7 +34449,7 @@
       "type": "file",
       "name": "ports.py",
       "filePath": "box_agent/kernel/ports.py",
-      "summary": "声明 Kernel 借用的模型、权限、记忆、Store、工具和 Hook 端口，以及 SkillEngine、ContextEngine 和 PreparedContext 合同。Skill 保存来源和读取事实，Context 提供请求投影及可选提交、响应回调，KernelServices 仅持有不可变引用。",
+      "summary": "声明 Kernel 借用的模型、权限、记忆、Store、工具、Hook 与 Skill/Context 端口；新增独立 CompactEnginePort 只返回压缩结果，不能自行提交日志或替换 live history。ContextEnginePort 仍使用 configure_run、bind_history 和 prepare_request，KernelServices 保存各能力的不可变引用。",
       "tags": [
         "kernel",
         "protocol",
@@ -34500,8 +34463,8 @@
       "name": "SummaryLLMPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        21,
-        34
+        23,
+        36
       ],
       "summary": "封装 `SummaryLLMPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34519,8 +34482,8 @@
       "name": "LLMPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        38,
-        57
+        40,
+        59
       ],
       "summary": "封装 `LLMPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34538,8 +34501,8 @@
       "name": "PermissionGatewayPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        61,
-        64
+        63,
+        66
       ],
       "summary": "封装 `PermissionGatewayPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34557,8 +34520,8 @@
       "name": "MemoryLookupPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        68,
-        76
+        70,
+        78
       ],
       "summary": "封装 `MemoryLookupPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34576,8 +34539,8 @@
       "name": "MemoryExtractionPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        80,
-        89
+        82,
+        91
       ],
       "summary": "封装 `MemoryExtractionPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34595,8 +34558,8 @@
       "name": "MemoryPromotionPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        93,
-        111
+        95,
+        113
       ],
       "summary": "封装 `MemoryPromotionPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34614,8 +34577,8 @@
       "name": "SessionStorePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        115,
-        145
+        117,
+        147
       ],
       "summary": "封装 `SessionStorePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34633,8 +34596,8 @@
       "name": "HookBusPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        149,
-        201
+        151,
+        203
       ],
       "summary": "保留旧生命周期与工具 fire_* 调用签名，供兼容入口借用 Hook 能力。",
       "tags": [
@@ -34652,8 +34615,8 @@
       "name": "ToolCatalogPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        216,
-        233
+        218,
+        235
       ],
       "summary": "封装 `ToolCatalogPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34671,8 +34634,8 @@
       "name": "ToolExposureResultPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        237,
-        241
+        239,
+        243
       ],
       "summary": "封装 `ToolExposureResultPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34690,8 +34653,8 @@
       "name": "ToolExposurePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        245,
-        255
+        247,
+        257
       ],
       "summary": "封装 `ToolExposurePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34709,8 +34672,8 @@
       "name": "ToolResultStorePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        259,
-        284
+        261,
+        286
       ],
       "summary": "封装 `ToolResultStorePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34728,8 +34691,8 @@
       "name": "ToolResultBudgetOutcomePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        288,
-        294
+        290,
+        296
       ],
       "summary": "封装 `ToolResultBudgetOutcomePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
@@ -34747,8 +34710,8 @@
       "name": "ToolEnginePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        298,
-        315
+        300,
+        317
       ],
       "summary": "定义每轮工具准备、运行配置、预算指引、异步调用事件及关闭接口，执行器借用会话资源。",
       "tags": [
@@ -34766,10 +34729,10 @@
       "name": "KernelServices",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        395,
-        413
+        408,
+        427
       ],
-      "summary": "把本轮已解析的模型、工具、Store、Hook 及可选 Skill/Context 能力保存为不可变引用包，不移交引用对象的资源所有权。",
+      "summary": "以不可变引用包保存本轮解析的模型、工具、Store、Hook、Skill、Context 和可选 CompactEngine；各能力对象的资源所有权保持外部归属。",
       "tags": [
         "class",
         "kernel",
@@ -34972,7 +34935,7 @@
       "type": "file",
       "name": "defaults.py",
       "filePath": "box_agent/plugins/defaults.py",
-      "summary": "把调用方拥有的能力包装为默认描述符，并为缺失的 Context 创建 RUN 实例。最终装配验证 Get/List Loader 与 SkillEngine 来源身份、Skill 持久化与 SessionStore 身份，再绑定 Context；Hook 和其他借用资源不移交所有权。",
+      "summary": "包装调用方借用能力并在缺失时创建 RUN 级 Context 与 CompactEngine；默认判断使用 None，保留布尔值为假的外部压缩器。最终装配仍校验 Skill 与 Loader/Store 身份后绑定 Context，Hook 和其他借用资源不移交所有权。",
       "tags": [
         "plugins",
         "composition",
@@ -34986,8 +34949,8 @@
       "name": "_captured_instance_descriptor",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        88,
-        102
+        90,
+        104
       ],
       "summary": "为调用方拥有的能力创建捕获同一实例的 RUN 描述符，disposer=None 保留原资源所有权。",
       "tags": [
@@ -35005,10 +34968,10 @@
       "name": "default_plugin_descriptors",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        105,
-        172
+        107,
+        184
       ],
-      "summary": "按固定顺序包装借用能力，包括可选 Skill 和 Context 端口；Context 缺失时创建 RUN 作用域默认描述符，总线仍兼容旧 HookBus 与新 HookDispatch 两个端口。",
+      "summary": "按固定顺序包装借用能力，支持 Skill、Context 和 Compact 端口；只在 Context 或 Compact 为 None 时创建对应 RUN 默认描述符，保留 falsey 实例和 Hook 双端口兼容。",
       "tags": [
         "function",
         "plugins",
@@ -35024,8 +34987,8 @@
       "name": "create_default_plugin_host",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        175,
-        216
+        187,
+        230
       ],
       "summary": "将借用能力与额外静态插件组成当前 Run 私有宿主，拒绝非 RUN 作用域扩展。",
       "tags": [
@@ -35043,10 +35006,10 @@
       "name": "kernel_services_from_registry",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        234,
-        259
+        248,
+        274
       ],
-      "summary": "从冻结注册表读取最终能力，先验证 Skill 来源与 Store 归属，再配置 Context，形成不可变 KernelServices。",
+      "summary": "从冻结注册表读取能力，先验证 Skill 来源与 Store 归属并配置 Context，再把可选 CompactEngine 与其他引用放入 KernelServices。",
       "tags": [
         "function",
         "plugins",
@@ -35062,10 +35025,10 @@
       "name": "compose_default_services",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        262,
-        304
+        277,
+        325
       ],
-      "summary": "验证借用 Skill 与目录、Store 的一致性，缺失时创建运行级 DefaultContextEngine 并绑定最终能力；其余服务保持对象身份，返回不可变引用包。",
+      "summary": "校验借用 Skill 与最终 Loader/Store 并配置 Context；仅在缺失时创建 DefaultContextEngine 或 DefaultCompactEngine，保留 falsey 外部压缩器和其余对象身份。",
       "tags": [
         "function",
         "plugins",
@@ -35436,7 +35399,7 @@
       "type": "file",
       "name": "session_context.py",
       "filePath": "box_agent/session_context.py",
-      "summary": "用显式数据对象分离配置、会话选项、宿主借用能力与本轮输入，诊断输出避免暴露 Config。HostBindings 允许宿主提供 Skill 访问和目录过滤回调，供共享能力组装接入策略。",
+      "summary": "用显式对象分离配置、会话选项、宿主借用能力与当前输入，诊断避免暴露 Config。resume_session_log 选择共享恢复准备顺序，HostBindings 的 Skill 访问与目录过滤器继续把策略交给能力装配。",
       "tags": [
         "data-model",
         "host-bindings",
@@ -35451,9 +35414,9 @@
       "filePath": "box_agent/session_context.py",
       "lineRange": [
         17,
-        34
+        35
       ],
-      "summary": "保存 profile、会话 cwd、utility、权限、工作区布局和原始构造状态等标准化选项，不再定义独立产物根或产物模式。",
+      "summary": "保存 profile、cwd、utility、权限、布局和标准化构造选项；resume_session_log 开启先验证 Skill 后修复日志的共享恢复顺序，不引入另一套会话存储。",
       "tags": [
         "data-model",
         "host-bindings",
@@ -35468,8 +35431,8 @@
       "name": "HostBindings",
       "filePath": "box_agent/session_context.py",
       "lineRange": [
-        38,
-        66
+        39,
+        67
       ],
       "summary": "声明宿主借用的模型、工具、记忆、Hook、SessionLog、异步任务与组装回调，并提供可选 Skill 访问和目录过滤函数，供共享会话预备阶段使用。",
       "tags": [
@@ -35486,8 +35449,8 @@
       "name": "SessionContext",
       "filePath": "box_agent/session_context.py",
       "lineRange": [
-        70,
-        86
+        71,
+        87
       ],
       "summary": "绑定 Config、SessionOptions、HostBindings 与唯一会话键，解析工作区并发送不会改变模型行为的诊断事件。",
       "tags": [
@@ -35504,8 +35467,8 @@
       "name": "RunContext",
       "filePath": "box_agent/session_context.py",
       "lineRange": [
-        90,
-        94
+        91,
+        95
       ],
       "summary": "把当前会话、Agent、有效运行选项和唯一轮次 ID 绑定为 run scope 工厂输入。",
       "tags": [
@@ -36691,7 +36654,7 @@
       "type": "document",
       "name": "AGENT_SESSION.md",
       "filePath": "docs/AGENT_SESSION.md",
-      "summary": "说明 AgentSession.open 的配置驱动装配、插件生命周期、cwd 和宿主边界。Agent 持有唯一 SkillRuntime，读取恢复不在宿主重复执行；保留失败 Run 回滚、再激活门控与先清理 Run 再释放 Session 的顺序。",
+      "summary": "说明 AgentSession 装配、插件生命周期、稳定 cwd 与宿主边界，并记录唯一 SkillRuntime 和严格／部分恢复顺序。新增 CLI 逻辑 Session ID、目标与 trace 归属、日志关闭责任和必需 surface/reset 的兼容迁移要求；清除消息不删除非消息事实或审计历史。",
       "tags": [
         "文档",
         "架构",
@@ -37596,8 +37559,8 @@
       "name": "_register_legacy_hooks",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        89,
-        96
+        91,
+        98
       ],
       "summary": "按原列表顺序把旧 Hook 适配成声明，由装配层绑定 legacy 来源和当前 Run 归属。",
       "complexity": "simple",
@@ -37613,8 +37576,8 @@
       "name": "register_run_hooks",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        99,
-        118
+        101,
+        120
       ],
       "summary": "先注册旧 Hook，再从 activation 的真实 contribution 取得 HookProvider 声明并绑定描述符归属，全部成功后冻结总线；失败先关闭总线。",
       "complexity": "simple",
@@ -37630,8 +37593,8 @@
       "name": "_cleanup_hook_run",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        287,
-        316
+        289,
+        318
       ],
       "summary": "先排空 HookBus；若总线已关闭但报告迟到持久化错误，仍释放拥有的 Provider 并合并错误。私有宿主取消后继续清理剩余实例，以任务返回值保留原异常对象。",
       "complexity": "simple",
@@ -37647,8 +37610,8 @@
       "name": "_wait_for_hook_cleanup",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        319,
-        340
+        321,
+        342
       ],
       "summary": "通过 shield 等待受保护清理任务；managed 路径延后传播重复取消，确保 Hook 与 Provider 清理完成后 Session 才能释放依赖。",
       "complexity": "simple",
@@ -37664,8 +37627,8 @@
       "name": "_cleanup_task_finished",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        343,
-        346
+        345,
+        348
       ],
       "summary": "释放已完成清理任务的全局保留引用，并消费未取消任务异常。",
       "complexity": "simple",
@@ -38081,8 +38044,8 @@
       "name": "HookDispatchPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        205,
-        212
+        207,
+        214
       ],
       "summary": "向内核与工具引擎提供 observe、before_tool 和 after_tool 的结构化协议，返回只读决策结果并保留旧 HookBusPort。",
       "complexity": "simple",
@@ -38252,8 +38215,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        275,
-        288
+        249,
+        262
       ],
       "summary": "根据规范图片块的宽高估算输入 token，并在缺少有效尺寸时使用默认值，将结果限制在最小 512 token 与配置上限之间。"
     },
@@ -38271,8 +38234,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        291,
-        304
+        265,
+        278
       ],
       "summary": "序列化预算正文时移除 input_image 的 data 字段，并保留估算图片 token 的标记，避免把 base64 字节作为文本计费。"
     },
@@ -38290,8 +38253,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        307,
-        316
+        281,
+        290
       ],
       "summary": "汇总列表正文中所有规范 input_image 块的像素 token 估算；非列表正文不产生图片成本。"
     },
@@ -38309,8 +38272,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        820,
-        825
+        798,
+        803
       ],
       "summary": "仅将以当前或旧版摘要标记开头的 user 文本识别为合成摘要占位消息。"
     },
@@ -38328,8 +38291,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        843,
-        847
+        821,
+        825
       ],
       "summary": "把当前提供的工具定义归一为名称映射，结合最新真实响应的 usage 与完整请求本地估算计算安全输入 token 量。"
     },
@@ -38347,8 +38310,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        850,
-        859
+        828,
+        837
       ],
       "summary": "从安全输入上限扣除当前消息、实际工具定义和固定 1024 token 信封余量，将剩余额度换算为最多 50000 字符的引用预算。output_tokens 参数只保留调用兼容性，不再次预留模型输出。"
     },
@@ -38364,8 +38327,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        319,
-        327
+        321,
+        329
       ],
       "summary": "约定请求副本、历史投影、资料关联、完整输入估算和阻塞原因，Kernel 消费这些通用字段而不解析 Skill 领域状态。"
     },
@@ -38381,8 +38344,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        331,
-        359
+        333,
+        361
       ],
       "summary": "约定会话来源解析、显式选择、读取与恢复事实，以及不可变快照和交付记录；不持有请求消息或预算，外层装配验证与内置 Skill 工具的来源身份一致。"
     },
@@ -38398,8 +38361,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        363,
-        391
+        365,
+        393
       ],
       "summary": "约定每 Run 的历史绑定、临时资料预留、工具读取和完整 PreparedTools 请求投影；可选 project_history 与提交、响应回调让 Kernel 保持通用，旧 Context 可使用恒等历史投影。"
     },
@@ -38432,8 +38395,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        58,
-        70
+        60,
+        72
       ],
       "summary": "从内置 GetSkillTool 与 ListSkillsTool 解析同一 Loader；只检查已绑定对象，不扫描目录，混用两个来源时明确拒绝。"
     },
@@ -38449,8 +38412,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        73,
-        85
+        75,
+        87
       ],
       "summary": "校验最终工具目录与 SkillEngine 的 Loader 对象身份；拒绝把调用方已有的会话读取事实静默转到其他来源，自定义工具保留自己的绑定合同。"
     },
@@ -38466,8 +38429,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        219,
-        231
+        233,
+        245
       ],
       "summary": "为内置 SkillRuntime 绑定最终 SessionStore；若已有持久化归属与最终 Store 不同则拒绝，避免静态插件替换后分裂会话日志。"
     },
@@ -38484,9 +38447,9 @@
       "complexity": "simple",
       "lineRange": [
         125,
-        137
+        143
       ],
-      "summary": "从最终会话 Loader 或内置 Skill 工具解析来源并创建会话 Runtime；utility 不恢复工具能力，只有 ACP profile 允许恢复可用的旧记录子集。"
+      "summary": "从会话 Loader 或内置读取工具绑定 Runtime；需要恢复日志时先 restore_records 校验 Skill，再调用 prepare_resume 修复中断消息。CLI 保持严格规则，只有 ACP profile 允许当前可用子集。"
     },
     {
       "id": "file:box_agent/skill_context.py",
@@ -39045,6 +39008,169 @@
       ],
       "complexity": "moderate",
       "summary": "用两张职责与流程图说明 Tool Engine 和 Skill Engine 如何协作：工具冻结目标后执行，Skill 按来源和版本提供方法资料，Context 决定主请求中的位置与预算，Kernel 提交真实消息。明确目录摘要和 child 方法包仍由各自入口组装。"
+    },
+    {
+      "id": "file:box_agent/kernel/compact_engine.py",
+      "type": "file",
+      "name": "compact_engine.py",
+      "filePath": "box_agent/kernel/compact_engine.py",
+      "summary": "提供可替换压缩能力的默认实现，将 CompactionInput 转交既有 _maybe_summarize，保留摘要、确定性回退、预算和近期完整工具消息组规则。默认 Kernel 路径通过 before_summary 负责开始日志，返回结果的持久提交及内存历史替换仍由 Kernel 完成。",
+      "tags": [
+        "kernel",
+        "compaction",
+        "capability-adapter"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "type": "class",
+      "name": "DefaultCompactEngine",
+      "filePath": "box_agent/kernel/compact_engine.py",
+      "summary": "把冻结输入载体中的 history 元组转为列表，并把模型、使用量、工具状态、精确 schema 预算、强制标记和 before_summary 回调原样转交 _maybe_summarize。该适配器不直接持有或提交 Session Log，也不替代负责请求投影的 ContextEnginePort。",
+      "tags": [
+        "class",
+        "kernel",
+        "compaction",
+        "capability-adapter"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        8,
+        22
+      ]
+    },
+    {
+      "id": "file:box_agent/kernel/context_types.py",
+      "type": "file",
+      "name": "context_types.py",
+      "filePath": "box_agent/kernel/context_types.py",
+      "summary": "定义可替换压缩器的输入及结果载体，分开实际工具运行状态与精确提供的 schema 估算，并通过 before_summary 暴露摘要前的持久化边界。CompactionOutcome 携带保护消息数和超限状态，同时保留历史三元组解包契约。",
+      "tags": [
+        "kernel",
+        "compaction",
+        "data-contract",
+        "compatibility"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:box_agent/kernel/context_types.py:CompactionInput",
+      "type": "class",
+      "name": "CompactionInput",
+      "filePath": "box_agent/kernel/context_types.py",
+      "summary": "冻结一次压缩决策的输入载体，包含历史元组、安全输入上限、模型、使用量、摘要开关及 before_summary 回调；tools 用于恢复可信工具状态，estimate_tools 用于估算实际提供的 schema 成本。载体不含 Session Log 提交接口，摘要或确定性回退开始前应调用回调。",
+      "tags": [
+        "class",
+        "kernel",
+        "compaction",
+        "input-contract"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        13,
+        35
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/context_types.py:CompactionOutcome",
+      "type": "class",
+      "name": "CompactionOutcome",
+      "filePath": "box_agent/kernel/context_types.py",
+      "summary": "保存压缩后的消息、前后估算、模式、摘要调用及错误信息和受保护消息数，并将 still_over_limit 归一为是否 blocked，拒绝显式传入的矛盾值。继续支持解包为 messages、False、estimated_before，保证后续请求仍重新检查预算。",
+      "tags": [
+        "class",
+        "kernel",
+        "compaction",
+        "result-contract",
+        "compatibility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        39,
+        71
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "type": "class",
+      "name": "CompactEnginePort",
+      "filePath": "box_agent/kernel/ports.py",
+      "tags": [
+        "会话",
+        "持久化",
+        "契约"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        397,
+        404
+      ],
+      "summary": "约定 compact_if_needed 接收 CompactionInput 并返回 CompactionOutcome；摘要或确定性兜底前必须调用 before_summary 并传播失败，持久和内存 surface 的提交仍由 Kernel 负责。"
+    },
+    {
+      "id": "class:box_agent/session_log.py:SessionOpenResult",
+      "type": "class",
+      "name": "SessionOpenResult",
+      "filePath": "box_agent/session_log.py",
+      "tags": [
+        "会话",
+        "持久化",
+        "契约"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        74,
+        78
+      ],
+      "summary": "返回已打开的 SessionLog 及 resumed 标志，使调用方决定是否执行共享恢复准备并承担日志关闭责任。"
+    },
+    {
+      "id": "function:box_agent/session_log.py:default_session_root",
+      "type": "function",
+      "name": "default_session_root",
+      "filePath": "box_agent/session_log.py",
+      "tags": [
+        "会话",
+        "持久化",
+        "契约"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        98,
+        104
+      ],
+      "summary": "通过现有 state_path 获取逻辑 Sessions 目录，遵循 BOX_AGENT_HOME profile 并保持历史默认路径。"
+    },
+    {
+      "id": "file:box_agent/session_projection.py",
+      "type": "file",
+      "name": "session_projection.py",
+      "filePath": "box_agent/session_projection.py",
+      "tags": [
+        "会话",
+        "持久化",
+        "投影"
+      ],
+      "complexity": "moderate",
+      "summary": "定义已提交 Session Log 前缀的公开投影快照；构造时深拷贝消息和嵌套状态，每次读取集合再返回防御性副本，保留旧 list/dict 调用形状。投影保存完整会话事实，与单次 provider 请求的 Context 处理分离。"
+    },
+    {
+      "id": "class:box_agent/session_projection.py:SessionProjection",
+      "type": "class",
+      "name": "SessionProjection",
+      "filePath": "box_agent/session_projection.py",
+      "tags": [
+        "会话",
+        "持久化",
+        "契约"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        18,
+        64
+      ],
+      "summary": "保存已提交日志前缀的隔离快照；输入和每次访问的 Message、list/dict 及嵌套状态均深拷贝，修改恢复后的运行状态不能回写投影本身，公开集合形状兼容旧调用方。"
     }
   ],
   "edges": [
@@ -40559,20 +40685,6 @@
       "type": "contains",
       "direction": "forward",
       "weight": 1
-    },
-    {
-      "source": "file:box_agent/kernel/context_engine.py",
-      "target": "class:box_agent/kernel/context_engine.py:CompactionOutcome",
-      "type": "contains",
-      "direction": "forward",
-      "weight": 1
-    },
-    {
-      "source": "file:box_agent/kernel/context_engine.py",
-      "target": "class:box_agent/kernel/context_engine.py:CompactionOutcome",
-      "type": "exports",
-      "direction": "forward",
-      "weight": 0.8
     },
     {
       "source": "file:box_agent/kernel/context_engine.py",
@@ -54971,20 +55083,6 @@
     {
       "source": "file:box_agent/session_log.py",
       "target": "class:box_agent/session_log.py:SessionLogWorkspaceMismatch",
-      "type": "exports",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "file:box_agent/session_log.py",
-      "target": "class:box_agent/session_log.py:SessionProjection",
-      "type": "contains",
-      "direction": "forward",
-      "weight": 1.0
-    },
-    {
-      "source": "file:box_agent/session_log.py",
-      "target": "class:box_agent/session_log.py:SessionProjection",
       "type": "exports",
       "direction": "forward",
       "weight": 0.8
@@ -77029,13 +77127,6 @@
       "weight": 0.8
     },
     {
-      "source": "function:box_agent/kernel/context_engine.py:_maybe_summarize",
-      "target": "class:box_agent/kernel/context_engine.py:CompactionOutcome",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
       "source": "function:box_agent/kernel/context_engine.py:_message_chars",
       "target": "function:box_agent/kernel/context_engine.py:_budget_content_json",
       "type": "calls",
@@ -77108,13 +77199,6 @@
     {
       "source": "function:box_agent/kernel/loop.py:_run_agent_loop_impl",
       "target": "function:box_agent/kernel/context_engine.py:_fallback_context_estimate",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:box_agent/kernel/loop.py:_run_agent_loop_impl",
-      "target": "function:box_agent/kernel/context_engine.py:_maybe_summarize",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
@@ -77323,6 +77407,412 @@
       "weight": 0.8
     },
     {
+      "source": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "target": "function:box_agent/kernel/context_engine.py:_maybe_summarize",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "target": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "type": "implements",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "target": "class:box_agent/kernel/context_types.py:CompactionInput",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "target": "class:box_agent/kernel/context_types.py:CompactionOutcome",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "class:box_agent/kernel/ports.py:KernelServices",
+      "target": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "class:box_agent/session_log.py:SessionLog",
+      "target": "class:box_agent/session_log.py:SessionOpenResult",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/session_log.py:SessionLog",
+      "target": "class:box_agent/session_projection.py:SessionProjection",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "document:docs/AGENT_SESSION.md",
+      "target": "file:box_agent/cli.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/AGENT_SESSION.md",
+      "target": "file:box_agent/session_log.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/AGENT_SESSION.md",
+      "target": "file:box_agent/session_projection.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION.md",
+      "target": "file:box_agent/composition.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION.md",
+      "target": "file:box_agent/kernel/compact_engine.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION.md",
+      "target": "file:box_agent/kernel/context_types.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION.md",
+      "target": "file:box_agent/kernel/loop.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION.md",
+      "target": "file:box_agent/kernel/ports.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION_CN.md",
+      "target": "file:box_agent/composition.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION_CN.md",
+      "target": "file:box_agent/kernel/compact_engine.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION_CN.md",
+      "target": "file:box_agent/kernel/context_types.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION_CN.md",
+      "target": "file:box_agent/kernel/loop.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONTEXT_COMPRESSION_CN.md",
+      "target": "file:box_agent/kernel/ports.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:box_agent/cli.py",
+      "target": "file:box_agent/session_log.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/kernel/compact_engine.py",
+      "target": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:box_agent/kernel/compact_engine.py",
+      "target": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/compact_engine.py",
+      "target": "file:box_agent/kernel/context_engine.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/kernel/compact_engine.py",
+      "target": "file:box_agent/kernel/context_types.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/kernel/context_engine.py",
+      "target": "class:box_agent/kernel/context_types.py:CompactionOutcome",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/context_engine.py",
+      "target": "file:box_agent/kernel/context_types.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/kernel/context_types.py",
+      "target": "class:box_agent/kernel/context_types.py:CompactionInput",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:box_agent/kernel/context_types.py",
+      "target": "class:box_agent/kernel/context_types.py:CompactionOutcome",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:box_agent/kernel/context_types.py",
+      "target": "class:box_agent/kernel/context_types.py:CompactionInput",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/context_types.py",
+      "target": "class:box_agent/kernel/context_types.py:CompactionOutcome",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/context_types.py",
+      "target": "file:box_agent/schema/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/kernel/context_types.py",
+      "target": "file:box_agent/tools/base.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/kernel/ports.py",
+      "target": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/ports.py",
+      "target": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/ports.py",
+      "target": "file:box_agent/kernel/context_types.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/session_log.py",
+      "target": "class:box_agent/session_log.py:SessionOpenResult",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/session_log.py",
+      "target": "function:box_agent/session_log.py:default_session_root",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/session_log.py",
+      "target": "class:box_agent/session_log.py:SessionOpenResult",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/session_log.py",
+      "target": "class:box_agent/session_projection.py:SessionProjection",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/session_log.py",
+      "target": "function:box_agent/session_log.py:default_session_root",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/session_log.py",
+      "target": "file:box_agent/session_projection.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/session_projection.py",
+      "target": "class:box_agent/session_projection.py:SessionProjection",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/session_projection.py",
+      "target": "class:box_agent/session_projection.py:SessionProjection",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/session_projection.py",
+      "target": "file:box_agent/schema/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:box_agent/cli.py:cmd_goal",
+      "target": "class:box_agent/session_log.py:SessionLog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/cli.py:cmd_goal",
+      "target": "function:box_agent/agent.py:goal_state_from_payload",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/cli.py:cmd_goal",
+      "target": "function:box_agent/session_log.py:default_session_root",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/cli.py:run_agent",
+      "target": "class:box_agent/session_log.py:SessionLog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/cli.py:run_agent",
+      "target": "function:box_agent/session_log.py:default_session_root",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/kernel/context_engine.py:_maybe_summarize",
+      "target": "class:box_agent/kernel/context_types.py:CompactionOutcome",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/kernel/loop.py:_run_agent_loop_impl",
+      "target": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/kernel/loop.py:_run_agent_loop_impl",
+      "target": "class:box_agent/kernel/context_types.py:CompactionInput",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/kernel/loop.py:_run_agent_loop_impl",
+      "target": "class:box_agent/kernel/ports.py:CompactEnginePort",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:box_agent/plugins/defaults.py:compose_default_services",
+      "target": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/plugins/defaults.py:default_plugin_descriptors",
+      "target": "class:box_agent/kernel/compact_engine.py:DefaultCompactEngine",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:_bind_skill_runtime",
+      "target": "class:box_agent/session_log.py:SessionLog",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:box_agent/session_log.py:default_session_root",
+      "target": "function:box_agent/user_paths.py:state_path",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
       "source": "class:box_agent/agent.py:Agent",
       "target": "function:box_agent/plugins/defaults.py:_bind_skill_store",
       "type": "calls",
@@ -77341,7 +77831,7 @@
     {
       "id": "layer:core-agent-runtime",
       "name": "核心 Agent 与 Kernel 运行层",
-      "description": "承载 AgentSession、会话能力装配、Agent 运行入口、稳定 Kernel 循环与端口、唯一工具消息提交及 SessionLog，使 CLI 与 ACP 在稳定 cwd 下复用配置、恢复、取消和生命周期。Agent 持有会话 SkillRuntime，Context 通过通用端口投影完整请求；Kernel 提交真实历史与请求关联后调用确认回调。Composition 绑定最终 Skill、Store 与运行级 Context，并为每 Run 冻结 HookBus；managed 保留模型、工具和连接器能力身份，关闭先排空总线再清理拥有的 Provider，迟到持久化错误保留且不跳过已可释放资源。",
+      "description": "承载 AgentSession、能力装配、Agent 运行入口、稳定 Kernel 与端口、工具消息提交及唯一 SessionLog。CLI 使用统一逻辑 Session ID，日志投影对消息和嵌套状态提供防御性副本；清除历史先提交必需 reset，保留非消息事实与审计事件。Agent 持有 SkillRuntime，请求 Context 保持原输入合同，CompactEngine 只返回压缩决策，Kernel 持久化摘要前缀与新 surface 并 flush 后才改内存。Composition 绑定最终借用能力并为每 Run 冻结 HookBus，保留包括 falsey 压缩器在内的实例身份；关闭仍先排空总线再清理拥有的 Provider并传播迟到持久化错误。",
       "nodeIds": [
         "file:box_agent/__init__.py",
         "file:box_agent/agent.py",
@@ -77394,7 +77884,10 @@
         "file:box_agent/kernel/tool_messages.py",
         "file:box_agent/session_context.py",
         "file:box_agent/hook_bus.py",
-        "file:box_agent/kernel/hook_types.py"
+        "file:box_agent/kernel/hook_types.py",
+        "file:box_agent/kernel/compact_engine.py",
+        "file:box_agent/kernel/context_types.py",
+        "file:box_agent/session_projection.py"
       ]
     },
     {
@@ -77847,13 +78340,14 @@
     {
       "order": 2,
       "title": "CLI 装配入口",
-      "description": "命令行入口负责配置、诊断、目标管理和交互式执行，Pydantic 配置模型把 LLM、工具、MCP 与宿主设置转成共享类型。user_paths 统一自有状态位置；显式 BOX_AGENT_HOME 要求专用绝对目录，并约束配置和状态覆盖路径，根目录切换本身不授予文件权限。工具装配再把配置转成以同一会话 cwd 解析路径的能力，为每套工具分配独立 scratch；隔离 profile 样例展示了如何另行关闭背景能力。 CLI 目录匹配只更新名称、简介等发现信息，slash 显式选择进入 SkillRuntime，关键词命中不再预载正文。",
+      "description": "命令行入口负责配置、诊断、目标管理和交互式执行，Pydantic 配置模型把 LLM、工具、MCP 与宿主设置转成共享类型。user_paths 统一自有状态位置；显式 BOX_AGENT_HOME 要求专用绝对目录，并约束配置和状态覆盖路径，根目录切换本身不授予文件权限。工具装配再把配置转成以同一会话 cwd 解析路径的能力，为每套工具分配独立 scratch；隔离 profile 样例展示了如何另行关闭背景能力。 CLI 目录匹配只更新名称、简介等发现信息，slash 显式选择进入 SkillRuntime，关键词命中不再预载正文。 CLI 创建或恢复 SessionLog，--session-id/--resume 的逻辑 ID 同时用于 Agent、运行选项、trace 和命名目标；新建未命名会话继续兼容旧工作区目标文件。",
       "nodeIds": [
         "file:box_agent/cli.py",
         "file:box_agent/config.py",
         "file:box_agent/user_paths.py",
         "file:box_agent/tools/setup.py",
-        "config:box_agent/config/isolated-profile-example.yaml"
+        "config:box_agent/config/isolated-profile-example.yaml",
+        "file:box_agent/session_log.py"
       ],
       "languageLesson": "Pydantic 模型把外部配置转换成经过校验的类型化对象，让 CLI 装配阶段尽早暴露缺失字段和非法组合。"
     },
@@ -77872,7 +78366,7 @@
     {
       "order": 4,
       "title": "共享运行入口",
-      "description": "两个宿主经 AgentSession.open 进入受管会话，同步 create 与 AgentService 入口继续兼容。session_assembly 按插件顺序准备模型、记忆、工具、提示和 Hook，保留 utility 门控、稳定 cwd、宿主 Skill 过滤与连接器许可。Agent 持有唯一会话 SkillRuntime，Session 只传递引用；每轮创建 Context 并在最终装配后验证 Loader/Store 绑定。managed 路径保留借用模型、工具与连接器对象身份，事件流结束后等待本 Run HookBus 和拥有的 Provider 清理完成，再释放 Session 资源。",
+      "description": "两个宿主经 AgentSession.open 进入受管会话，同步 create 与 AgentService 入口继续兼容。session_assembly 按插件顺序准备模型、记忆、工具、提示和 Hook，保留 utility 门控、稳定 cwd、宿主 Skill 过滤与连接器许可。Agent 持有唯一会话 SkillRuntime，Session 只传递引用；每轮创建 Context 并在最终装配后验证 Loader/Store 绑定。managed 路径保留借用模型、工具与连接器对象身份，事件流结束后等待本 Run HookBus 和拥有的 Provider 清理完成，再释放 Session 资源。 共享恢复准备以 resume_session_log 控制，先校验 Skill 记录再修复中断调用；CLI 严格恢复，ACP 原有可用子集策略保持。CLI 拥有并在失败启动和最终退出时关闭自己的日志。",
       "nodeIds": [
         "file:box_agent/agent_session.py",
         "file:box_agent/session_context.py",
@@ -77884,32 +78378,35 @@
     {
       "order": 5,
       "title": "Kernel 执行内核",
-      "description": "Kernel ports 区分 ToolEngine、SkillEngine、ContextEngine 和 PreparedContext。主循环先取得同一份 PreparedTools，再请求 Context 核算完整输入和普通资料投影；工具目标及权限仍归 Tool Engine。Kernel 持久化真实调用、回复及请求关联，日志成功后调用通用 on_committed，并在非空且无过期、截断标记的响应后调用 on_response。压缩重试不重放工具或 Step Hook；stream_controller 对连接中断和异常重复流分别提供每轮最多一次的恢复。Hook 的匹配与决策仍由外层总线负责。",
+      "description": "Kernel 的请求 ContextEnginePort 保持 configure_run、bind_history、prepare_request 合同，继续消费同一 PreparedTools。独立 CompactEnginePort 接收 CompactionInput 并决定是否压缩；默认适配器委托原 _maybe_summarize，保留实际工具状态、精确 schema 估算、force 和摘要输入上限。摘要或确定性兜底前执行 Kernel 的 before_summary；Kernel 提交前缀、compaction/start 和返回 surface并 flush 后才更新内存。请求提交与有效响应回调、单次预算重试、连接中断和重复流的有界恢复及 Hook 分工保持。",
       "nodeIds": [
         "file:box_agent/kernel/ports.py",
         "file:box_agent/kernel/loop.py",
         "file:box_agent/kernel/tool_messages.py",
-        "file:box_agent/kernel/stream_controller.py"
+        "file:box_agent/kernel/stream_controller.py",
+        "file:box_agent/kernel/compact_engine.py",
+        "file:box_agent/kernel/context_types.py"
       ],
       "languageLesson": "Python Protocol 提供结构化子类型：实现方不必继承共同基类，只要满足端口方法签名即可被 Kernel 接受。"
     },
     {
       "order": 6,
       "title": "会话与连续执行",
-      "description": "上一站的活跃会话与运行状态不会成为第二套持久化来源：SessionLog 以追加式 JSONL 保存可重放的会话事实，并负责工作区校验和中断修复。显式降级恢复只有在会话 ID 和 cwd 验证通过后，才备份原始日志并建立新日志，不执行历史工具。turn_continuation 处理承诺继续却提前结束的回合，与模型连接中断后的恢复各自保持有界。产物事件以 cwd 相对路径关联实际文件，roadmap 校验和任务注册把执行结果关联回可追踪的交付内容。 宿主代读资料使用 SessionLog 内容寻址快照保留本次正文，路径与 UTF-8 哈希需验证；快照先持久化，请求关联随后提交。Skill 读取记录保留来源和版本，但不代表正文仍存在于下一请求。",
+      "description": "SessionLog 是唯一持久会话来源，记录真实消息、目标、计划、Todo、Skill 与审计事件；open_or_create 区分不存在的会话与损坏目录，校验 cwd 并在恢复失败时释放写锁。SessionProjection 构造与访问时深拷贝消息和嵌套状态，保留旧集合形状；请求 Context 不改这个完整投影。Agent 清除历史先 append/flush 必需 surface/reset，再清内存，两个 surface reducer 同时响应 reset且不忘记非消息事实。旧读者不能忽略 reset，回滚需保留兼容 reader。Skill 请求快照、连续执行及产物验收仍沿既有证据链。",
       "nodeIds": [
         "file:box_agent/session_log.py",
         "file:box_agent/turn_continuation.py",
         "file:box_agent/roadmap_artifacts.py",
         "file:box_agent/artifacts.py",
-        "file:box_agent/task_registry.py"
+        "file:box_agent/task_registry.py",
+        "file:box_agent/session_projection.py"
       ],
       "languageLesson": "追加式 JSONL 适合会话事件日志：每行独立解析，写入失败的影响局部化，并可通过投影重建当前状态。"
     },
     {
       "order": 7,
       "title": "插件能力所有权",
-      "description": "插件描述符定义作用域与依赖，PluginHost 负责发现、排序、激活、实例缓存和清理，类型化注册表冻结各轮 KernelServices。PluginRuntime 与 PluginSession 管理 process/session/run 生命周期，在激活锁外准备会话能力，再为每轮绑定运行插件；内置初始化器按固定顺序调用共享装配能力，区分借用与自建资源，并在关闭时等待初始化后按所有权清理。失败 Run 激活的中断回滚由 PluginHost 按 session_key 保留，涵盖运行时 Port 校验失败；会话关闭先重试 Run 再释放 Session 依赖，清理未完成时禁止该会话再次激活，其他会话和 Process 资源保持独立。HookProviderPort 的有序 HookSpec 按插件身份登记到每 Run 的总线；额外 RUN 插件使用仅拥有新 Provider 的私有扩展宿主，先排空总线再清理 Provider，重复取消会触发清理重试，借用能力仍由既有所有者释放。 默认装配可创建 RUN 级 Context，但 Skill 读取事实归 Agent 会话；替换最终工具目录或 Store 时须配套同来源、同持久化绑定。总线关闭后出现迟到日志持久化错误仍继续 Provider 清理，错误向调用方传播。",
+      "description": "插件描述符定义作用域与依赖，PluginHost 负责发现、排序、激活、实例缓存和清理，类型化注册表冻结各轮 KernelServices。PluginRuntime 与 PluginSession 管理 process/session/run 生命周期，在激活锁外准备会话能力，再为每轮绑定运行插件；内置初始化器按固定顺序调用共享装配能力，区分借用与自建资源，并在关闭时等待初始化后按所有权清理。失败 Run 激活的中断回滚由 PluginHost 按 session_key 保留，涵盖运行时 Port 校验失败；会话关闭先重试 Run 再释放 Session 依赖，清理未完成时禁止该会话再次激活，其他会话和 Process 资源保持独立。HookProviderPort 的有序 HookSpec 按插件身份登记到每 Run 的总线；额外 RUN 插件使用仅拥有新 Provider 的私有扩展宿主，先排空总线再清理 Provider，重复取消会触发清理重试，借用能力仍由既有所有者释放。 默认装配可创建 RUN 级 Context，但 Skill 读取事实归 Agent 会话；替换最终工具目录或 Store 时须配套同来源、同持久化绑定。总线关闭后出现迟到日志持久化错误仍继续 Provider 清理，错误向调用方传播。 CompactEngine 同样通过可选单实例端口注册，缺失时才创建 RUN 默认值；普通和 managed 路径都保留调用方提供的 falsey 实例，不转移借用资源所有权。",
       "nodeIds": [
         "file:box_agent/plugins/descriptors.py",
         "file:box_agent/plugins/host.py",
@@ -77958,7 +78455,7 @@
     {
       "order": 11,
       "title": "记忆与上下文",
-      "description": "长期记忆负责存储、检索、自动匹配、提取维护与晋升；资源账本保留读取完整性和恢复证据。DefaultContextEngine 面向下一次完整请求核算历史、PreparedTools schema、自动记忆、Skill 资料及临时图片，并保持工具定义与目标绑定。SkillReferenceContext 从 Runtime 取得不可变快照，基于最终可见文本核验同源、同版和完整范围；显式选择投影到当前 user 副本，真实读取留在 tool 消息，超预算可分页或阻塞。压缩后重新绑定历史，已读事实不能替代正文。",
+      "description": "长期记忆负责存储、检索、自动匹配、提取维护与晋升；资源账本保留读取完整性和恢复证据。DefaultContextEngine 面向下一次完整请求核算历史、PreparedTools schema、自动记忆、Skill 资料及临时图片，并保持工具定义与目标绑定。SkillReferenceContext 从 Runtime 取得不可变快照，基于最终可见文本核验同源、同版和完整范围；显式选择投影到当前 user 副本，真实读取留在 tool 消息，超预算可分页或阻塞。压缩后重新绑定历史，已读事实不能替代正文。 压缩策略通过独立 CompactEngine 返回结果；CompactionOutcome 的旧三元组解包形式及模块再导出仍可用，still_over_limit 必须与 blocked 模式一致。",
       "nodeIds": [
         "file:box_agent/memory.py",
         "file:box_agent/memory_maintainer.py",
