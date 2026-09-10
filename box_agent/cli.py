@@ -1811,13 +1811,14 @@ async def run_agent(
     workspace_dir: Path,
     task: str | None = None,
     initial_goal: str | None = None,
-    session_id: str | None = None,
     sandbox_mode: bool = True,
     verify_api: bool = True,
     json_summary: bool = False,
     deep_think: bool = False,
     force_plan_start: bool = False,
     goal_autopilot_enabled: bool = True,
+    *,
+    session_id: str | None = None,
 ) -> int:
     """Run Agent in interactive or non-interactive mode.
 
@@ -1831,6 +1832,7 @@ async def run_agent(
         deep_think: If True, enable thinking mode for the run
         force_plan_start: If True, require the next turn to publish a plan first
         goal_autopilot_enabled: If True, continue active goals in --task mode within configured budgets
+        session_id: Optional logical session ID, supplied by keyword
     """
     session_start = datetime.now()
 

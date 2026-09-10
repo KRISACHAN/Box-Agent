@@ -20,7 +20,7 @@ class SessionOptions:
     workspace_dir: str | Path | None = None
     token_limit: int | None = None
     utility: bool = False
-    resume_session_log: bool = False
+    resume_session_log: bool = field(default=False, kw_only=True)
     profile: str = "python"
     sandbox_mode: bool = False
     non_interactive: bool = True

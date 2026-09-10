@@ -1133,6 +1133,34 @@ def _configure_persistent_cli_test(tmp_path, monkeypatch):
     return workspace
 
 
+@pytest.mark.parametrize("all_legacy_arguments", [False, True])
+def test_legacy_cli_positional_arguments_keep_api_verification_disabled(
+    tmp_path, monkeypatch, all_legacy_arguments,
+):
+    workspace = _configure_persistent_cli_test(tmp_path, monkeypatch)
+    probes = []
+
+    async def record_probe(client):
+        probes.append(client)
+
+    monkeypatch.setattr(cli, "_probe_llm_api", record_probe)
+    arguments = [workspace, "task", None, False, False]
+    options = {"session_id": "positional-contract"}
+    if all_legacy_arguments:
+        arguments.extend([False, False, False, False])
+    else:
+        options["goal_autopilot_enabled"] = False
+    assert asyncio.run(cli.run_agent(*arguments, **options)) == 0
+    assert probes == []
+    restored = SessionLog.open(
+        cli.default_session_root(), session_id="positional-contract", cwd=workspace,
+    )
+    try:
+        assert restored.replay().messages[-1].content == "done."
+    finally:
+        restored.close()
+
+
 def test_cli_failed_skill_restore_preserves_log_and_releases_writer_lock(tmp_path, monkeypatch):
     from box_agent.skill_dependencies import SkillDependencyError
 
