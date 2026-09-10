@@ -240,6 +240,39 @@ class TestFilterByQuery:
         out = loader.filter_by_query("数据")
         assert len(out) == 16
 
+    @pytest.mark.parametrize("max_skills", [1, 16])
+    def test_hidden_skills_do_not_consume_recommendation_slots(self, loader: SkillLoader, max_skills):
+        for i in range(20):
+            name = f"analysis-hidden-{i:02d}"
+            loader.loaded_skills[name] = Skill(
+                name=name, description="analysis", content="", source="connector",
+            )
+        loader.loaded_skills["visible-workflow"] = Skill(
+            name="visible-workflow", description="analysis", content="", source="user",
+        )
+
+        matches = loader.filter_by_query(
+            "analysis", max_skills=max_skills,
+            skill_filter=lambda skill: skill.name == "visible-workflow",
+        )
+
+        assert [skill.name for skill in matches] == ["visible-workflow"]
+
+    def test_hidden_primary_does_not_introduce_dependency_recommendations(self, loader: SkillLoader):
+        loader.loaded_skills["hidden-primary"] = Skill(
+            name="hidden-primary", description="analysis", content="", source="connector",
+            required_skills=["visible-helper"],
+        )
+        loader.loaded_skills["visible-helper"] = Skill(
+            name="visible-helper", description="Only a helper", content="", source="user",
+        )
+
+        matches = loader.filter_by_query(
+            "analysis", skill_filter=lambda skill: skill.name == "visible-helper",
+        )
+
+        assert matches == []
+
     def test_pptx_expands_visual_dependency_without_expensive_research(self, loader: SkillLoader):
         names = [s.name for s in loader.filter_by_query("PPT")]
         assert names.index("pptx") < names.index("html-templates")

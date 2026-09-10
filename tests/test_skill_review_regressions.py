@@ -6,6 +6,8 @@ from hashlib import sha256
 import pytest
 
 from box_agent.agent import Agent
+from box_agent.agent_session import AgentSession
+from box_agent.config import Config
 from box_agent.events import ErrorEvent
 from box_agent.schema import LLMResponse, Message
 from box_agent.session_log import SessionLog
@@ -212,6 +214,64 @@ def test_sync_composition_enforces_the_same_skill_store_binding(tmp_path, existi
         auto = compose_default_kernel_services({key: value for key, value in arguments.items()
                                                if key != 'skill_engine'})
         assert auto.skill_engine.session_log is new
+
+
+def _public_agent(entrypoint, **kwargs):
+    if entrypoint == 'agent':
+        return Agent(deferred_mcp_loading_enabled=False, **kwargs)
+    return AgentSession.create(
+        config=Config(llm={'model': 'fixture'}, agent={}, tools={'enable_mcp': False}),
+        **kwargs,
+    ).agent
+
+
+@pytest.mark.parametrize('entrypoint', ['agent', 'session'])
+@pytest.mark.parametrize('omit_store', [False, True])
+def test_public_host_rejects_transferring_bound_skill_facts(tmp_path, entrypoint, omit_store):
+    old = SessionLog.create(tmp_path / 'sessions', session_id='old', cwd=tmp_path)
+    new = SessionLog.create(tmp_path / 'sessions', session_id='new', cwd=tmp_path)
+    runtime = SkillRuntime(None, session_log=old)
+    runtime.register_reference('old-method', 'Existing caller method')
+    original_state = runtime.state
+    before_old, before_new = old.path.read_bytes(), new.path.read_bytes()
+    try:
+        with pytest.raises(ValueError, match='Skill.*Store'):
+            _public_agent(
+                entrypoint, llm_client=CapturingProvider(), system_prompt='BASE', tools=[],
+                workspace_dir=str(tmp_path), skill_runtime=runtime,
+                session_log=None if omit_store else new,
+            )
+        assert runtime.session_log is old
+        assert runtime.state is original_state
+        assert old.path.read_bytes() == before_old
+        assert new.path.read_bytes() == before_new
+    finally:
+        old.close()
+        new.close()
+
+
+@pytest.mark.parametrize('entrypoint', ['agent', 'session'])
+@pytest.mark.parametrize('already_bound', [False, True])
+@pytest.mark.parametrize('falsey', [False, True])
+def test_public_host_preserves_compatible_skill_runtime(tmp_path, entrypoint, already_bound, falsey):
+    class Runtime(SkillRuntime):
+        def __bool__(self):
+            return not falsey
+
+    log = SessionLog.create(tmp_path / 'sessions', session_id='matching', cwd=tmp_path)
+    runtime = Runtime(None, session_log=log if already_bound else None)
+    runtime.register_reference('known', 'Known caller method', persist=False)
+    try:
+        agent = _public_agent(
+            entrypoint, llm_client=CapturingProvider(), system_prompt='BASE', tools=[],
+            workspace_dir=str(tmp_path), skill_runtime=runtime, session_log=log,
+        )
+        assert agent.skill_runtime is runtime
+        assert runtime.session_log is log
+        runtime.register_reference('new-method', 'New caller method')
+        assert {record['name'] for record in log.replay().skills} == {'known', 'new-method'}
+    finally:
+        log.close()
 
 
 @pytest.mark.parametrize('second_restore', ['empty', 'changed'])

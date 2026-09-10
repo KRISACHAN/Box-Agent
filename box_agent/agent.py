@@ -576,10 +576,12 @@ class Agent:
         # Only this host knows the exact rules it appended after caller input.
         self._system_prompt_tail = system_prompt[len(caller_system_prompt.rstrip()):]
         self.system_prompt = system_prompt
-        from .plugins.defaults import skill_loader_from_catalog
+        from .plugins.defaults import _bind_skill_store, skill_loader_from_catalog
         loader = skill_loader_from_catalog(self.tools)
-        self.skill_runtime = skill_runtime or SkillRuntime(loader, session_log=session_log)
-        self.skill_runtime.session_log = session_log
+        self.skill_runtime = skill_runtime if skill_runtime is not None else SkillRuntime(
+            loader, session_log=session_log
+        )
+        _bind_skill_store(self.skill_runtime, session_log)
         for tool in self.tools.values():
             if hasattr(tool, "set_parent_system_prompt"):
                 tool.set_parent_system_prompt(system_prompt)

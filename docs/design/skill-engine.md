@@ -130,7 +130,9 @@ Agent 持有一个 `SkillRuntime`，每次 run 借用同一服务。共享 Loade
 
 Agent、默认装配和 ACP 的来源回退共用 `skill_loader_from_catalog`，只从真实 `GetSkillTool` / `ListSkillsTool` 实例推断来源；其他工具即使带有 `skill_loader` 属性，也不会成为 Skill 来源。内置工具的 Loader 与 Skill 服务的 Loader 不一致时，外层装配明确拒绝。插件替换来源应成对替换工具目录和 Skill reader，不能悄悄搬迁已有会话事实。后续真实 `get_skill` 通过 Context 提供的 `tool_reader` 读取有界正文，调用与权限仍经过原 Tool Engine。
 
-默认新建或尚未绑定 Store 的 SkillRuntime 在最终注册表解析后绑定 SessionStorePort。已绑定的借用 SkillRuntime 若与最终 Store 不一致，装配在模型调用和请求写入前报错；调用方须提供绑定到同一 Store 的 SkillRuntime，不能让 Skill 事实与请求分别写入两个 Store。Context 的可选 `project_history` 扩展为压缩提供有效规则，旧自定义 Context 未实现时保持原历史投影。
+默认新建或尚未绑定 Store 的 SkillRuntime 在最终注册表解析后绑定 SessionStorePort。已绑定的借用 SkillRuntime 若与最终 Store 不一致，装配在模型调用和请求写入前报错；调用方须提供绑定到同一 Store 的 SkillRuntime，不能让 Skill 事实与请求分别写入两个 Store。公共 Agent 和 AgentSession.create 构造入口复用同一检查，不能静默更换或清空既有 Store 归属。Context 的可选 `project_history` 扩展为压缩提供有效规则，旧自定义 Context 未实现时保持原历史投影。
+
+目录推荐在截取名额前应用会话的 Skill 可见性限制；隐藏条目不占用推荐名额，也不作为依赖扩展的主候选。
 
 这里选择**集中连接依赖，各模块处理自己的业务**。若由 Skill、Tool 或 Kernel 在内部各自创建 Context，局部代码容易直接调用，但插件替换后的 Skill/Store 可能与 Context 持有的实例不同，预算与状态也容易重复。集中装配把创建、替换和来源核对放在一次启动流程中，能保证 Context 借用最终实例；代价是装配层要明确传递依赖并测试替换关系。现有 PluginHost 已支持这一流程，因此无需新增注册系统，也不把 Skill 或 Tool 的全部处理搬进 Context。
 

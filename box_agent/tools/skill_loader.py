@@ -1043,7 +1043,7 @@ class SkillLoader:
 
         primary_matches = [
             skill for skill in self.search_skills(query, include_disabled=include_disabled)
-            if skill.name not in always_on
+            if skill.name in skill_pool and skill.name not in always_on
         ][:max_skills]
         matched: List[Skill] = []
         seen: Set[str] = set()
