@@ -46,9 +46,7 @@ def configured_adapter(tmp_path, monkeypatch, llm):
     workspace = profile / "workspace"
     workspace.mkdir(exist_ok=True)
     monkeypatch.setenv("BOX_AGENT_HOME", str(profile))
-    # The isolated profile owns its browser cache. Do not let a host or CI
-    # level override escape that profile while this fixture builds an adapter
-    # directly instead of going through run_acp_server().
+    # 独立测试 profile 使用自己的资源目录，不继承开发机或 CI 宿主的路径覆盖。
     monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
     monkeypatch.delenv("BOX_AGENT_SKILL_TOOLS_ROOT", raising=False)
     config = Config(
@@ -69,9 +67,14 @@ def configured_adapter(tmp_path, monkeypatch, llm):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("utility", [None, False, True])
+@pytest.mark.parametrize("inherited_paths", [False, True], ids=["isolated", "host-paths"])
 async def test_utility_has_no_registered_or_provider_visible_tools_without_changing_normal_sessions(
-    tmp_path, monkeypatch, utility,
+    tmp_path, monkeypatch, utility, inherited_paths,
 ):
+    if inherited_paths:
+        # 宿主目录位于测试的独立 profile 之外，不能被新会话继承。
+        monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "host-browsers"))
+        monkeypatch.setenv("BOX_AGENT_SKILL_TOOLS_ROOT", str(tmp_path / "host-skill-tools"))
     llm = RecordingLLM()
     adapter, workspace = configured_adapter(tmp_path, monkeypatch, llm)
     meta = {} if utility is None else {"utility": utility}
