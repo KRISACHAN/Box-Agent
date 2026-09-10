@@ -19,6 +19,7 @@ from ..kernel.ports import (
     ToolEnginePort,
     SkillEnginePort,
     ContextEnginePort,
+    CompactEnginePort,
     ToolExposurePort,
     ToolResultStorePort,
 )
@@ -51,6 +52,7 @@ DEFAULT_CAPABILITY_SCHEMA = CapabilitySchema(
         CapabilityBinding(ToolEnginePort, CapabilityPolicy.OPTIONAL_SINGLE),
         CapabilityBinding(SkillEnginePort, CapabilityPolicy.OPTIONAL_SINGLE),
         CapabilityBinding(ContextEnginePort, CapabilityPolicy.OPTIONAL_SINGLE),
+        CapabilityBinding(CompactEnginePort, CapabilityPolicy.OPTIONAL_SINGLE),
     )
 )
 
@@ -118,6 +120,7 @@ def default_plugin_descriptors(
     tool_engine: ToolEnginePort | None = None,
     skill_engine: SkillEnginePort | None = None,
     context_engine: ContextEnginePort | None = None,
+    compact_engine: CompactEnginePort | None = None,
 ) -> tuple[PluginDescriptor, ...]:
     """Return deterministic descriptors for the supplied runtime instances."""
 
@@ -151,6 +154,7 @@ def default_plugin_descriptors(
         ("default.tool-engine", ToolEnginePort, tool_engine, True),
         ("default.skill-engine", SkillEnginePort, skill_engine, True),
         ("default.context-engine", ContextEnginePort, context_engine, True),
+        ("default.compact-engine", CompactEnginePort, compact_engine, True),
     )
     descriptors = tuple(
         replace(
@@ -167,6 +171,14 @@ def default_plugin_descriptors(
         descriptors += (PluginDescriptor(
             plugin_id="default.context-engine", version="1.0.0",
             capabilities=(ContextEnginePort,), factory=lambda: DefaultContextEngine(),
+            scope=PluginScope.RUN,
+        ),)
+    if compact_engine is None:
+        from ..kernel.compact_engine import DefaultCompactEngine
+
+        descriptors += (PluginDescriptor(
+            plugin_id="default.compact-engine", version="1.0.0",
+            capabilities=(CompactEnginePort,), factory=DefaultCompactEngine,
             scope=PluginScope.RUN,
         ),)
     return descriptors
@@ -189,6 +201,7 @@ def create_default_plugin_host(
     plugins: tuple[PluginDescriptor, ...] = (),
     skill_engine: SkillEnginePort | None = None,
     context_engine: ContextEnginePort | None = None,
+    compact_engine: CompactEnginePort | None = None,
 ) -> PluginHost:
     """Create a fresh static host for one outer agent-loop run."""
 
@@ -211,6 +224,7 @@ def create_default_plugin_host(
             tool_engine=tool_engine,
             skill_engine=skill_engine,
             context_engine=context_engine,
+            compact_engine=compact_engine,
         ) + tuple(plugins),
         schema=DEFAULT_CAPABILITY_SCHEMA,
     )
@@ -256,6 +270,7 @@ def kernel_services_from_registry(registry: ActivatedRegistry) -> KernelServices
         tool_engine=registry.get(ToolEnginePort),
         skill_engine=registry.get(SkillEnginePort),
         context_engine=context_engine,
+        compact_engine=registry.get(CompactEnginePort),
     )
 
 
@@ -275,6 +290,7 @@ def compose_default_services(
     tool_engine: ToolEnginePort | None = None,
     skill_engine: SkillEnginePort | None = None,
     context_engine: ContextEnginePort | None = None,
+    compact_engine: CompactEnginePort | None = None,
 ) -> KernelServices:
     """Resolve a run-local Context over borrowed services without discovery or I/O."""
 
@@ -285,6 +301,10 @@ def compose_default_services(
 
         context_engine = DefaultContextEngine()
     context_engine.configure_run(skill_engine=skill_engine, session_store=session_store)
+    if compact_engine is None:
+        from ..kernel.compact_engine import DefaultCompactEngine
+
+        compact_engine = DefaultCompactEngine()
     return KernelServices(
         llm=llm,
         summary_llm=summary_llm,
@@ -301,6 +321,7 @@ def compose_default_services(
         tool_engine=tool_engine,
         skill_engine=skill_engine,
         context_engine=context_engine,
+        compact_engine=compact_engine,
     )
 
 

@@ -7,6 +7,28 @@ from box_agent.config import Config, AgentConfig, LLMConfig, ToolsConfig
 from tests.test_acp import DummyConn, DoneLLM
 
 @pytest.mark.asyncio
+async def test_legacy_positional_session_profile_starts_without_log_restore(tmp_path):
+    from box_agent.agent_session import AgentSession
+    from box_agent.session_context import HostBindings, SessionOptions
+
+    options = SessionOptions(tmp_path, None, True, "python")
+    assert options.profile == "python"
+    assert options.resume_session_log is False
+    session = await AgentSession.open(
+        config=Config(llm=LLMConfig(api_key="test"), agent=AgentConfig(enable_memory=False),
+                      tools=ToolsConfig(enable_mcp=False, enable_skills=False)),
+        options=options,
+        host=HostBindings(llm_client=DoneLLM(), tools=[], system_prompt="system"),
+    )
+    try:
+        assert session.plugin_session is not None
+        assert session.plugin_session.resources.context.options.profile == "python"
+        assert session.agent.session_log is None
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.asyncio
 async def test_acp_uses_shared_preparation_and_managed_session(tmp_path, monkeypatch):
     config = Config(llm=LLMConfig(api_key="test"), agent=AgentConfig(workspace_dir=str(tmp_path), enable_memory=False), tools=ToolsConfig(enable_mcp=False, enable_skills=False, enable_file_tools=False, enable_bash=False, enable_sub_agent=False))
     calls = []
@@ -148,6 +170,8 @@ async def test_managed_session_keeps_connector_skill_grants_for_parent_and_child
 async def test_cli_shared_prompt_controls_model_and_session_closes(tmp_path, monkeypatch):
     import sys
 
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("BOX_AGENT_HOME", raising=False)
     # Python 3.10 has exc_info(), but not exception().
     monkeypatch.delattr(sys, "exception", raising=False)
     import box_agent.cli as cli

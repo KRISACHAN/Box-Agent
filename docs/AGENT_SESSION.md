@@ -173,6 +173,40 @@ One managed session serves task mode, interactive turns and goal continuations.
 `/clear` and `/clear_all` reuse that session. The CLI closes its session and every
 model client it created, including probe/reconfiguration clients, on exit.
 
+### Durable CLI sessions
+
+CLI invocations create a SessionLog and print its logical ID. Pass
+`--session-id <id>` or `--resume <id>` to reopen it in the same workspace. The
+Agent, run options and diagnostic trace share that ID. A workspace mismatch is
+rejected, and a failed opening releases the log writer lock. The CLI closes its
+borrowed log after managed session cleanup, including failed startup paths.
+
+```bash
+box-agent --session-id report-work --task "Inspect the report inputs"
+box-agent --resume report-work --task "Continue from the saved history"
+box-agent goal status --session-id report-work
+box-agent goal progress "Inputs checked" --session-id report-work
+```
+
+`SessionLog.open_or_create(..., prepare_resume=False)` lets shared session
+preparation validate current Skill sources before repairing interrupted calls.
+`SessionOptions.resume_session_log` enables this ordering. CLI restores strictly;
+ACP retains its existing partial restoration policy for optional Skill state.
+
+Named sessions use their log's goal even when it is empty; an unrelated workspace
+goal never overwrites it. For compatibility, fresh unnamed CLI sessions can seed
+and mirror the legacy workspace goal file. The goal command without a session ID
+retains that legacy target, while the named form shares the existing complete
+action and output policy with SessionLog persistence.
+
+Clearing history commits a required `surface/reset` event before clearing live
+messages. It retains goal/plan/todo/Skill facts and the append-only audit trail.
+Reset affects both surface reducers so later appends and compression cannot
+revive cleared messages. Older readers that do not understand this event reject
+the log; recovery-enabled hosts may archive it and start a replacement. Before
+rolling back a runtime that has written resets, retain a reader with reset
+support. Marking reset ignorable would incorrectly restore cleared history.
+
 Skill names and descriptions may enter the system catalog. Context assembles
 main-Agent Skill bodies into ordinary request material, or a reading tool returns
 them as tool content. Restore validation precedes SessionLog resume repair, and

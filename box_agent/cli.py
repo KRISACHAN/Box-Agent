@@ -106,6 +106,7 @@ from box_agent.project_context import (
     compose_prompt_segments,
 )
 from box_agent.workspace_registry import WorkspaceRegistry, WorkspaceRegistryError
+from box_agent.session_log import SessionLog, default_session_root
 
 from box_agent.user_paths import state_path
 
@@ -880,109 +881,129 @@ def cmd_goal(
     evidence: list[str] | None = None,
     progress: list[str] | None = None,
     json_output: bool = False,
+    session_id: str | None = None,
 ) -> int:
-    """Scriptable CLI goal management without starting the agent runtime."""
-    action = (action or "status").strip().lower()
-    text_value = " ".join(text or []).strip()
-    evidence_items = [item.strip() for item in (evidence or []) if item.strip()]
-    progress_items = [item.strip() for item in (progress or []) if item.strip()]
-    goal = _load_goal_state(workspace_dir)
-    now = datetime.now().isoformat()
-
-    def emit(ok: bool = True, error: str | None = None) -> int:
-        if json_output:
-            payload = {"ok": ok, "goal": goal_payload(goal)}
-            if error:
-                payload["error"] = error
-            _json_print(payload)
-        else:
-            if error:
-                print(f"{Colors.RED}❌ {error}{Colors.RESET}")
-            elif goal is None:
-                print(f"{Colors.DIM}No goal for workspace: {workspace_dir}{Colors.RESET}")
+    """Scriptable CLI goal management with one action policy for both stores."""
+    logical_session_id = (session_id or "").strip()
+    opened = (SessionLog.open_or_create(
+        default_session_root(), session_id=logical_session_id,
+        cwd=workspace_dir, origin="cli",
+    ) if logical_session_id else None)
+    log = opened.log if opened is not None else None
+    try:
+        def save_goal(value):
+            if log is not None:
+                log.append("goal/change", {"goal": goal_payload(value)})
+                log.flush()
             else:
-                temp_agent = Agent.__new__(Agent)
-                temp_agent.goal = goal
-                print_goal_status(temp_agent)
-        return 0 if ok else 1
+                _save_goal_state(workspace_dir, value)
 
-    if action in ("status", "get"):
+        action = (action or "status").strip().lower()
+        text_value = " ".join(text or []).strip()
+        evidence_items = [item.strip() for item in (evidence or []) if item.strip()]
+        progress_items = [item.strip() for item in (progress or []) if item.strip()]
+        goal = goal_state_from_payload(log.replay().goal) if log is not None else _load_goal_state(workspace_dir)
+        now = datetime.now().isoformat()
+
+        def emit(ok: bool = True, error: str | None = None) -> int:
+            if json_output:
+                payload = {"ok": ok, "goal": goal_payload(goal)}
+                if opened is not None:
+                    payload.update(sessionId=logical_session_id, resumed=opened.resumed)
+                if error:
+                    payload["error"] = error
+                _json_print(payload)
+            else:
+                if error:
+                    print(f"{Colors.RED}❌ {error}{Colors.RESET}")
+                elif goal is None:
+                    print(f"{Colors.DIM}No goal for workspace: {workspace_dir}{Colors.RESET}")
+                else:
+                    temp_agent = Agent.__new__(Agent)
+                    temp_agent.goal = goal
+                    print_goal_status(temp_agent)
+            return 0 if ok else 1
+
+        if action in ("status", "get"):
+            return emit()
+
+        if action == "set":
+            if not text_value:
+                return emit(False, "Goal objective is required.")
+            goal = GoalState(
+                objective=text_value,
+                status="active",
+                created_at=now,
+                updated_at=now,
+                evidence=evidence_items,
+                progress=progress_items,
+            )
+            save_goal(goal)
+            return emit()
+
+        if action == "clear":
+            goal = None
+            save_goal(None)
+            return emit()
+
+        if goal is None:
+            return emit(False, "No goal is set for this workspace.")
+
+        if action == "pause":
+            goal.status = "paused"
+            goal.updated_at = now
+        elif action == "resume":
+            goal.status = "active"
+            goal.blocked_reason = None
+            goal.updated_at = now
+        elif action == "complete":
+            goal.status = "complete"
+            goal.blocked_reason = None
+            if text_value:
+                evidence_items.append(text_value)
+            if not evidence_items:
+                evidence_items.append("Completed via `box-agent goal complete`.")
+            for item in evidence_items:
+                if item not in goal.evidence:
+                    goal.evidence.append(item)
+            for item in progress_items:
+                if item not in goal.progress:
+                    goal.progress.append(item)
+            goal.completed_by = "cli"
+            goal.updated_at = now
+        elif action == "progress":
+            if text_value:
+                progress_items.append(text_value)
+            if not progress_items:
+                return emit(False, "Progress text is required.")
+            for item in progress_items:
+                if item not in goal.progress:
+                    goal.progress.append(item)
+            for item in evidence_items:
+                if item not in goal.evidence:
+                    goal.evidence.append(item)
+            goal.updated_at = now
+        elif action == "block":
+            reason = text_value
+            if not reason:
+                return emit(False, "Blocked reason is required.")
+            goal.status = "blocked"
+            goal.blocked_reason = reason
+            for item in evidence_items:
+                if item not in goal.evidence:
+                    goal.evidence.append(item)
+            for item in progress_items:
+                if item not in goal.progress:
+                    goal.progress.append(item)
+            goal.updated_at = now
+        else:
+            return emit(False, f"Unknown goal action: {action}")
+
+        save_goal(goal)
         return emit()
-
-    if action == "set":
-        if not text_value:
-            return emit(False, "Goal objective is required.")
-        goal = GoalState(
-            objective=text_value,
-            status="active",
-            created_at=now,
-            updated_at=now,
-            evidence=evidence_items,
-            progress=progress_items,
-        )
-        _save_goal_state(workspace_dir, goal)
-        return emit()
-
-    if action == "clear":
-        goal = None
-        _save_goal_state(workspace_dir, None)
-        return emit()
-
-    if goal is None:
-        return emit(False, "No goal is set for this workspace.")
-
-    if action == "pause":
-        goal.status = "paused"
-        goal.updated_at = now
-    elif action == "resume":
-        goal.status = "active"
-        goal.blocked_reason = None
-        goal.updated_at = now
-    elif action == "complete":
-        goal.status = "complete"
-        goal.blocked_reason = None
-        if text_value:
-            evidence_items.append(text_value)
-        if not evidence_items:
-            evidence_items.append("Completed via `box-agent goal complete`.")
-        for item in evidence_items:
-            if item not in goal.evidence:
-                goal.evidence.append(item)
-        for item in progress_items:
-            if item not in goal.progress:
-                goal.progress.append(item)
-        goal.completed_by = "cli"
-        goal.updated_at = now
-    elif action == "progress":
-        if text_value:
-            progress_items.append(text_value)
-        if not progress_items:
-            return emit(False, "Progress text is required.")
-        for item in progress_items:
-            if item not in goal.progress:
-                goal.progress.append(item)
-        for item in evidence_items:
-            if item not in goal.evidence:
-                goal.evidence.append(item)
-        goal.updated_at = now
-    elif action == "block":
-        reason = text_value
-        if not reason:
-            return emit(False, "Blocked reason is required.")
-        goal.status = "blocked"
-        goal.blocked_reason = reason
-        for item in evidence_items:
-            if item not in goal.evidence:
-                goal.evidence.append(item)
-        for item in progress_items:
-            if item not in goal.progress:
-                goal.progress.append(item)
-        goal.updated_at = now
-    else:
-        return emit(False, f"Unknown goal action: {action}")
-
-    _save_goal_state(workspace_dir, goal)
-    return emit()
+    finally:
+        if log is not None:
+            log.close()
 
 
 def _workspace_from_args(args: argparse.Namespace) -> Path:
@@ -1084,6 +1105,11 @@ Examples:
         help="Disable Jupyter sandbox mode (sandbox is enabled by default)",
     )
 
+    parser.add_argument(
+        "--session-id", "--resume", dest="session_id", default=None,
+        help="Resume or create a durable logical Session by ID",
+    )
+
     # Subcommands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -1133,6 +1159,11 @@ Examples:
         type=str,
         default=None,
         help="Workspace directory for this goal command",
+    )
+
+    goal_parser.add_argument(
+        "--session-id", "--resume", dest="session_id", default=argparse.SUPPRESS,
+        help="Read or update the canonical SessionLog by ID",
     )
 
     # setup subcommand
@@ -1786,6 +1817,8 @@ async def run_agent(
     deep_think: bool = False,
     force_plan_start: bool = False,
     goal_autopilot_enabled: bool = True,
+    *,
+    session_id: str | None = None,
 ) -> int:
     """Run Agent in interactive or non-interactive mode.
 
@@ -1799,6 +1832,7 @@ async def run_agent(
         deep_think: If True, enable thinking mode for the run
         force_plan_start: If True, require the next turn to publish a plan first
         goal_autopilot_enabled: If True, continue active goals in --task mode within configured budgets
+        session_id: Optional logical session ID, supplied by keyword
     """
     session_start = datetime.now()
 
@@ -1871,6 +1905,7 @@ async def run_agent(
     provider = LLMProvider.ANTHROPIC if config.llm.provider.lower() == "anthropic" else LLMProvider.OPENAI
 
     owned_clients = []
+    session_log = None
 
     def _new_client(**kwargs):
         client = build_llm_client(**kwargs)
@@ -1986,21 +2021,30 @@ async def run_agent(
         non_interactive = task is not None
         allow_full_access = config.tools.allow_full_access
         cli_env_context = build_cli_env_context()
+        logical_session_id = (session_id or "").strip() or f"cli-{uuid4().hex}"
+        legacy_goal_file = not bool((session_id or "").strip())
+        session_open = SessionLog.open_or_create(
+            default_session_root(), session_id=logical_session_id,
+            cwd=workspace_dir, origin="cli", prepare_resume=False,
+        )
+        session_log = session_open.log
         agent_session = await AgentSession.open(
             config=config, agent_factory=Agent,
             options=SessionOptions(
                 profile="cli", workspace_dir=workspace_dir, sandbox_mode=sandbox_mode,
+                resume_session_log=session_open.resumed,
                 non_interactive=non_interactive,
                 session_mode="code_agent" if code_workspace else None,
                 shell_python_path=resolve_cli_shell_python(),
             ),
             host=HostBindings(
-                llm_client=llm_client,
+                llm_client=llm_client, session_log=session_log,
                 base_tools_factory=initialize_base_tools,
                 workspace_tools_factory=add_workspace_tools,
                 output=print,
             ),
             thinking_enabled=deep_think, env_context=cli_env_context,
+            session_id=logical_session_id,
             force_plan_start=force_plan_start,
         )
         try:
@@ -2026,10 +2070,21 @@ async def run_agent(
             agent = agent_session.agent
 
             agent_session.source_text = bind_user_source_text(agent.tools, "", "")
-            restored_goal = _restore_cli_goal(agent, workspace_dir)
+            print(f"{Colors.DIM}Session: {logical_session_id}{Colors.RESET}")
+            restored_goal = agent.goal
+            if legacy_goal_file and not session_open.resumed:
+                restored_goal = _restore_cli_goal(agent, workspace_dir)
+                if restored_goal is not None:
+                    session_log.append("goal/change", {"goal": goal_payload(agent.goal)})
+                    session_log.flush()
+
+            def _save_cli_goal() -> None:
+                if legacy_goal_file:
+                    _save_goal_state(workspace_dir, agent.goal)
+
             if initial_goal and initial_goal.strip():
                 restored_goal = agent.set_goal(initial_goal)
-                _save_goal_state(workspace_dir, agent.goal)
+                _save_cli_goal()
 
             # Wire CLI permission negotiator (parity with ACP in-band negotiation)
             if grant_store is not None and not non_interactive:
@@ -2098,8 +2153,8 @@ async def run_agent(
                             f"{result.get('error') or 'unknown error'}{Colors.RESET}"
                         )
 
-            # One diagnostic file per CLI invocation; no synthetic ACP identity.
-            trace_session_id = f"cli-{uuid4().hex}"
+            # Diagnostics and kernel runs use the same logical Session identity.
+            trace_session_id = logical_session_id
             try:
                 trace_writer = SessionTraceWriter(session_id=trace_session_id, acp_session_id="")
             except Exception:
@@ -2208,7 +2263,7 @@ async def run_agent(
                             f"\n{Colors.YELLOW}⚠️  Goal autopilot stopped after "
                             f"{autopilot.no_progress_turns} continuation(s) without recorded goal progress.{Colors.RESET}"
                         )
-                    _save_goal_state(workspace_dir, agent.goal)
+                    _save_cli_goal()
                     if agent_session.skill_scratch_dir is not None:
                         try:
                             cleanup_skill_scratch_dir(agent_session.skill_scratch_dir)
@@ -2420,7 +2475,7 @@ async def run_agent(
 
                         elif command == "/goal" or command.startswith("/goal "):
                             handle_goal_command(agent, user_input)
-                            _save_goal_state(workspace_dir, agent.goal)
+                            _save_cli_goal()
                             continue
 
                         elif command == "/memory" or command.startswith("/memory "):
@@ -2575,7 +2630,7 @@ async def run_agent(
                         agent_session.cancelled = False
                         esc_listener_stop.set()
                         esc_thread.join(timeout=0.2)
-                        _save_goal_state(workspace_dir, agent.goal)
+                        _save_cli_goal()
                         if agent_session.skill_scratch_dir is not None:
                             try:
                                 cleanup_skill_scratch_dir(agent_session.skill_scratch_dir)
@@ -2621,7 +2676,11 @@ async def run_agent(
                 await _quiet_cleanup()
     finally:
         from box_agent.session_assembly import close_owned_clients
-        await close_owned_clients(owned_clients)
+        try:
+            await close_owned_clients(owned_clients)
+        finally:
+            if session_log is not None:
+                session_log.close()
 
 
 def main() -> int:
@@ -2683,6 +2742,7 @@ def main() -> int:
             evidence=args.evidence,
             progress=args.progress,
             json_output=args.json,
+            session_id=getattr(args, "session_id", None),
         )
 
     # Ensure user config exists; run setup wizard on first launch
@@ -2718,6 +2778,7 @@ def main() -> int:
                 workspace_dir,
                 task=args.task,
                 initial_goal=args.goal,
+                session_id=getattr(args, "session_id", None),
                 sandbox_mode=not args.no_sandbox,
                 verify_api=not args.no_verify_api,
                 json_summary=args.json,

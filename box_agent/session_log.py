@@ -18,6 +18,7 @@ from typing import Any, BinaryIO
 from uuid import uuid4
 
 from .schema import Message
+from .session_projection import SessionProjection
 
 
 _log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "request/header",
         "request/context",
         "session/end-seed",
+        "surface/reset",
         "goal/change",
         "plan/write",
         "todo/write",
@@ -69,14 +71,11 @@ class SessionLogWorkspaceMismatch(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class SessionProjection:
-    """Values reconstructed from one committed Session Log prefix."""
+class SessionOpenResult:
+    """Result of opening or creating one logical Session."""
 
-    messages: list[Message]
-    goal: dict[str, Any] | None
-    plan: dict[str, Any] | None
-    todos: list[dict[str, Any]]
-    skills: list[dict[str, Any]]
+    log: "SessionLog"
+    resumed: bool
 
 
 def _encode_record(record: dict[str, Any]) -> bytes:
@@ -94,6 +93,15 @@ def _encode_record(record: dict[str, Any]) -> bytes:
 def _session_dir(root: Path, session_id: str) -> Path:
     key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     return root / key
+
+
+def default_session_root() -> Path:
+    """Return the shared on-disk root for logical Agent Sessions."""
+    # Keep session storage inside the configured Box-Agent profile when one is
+    # active (BOX_AGENT_HOME), while preserving the historical default path.
+    from .user_paths import state_path
+
+    return state_path("sessions")
 
 
 def _normalize_cwd(cwd: str | Path) -> str:
@@ -210,6 +218,43 @@ class SessionLog:
                 "session cwd does not match the immutable workspace "
                 f"(stored={stored_cwd!r}, requested={requested_cwd!r})"
             )
+
+    @classmethod
+    def open_or_create(
+        cls,
+        root: str | Path,
+        *,
+        session_id: str,
+        cwd: str | Path,
+        origin: str | None = None,
+        prepare_resume: bool = True,
+    ) -> SessionOpenResult:
+        """Open an existing Session or create it, with one recovery policy."""
+
+        try:
+            log = cls.open(root, session_id=session_id, cwd=cwd)
+        except FileNotFoundError:
+            directory = _session_dir(Path(root), session_id)
+            if directory.exists():
+                # A directory without a canonical session file is not a new
+                # session; surface the corruption instead of overwriting it.
+                raise SessionLogCorrupted(
+                    f"session directory exists without {directory / 'session.jsonl'}"
+                )
+            log = cls.create(
+                root,
+                session_id=session_id,
+                cwd=cwd,
+                origin=origin,
+            )
+            return SessionOpenResult(log=log, resumed=False)
+        if prepare_resume:
+            try:
+                log.prepare_resume()
+            except BaseException:
+                log.close()
+                raise
+        return SessionOpenResult(log=log, resumed=True)
 
     @classmethod
     def create(
@@ -638,6 +683,9 @@ class SessionLog:
     def _surface_nodes(self) -> list[tuple[int, Message]]:
         surface: list[tuple[int, Message]] = []
         for event in self._events:
+            if event["type"] == "surface/reset":
+                surface.clear()
+                continue
             if event["type"] not in {
                 "user/message",
                 "assistant/message",
@@ -734,6 +782,13 @@ class SessionLog:
             )
         return appended
 
+    def reset_surface(self, *, reason: str) -> dict[str, Any]:
+        """Persist a logical conversation reset without deleting audit history."""
+
+        event = self.append("surface/reset", {"reason": reason})
+        self.flush()
+        return event
+
     def replay(self) -> SessionProjection:
         surface: list[tuple[int, Message]] = []
         goal: dict[str, Any] | None = None
@@ -743,6 +798,9 @@ class SessionLog:
         for event in self._events:
             event_type = event.get("type")
             data = event["data"]
+            if event_type == "surface/reset":
+                surface.clear()
+                continue
             if event_type == "goal/change":
                 value = data.get("goal")
                 goal = deepcopy(value) if isinstance(value, dict) else None

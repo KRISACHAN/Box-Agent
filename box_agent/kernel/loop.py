@@ -57,7 +57,6 @@ from .context_engine import (
     REQUEST_INPUT_HEADROOM_TOKENS,
     _fallback_context_estimate,
     _is_compaction_metadata,
-    _maybe_summarize,
     _validate_transient_followup_result,
 )
 from .ports import KernelServices
@@ -720,6 +719,11 @@ async def _run_agent_loop_impl(
     tools = _services.tool_catalog
     tool_exposure_manager = _services.tool_exposure
     tool_result_storage = _services.tool_result_store
+    compact_engine = _services.compact_engine
+    if compact_engine is None:
+        from .compact_engine import DefaultCompactEngine
+
+        compact_engine = DefaultCompactEngine()
     context_engine = _services.context_engine
     if context_engine is not None:
         context_engine.bind_history(messages)
@@ -1017,26 +1021,30 @@ async def _run_agent_loop_impl(
         # Older custom contexts retain the identity projection.
         project_history = getattr(context_engine, "project_history", None)
         effective_messages = project_history(messages) if callable(project_history) else messages
-        result = await _maybe_summarize(
-            llm,
-            effective_messages,
-            history_token_limit,
-            api_total_tokens,
-            False,
-            session_id=session_id,
-            turn_id=turn_id,
-            title=title,
-            api_prompt_tokens=api_prompt_tokens,
-            tools=tools,
+        from .context_types import CompactionInput
+
+        def before_summary(estimated: int) -> None:
+            if session_log is not None and session_turn is not None:
+                session_log.append_unlogged_messages(
+                    effective_messages[1:], turn=session_turn, step=step + 1,
+                )
+                session_log.append("compaction/start", {
+                    "turn": session_turn, "step": step + 1,
+                    "estimatedBefore": estimated, "tokenLimit": history_token_limit,
+                })
+                session_log.flush()
+
+        result = await compact_engine.compact_if_needed(CompactionInput(
+            history=tuple(effective_messages), token_limit=history_token_limit,
+            llm=llm, api_total_tokens=api_total_tokens,
+            session_id=session_id, turn_id=turn_id, title=title,
+            api_prompt_tokens=api_prompt_tokens, tools=tools,
             summary_llm=summary_llm,
             allow_llm_summary=summary_failure_cooldown_steps == 0,
-            session_log=session_log,
-            session_turn=session_turn,
-            session_step=step + 1,
-            force=force,
-            estimate_tools=estimate_tools,
+            before_summary=before_summary,
+            force=force, estimate_tools=estimate_tools,
             summary_input_token_limit=token_limit if force else None,
-        )
+        ))
         if result.mode == "fallback" and result.summary_calls > 0 and result.error:
             summary_failure_cooldown_steps = (
                 max_steps

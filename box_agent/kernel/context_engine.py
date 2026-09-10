@@ -6,13 +6,13 @@ import json
 import logging
 import math
 import re
-from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Callable, Final
 
 from ..llm.capabilities import image_input_support
 from ..schema import LLMResponse, Message
 from ..session_log import SessionLog
 from ..tools.base import Tool, ToolResult
+from .context_types import CompactionOutcome
 
 
 _log = logging.getLogger("box_agent.core")
@@ -110,32 +110,6 @@ _SUMMARY_REQUEST = (
 )
 
 
-@dataclass(frozen=True)
-class CompactionOutcome:
-    """Observable result of one context-compaction decision.
-
-    Iteration preserves the historical ``(messages, skip_next, estimate)``
-    return contract for callers that have not migrated yet.  ``skip_next`` is
-    intentionally always false: every subsequent request must be rechecked.
-    """
-
-    messages: list[Message] | None
-    estimated_before: int
-    estimated_after: int
-    mode: str = "none"
-    summary_calls: int = 0
-    error: str | None = None
-    error_type: str | None = None
-    trigger_source: str = "none"
-
-    @property
-    def blocked(self) -> bool:
-        return self.mode == "blocked"
-
-    def __iter__(self):
-        yield self.messages
-        yield False
-        yield self.estimated_before
 
 
 def _summary_message_text(msg: Message) -> str:
@@ -660,6 +634,7 @@ async def _maybe_summarize(
     force: bool = False,
     estimate_tools: dict[str, Any] | None = None,
     summary_input_token_limit: int | None = None,
+    before_summary: Callable[[int], None] | None = None,
 ) -> CompactionOutcome:
     """Compact once when the complete next request exceeds its safe limit."""
     if skip_check:
@@ -708,7 +683,9 @@ async def _maybe_summarize(
         if index > 0 and index not in retained_indices
     ]
 
-    if session_log is not None and session_turn is not None and session_step is not None:
+    if before_summary is not None:
+        before_summary(estimated)
+    elif session_log is not None and session_turn is not None and session_step is not None:
         session_log.append_unlogged_messages(
             messages[1:],
             turn=session_turn,
@@ -814,6 +791,7 @@ async def _maybe_summarize(
         error=error,
         error_type=None if error_type == "none" else error_type,
         trigger_source=trigger_source,
+        protected_messages=len(retained_messages),
     )
 
 

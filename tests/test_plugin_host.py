@@ -458,7 +458,7 @@ def test_default_capability_schema_covers_kernel_services_in_field_order() -> No
 
     from box_agent.kernel.ports import ToolEnginePort, HookDispatchPort
     from box_agent.plugins.hooks import HookProviderPort
-    from box_agent.kernel.ports import ContextEnginePort, SkillEnginePort
+    from box_agent.kernel.ports import ContextEnginePort, SkillEnginePort, CompactEnginePort
 
     ports_by_field = {
         "llm": LLMPort,
@@ -476,6 +476,7 @@ def test_default_capability_schema_covers_kernel_services_in_field_order() -> No
         "hook_dispatch": HookDispatchPort,
         "skill_engine": SkillEnginePort,
         "context_engine": ContextEnginePort,
+        "compact_engine": CompactEnginePort,
     }
     # Provider 是多实现贡献，调用身份是值对象，二者不按服务字段一一映射。
     assert {binding.port_type for binding in bindings} == set(ports_by_field.values()) | {HookProviderPort}
@@ -548,7 +549,11 @@ def test_default_descriptors_are_deterministic_and_preserve_exact_instances() ->
     assert isinstance(by_port[ContextEnginePort], DefaultContextEngine)
     context_descriptor = next(item for item in first if item.capabilities == (ContextEnginePort,))
     assert inspect.signature(context_descriptor.factory).parameters == {}
-    assert len(first) == 7
+    from box_agent.kernel.compact_engine import DefaultCompactEngine
+    from box_agent.kernel.ports import CompactEnginePort
+
+    assert isinstance(by_port[CompactEnginePort], DefaultCompactEngine)
+    assert len(first) == 8
 
 
 @pytest.mark.asyncio

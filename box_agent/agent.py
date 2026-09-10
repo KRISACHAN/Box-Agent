@@ -465,6 +465,7 @@ class Agent:
         enable_builtin_tools: bool = True,
         plugins: tuple[Any, ...] = (),
         skill_runtime: SkillRuntime | None = None,
+        session_id: str = "",
     ):
         self.llm = llm_client
         self.tools = {
@@ -605,6 +606,7 @@ class Agent:
         self.session_log = session_log
         self._pending_skill_restore: list[dict[str, Any]] = []
         self._skill_persistence_pending = False
+        self.session_id = session_id.strip()
         if self.session_log is not None:
             projection = self.session_log.replay()
             self.messages.extend(projection.messages)
@@ -939,6 +941,11 @@ class Agent:
         Returns the number of removed messages.
         """
         removed = max(0, len(self.messages) - 1)
+        if self.session_log is not None:
+            # Commit the reset before changing live history. Use the existing
+            # Store append/flush contract; custom stores need no new method.
+            self.session_log.append("surface/reset", {"reason": "agent.clear_history"})
+            self.session_log.flush()
         del self.messages[1:]
         self.context_resource_ledger.rotate_epoch()
         return removed
@@ -961,6 +968,7 @@ class Agent:
             memory_manager=getattr(self._memory_extractor, "_mgr", None),
             memory_extractor=self._memory_extractor,
             inject_queue=self.inject_queue,
+            session_id=self.session_id,
             max_tool_calls=self.tool_limits.general.max_tool_calls,
             max_delegated_tool_calls=(
                 self.tool_limits.general.max_delegated_tool_calls
