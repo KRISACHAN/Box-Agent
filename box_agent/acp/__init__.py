@@ -3439,7 +3439,7 @@ class BoxACPAgent:
         injected = 0
         update_id = uuid4().hex
         for session_id, session in self._sessions.items():
-            if not session.turn_active:
+            if session.utility_session or not session.turn_active:
                 continue
             if state == "ready":
                 visibility = (

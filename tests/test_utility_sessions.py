@@ -157,13 +157,20 @@ async def test_eager_mcp_refresh_keeps_utility_registry_and_provider_tools_empty
         normal = await adapter.newSession(SimpleNamespace(cwd=str(workspace), field_meta={}))
         state = adapter._sessions[utility.sessionId]
         assert state.agent.tools == {}
+        state.turn_active = True
+        adapter._sessions[normal.sessionId].turn_active = True
         if refresh == "background":
             adapter._sync_mcp_registries([remote])
+            adapter._inject_mcp_runtime_update(name="law", state="connected", tool_count=1)
         else:
             await adapter.extMethod(refresh, {"source": "connector", "config": {"mcpServers": {}}})
         assert "connector_lookup" in adapter._sessions[normal.sessionId].agent.tools
         assert state.agent.tools == {}
         assert not state.mcp_fallback_tools
+        assert state.inject_queue.empty()
+        assert not adapter._sessions[normal.sessionId].inject_queue.empty()
+        state.turn_active = False
+        adapter._sessions[normal.sessionId].turn_active = False
         await adapter.prompt(SimpleNamespace(
             sessionId=utility.sessionId, prompt=[{"text": "write a title"}], field_meta={},
         ))
