@@ -1201,6 +1201,7 @@ class BoxACPAgent:
             session_registries=lambda: (
                 (state.agent.tools, state.mcp_fallback_tools)
                 for state in self._sessions.values()
+                if not state.utility_session
             ),
         )
         self._mcp_task = mcp_task  # background MCP discovery; awaited on first prompt
@@ -3332,18 +3333,7 @@ class BoxACPAgent:
             else:
                 result = await reconcile_mcp_sources(source)
             if not self._config.tools.mcp.deferred_loading_enabled:
-                all_mcp_tools = get_all_mcp_tools()
-                sync_mcp_tool_list(
-                    self._base_tools,
-                    all_mcp_tools,
-                    self._base_mcp_fallback_tools,
-                )
-                for session_state in self._sessions.values():
-                    sync_mcp_tools(
-                        session_state.agent.tools,
-                        all_mcp_tools,
-                        session_state.mcp_fallback_tools,
-                    )
+                self._sync_mcp_registries(get_all_mcp_tools())
             injected = 0
             for item in result.get("results", []):
                 name = item.get("name", "")

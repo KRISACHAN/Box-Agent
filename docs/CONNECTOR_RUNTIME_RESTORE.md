@@ -10,9 +10,15 @@ connectors, including their removals. Other connectors and system/user sources
 are untouched. Without the filter, it replaces the complete connector source.
 Hosts should use scoped updates for provider-specific credential refresh,
 connect/disconnect and enable/disable operations.
+An incoming server name cannot replace a server belonging to a connector outside
+the filter. Removing a connector revokes its live connection even when a lower
+priority user definition has the same name; that user source requires its own
+reconciliation before activation.
 
 Servers declaring `credentialRef` wait without creating a transport until the
-host provides that credential. Resolving or reconnecting one server must not
+host provides that credential. Only connector-owned definitions may reference
+these credentials; system/user definitions with `credentialRef` are rejected
+before creating a transport. Resolving or reconnecting one server must not
 advance another server's credential/configuration fingerprint: a later
 credential update must still cause that other server to reconnect.
 Independent servers start concurrently, with their existing per-server timeout
@@ -21,6 +27,10 @@ and reconnect lock. Source-level updates remain serialized.
 Reapplying unchanged configuration retries servers whose last connection failed,
 without restarting healthy or still-loading servers. The returned success value
 reflects that new attempt, including another failure.
+
+Conversation connector authorization applies to eager and deferred tools,
+including child inheritance and calls after a selection is revoked. Catalog
+refreshes never add tools to utility sessions, including background discovery.
 
 Changing this contract requires rebuilding the packaged ACP runtime and testing
 host startup, mixed OAuth/token restoration and process restart. Source tests

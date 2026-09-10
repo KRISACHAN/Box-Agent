@@ -171,6 +171,8 @@ def resolve_mcp_sources(
                 continue
             config_id, connector_id, connector_name = _server_identity(source, name, config)
             credential_ref = config.get("credentialRef")
+            if credential_ref is not None and source.owner != "connector":
+                raise ValueError(f"MCP server {name}: credentialRef requires a connector-owned source")
             credential_version = (
                 credential_versions.get(credential_ref, 0)
                 if isinstance(credential_ref, str)

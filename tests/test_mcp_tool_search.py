@@ -215,7 +215,8 @@ async def test_tool_search_filters_connector_tools_before_ranking_and_activation
 
 
 @pytest.mark.asyncio
-async def test_connector_tool_becomes_hidden_and_uncallable_when_conversation_disables_it() -> None:
+@pytest.mark.parametrize("deferred", [True, False])
+async def test_connector_tool_becomes_hidden_and_uncallable_when_conversation_disables_it(deferred) -> None:
     catalog = MCPToolCatalog()
     tool = FakeMCPTool(
         "mcp__pkulaw__search_case",
@@ -234,13 +235,21 @@ async def test_connector_tool_becomes_hidden_and_uncallable_when_conversation_di
     manager = MCPToolExposureManager(
         catalog,
         activated,
+        deferred_mcp=deferred,
         allowed_connector_ids_provider=lambda: frozenset(allowed_connector_ids),
     )
-    offered = manager.prepare_tools([])
+    candidates = [] if deferred else [tool]
+    allowed_connector_ids.clear()
+    assert manager.prepare_tools(candidates).tools == []
+    assert manager.inherited_tools({tool.name: tool}) == {}
+    allowed_connector_ids.add("pkulaw")
+    offered = manager.prepare_tools(candidates)
 
     assert [item.name for item in offered.tools] == ["mcp__pkulaw__search_case"]
     allowed_connector_ids.clear()
-    assert manager.prepare_tools([]).tools == []
+    assert manager.prepare_tools(candidates).tools == []
+    assert manager.inherited_tools({tool.name: tool}) == {}
+    assert manager.validate_call(tool.name, None, tool) is not None
     assert manager.validate_call(
         "mcp__pkulaw__search_case",
         offered.mcp_generations["mcp__pkulaw__search_case"],

@@ -1117,7 +1117,7 @@ def set_mcp_runtime_credential(credential_ref: str, headers: dict[str, str]) -> 
     return [
         name
         for name, definition in _mcp_server_definitions.items()
-        if definition.config.get("credentialRef") == normalized_ref
+        if definition.owner == "connector" and definition.config.get("credentialRef") == normalized_ref
     ]
 
 
@@ -1143,13 +1143,15 @@ def clear_mcp_runtime_credential(credential_ref: str) -> list[str]:
     return [
         name
         for name, definition in _mcp_server_definitions.items()
-        if definition.config.get("credentialRef") == normalized_ref
+        if definition.owner == "connector" and definition.config.get("credentialRef") == normalized_ref
     ]
 
 
 def _materialize_server_config(definition: ResolvedMcpServer) -> dict:
     server_config = dict(definition.config)
     credential_ref = server_config.pop("credentialRef", None)
+    if credential_ref is not None and definition.owner != "connector":
+        raise ValueError("credentialRef requires a connector-owned source")
     server_config.pop("_connectorId", None)
     server_config.pop("_connectorName", None)
     if isinstance(credential_ref, str):
@@ -1514,16 +1516,21 @@ async def replace_mcp_source(
                     for name, definition in _mcp_server_definitions.items()
                     if definition.owner == source
                 }
-            servers = {
-                **{
-                    name: value for name, value in existing.items()
-                    if str(value.get("_connectorId", "")).strip().lower() not in targets
-                },
-                **{
-                    name: value for name, value in servers.items()
-                    if str(value.get("_connectorId", "")).strip().lower() in targets
-                },
+            retained = {
+                name: value for name, value in existing.items()
+                if str(value.get("_connectorId", "")).strip().lower() not in targets
             }
+            incoming = {
+                name: value for name, value in servers.items()
+                if str(value.get("_connectorId", "")).strip().lower() in targets
+            }
+            conflicts = sorted(retained.keys() & incoming.keys())
+            if conflicts:
+                return {"success": False, "error": (
+                    "MCP server names belong to connectors outside connectorIds: "
+                    + ", ".join(conflicts)
+                )}
+            servers = {**retained, **incoming}
         _mcp_source_overrides[source] = servers
         if connector_ids is not None:
             result = await _reconcile_mcp_sources_locked(source, connector_ids)
@@ -1554,16 +1561,24 @@ async def _reconcile_mcp_sources_locked(
 
     results: list[dict] = []
     reconnects: list[tuple[str, str]] = []
+
+    def in_scope(definition: ResolvedMcpServer | None) -> bool:
+        return definition is not None and (
+            source is None or definition.owner == source
+        ) and (
+            connector_ids is None or definition.connector_id in connector_ids
+        )
+
     all_names = sorted(set(previous) | set(current))
     for name in all_names:
         before = previous.get(name)
         after = current.get(name)
-        definition = after or before
-        if source is not None and definition.owner != source:
+        before_in_scope, after_in_scope = in_scope(before), in_scope(after)
+        if not before_in_scope and not after_in_scope:
             continue
-        if connector_ids is not None and definition.connector_id not in connector_ids:
-            continue
-        if after is None:
+        if not after_in_scope:
+            # Revoke the old owner without applying a newly revealed source
+            # outside this update. Its own reconciliation may activate it later.
             result = await disconnect_mcp_server(name)
             if before is not None:
                 _record_status(name, "disabled", definition=before)

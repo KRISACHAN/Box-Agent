@@ -63,9 +63,9 @@ def test_credential_version_participates_in_server_fingerprint(tmp_path: Path) -
     connector = tmp_path / "mcp.json"
     _write(
         connector,
-        {"law": {"url": "https://example.test", "credentialRef": "law-token"}},
+        {"law": {"url": "https://example.test", "credentialRef": "law-token", "_connectorId": "law"}},
     )
-    sources = (configured_mcp_sources(str(connector))[0],)
+    sources = (McpConfigSource("connector", connector),)
 
     before = resolve_mcp_sources(sources, {"law-token": 1}).servers["law"]
     after = resolve_mcp_sources(sources, {"law-token": 2}).servers["law"]
@@ -405,3 +405,108 @@ async def test_connector_update_does_not_acknowledge_or_apply_pending_user_sourc
     await mcp_loader.reconcile_mcp_sources("user")
     assert connect.await_args_list[-1].args == ("mine",)
     assert mcp_loader._mcp_server_definitions["mine"].config["command"] == "after"
+
+
+@pytest.mark.parametrize("owner", ["user", "system"])
+def test_non_connector_sources_cannot_reference_runtime_credentials(tmp_path, monkeypatch, owner):
+    from dataclasses import replace
+
+    path = tmp_path / "mcp.json"
+    _write(path, {"law": {
+        "url": "https://untrusted.invalid/mcp",
+        "_connectorId": "law",
+        "credentialRef": "connector:law:default",
+    }})
+    monkeypatch.setattr(mcp_loader, "_mcp_runtime_credentials", {
+        "connector:law:default": {"Authorization": "Bearer test-sentinel"},
+    })
+    definition = resolve_mcp_sources((McpConfigSource("connector", path),)).servers["law"]
+    assert mcp_loader._materialize_server_config(definition)["headers"] == {
+        "Authorization": "Bearer test-sentinel",
+    }
+    with pytest.raises(ValueError, match="connector-owned source"):
+        resolve_mcp_sources((McpConfigSource(owner, path),))
+    # Older or programmatically constructed definitions cannot bypass parsing.
+    with pytest.raises(ValueError, match="connector-owned source"):
+        mcp_loader._materialize_server_config(replace(definition, owner=owner))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("targets", [None, ["law"]])
+async def test_connector_removal_revokes_live_owner_before_user_fallback(
+    monkeypatch, isolated_connector_runtime, targets,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from box_agent.tools.mcp_tool_catalog import MCPToolCatalog
+    from tests.test_mcp_tool_search import FakeMCPTool
+
+    user = Path(mcp_loader._mcp_config_path)
+    _write(user, {"shared": {"url": "https://user.example.test/mcp"}})
+    mcp_loader._mcp_source_overrides["connector"] = {
+        "shared": {"url": "https://connector.example.test/mcp", "_connectorId": "law"},
+    }
+    mcp_loader._mcp_server_definitions = mcp_loader._resolve_registered_sources(str(user))
+    tool = FakeMCPTool("law_search", "shared", connector_id="law")
+    catalog = MCPToolCatalog()
+    catalog.replace_server("shared", [tool])
+    monkeypatch.setattr(mcp_loader, "get_mcp_tool_catalog", lambda: catalog)
+    connection = SimpleNamespace(name="shared", tools=[tool], disconnect=AsyncMock())
+    mcp_loader._mcp_connections = [connection]
+    mcp_loader._record_status("shared", "connected")
+    reconnect = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(mcp_loader, "_reconnect_mcp_server_locked", reconnect)
+
+    result = await mcp_loader.replace_mcp_source("connector", {"mcpServers": {}}, targets)
+
+    assert result["success"] is True
+    assert result["results"][0]["action"] == "removed"
+    connection.disconnect.assert_awaited_once()
+    reconnect.assert_not_awaited()
+    assert mcp_loader._mcp_connections == []
+    assert "shared" not in mcp_loader._mcp_server_definitions
+    assert catalog.snapshot() == ()
+    assert mcp_loader._mcp_status["shared"].state == "disabled"
+    # The shadowed source is only activated by its own explicit reconciliation.
+    await mcp_loader.reconcile_mcp_sources("user")
+    reconnect.assert_awaited_once_with("shared")
+    assert mcp_loader._mcp_server_definitions["shared"].owner == "user"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_override", [True, False])
+async def test_scoped_connector_update_cannot_take_another_connectors_server_name(
+    monkeypatch, tmp_path, isolated_connector_runtime, runtime_override,
+):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    existing = {"shared": {"url": "https://other.example.test/mcp", "_connectorId": "other"}}
+    if runtime_override:
+        mcp_loader._mcp_source_overrides["connector"] = existing
+    else:
+        connector = tmp_path / "connector.json"
+        _write(connector, existing)
+        monkeypatch.setenv("BOX_AGENT_CONNECTOR_MCP_CONFIG_PATH", str(connector))
+    mcp_loader._mcp_server_definitions = mcp_loader._resolve_registered_sources(mcp_loader._mcp_config_path)
+    before = dict(mcp_loader._mcp_server_definitions)
+    overrides = deepcopy(mcp_loader._mcp_source_overrides)
+    connection = SimpleNamespace(name="shared", tools=[], disconnect=AsyncMock())
+    mcp_loader._mcp_connections = [connection]
+    mcp_loader._record_status("shared", "connected")
+    reconnect = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(mcp_loader, "_reconnect_mcp_server_locked", reconnect)
+
+    result = await mcp_loader.replace_mcp_source("connector", {"mcpServers": {
+        "shared": {"url": "https://law.example.test/mcp", "_connectorId": "law"},
+    }}, ["law"])
+
+    assert result["success"] is False
+    assert "outside connectorIds" in result["error"]
+    assert mcp_loader._mcp_source_overrides == overrides
+    assert mcp_loader._mcp_server_definitions == before
+    assert mcp_loader._mcp_status["shared"].state == "connected"
+    assert mcp_loader._mcp_connections == [connection]
+    connection.disconnect.assert_not_awaited()
+    reconnect.assert_not_awaited()

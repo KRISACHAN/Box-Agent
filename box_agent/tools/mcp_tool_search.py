@@ -492,11 +492,14 @@ class MCPToolExposureManager:
         self._allowed_connector_ids_provider = allowed_connector_ids_provider
 
     def _entry_is_allowed(self, entry) -> bool:
-        if entry.connector_id is None:
+        return self._connector_is_allowed(entry.connector_id)
+
+    def _connector_is_allowed(self, connector_id: str | None) -> bool:
+        if connector_id is None:
             return True
         if self._allowed_connector_ids_provider is None:
             return True
-        return entry.connector_id in self._allowed_connector_ids_provider()
+        return connector_id in self._allowed_connector_ids_provider()
 
     def prepare_tools(self, candidates: list[Tool]) -> ToolExposure:
         # ``candidates`` is the session's stable core-tool registry. Ordinary
@@ -520,7 +523,9 @@ class MCPToolExposureManager:
                 self._activated_local.pop(name, None)
         for tool in candidates:
             if getattr(tool, "mcp_tool_id", None) is not None:
-                if not self._deferred_mcp:
+                if not self._deferred_mcp and self._connector_is_allowed(
+                    getattr(tool, "mcp_connector_id", None)
+                ):
                     visible[tool.name] = tool
                     generation = getattr(tool, "mcp_generation", None)
                     if isinstance(generation, int):
@@ -554,7 +559,6 @@ class MCPToolExposureManager:
             for tool in [*tool_map.values(), *exposure.tools]
             if tool.name != TOOL_SEARCH_NAME and (
                 getattr(tool, "mcp_tool_id", None) is None
-                or not self._deferred_mcp
                 or tool.name in exposure.offered_names
             )
         }
@@ -565,8 +569,15 @@ class MCPToolExposureManager:
         offered_generation: int | None,
         target_tool: Tool | None = None,
     ) -> str | None:
+        if target_tool is not None and not self._connector_is_allowed(
+            getattr(target_tool, "mcp_connector_id", None)
+        ):
+            return f"MCP tool '{name}' is not enabled for this conversation; search again."
         if offered_generation is None:
             return None
+        current = self._catalog.get_by_model_name(name)
+        if current is not None and not self._entry_is_allowed(current):
+            return f"MCP tool '{name}' is not enabled for this conversation; search again."
         if not self._deferred_mcp:
             if (
                 target_tool is not None
@@ -574,11 +585,8 @@ class MCPToolExposureManager:
             ):
                 return f"MCP tool '{name}' execution target changed after it was offered; prepare tools again."
             return None
-        current = self._catalog.get_by_model_name(name)
         if current is None:
             return f"MCP tool '{name}' is unavailable or has a name conflict; search again."
-        if not self._entry_is_allowed(current):
-            return f"MCP tool '{name}' is not enabled for this conversation; search again."
         if current.generation != offered_generation:
             return f"MCP tool '{name}' changed after it was offered; search again."
         if (
