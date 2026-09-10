@@ -70,3 +70,5 @@ Effect evaluation is attempt-scoped and read from
 `attempts/<attempt-id>/effect_evaluation.json`. Existing attempts without this
 file remain readable and show an empty state; `service_error` documents display
 the local service error without changing the underlying Case status.
+
+Incomplete, malformed, or explicitly mismatched effect results are shown as unavailable diagnostics with scores hidden. Viewing does not rewrite the stored response or the original ACP/completeness result; missing optional confidence and evidence remain readable.

@@ -16,6 +16,7 @@ from acp_eval.storage import atomic_write_json
 
 EFFECT_SCHEMA_VERSION = "agent-eval-effect/v1"
 EFFECT_RESULT_NAME = "effect_evaluation.json"
+EFFECT_RESPONSE_NAME = "effect_response.json"
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,7 @@ def evaluate_attempt(
     record: Mapping[str, Any],
     config: EffectEvaluationConfig,
 ) -> dict[str, Any]:
-    """Call the service, persist its exact response, and never expose credentials."""
+    """Keep the raw response audit and publish only a matching effect result."""
 
     attempt_dir = Path(attempt_dir).resolve()
     case_id = str(record.get("id") or "")
@@ -111,10 +112,18 @@ def evaluate_attempt(
             timeout=config.timeout_seconds,
         ) as response:
             document = json.loads(response.read().decode("utf-8"))
+        atomic_write_json(attempt_dir / EFFECT_RESPONSE_NAME, document)
         if not isinstance(document, dict):
             raise ValueError("effect service response must be a JSON object")
         if document.get("schema_version") != EFFECT_SCHEMA_VERSION:
             raise ValueError("effect service response has an unsupported schema")
+        source = document.get("source")
+        if source is not None:
+            if not isinstance(source, dict):
+                raise ValueError("effect service source must be an object")
+            for key, expected in (("case_id", case_id), ("attempt_id", attempt_id)):
+                if key in source and source[key] != expected:
+                    raise ValueError(f"effect service response {key} does not match request")
         document["client"] = {
             "started_at": started_at,
             "elapsed_ms": round((monotonic() - started) * 1000),

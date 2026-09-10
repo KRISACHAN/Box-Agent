@@ -373,6 +373,7 @@ def create_app(
                 "case": case,
                 "active": "effect",
                 "effect": effect,
+                "effect_error": case.get("effect_error"),
                 "process_metrics": process_metrics,
                 "result_metrics": result_metrics,
                 "process_available": sum(

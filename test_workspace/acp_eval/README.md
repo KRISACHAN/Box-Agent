@@ -39,7 +39,9 @@ uv run --project test_workspace/acp_eval acp-eval \
 By default, a case whose latest attempt has a terminal manifest is skipped only
 when its stored case fingerprint exactly matches the current record and input
 bytes, and when its stored producing runtime has the same comparable Python
-version/implementation, Box-Agent version, and Box-Agent Git commit. If any
+version/implementation, Box-Agent version, and Box-Agent Git commit. The stored
+model configuration digest must also match the requested model, token limit,
+and complete binding/routing configuration. If any
 runtime identity source is unavailable, resume is conservative and executes a
 new attempt. Changing the query, any other record field, an input path, or an
 input file's bytes also creates a new immutable attempt automatically. Request
@@ -112,7 +114,8 @@ test_workspace/outputs/<evaluation>/
         ├── files-after.json
         ├── artifacts.json
         ├── completeness.json
-        └── effect_evaluation.json  # optional agents-eval response
+        ├── effect_evaluation.json  # optional validated effect result or service error
+        └── effect_response.json    # original parsed service response, kept for audit
 ```
 
 `latest.json` atomically points to the latest attempt using its ID and a path
@@ -185,3 +188,7 @@ a failure. Inspect `process.jsonl` for the signal initiator and reason.
 does not judge the Agent's reasoning, answer, or artifacts. Provider-internal
 retries and cleanup steps that Box-Agent never emits remain unsupported rather
 than being reconstructed.
+
+Model selection, token limits and the complete model-binding/routing configuration are frozen and hashed as `model_config_sha256` before execution. Resume requires this producing-attempt identity to match as well as the existing input/runtime fingerprints. Changed settings or legacy attempts without that identity create a new attempt; prior attempt files are preserved.
+
+Effect responses with explicit mismatched case or attempt identifiers become a separate `service_error` without promoting scores or changing the original ACP/completeness result. The original parsed response remains in `effect_response.json`.

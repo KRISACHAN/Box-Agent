@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -107,19 +108,68 @@ class EvaluationRepository:
         return None
 
     @staticmethod
-    def _effect_summary(attempt: Path) -> dict[str, Any]:
+    def _effect_document(attempt: Path, case_id: str | None = None) -> tuple[dict[str, Any] | None, str | None]:
+        effect = EvaluationRepository._json(attempt / "effect_evaluation.json", None)
+        if effect is None:
+            return None, None
+        if not isinstance(effect, dict) or effect.get("schema_version") != "agent-eval-effect/v1":
+            return None, "效果响应格式无效。"
+        if any(not isinstance(effect.get(key), dict) for key in ("summary", "source", "judge")):
+            return None, "效果响应缺少有效的评估摘要、来源或裁判信息。"
+        run = EvaluationRepository._json(attempt / "run.json", {})
+        expected_case = case_id or (run.get("case_id") if isinstance(run, dict) else None)
+        source = effect["source"]
+        for key, expected in (("case_id", expected_case), ("attempt_id", attempt.name)):
+            if expected is not None and key in source and source[key] != expected:
+                return None, f"效果响应的 {key} 与当前 Attempt 不匹配。"
+
+        def valid_number(value: Any) -> bool:
+            if value is None:
+                return True
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return False
+            try:
+                return math.isfinite(value)
+            except OverflowError:
+                return False
+
+        summary = effect["summary"]
+        if any(not valid_number(summary.get(key)) for key in (
+            "process_score", "result_score", "total_score", "score_coverage",
+        )):
+            return None, "效果响应包含无效评分数据。"
+        normalized = dict(effect)
+        normalized["client"] = effect.get("client") if isinstance(effect.get("client"), dict) else {}
+        for key in ("metrics", "performance", "cost"):
+            values = effect.get(key, [])
+            if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
+                return None, f"效果响应的 {key} 数据无效。"
+            normalized[key] = values
+        metrics = []
+        for metric in normalized["metrics"]:
+            if any(not valid_number(metric.get(key)) for key in ("score", "weight", "confidence")):
+                return None, "效果响应包含无效指标数值。"
+            evidence = metric.get("evidence") or []
+            missing = metric.get("missing_evidence") or []
+            if (not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence)
+                    or not isinstance(missing, list)):
+                return None, "效果响应包含无效指标证据。"
+            metrics.append({**metric, "confidence": metric.get("confidence"),
+                            "evidence": evidence, "missing_evidence": missing})
+        normalized["metrics"] = metrics
+        return normalized, None
+
+    @staticmethod
+    def _effect_summary(attempt: Path, case_id: str | None = None) -> dict[str, Any]:
         def compact_number(value: Any) -> Any:
             if isinstance(value, float) and value.is_integer():
                 return int(value)
             return value
 
-        effect = EvaluationRepository._json(
-            attempt / "effect_evaluation.json",
-            None,
-        )
+        effect, error = EvaluationRepository._effect_document(attempt, case_id)
         if not isinstance(effect, dict):
             return {
-                "status": "missing",
+                "status": "invalid" if error else "missing",
                 "process_score": None,
                 "process_weight": 40,
                 "result_score": None,
@@ -204,7 +254,7 @@ class EvaluationRepository:
                 "completeness_status": "incomplete",
                 "duration": None,
                 "stderr_counts": {"error": 0, "timeout": 0, "warning": 0},
-                "effect_summary": self._effect_summary(case_path),
+                "effect_summary": self._effect_summary(case_path, case_path.name),
             }
         run = self._json(attempt / "run.json", {})
         return {
@@ -217,7 +267,7 @@ class EvaluationRepository:
             "completeness_status": run.get("completeness_status") or "incomplete",
             "duration": self._duration(run),
             "stderr_counts": run.get("stderr_counts") or {"error": 0, "timeout": 0, "warning": 0},
-            "effect_summary": self._effect_summary(attempt),
+            "effect_summary": self._effect_summary(attempt, case_path.name),
             "run": run,
         }
 
@@ -239,14 +289,14 @@ class EvaluationRepository:
         if "attempt_path" not in result:
             raise NotFoundError(case_id)
         attempt = result["attempt_path"]
+        effect, effect_error = self._effect_document(attempt, case_id)
         result.update(
             {
                 "input": self._json(case_path / "input.json", {}),
                 "assistant": self._final_answer(attempt),
                 "completeness": self._json(attempt / "completeness.json", {}),
-                "effect_evaluation": self._json(
-                    attempt / "effect_evaluation.json", None
-                ),
+                "effect_evaluation": effect,
+                "effect_error": effect_error,
                 "case_path": case_path,
             }
         )

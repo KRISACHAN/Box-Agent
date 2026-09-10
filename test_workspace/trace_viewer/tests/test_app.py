@@ -318,6 +318,60 @@ def test_effect_page_has_empty_state_for_old_attempt(client):
     assert "尚未生成效果评估" in response.text
 
 
+@pytest.mark.parametrize("damage", ["sparse", "wrong-case", "wrong-attempt", "bad-coverage", "bad-confidence", "huge-score"])
+def test_invalid_effect_is_diagnostic_without_scores_or_artifact_changes(client, repo_root, damage):
+    import json
+    from trace_viewer.repository import EvaluationRepository
+
+    repository = EvaluationRepository(repo_root)
+    case = repository.get_case("eval-one", "Q1")
+    attempt = case["attempt_path"]
+    effect_path = attempt / "effect_evaluation.json"
+    effect = json.loads(effect_path.read_text())
+    if damage == "sparse":
+        effect = {"schema_version": "agent-eval-effect/v1", "status": "complete", "metrics": []}
+    elif damage == "wrong-case":
+        effect["source"]["case_id"] = "OTHER-CASE"
+    elif damage == "wrong-attempt":
+        effect["source"]["attempt_id"] = "other-attempt"
+    elif damage == "bad-coverage":
+        effect["summary"]["score_coverage"] = "invalid"
+    elif damage == "huge-score":
+        effect["summary"]["total_score"] = 10 ** 400
+    else:
+        effect["metrics"][0]["confidence"] = "invalid"
+    effect_path.write_text(json.dumps(effect))
+    before_effect = effect_path.read_bytes()
+    before_run = (attempt / "run.json").read_bytes()
+
+    response = client.get("/runs/eval-one/cases/Q1/effect")
+
+    assert response.status_code == 200
+    assert "效果评估不可用" in response.text
+    assert "当前不展示评分" in response.text
+    assert "87 / 100" not in response.text
+    summary = repository.get_case("eval-one", "Q1")["effect_summary"]
+    assert summary["status"] == "invalid"
+    assert summary["process_score"] is None and summary["result_score"] is None
+    assert effect_path.read_bytes() == before_effect
+    assert (attempt / "run.json").read_bytes() == before_run
+
+
+def test_effect_metric_without_optional_confidence_or_evidence_remains_readable(client, repo_root):
+    import json
+    from trace_viewer.repository import EvaluationRepository
+
+    attempt = EvaluationRepository(repo_root).get_case("eval-one", "Q1")["attempt_path"]
+    path = attempt / "effect_evaluation.json"
+    effect = json.loads(path.read_text())
+    effect["metrics"][0].pop("confidence")
+    effect["metrics"][0]["evidence"] = None
+    path.write_text(json.dumps(effect))
+    response = client.get("/runs/eval-one/cases/Q1/effect")
+    assert response.status_code == 200
+    assert "计划质量" in response.text
+
+
 def test_diagnosis_page_has_an_empty_state_without_a_markdown_file(client):
     response = client.get("/runs/eval-one/cases/Q1/diagnosis")
 

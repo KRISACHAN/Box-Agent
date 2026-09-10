@@ -8,7 +8,7 @@
     <td><strong>{{ metric.label }}</strong><small>{{ metric.metric_id }}</small></td>
     <td class="score-cell">{{ metric.score if metric.score is not none else "—" }} / {{ metric.weight }}</td>
     <td><span class="status status-{{ metric.status }}">{% if metric.status == "complete" %}已评估{% elif metric.status == "unavailable" %}无法评估{% elif metric.status == "conflict" %}待复核{% elif metric.status == "pending" %}评估中{% else %}{{ metric.status }}{% endif %}</span><small>{{ metric.judge_type }}</small>{% if metric.missing_evidence %}<small>缺少：{{ metric.missing_evidence|join(", ") }}</small>{% endif %}</td>
-    <td>{{ (metric.confidence * 100)|round(0)|int }}%</td>
+    <td>{% if metric.confidence is not none %}{{ (metric.confidence * 100)|round(0)|int }}%{% else %}—{% endif %}</td>
     <td><p class="rationale">{{ metric.rationale or "—" }}</p>{% for evidence in metric.evidence %}<details class="evidence"><summary>{{ evidence.evidence_id }} · {{ evidence.locator }}</summary><pre>{{ evidence.excerpt }}</pre></details>{% endfor %}</td>
   </tr>{% else %}<tr><td colspan="5" class="empty">没有此类指标。</td></tr>{% endfor %}</tbody>
 </table></div>
@@ -17,7 +17,9 @@
 <section class="page-heading"><h1>效果指标</h1><p>agents-eval 基于本次 Case 原始采集证据同步生成的独立评估。</p></section>
 {% include "_tabs.html" %}
 
-{% if not effect %}
+{% if effect_error %}
+<section class="panel effect-empty"><h2>效果评估不可用</h2><p class="empty">{{ effect_error }} 原始文件已保留，当前不展示评分。</p></section>
+{% elif not effect %}
 <section class="panel effect-empty"><h2>尚未生成效果评估</h2><p class="empty">本次 Attempt 没有 <code>effect_evaluation.json</code>。请配置效果评估服务后执行一个新 Attempt。</p></section>
 {% else %}
 {% if effect.status == "service_error" %}
