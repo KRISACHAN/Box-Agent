@@ -59,6 +59,10 @@ Managed Run 传播取消或结束之前，必须等待 HookBus 排空和扩展 P
 
 每轮独立的扩展宿主没有后续 Session 来代为重试。若 Provider 清理再次被取消，Run owner 会保留清理任务并继续关闭尚存的实例，清理完成后再传播原始取消；持续中断的 Provider 会推迟该 Run 的清理完成。
 
+超时或取消后，Handler 收尾中迟到的 `SessionLogDurabilityError` 仍按原异常对象保留。
+该错误在下次分发或关闭时继续向宿主传播，不会因任务已经结束而静默消费；
+运行收尾仍会先排空、注销并释放 Provider，避免错误传播跳过资源释放。
+
 ## 装配与调用
 
 ```text
@@ -101,6 +105,10 @@ Handler 可以是异步函数，也可以是提供异步 `handle(context)` 的�
 
 `replace()` 和 `suppress()` 影响可见的 content/error，处理结果进入模型历史和宿主结果事件。总线保留整条链的 `modified` 标识，使显式替换的文本优先于工具原来的 model_context 或历史资源回执。工具的 success、原始输出、独立持久化内容和产物引用仍属于各自的数据出口；文本处理不会撤销已经发生的操作。
 
+结果文本 Hook 不是所有模型输入的统一审查屏障。在仍使用 `SkillResultAdapter` 的旧 Skill
+管线中，`get_skill` 可以在结果 Handler 前激活 system 指导；抑制工具文本不会撤销该状态。
+Skill 正文和 Context 输入的策略由其所属模块负责，不能仅靠 `result_text` 推断它们已被清除。
+
 被 Hook、参数校验或权限流程拒绝的调用跳过新式结果 Handler，通过 `tool.finished` 的 `executed=false` 表达未执行。旧结果 Hook 继续保留原来的可见失败结果回调范围。
 
 ## 调用信息
@@ -118,6 +126,9 @@ Handler 可以是异步函数，也可以是提供异步 `handle(context)` 的�
 新 Observer 默认预算为 1 秒，新 Interceptor 为 5 秒，单条处理链为 10 秒。matcher 和 Handler 共用单 Hook 预算；有效截止时间取单 Hook、整链和 Run 期限的最早值。`HookSpec.timeout_ms` 可以进一步缩短预算。
 
 Observer 的普通异常和超时记录告警后继续；前置 Handler 的异常、超时或非法返回导致拒绝；文本 Handler 对应情况导致抑制。取消和 `SessionLogDurabilityError` 继续向外传播。旧回调保留原有普通异常告警和期限语义。
+
+旧 `on_tool_result` 返回错误长度或不可解包的值时，保留原有告警并继续使用此前文本；
+返回值转换也属于 legacy 异常边界。
 
 ```text
 Registering → freeze() → Ready → close() → Draining → Closed

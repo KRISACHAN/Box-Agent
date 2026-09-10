@@ -518,3 +518,54 @@ async def test_legacy_hooks_keep_the_callers_context_variables():
 
     _ = [event async for event in run_agent_loop(llm=CheckingModel([]), tools={}, messages=[], hooks=[Legacy()])]
     assert marker.get() == "after"
+
+
+@pytest.mark.parametrize("malformed", [(), ("text", None, "extra"), 123])
+async def test_malformed_legacy_result_preserves_text_and_run_completion(malformed):
+    class Legacy(BaseHook):
+        async def on_tool_result(self, **kwargs):
+            return malformed
+
+    tool = Echo()
+    events, messages, model = await run(tool, [], hooks=[Legacy()])
+    assert tool.calls == ["original"] and model.requests == 2
+    assert all(event.success for event in events if isinstance(event, ToolCallResult))
+    assert [message.content for message in messages if message.role == "tool"] == ["原始模型专用文本"]
+
+
+@pytest.mark.parametrize("managed", [False, True])
+async def test_late_handler_durability_error_still_releases_run_providers(tmp_path, managed):
+    from box_agent.session_log import SessionLogDurabilityError
+
+    disposed = []
+    failure = SessionLogDurabilityError("handler cleanup write failed")
+
+    async def handler(ctx):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            raise failure
+
+    descriptor = plugin(
+        [HookSpec("late-durable", ("tool.before_execution",), "before_tool", handler, timeout_ms=50)],
+        disposer=lambda instance: disposed.append(instance),
+    )
+    config = Config(llm={"model": "fixture"}, agent={"max_steps": 2}, tools={})
+    if managed:
+        session = await AgentSession.open(
+            config=config, options=SessionOptions(workspace_dir=tmp_path),
+            host=HostBindings(llm_client=Model(), tools=[Echo()], system_prompt="system"),
+            plugins=(descriptor,),
+        )
+    else:
+        session = AgentSession.create(config=config, llm_client=Model(), tools=[Echo()],
+                                      system_prompt="system", workspace_dir=tmp_path,
+                                      plugins=(descriptor,))
+    try:
+        session.agent.add_user_message("execute")
+        with pytest.raises(SessionLogDurabilityError) as captured:
+            _ = [event async for event in session.run_events()]
+        assert captured.value is failure
+        assert len(disposed) == 1
+    finally:
+        await session.aclose()

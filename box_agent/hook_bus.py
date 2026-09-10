@@ -138,6 +138,8 @@ class HookBus:
         self._order = 0
         self._dispatches: dict[str, asyncio.Task] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._unobserved_tasks: set[asyncio.Task] = set()
+        self._late_durability_errors: list[SessionLogDurabilityError] = []
         self._close_lock = asyncio.Lock()
         self._observer_timeout_ms = observer_timeout_ms
         self._interceptor_timeout_ms = interceptor_timeout_ms
@@ -206,6 +208,7 @@ class HookBus:
             raise HookStateError("HookBus 状态或 Run 身份不匹配")
         if context.session_id != self.context.session_id:
             raise HookStateError("HookBus Session 身份不匹配")
+        self._raise_late_errors()
         lease = DispatchLease(uuid4().hex)
         self._dispatches[lease.dispatch_id] = asyncio.current_task()
         return lease
@@ -229,8 +232,34 @@ class HookBus:
 
     def _task_finished(self, task: asyncio.Task) -> None:
         self._tasks.discard(task)
+        unobserved = task in self._unobserved_tasks
+        self._unobserved_tasks.discard(task)
         if not task.cancelled():
-            task.exception()
+            error = task.exception()
+            if unobserved:
+                self._remember_late_error(error)
+
+    def _remember_late_error(self, error: BaseException | None) -> None:
+        if isinstance(error, SessionLogDurabilityError) and all(
+            error is not previous for previous in self._late_durability_errors
+        ):
+            self._late_durability_errors.append(error)
+
+    def _raise_late_errors(self) -> None:
+        if self._late_durability_errors:
+            first, *others = self._late_durability_errors
+            self._late_durability_errors.clear()
+            if others:
+                first.__notes__ = [*getattr(first, "__notes__", ()),
+                                   f"Additional Hook drain failures: {others!r}"]
+            raise first
+
+    def _abandon_task(self, task: asyncio.Task) -> None:
+        self._unobserved_tasks.add(task)
+        if task.done():
+            self._task_finished(task)
+        else:
+            task.cancel()
 
     async def _execute_entry(self, entry: RegistrationEntry, context: HookContext,
                              legacy_payload: dict[str, Any] | None = None) -> HookExecution:
@@ -241,6 +270,11 @@ class HookBus:
             spec = entry.spec
             if isinstance(spec.handler, LegacyHookAdapter):
                 decision = await spec.handler.handle_legacy(context.event, legacy_payload)
+                if context.event == "tool.after_execution" and decision is not None:
+                    # Match HookManager's protected two-value unpacking. An
+                    # invalid legacy return is an ordinary callback failure.
+                    content, error = decision
+                    decision = (content, error)
                 return HookExecution("completed", decision)
             if spec.matcher is not None:
                 matched = await getattr(spec.matcher, "matches", spec.matcher)(context)
@@ -258,6 +292,7 @@ class HookBus:
             return HookExecution("completed", decision)
 
         task = None
+        observed = False
         legacy = isinstance(entry.spec.handler, LegacyHookAdapter)
         try:
             if not legacy and context.is_cancelled():
@@ -278,6 +313,7 @@ class HookBus:
                     if remaining <= 0:
                         raise asyncio.TimeoutError
                     await asyncio.wait({task}, timeout=min(remaining, 0.05))
+                observed = True
                 execution = task.result()
                 if monotonic() > context.deadline:
                     raise asyncio.TimeoutError
@@ -288,12 +324,12 @@ class HookBus:
                 "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
                 error=type(error).__name__,
             )
-            if task is not None and not task.done():
-                task.cancel()
+            if task is not None and not observed:
+                self._abandon_task(task)
             raise
         except Exception as error:
-            if task is not None and not task.done():
-                task.cancel()
+            if task is not None and not observed:
+                self._abandon_task(task)
             execution = HookExecution("failed", error=type(error).__name__)
             _log.warning("Hook %s/%s failed: %s", entry.owner.plugin_id, entry.spec.hook_id, error)
             return execution
@@ -489,13 +525,21 @@ class HookBus:
 
     async def _drain(self) -> None:
         tasks = set(self._dispatches.values()) | self._tasks
+        handlers = set(self._tasks)
         tasks.discard(asyncio.current_task())
         for task in tasks:
-            if not task.done():
+            if task in handlers:
+                self._abandon_task(task)
+            elif not task.done():
                 task.cancel()
         if tasks:
             # 超时后仍存活的 Handler 也必须结束，才能销毁其插件实例。
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for task, result in zip(tasks, results):
+                if task in handlers:
+                    self._task_finished(task)
+                if isinstance(result, BaseException):
+                    self._remember_late_error(result)
             self._tasks.difference_update(task for task in tasks if task.done())
 
     async def close(self) -> None:
@@ -510,3 +554,4 @@ class HookBus:
                 await token.dispose()
             self._tokens.clear()
             self.state = "Closed"
+            self._raise_late_errors()

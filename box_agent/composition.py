@@ -274,10 +274,13 @@ async def _cleanup_hook_run(
     bus: HookBus, activation: PluginActivation | None, host: PluginHost | None,
 ) -> BaseException | None:
     """Drain handlers before releasing providers; carry failures across Task boundaries."""
+    errors: list[BaseException] = []
     try:
         await bus.close()
     except BaseException as error:
-        return error
+        if bus.state != "Closed":
+            return error
+        errors.append(error)
     if host is not None:
         try:
             await _cleanup_plugin_run(activation=activation, host=host)
@@ -295,8 +298,8 @@ async def _cleanup_hook_run(
                         break
             # Python 3.10 wraps cancellation raised by Task.result(), losing its
             # top-level cause. A task result preserves the exact error object.
-            return error
-    return None
+            errors.append(error)
+    return _combined_cleanup_error(errors) if errors else None
 
 
 async def _wait_for_hook_cleanup(task: asyncio.Task, *, settle: bool) -> None:

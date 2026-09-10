@@ -310,3 +310,69 @@ def test_decision_constructors_reject_contradictory_or_mutable_runtime_data():
     decision = BeforeToolDecision.modify(arguments)
     arguments["nested"].append(2)
     assert decision.arguments["nested"] == (1,)
+
+
+@pytest.mark.parametrize("finished_before_close", [False, True])
+async def test_late_durability_failure_is_preserved_after_timeout_and_drain(finished_before_close):
+    bus = HookBus(interceptor_timeout_ms=50)
+    release, cleanup_started, cleanup_finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    failure = SessionLogDurabilityError("late durable write failed")
+    if finished_before_close:
+        release.set()
+
+    async def handler(ctx):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    continue
+            cleanup_finished.set()
+            raise failure
+
+    token = register(bus, "late-write", handler)
+    bus.freeze()
+    result = await bus.before_tool(context(bus), {})
+    assert result.action == "deny"
+    await asyncio.wait_for(cleanup_started.wait(), 1)
+    if finished_before_close:
+        await asyncio.wait_for(cleanup_finished.wait(), 1)
+        await asyncio.sleep(0)
+        assert not bus._tasks
+    closing = asyncio.create_task(bus.close())
+    if not finished_before_close:
+        await asyncio.sleep(0)
+        assert not closing.done() and not token._disposed
+        release.set()
+    with pytest.raises(SessionLogDurabilityError) as captured:
+        await asyncio.wait_for(closing, 1)
+    assert captured.value is failure
+    assert cleanup_finished.is_set() and token._disposed
+    assert bus.state == "Closed" and not bus._tasks and not bus._dispatches
+    await bus.close()
+
+
+async def test_observed_late_durability_failure_prevents_the_next_dispatch():
+    bus = HookBus(interceptor_timeout_ms=50)
+    finished = asyncio.Event()
+    failure = SessionLogDurabilityError("late failure before next step")
+
+    async def handler(ctx):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            finished.set()
+            raise failure
+
+    register(bus, "late", handler)
+    bus.freeze()
+    assert (await bus.before_tool(context(bus), {})).action == "deny"
+    await asyncio.wait_for(finished.wait(), 1)
+    await asyncio.sleep(0)
+    with pytest.raises(SessionLogDurabilityError) as captured:
+        await bus.fire_step_start(step=2, max_steps=3)
+    assert captured.value is failure
+    await bus.close()
