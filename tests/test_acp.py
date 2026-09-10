@@ -21,6 +21,11 @@ import box_agent.composition as composition_module
 import box_agent.runtime as runtime_module
 from box_agent.acp import (
     BoxACPAgent,
+    _connected_connector_ids,
+    _connector_ids_from_meta,
+    _connector_status_context,
+    _connector_status_unavailable_from_meta,
+    _connector_statuses_from_meta,
     _inject_item_id,
     _latest_user_request_for_plan_detection,
     _looks_like_plan_approval_text,
@@ -61,6 +66,9 @@ from box_agent.tools.setup import (
 )
 from box_agent.workspace_registry import WorkspaceRegistry
 from tests.architecture_imports import forbidden_adapter_layer_imports
+
+
+_EMPTY_CONNECTOR_CONTEXT = "\n\n<connector-status>\nnone: selected\n</connector-status>"
 
 
 class DummyConn:
@@ -252,6 +260,96 @@ def test_acp_normalizes_structured_user_decision_response_meta():
         "custom_text": "",
         "trigger": "timeout",
     }
+
+
+def test_acp_normalizes_connector_selection_and_renders_session_scoped_status(monkeypatch):
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_connector_server_names",
+        lambda: {
+            "pkulaw": frozenset({"pkulaw-law-search-semantic", "pkulaw-citation"}),
+            "qixin": frozenset({"qixin-huiyan"}),
+        },
+    )
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_status",
+        lambda: [
+            {
+                "owner": "connector",
+                "connectorId": "pkulaw",
+                "connectorName": "北大法宝",
+                "name": "pkulaw-law-search-semantic",
+                "state": "connected",
+            },
+            {
+                "owner": "connector",
+                "connectorId": "pkulaw",
+                "connectorName": "北大法宝",
+                "name": "pkulaw-citation",
+                "state": "connected",
+            },
+            {
+                "owner": "connector",
+                "connectorId": "qixin",
+                "connectorName": "启信慧眼",
+                "name": "qixin-huiyan",
+                "state": "error",
+            },
+        ],
+    )
+
+    assert _connector_ids_from_meta({"selected_connector_ids": [" PKULAW ", "pkulaw"]}) == {
+        "pkulaw"
+    }
+    assert _connector_status_context({"pkulaw", "qixin"}) == (
+        "<connector-status>\n"
+        "pkulaw 北大法宝: connected\n"
+        "qixin 启信慧眼: disconnected\n"
+        "</connector-status>"
+    )
+    connector_statuses = _connector_statuses_from_meta(
+        {
+            "connector_statuses": [
+                {"id": "qixin", "name": "启信慧眼", "status": "disconnected"},
+                {"id": "pkulaw", "name": "北大法宝", "status": "connected"},
+            ]
+        }
+    )
+    assert connector_statuses == (
+        ("qixin", "启信慧眼", "disconnected"),
+        ("pkulaw", "北大法宝", "connected"),
+    )
+    assert _connector_status_context({"pkulaw"}, connector_statuses) == (
+        "<connector-status>\n"
+        "qixin 启信慧眼: disconnected\n"
+        "pkulaw 北大法宝: connected\n"
+        "</connector-status>"
+    )
+    assert _connector_status_unavailable_from_meta(
+        {"connector_status_unavailable": True}
+    ) is True
+    assert _connector_status_context(
+        {"pkulaw"}, connector_statuses, connector_status_unavailable=True
+    ) == (
+        "<connector-status>\n"
+        "status: unavailable\n"
+        "连接器状态读取失败，请勿沿用之前轮次的连接状态。\n"
+        "</connector-status>"
+    )
+    assert _connected_connector_ids({"pkulaw", "qixin"}) == frozenset({"pkulaw"})
+    with pytest.raises(ValueError, match="invalid connector id"):
+        _connector_ids_from_meta({"selected_connector_ids": ["pkulaw.connector"]})
+    with pytest.raises(ValueError, match="invalid status"):
+        _connector_statuses_from_meta(
+            {
+                "connector_statuses": [
+                    {"id": "pkulaw", "name": "北大法宝", "status": "connecting"}
+                ]
+            }
+        )
+    with pytest.raises(ValueError, match="must be a boolean"):
+        _connector_status_unavailable_from_meta(
+            {"connector_status_unavailable": "yes"}
+        )
     assert _user_decision_response_from_meta(
         {
             "user_decision": {
@@ -268,6 +366,98 @@ def test_acp_normalizes_structured_user_decision_response_meta():
         "custom_text": "突出年度案例",
         "trigger": "user",
     }
+
+
+def test_acp_marks_multi_server_connector_disconnected_when_any_server_is_down(monkeypatch):
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_connector_server_names",
+        lambda: {"pkulaw": frozenset({"pkulaw-search", "pkulaw-citation"})},
+    )
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_status",
+        lambda: [
+            {
+                "owner": "connector",
+                "connectorId": "pkulaw",
+                "connectorName": "北大法宝",
+                "name": "pkulaw-search",
+                "state": "connected",
+            },
+            {
+                "owner": "connector",
+                "connectorId": "pkulaw",
+                "connectorName": "北大法宝",
+                "name": "pkulaw-citation",
+                "state": "failed",
+            },
+        ],
+    )
+
+    assert _connector_status_context({"pkulaw"}) == (
+        "<connector-status>\npkulaw 北大法宝: disconnected\n</connector-status>"
+    )
+    assert _connected_connector_ids({"pkulaw"}) == frozenset()
+
+
+def test_acp_marks_multi_server_connector_disconnected_when_a_status_is_missing(monkeypatch):
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_connector_server_names",
+        lambda: {"pkulaw": frozenset({"pkulaw-search", "pkulaw-citation"})},
+    )
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_status",
+        lambda: [
+            {
+                "owner": "connector",
+                "connectorId": "pkulaw",
+                "connectorName": "北大法宝",
+                "name": "pkulaw-search",
+                "state": "connected",
+            }
+        ],
+    )
+
+    assert _connector_status_context({"pkulaw"}) == (
+        "<connector-status>\npkulaw 北大法宝: disconnected\n</connector-status>"
+    )
+    assert _connected_connector_ids({"pkulaw"}) == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_acp_session_metadata_hides_physically_isolated_connector_skills(tmp_path):
+    builtin_root = tmp_path / "builtin-skills"
+    connector_root = tmp_path / "connector-skills"
+    for root, name, description in (
+        (builtin_root, "ordinary-skill", "Ordinary visible Skill"),
+        (connector_root, "pkulaw", "Internal connector Skill"),
+    ):
+        skill_dir = root / name
+        skill_dir.mkdir(parents=True)
+        skill_dir.joinpath("SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n\nInstructions.\n",
+            encoding="utf-8",
+        )
+    skill_loader = SkillLoader(
+        sources=[(builtin_root, "builtin"), (connector_root, "connector")]
+    )
+    skill_loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(
+        DummyConn(),
+        config,
+        DummyLLM(),
+        [],
+        "system",
+        skill_loader=skill_loader,
+    )
+
+    session = await agent.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+
+    assert [item["name"] for item in session.field_meta["skills"]] == ["ordinary-skill"]
 
 
 @pytest.mark.asyncio
@@ -1160,11 +1350,154 @@ class DoneLLM:
 
 
 @pytest.mark.asyncio
+async def test_acp_appends_connector_status_to_every_user_turn(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_connector_server_names",
+        lambda: {"pkulaw": frozenset({"pkulaw-law-search-semantic"})},
+    )
+    monkeypatch.setattr(
+        "box_agent.acp.get_mcp_status",
+        lambda: [
+            {
+                "owner": "connector",
+                "connectorId": "pkulaw",
+                "connectorName": "北大法宝",
+                "name": "pkulaw-law-search-semantic",
+                "state": "connected",
+            }
+        ],
+    )
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "selected_connector_ids": ["pkulaw"],
+                "connector_statuses": [
+                    {"id": "qixin", "name": "启信慧眼", "status": "disconnected"},
+                    {"id": "pkulaw", "name": "北大法宝", "status": "connected"},
+                ],
+            },
+        )
+    )
+
+    await agent.prompt(
+        SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "first"}], field_meta={})
+    )
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "second"}],
+            field_meta={
+                "selected_connector_ids": [],
+                "connector_statuses": [
+                    {"id": "qixin", "name": "启信慧眼", "status": "disconnected"},
+                    {"id": "pkulaw", "name": "北大法宝", "status": "disconnected"},
+                ],
+            },
+        )
+    )
+
+    messages = agent._sessions[session.sessionId].agent.messages
+    assert messages[-4].content == (
+        "first\n\n<connector-status>\n"
+        "qixin 启信慧眼: disconnected\n"
+        "pkulaw 北大法宝: connected\n"
+        "</connector-status>"
+    )
+    assert messages[-2].content == (
+        "second\n\n<connector-status>\n"
+        "qixin 启信慧眼: disconnected\n"
+        "pkulaw 北大法宝: disconnected\n"
+        "</connector-status>"
+    )
+    session_log = agent._sessions[session.sessionId].agent.session_log
+    if session_log is not None:
+        session_log.close()
+
+
+@pytest.mark.asyncio
+async def test_acp_replaces_stale_connector_snapshot_when_host_status_is_unavailable(
+    tmp_path,
+):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    session = await agent.newSession(
+        SimpleNamespace(
+            cwd=str(tmp_path),
+            field_meta={
+                "selected_connector_ids": ["pkulaw"],
+                "connector_statuses": [
+                    {"id": "pkulaw", "name": "北大法宝", "status": "connected"}
+                ],
+            },
+        )
+    )
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "北大法宝还能用么"}],
+            field_meta={"connector_status_unavailable": True},
+        )
+    )
+
+    state = agent._sessions[session.sessionId]
+    assert state.connector_statuses is None
+    assert state.connector_status_unavailable is True
+    assert state.agent.messages[-2].content == (
+        "北大法宝还能用么\n\n"
+        "<connector-status>\n"
+        "status: unavailable\n"
+        "连接器状态读取失败，请勿沿用之前轮次的连接状态。\n"
+        "</connector-status>"
+    )
+
+    await agent.prompt(
+        SimpleNamespace(
+            sessionId=session.sessionId,
+            prompt=[{"text": "现在呢"}],
+            field_meta={
+                "connector_statuses": [
+                    {
+                        "id": "pkulaw",
+                        "name": "北大法宝",
+                        "status": "disconnected",
+                    }
+                ]
+            },
+        )
+    )
+
+    assert state.connector_statuses == (("pkulaw", "北大法宝", "disconnected"),)
+    assert state.connector_status_unavailable is False
+    assert state.agent.messages[-2].content == (
+        "现在呢\n\n"
+        "<connector-status>\n"
+        "pkulaw 北大法宝: disconnected\n"
+        "</connector-status>"
+    )
+    if state.agent.session_log is not None:
+        state.agent.session_log.close()
+
+
+@pytest.mark.asyncio
 async def test_acp_restarts_with_same_product_session_from_jsonl(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("BOX_AGENT_SKILL_TOOLS_ROOT", raising=False)
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
@@ -1191,7 +1524,7 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
 
     assert restarted.sessionId != first.sessionId
     assert [(message.role, message.content) for message in state.agent.messages[1:]] == [
-        ("user", "remember this"),
+        ("user", "remember this" + _EMPTY_CONNECTOR_CONTEXT),
         ("assistant", "done"),
     ]
     assert state.agent.session_log.events[-1]["type"] == "session/end-seed"
@@ -1218,7 +1551,7 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
         "stale migration seed"
     ) == 0
     assert [(message.role, message.content) for message in state.agent.messages[-2:]] == [
-        ("user", "continue after restart"),
+        ("user", "continue after restart" + _EMPTY_CONNECTOR_CONTEXT),
         ("assistant", "done"),
     ]
     state.agent.session_log.close()
@@ -1286,7 +1619,9 @@ async def test_acp_resumes_and_answers_when_previous_skills_are_unavailable(
             expected_names = ("available-skill",) if availability == "partial" else ()
             assert state.agent.active_skill_diagnostics()["names"] == expected_names
             assert "Instructions for missing-skill." not in state.agent.system_prompt
-            assert "remember me" in [message.content for message in state.agent.messages]
+            assert "remember me" + _EMPTY_CONNECTOR_CONTEXT in [
+                message.content for message in state.agent.messages
+            ]
             response = await restarted.prompt(
                 SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "continue"}])
             )
@@ -2155,6 +2490,93 @@ async def test_mcp_reconnect_injects_hidden_deferred_state_into_active_turns_onl
 
 
 @pytest.mark.asyncio
+async def test_mcp_credential_set_keeps_secret_out_of_result(tmp_path, monkeypatch):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+    captured = {}
+
+    def set_credential(credential_ref, headers):
+        captured.update({"credentialRef": credential_ref, "headers": headers})
+        return ["law"]
+
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.set_mcp_runtime_credential",
+        set_credential,
+    )
+
+    result = await agent.extMethod(
+        "mcp/credential/set",
+        {
+            "credentialRef": "connector:pkulaw:default",
+            "headers": {"Authorization": "Bearer secret"},
+        },
+    )
+
+    assert captured["headers"]["Authorization"] == "Bearer secret"
+    assert result == {"success": True, "affectedServers": ["law"]}
+    assert "secret" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_mcp_reconcile_delegates_source_diff_to_loader(tmp_path, monkeypatch):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+
+    async def reconcile(source):
+        return {"success": True, "source": source, "results": []}
+
+    monkeypatch.setattr(
+        "box_agent.tools.mcp_loader.reconcile_mcp_sources",
+        reconcile,
+    )
+
+    result = await agent.extMethod("mcp/reconcile", {"source": "connector"})
+
+    assert result == {"success": True, "source": "connector", "results": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("connector_ids", [None, ["pkulaw"]])
+async def test_mcp_source_replace_delegates_runtime_config_to_loader(tmp_path, monkeypatch, connector_ids):
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DummyLLM(), [], "system")
+    captured = {}
+
+    async def replace(source, source_config, ids=None):
+        captured.update({"source": source, "config": source_config})
+        if ids is not None:
+            captured["connectorIds"] = ids
+        return {"success": True, "source": source, "results": []}
+
+    monkeypatch.setattr("box_agent.tools.mcp_loader.replace_mcp_source", replace)
+
+    source_config = {
+        "mcpServers": {
+            "law": {"url": "https://example.test/mcp", "_connectorId": "pkulaw"}
+        }
+    }
+    params = {"source": "connector", "config": source_config}
+    if connector_ids is not None:
+        params["connectorIds"] = connector_ids
+    result = await agent.extMethod("mcp/source/replace", params)
+
+    assert captured == params
+    assert result == {"success": True, "source": "connector", "results": []}
+
+
+@pytest.mark.asyncio
 async def test_acp_auth_refresh_reconnects_and_injects_deferred_catalog_update(
     tmp_path,
     monkeypatch,
@@ -2221,7 +2643,9 @@ async def test_acp_seeds_negotiated_session_continuation_once(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path / "profile"))
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("BOX_AGENT_SKILL_TOOLS_ROOT", raising=False)
     agent, _ = acp_agent
     session = await agent.newSession(
         SimpleNamespace(
@@ -2253,7 +2677,7 @@ async def test_acp_seeds_negotiated_session_continuation_once(
     assert [(message.role, message.content) for message in state.agent.messages[1:4]] == [
         ("user", "制作融资 BP"),
         ("assistant", "已生成 index.html"),
-        ("user", "修改第一页标题"),
+        ("user", "修改第一页标题" + _EMPTY_CONNECTOR_CONTEXT),
     ]
 
     await agent.prompt(
@@ -3170,7 +3594,7 @@ async def test_acp_goal_pause_stops_prompt_injection(tmp_path):
     await agent.prompt(SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "side question"}]))
 
     latest_user = [content for role, content in llm.calls[-1] if role == "user"][-1]
-    assert latest_user == "side question"
+    assert latest_user == "side question" + _EMPTY_CONNECTOR_CONTEXT
 
 
 @pytest.mark.asyncio
@@ -3437,7 +3861,8 @@ async def test_acp_turn_cleanup_preserves_running_session_scratch(
     class ConcurrentLLM(DoneLLM):
         async def generate_stream(self, messages, tools=None, **kwargs):
             if any(
-                message.role == "user" and message.content == "keep running"
+                message.role == "user"
+                and message.content == "keep running" + _EMPTY_CONNECTOR_CONTEXT
                 for message in messages
             ):
                 second_started.set()
@@ -4236,7 +4661,7 @@ async def test_acp_skill_filter_ignores_host_ui_language_instruction(tmp_path):
         "[Host UI language: Chinese. Use this language for user-visible "
         "intermediate summaries, progress updates, and the final response unless the user "
         "explicitly requests another language.]\n\n"
-        "孙宇晨最新的回复是什么"
+        "孙宇晨最新的回复是什么" + _EMPTY_CONNECTOR_CONTEXT
     ]
 
 

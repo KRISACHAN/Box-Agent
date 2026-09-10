@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from box_agent.agent import Agent
-from box_agent.events import DoneEvent
+from box_agent.events import DoneEvent, SummarizationEvent
 from box_agent.hooks import BaseHook
 from box_agent.schema import FunctionCall, LLMResponse, Message, StreamEvent, ToolCall
 from box_agent.session_log import SessionLog, SessionLogDurabilityError
@@ -262,7 +262,9 @@ async def test_compaction_is_durable_before_live_context_switch(tmp_path):
         system_prompt="system",
         tools=[],
         workspace_dir=str(tmp_path),
-        token_limit=5_000,
+        # Keep room for tool_search's local/connector schema after compaction,
+        # while the long history still forces the real summary path below.
+        token_limit=8_000,
         deferred_mcp_loading_enabled=False,
         session_log=log,
     )
@@ -272,8 +274,12 @@ async def test_compaction_is_durable_before_live_context_switch(tmp_path):
     agent.add_user_message("latest request")
     options = replace(agent.default_run_options(), summary_llm=summary_llm)
 
-    _ = [event async for event in agent.run_events(options=options)]
+    events = [event async for event in agent.run_events(options=options)]
 
+    compactions = [event for event in events if isinstance(event, SummarizationEvent)]
+    assert len(compactions) == 1
+    assert compactions[0].mode == "summary"
+    assert compactions[0].estimated_tokens > 8_000 > compactions[0].estimated_after
     assert summary_llm.saw_start
     assert llm.saw_replacement
     assert any(

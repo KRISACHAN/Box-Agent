@@ -92,6 +92,7 @@ def build_agent(
     max_truncated_tool_call_retries: int = 3,
     truncated_tool_call_boost_cap: int = 32768,
     context_resource_dedup_enabled: bool = True,
+    allowed_connector_ids_provider: Callable[[], frozenset[str]] | None = None,
     deferred_mcp_loading_enabled: bool = True,
     session_log: Any = _UNSET,
     enable_builtin_tools: bool | object = _UNSET,
@@ -125,6 +126,7 @@ def build_agent(
         "max_truncated_tool_call_retries": max_truncated_tool_call_retries,
         "truncated_tool_call_boost_cap": truncated_tool_call_boost_cap,
         "context_resource_dedup_enabled": context_resource_dedup_enabled,
+        "allowed_connector_ids_provider": allowed_connector_ids_provider,
         "deferred_mcp_loading_enabled": deferred_mcp_loading_enabled,
     }
     if hooks is not _UNSET:

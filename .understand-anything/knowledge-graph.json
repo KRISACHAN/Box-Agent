@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T16:13:23.313Z",
-    "gitCommitHash": "ea99fc5ae17f19f2dd752b2264cd3134a36c07ae"
+    "analyzedAt": "2026-09-10T18:06:25.517Z",
+    "gitCommitHash": "be3c151a0d056623795b6c799a298919e6ed6ae0"
   },
   "nodes": [
     {
@@ -5922,7 +5922,7 @@
       "type": "file",
       "name": "sub_agent_capabilities.py",
       "filePath": "box_agent/tools/sub_agent_capabilities.py",
-      "summary": "解析委派能力规范，并解析子代理可获得的工具、Skill、预算与约束。",
+      "summary": "解析委派能力规范并对照父会话实时能力收紧工具、Skill、预算和约束；可用注入的会话访问过滤器检查必需 Skill 及其依赖。",
       "tags": [
         "子任务",
         "能力解析",
@@ -6154,9 +6154,9 @@
       "filePath": "box_agent/tools/sub_agent_capabilities.py",
       "lineRange": [
         533,
-        699
+        711
       ],
-      "summary": "对照父会话实时工具和 SkillLoader 解析能力，拒绝递归委派及约束冲突，并校验 Skill 缺失、禁用、损坏和依赖环。",
+      "summary": "对照父会话实时工具和 SkillLoader 解析能力，拒绝递归委派、约束冲突及缺失、禁用、损坏或成环的 Skill；注入会话过滤器时逐项检查请求及依赖 Skill，并在未获启用时返回结构化失败。",
       "tags": [
         "子任务",
         "能力解析",
@@ -6230,11 +6230,11 @@
       "type": "file",
       "name": "mcp_loader.py",
       "filePath": "box_agent/tools/mcp_loader.py",
-      "summary": "管理 MCP 服务器连接、动态认证、工具包装、状态目录和重连流程。",
+      "summary": "从隔离来源管理 MCP 注册表、connector 专属进程内凭证与逐服务重连，来源更新持锁后先等待冷发现就绪，超时不修改配置。作用域撤销与热重连共享同名服务锁，独立服务并发启动，旧 owner 撤销后不会自动激活范围外同名来源。",
       "tags": [
-        "python",
-        "runtime",
-        "mcp"
+        "mcp",
+        "connectors",
+        "lifecycle"
       ],
       "complexity": "complex"
     },
@@ -6244,15 +6244,16 @@
       "name": "_warn",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        76,
-        78
+        82,
+        84
       ],
-      "summary": "`_warn` 函数负责 warn 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "将 MCP 诊断输出到 stderr，避免污染 ACP stdout 协议流。",
       "tags": [
         "function",
         "python",
         "runtime",
-        "mcp"
+        "mcp",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6262,10 +6263,10 @@
       "name": "_public_mcp_tool_name",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        81,
-        95
+        87,
+        107
       ],
-      "summary": "`_public_mcp_tool_name` 函数负责 public、mcp、tool、name 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "保留浏览器工具的既有公开映射，为连接器工具增加服务命名空间，并用稳定哈希处理非法字符或过长名称。",
       "tags": [
         "function",
         "tools",
@@ -6281,15 +6282,16 @@
       "name": "_replace_server_catalog",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        98,
-        112
+        115,
+        129
       ],
-      "summary": "`_replace_server_catalog` 函数负责 replace、server、catalog 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "替换服务器工具目录并报告名称冲突，由目录隐藏冲突目标。",
       "tags": [
         "function",
         "python",
         "runtime",
-        "mcp"
+        "mcp",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6299,15 +6301,16 @@
       "name": "_structured_mcp_error_message",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        115,
-        134
+        132,
+        151
       ],
-      "summary": "`_structured_mcp_error_message` 函数负责 structured、mcp、error、message 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "从误缺 isError 标记的 JSON 错误封装中恢复可用错误信息。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6317,15 +6320,16 @@
       "name": "_walk_exception_tree",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        137,
-        161
+        154,
+        178
       ],
-      "summary": "`_walk_exception_tree` 函数负责 walk、exception、tree 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "按对象身份去重遍历异常组、cause 和 context，保留底层传输错误。",
       "tags": [
         "function",
         "python",
         "runtime",
-        "mcp"
+        "mcp",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6335,10 +6339,10 @@
       "name": "_http_statuses_from_exception",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        164,
-        176
+        181,
+        193
       ],
-      "summary": "`_http_statuses_from_exception` 函数负责 http、statuses、from、exception 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "从完整异常链提取有效 HTTP 状态码，兼容异常对象和其 response。",
       "tags": [
         "function",
         "status",
@@ -6354,10 +6358,10 @@
       "name": "_mcp_auth_status",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        179,
-        188
+        196,
+        205
       ],
-      "summary": "`_mcp_auth_status` 函数负责 mcp、auth、status 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "汇总异常链中的认证状态，优先识别 401，再识别 403。",
       "tags": [
         "function",
         "mcp",
@@ -6373,10 +6377,10 @@
       "name": "_is_mcp_authentication_error",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        191,
-        192
+        208,
+        209
       ],
-      "summary": "`_is_mcp_authentication_error` 函数负责 is、mcp、authentication、error 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "判断异常链是否包含 MCP 认证或授权失败状态。",
       "tags": [
         "function",
         "mcp",
@@ -6392,15 +6396,16 @@
       "name": "_mcp_connection_error_message",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        195,
-        216
+        212,
+        233
       ],
-      "summary": "`_mcp_connection_error_message` 函数负责 mcp、connection、error、message 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "优先报告真实 HTTP 认证失败或底层传输问题，避免清理产生的取消异常掩盖原因。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6410,10 +6415,10 @@
       "name": "_has_authorization_header",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        275,
-        276
+        292,
+        293
       ],
-      "summary": "`_has_authorization_header` 函数负责 has、authorization、header 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "以不区分大小写方式判断配置是否已包含 Authorization。",
       "tags": [
         "function",
         "authentication",
@@ -6429,10 +6434,10 @@
       "name": "_dynamic_bearer_auth_for_url",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        279,
-        287
+        296,
+        304
       ],
-      "summary": "`_dynamic_bearer_auth_for_url` 函数负责 dynamic、bearer、auth、for、url 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "仅为允许附加产品认证且未显式配置 Authorization 的 URL 建立动态 bearer hook。",
       "tags": [
         "function",
         "authentication",
@@ -6448,15 +6453,16 @@
       "name": "set_mcp_timeout_config",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        290,
-        308
+        307,
+        325
       ],
-      "summary": "`set_mcp_timeout_config` 函数负责 set、mcp、timeout、config 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "仅更新调用方显式提供的全局 MCP 超时值。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6466,15 +6472,16 @@
       "name": "get_mcp_timeout_config",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        311,
-        313
+        328,
+        330
       ],
-      "summary": "`get_mcp_timeout_config` 函数负责 get、mcp、timeout、config 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "返回当前 MCP 连接和执行默认超时配置。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6484,10 +6491,10 @@
       "name": "_current_mcp_auth_fingerprint",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        937,
-        942
+        987,
+        992
       ],
-      "summary": "`_current_mcp_auth_fingerprint` 函数负责 current、mcp、auth、fingerprint 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "计算当前产品登录认证指纹，以判断认证失败服务是否需要在 token 更新后重连。",
       "tags": [
         "function",
         "mcp",
@@ -6503,10 +6510,10 @@
       "name": "is_mcp_loading",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        945,
-        946
+        995,
+        996
       ],
-      "summary": "`is_mcp_loading` 函数负责 is、mcp、loading 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "报告 MCP 首次加载是否仍在进行。",
       "tags": [
         "function",
         "loading",
@@ -6522,10 +6529,10 @@
       "name": "get_mcp_config_path",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        949,
-        950
+        999,
+        1000
       ],
-      "summary": "`get_mcp_config_path` 函数负责 get、mcp、config、path 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "返回本轮 MCP 加载保存的主配置路径。",
       "tags": [
         "function",
         "mcp",
@@ -6541,10 +6548,10 @@
       "name": "get_mcp_tools_for_server",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        953,
-        956
+        1007,
+        1010
       ],
-      "summary": "`get_mcp_tools_for_server` 函数负责 get、mcp、tools、for、server 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "返回指定已连接服务当前持有的工具列表。",
       "tags": [
         "function",
         "tools",
@@ -6560,10 +6567,10 @@
       "name": "get_all_mcp_tools",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        959,
-        961
+        1013,
+        1015
       ],
-      "summary": "`get_all_mcp_tools` 函数负责 get、all、mcp、tools 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "汇总全部活动 MCP 连接的工具对象。",
       "tags": [
         "function",
         "tools",
@@ -6579,15 +6586,16 @@
       "name": "disconnect_mcp_server",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        964,
-        978
+        1018,
+        1032
       ],
-      "summary": "`disconnect_mcp_server` 函数负责 disconnect、mcp、server 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "关闭并移除指定服务的连接及工具目录，并同步其状态。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6597,10 +6605,10 @@
       "name": "_record_status",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        981,
-        999
+        1035,
+        1062
       ],
-      "summary": "`_record_status` 函数负责 record、status 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "记录服务状态与来源身份，规范认证状态，并保持状态载荷不含凭证 headers。",
       "tags": [
         "function",
         "status",
@@ -6616,10 +6624,10 @@
       "name": "get_mcp_status",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1002,
-        1014
+        1065,
+        1082
       ],
-      "summary": "`get_mcp_status` 函数负责 get、mcp、status 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "导出服务状态、owner/configId、连接器名称、sourcePath 和工具元数据。",
       "tags": [
         "function",
         "mcp",
@@ -6635,15 +6643,16 @@
       "name": "_determine_connection_type",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1017,
-        1025
+        1085,
+        1093
       ],
-      "summary": "`_determine_connection_type` 函数负责 determine、connection、type 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "从显式传输配置或 URL 推导服务连接类型，默认使用 stdio。",
       "tags": [
         "function",
         "python",
         "runtime",
-        "mcp"
+        "mcp",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6653,10 +6662,10 @@
       "name": "_resolve_mcp_config_path",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1028,
-        1056
+        1249,
+        1277
       ],
-      "summary": "`_resolve_mcp_config_path` 函数负责 resolve、mcp、config、path 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "按既有用户、工作目录和项目回退规则解析主 MCP 配置文件。",
       "tags": [
         "function",
         "resolution",
@@ -6672,10 +6681,10 @@
       "name": "load_mcp_tools_async",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1059,
-        1235
+        1280,
+        1434
       ],
-      "summary": "`load_mcp_tools_async` 函数负责 load、mcp、tools、async 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "解析多来源注册表并并发启动启用服务；有 credentialRef 但缺凭证时记录等待状态，不创建传输，再发布连接状态与工具目录。",
       "tags": [
         "function",
         "loading",
@@ -6691,15 +6700,16 @@
       "name": "cleanup_mcp_connections",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1238,
-        1245
+        1437,
+        1448
       ],
-      "summary": "`cleanup_mcp_connections` 函数负责 cleanup、mcp、connections 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "关闭连接并清空来源定义、内存来源覆盖、状态与工具目录；运行时凭证仍由进程内凭证接口管理。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6709,15 +6719,16 @@
       "name": "reconnect_mcp_server",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1248,
-        1252
+        1451,
+        1467
       ],
-      "summary": "`reconnect_mcp_server` 函数负责 reconnect、mcp、server 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "串行化同一服务的热重连，只刷新该服务定义的凭证与配置指纹，避免提前推进其他服务的版本状态。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6727,10 +6738,10 @@
       "name": "reconnect_auth_failed_mcp_servers_if_token_changed",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1255,
-        1282
+        1641,
+        1668
       ],
-      "summary": "`reconnect_auth_failed_mcp_servers_if_token_changed` 函数负责 reconnect、auth、failed、mcp、servers、if 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "在产品登录指纹变化后重连认证失败的 MCP 服务，保留逐服务重连锁。",
       "tags": [
         "function",
         "mcp",
@@ -6746,15 +6757,16 @@
       "name": "_reconnect_mcp_server_locked",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1285,
-        1395
+        1671,
+        1745
       ],
-      "summary": "`_reconnect_mcp_server_locked` 函数负责 reconnect、mcp、server、locked 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "从已解析注册表重建单个服务连接；缺宿主凭证时只返回等待状态，连接成功后更新工具目录及来源状态。",
       "tags": [
         "function",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "moderate"
     },
@@ -6764,15 +6776,16 @@
       "name": "MCPTimeoutConfig",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        230,
-        235
+        247,
+        252
       ],
-      "summary": "`MCPTimeoutConfig` 类负责 MCPTimeoutConfig 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "保存连接、工具执行与 SSE 读取的全局默认超时。",
       "tags": [
         "class",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "simple"
     },
@@ -6782,10 +6795,10 @@
       "name": "DynamicBearerAuth",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        242,
-        272
+        259,
+        289
       ],
-      "summary": "`DynamicBearerAuth` 类负责 DynamicBearerAuth 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "在每次适用的 HTTP 请求时读取最新产品登录 token，保留已有 Authorization 并限制可附加认证的地址。",
       "tags": [
         "class",
         "authentication",
@@ -6801,10 +6814,10 @@
       "name": "MCPTool",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        316,
-        502
+        333,
+        531
       ],
-      "summary": "`MCPTool` 类负责 MCPTool 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "把远端 MCP 工具封装为本地 Tool，保留服务与连接器身份、参数、generation、常驻策略和并发限制，向真实会话提交调用。",
       "tags": [
         "class",
         "tools",
@@ -6820,15 +6833,16 @@
       "name": "MCPServerConnection",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        505,
-        907
+        534,
+        946
       ],
-      "summary": "`MCPServerConnection` 类负责 MCPServerConnection 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "管理 stdio、SSE 与 Streamable HTTP 连接、逐服务超时和生命周期；将连接器身份及所属服务加载策略传递给发现的工具。",
       "tags": [
         "class",
         "mcp",
         "python",
-        "runtime"
+        "runtime",
+        "connectors"
       ],
       "complexity": "complex"
     },
@@ -6838,10 +6852,10 @@
       "name": "McpServerStatus",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        916,
-        923
+        956,
+        968
       ],
-      "summary": "`McpServerStatus` 类负责 McpServerStatus 相关逻辑，是 `box_agent/tools/mcp_loader.py` 职责的一部分。",
+      "summary": "保存服务连接状态、来源 owner/configId、连接器元数据及工具计数，不包含运行时凭证 headers。",
       "tags": [
         "class",
         "mcp",
@@ -9902,7 +9916,7 @@
       "type": "file",
       "name": "skill_tool.py",
       "filePath": "box_agent/tools/skill_tool.py",
-      "summary": "把 SkillLoader 封装为模型可调用的 Skill 读取工具集合。",
+      "summary": "把 SkillLoader 封装为按需读取 Skill 正文的工具，并支持在返回内容前应用会话级 Skill 访问过滤。",
       "tags": [
         "python",
         "runtime",
@@ -9916,10 +9930,10 @@
       "name": "create_skill_tools",
       "filePath": "box_agent/tools/skill_tool.py",
       "lineRange": [
-        130,
-        163
+        142,
+        175
       ],
-      "summary": "`create_skill_tools` 函数负责 create、skill、tools 相关逻辑，是 `box_agent/tools/skill_tool.py` 职责的一部分。",
+      "summary": "从单一目录或有优先级的 builtin、connector、user 来源创建 SkillLoader 和 get_skill 工具，支持把目录发现留给宿主后台任务。",
       "tags": [
         "function",
         "creation",
@@ -9936,9 +9950,9 @@
       "filePath": "box_agent/tools/skill_tool.py",
       "lineRange": [
         17,
-        127
+        139
       ],
-      "summary": "`GetSkillTool` 类负责 GetSkillTool 相关逻辑，是 `box_agent/tools/skill_tool.py` 职责的一部分。",
+      "summary": "按需刷新并读取 Skill，处理执行配置禁用、预载内容去重和损坏诊断；注入访问过滤器时拒绝返回当前会话未启用的 Skill 正文。",
       "tags": [
         "class",
         "skills",
@@ -10190,12 +10204,11 @@
       "type": "file",
       "name": "build_runtime.py",
       "filePath": "scripts/build_runtime.py",
-      "summary": "构建跨平台 PyInstaller 运行时，打包 Node/浏览器等组件并可安装到 OfficeV3。",
+      "summary": "构建跨平台独立 ACP 运行时及可迁移资源包，可安装至 OfficeV3；manifest 宣告 connector_skill_sources_version 与 mcp_multi_source_version 均为 1。",
       "tags": [
-        "python",
+        "packaging",
         "runtime",
-        "runtime-management",
-        "packaging"
+        "manifest"
       ],
       "complexity": "complex"
     },
@@ -10208,7 +10221,7 @@
         159,
         161
       ],
-      "summary": "`env_flag` 函数负责 env、flag 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "将环境变量的常见真值拼写转换为构建布尔开关。",
       "tags": [
         "function",
         "python",
@@ -10227,7 +10240,7 @@
         164,
         257
       ],
-      "summary": "`pyinstaller_hidden_imports` 函数负责 pyinstaller、hidden、imports 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "列出独立 ACP 运行时所需 PyInstaller 隐式导入，并适配外部 Python 沙箱模式。",
       "tags": [
         "function",
         "installation",
@@ -10246,7 +10259,7 @@
         260,
         280
       ],
-      "summary": "`pyinstaller_collect_args` 函数负责 pyinstaller、collect、args 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "生成打包运行时所需依赖资源的 PyInstaller collect 参数。",
       "tags": [
         "function",
         "installation",
@@ -10265,7 +10278,7 @@
         283,
         290
       ],
-      "summary": "`pyinstaller_exclude_args` 函数负责 pyinstaller、exclude、args 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "为外部 Python 沙箱构建生成明确的模块排除参数。",
       "tags": [
         "function",
         "installation",
@@ -10284,7 +10297,7 @@
         293,
         309
       ],
-      "summary": "`detect_platform` 函数负责 detect、platform 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "把当前 Python 进程的平台与架构规范化为 Electron 使用的标识。",
       "tags": [
         "function",
         "python",
@@ -10303,7 +10316,7 @@
         312,
         326
       ],
-      "summary": "`parse_target` 函数负责 parse、target 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "解析并校验目标平台与架构，缺省时使用当前进程平台。",
       "tags": [
         "function",
         "parsing",
@@ -10322,7 +10335,7 @@
         329,
         342
       ],
-      "summary": "`require_supported_build_process` 函数负责 require、supported、build、process 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "拒绝当前构建进程无法产出的平台组合，避免生成错误目标元数据。",
       "tags": [
         "function",
         "builder",
@@ -10341,7 +10354,7 @@
         345,
         381
       ],
-      "summary": "`verify_entry_binary_arch` 函数负责 verify、entry、binary、arch 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "检查已打包启动器的实际 CPU 架构是否符合声明目标。",
       "tags": [
         "function",
         "python",
@@ -10360,7 +10373,7 @@
         384,
         389
       ],
-      "summary": "`pyinstaller_target_arch_args` 函数负责 pyinstaller、target、arch、args 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "为 macOS 目标生成 PyInstaller 架构参数。",
       "tags": [
         "function",
         "installation",
@@ -10379,7 +10392,7 @@
         392,
         403
       ],
-      "summary": "`bundled_stable_runtime_components` 函数负责 bundled、stable、runtime、components 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "按目标平台和外部沙箱模式确定要随包携带的稳定运行时组件。",
       "tags": [
         "function",
         "runtime",
@@ -10396,9 +10409,9 @@
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
         406,
-        433
+        435
       ],
-      "summary": "`build_runtime_manifest` 函数负责 build、runtime、manifest 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "生成独立运行时入口与组件清单，宣告 connector_skill_sources_version=1 和 mcp_multi_source_version=1 两项能力版本。",
       "tags": [
         "function",
         "builder",
@@ -10414,10 +10427,10 @@
       "name": "resolve_officev3_dir",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        439,
-        463
+        441,
+        465
       ],
-      "summary": "`resolve_officev3_dir` 函数负责 resolve、officev3、dir 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "定位包含运行时安装器的 OfficeV3 checkout，支持显式参数与环境路径。",
       "tags": [
         "function",
         "resolution",
@@ -10433,10 +10446,10 @@
       "name": "install_runtime_into_officev3",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        466,
-        511
+        468,
+        513
       ],
-      "summary": "`install_runtime_into_officev3` 函数负责 install、runtime、into、officev3 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "调用 OfficeV3 安装器把已构建归档安装至 build-resources，并核对预期版本。",
       "tags": [
         "function",
         "installation",
@@ -10452,10 +10465,10 @@
       "name": "build_runtime",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        514,
-        697
+        516,
+        699
       ],
-      "summary": "`build_runtime` 函数负责 build、runtime 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "编排平台校验、PyInstaller 构建、资源收集、manifest 与归档输出，返回运行时包路径。",
       "tags": [
         "function",
         "builder",
@@ -10471,10 +10484,10 @@
       "name": "_install_bundled_node_runtime",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        700,
-        709
+        702,
+        711
       ],
-      "summary": "`_install_bundled_node_runtime` 函数负责 install、bundled、node、runtime 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "向 macOS 运行时包安装可迁移 Node 组件并清理下载缓存。",
       "tags": [
         "function",
         "installation",
@@ -10490,10 +10503,10 @@
       "name": "_install_bundled_win_runtimes",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        712,
-        731
+        714,
+        733
       ],
-      "summary": "`_install_bundled_win_runtimes` 函数负责 install、bundled、win、runtimes 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "向 Windows 包组合 PortableGit、独立 Python 与 Node，减少对系统工具的依赖。",
       "tags": [
         "function",
         "installation",
@@ -10509,10 +10522,10 @@
       "name": "_install_portable_git_win",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        734,
-        780
+        736,
+        782
       ],
-      "summary": "`_install_portable_git_win` 函数负责 install、portable、git、win 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "下载、校验并解包 Windows PortableGit 到运行时目录。",
       "tags": [
         "function",
         "installation",
@@ -10528,10 +10541,10 @@
       "name": "_install_portable_python_win",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        783,
-        845
+        785,
+        847
       ],
-      "summary": "`_install_portable_python_win` 函数负责 install、portable、python、win 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "下载、校验并安装 Windows 独立 Python，再补充沙箱依赖。",
       "tags": [
         "function",
         "installation",
@@ -10547,10 +10560,10 @@
       "name": "_install_sandbox_packages_win",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        857,
-        893
+        859,
+        895
       ],
-      "summary": "`_install_sandbox_packages_win` 函数负责 install、sandbox、packages、win 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "在随包便携 Python 中预装沙箱数据处理依赖，并隔离父进程虚拟环境标记。",
       "tags": [
         "function",
         "installation",
@@ -10566,10 +10579,10 @@
       "name": "_download_to",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        896,
-        905
+        898,
+        907
       ],
-      "summary": "`_download_to` 函数负责 download、to 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "把远端内容写入临时文件后原子替换目标下载文件。",
       "tags": [
         "function",
         "loading",
@@ -10585,10 +10598,10 @@
       "name": "_sha256_file",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        908,
-        913
+        910,
+        915
       ],
-      "summary": "`_sha256_file` 函数负责 sha256、file 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "分块计算文件 SHA-256，避免一次读入整份归档。",
       "tags": [
         "function",
         "python",
@@ -10604,10 +10617,10 @@
       "name": "_verify_sha256",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        916,
-        927
+        918,
+        929
       ],
-      "summary": "`_verify_sha256` 函数负责 verify、sha256 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "比较下载归档与固定 SHA-256，不匹配时中止构建。",
       "tags": [
         "function",
         "python",
@@ -10623,10 +10636,10 @@
       "name": "_relativize_node_manifest",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        930,
-        947
+        932,
+        949
       ],
-      "summary": "`_relativize_node_manifest` 函数负责 relativize、node、manifest 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "将 Node manifest 路径转换为相对 node_root 的形式，使归档可迁移。",
       "tags": [
         "function",
         "python",
@@ -10642,10 +10655,10 @@
       "name": "main",
       "filePath": "scripts/build_runtime.py",
       "lineRange": [
-        952,
-        1037
+        954,
+        1039
       ],
-      "summary": "`main` 函数负责 main 相关逻辑，是 `scripts/build_runtime.py` 职责的一部分。",
+      "summary": "解析独立运行时构建参数，执行构建并按请求安装到 OfficeV3。",
       "tags": [
         "function",
         "python",
@@ -23008,11 +23021,11 @@
       "type": "file",
       "name": "mcp_bootstrap.py",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
-      "summary": "初始化托管搜索和内置 Web Extract 的 MCP 配置，保留用户设置并向托管 stdio 服务传播当前 profile。",
+      "summary": "初始化托管搜索和内置 Web Extract 的 MCP 配置，保留受保护的用户设置；支持宿主指定的 system MCP 配置路径，未指定时保留旧用户路径。",
       "tags": [
         "mcp",
-        "配置初始化",
-        "托管服务"
+        "configuration",
+        "bootstrap"
       ],
       "complexity": "complex"
     },
@@ -23030,7 +23043,8 @@
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23041,14 +23055,15 @@
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
         56,
-        58
+        61
       ],
-      "summary": "定位当前 profile 的默认托管 MCP 配置文件。",
+      "summary": "优先返回 BOX_AGENT_MANAGED_MCP_CONFIG_PATH 指定的宿主 system MCP 来源，否则沿用当前 profile 的旧用户配置路径。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23058,15 +23073,16 @@
       "name": "_normalize_hosted_search_url",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        61,
-        77
+        64,
+        80
       ],
       "summary": "规范托管搜索地址，去除不合适的尾部格式。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23076,15 +23092,16 @@
       "name": "_is_official_hosted_search_url",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        80,
-        89
+        83,
+        92
       ],
       "summary": "识别内置托管搜索服务地址以控制自动配置覆盖范围。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23094,15 +23111,16 @@
       "name": "_resolve_hosted_search_server",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        92,
-        103
+        95,
+        106
       ],
       "summary": "依据配置和环境选择托管搜索 MCP 的传输与认证设置。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23112,15 +23130,16 @@
       "name": "_bundled_mcp_servers",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        106,
-        156
+        109,
+        159
       ],
       "summary": "收集打包运行时提供的内置 MCP 服务定义。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "moderate"
     },
@@ -23130,15 +23149,16 @@
       "name": "_web_extract_server",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        159,
-        171
+        162,
+        174
       ],
       "summary": "构造内置 Web Extract 的 stdio 启动项并绑定所需 profile 环境。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23148,15 +23168,16 @@
       "name": "_merge_managed_entry",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        174,
-        185
+        177,
+        188
       ],
       "summary": "更新托管服务的受控字段并保留不属于管理范围的用户配置。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23166,15 +23187,16 @@
       "name": "_merge_hosted_search_url",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        188,
-        209
+        191,
+        212
       ],
       "summary": "合并托管搜索 URL 的更新，保护显式自定义的服务地址。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23184,15 +23206,16 @@
       "name": "_atomic_write_json",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        212,
-        229
+        215,
+        232
       ],
       "summary": "先写临时文件再原子替换 MCP JSON，避免部分写入。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23202,15 +23225,16 @@
       "name": "bootstrap_managed_mcp_config",
       "filePath": "box_agent/tools/mcp_bootstrap.py",
       "lineRange": [
-        232,
-        315
+        235,
+        318
       ],
       "summary": "读取并合并托管 MCP 服务，必要时原子写回并返回变更结果。",
       "tags": [
         "工具函数",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "moderate"
     },
@@ -23228,7 +23252,8 @@
         "数据模型",
         "mcp",
         "配置初始化",
-        "托管服务"
+        "托管服务",
+        "configuration"
       ],
       "complexity": "simple"
     },
@@ -23237,7 +23262,7 @@
       "type": "file",
       "name": "mcp_config_tool.py",
       "filePath": "box_agent/tools/mcp_config_tool.py",
-      "summary": "通过工具接口查询和修改 MCP 服务配置，跟随 loader 实际路径并约束显式 profile 的写入边界。",
+      "summary": "通过工具接口查询和修改 MCP 服务配置；优先写入宿主指定的用户配置，未指定时跟随 loader 实际路径，并约束显式 profile 的写入边界。",
       "tags": [
         "mcp",
         "配置",
@@ -23251,8 +23276,8 @@
       "name": "_updated_server_config",
       "filePath": "box_agent/tools/mcp_config_tool.py",
       "lineRange": [
-        33,
-        81
+        34,
+        82
       ],
       "summary": "在现有 MCP 服务配置上应用用户请求的启用或字段更新。",
       "tags": [
@@ -23269,8 +23294,8 @@
       "name": "_browser_config_summary",
       "filePath": "box_agent/tools/mcp_config_tool.py",
       "lineRange": [
-        84,
-        128
+        85,
+        129
       ],
       "summary": "提取浏览器 MCP 配置的可读摘要并保留关键启用状态。",
       "tags": [
@@ -23287,10 +23312,10 @@
       "name": "_resolve_write_target",
       "filePath": "box_agent/tools/mcp_config_tool.py",
       "lineRange": [
-        131,
-        163
+        132,
+        169
       ],
-      "summary": "选择 loader 正在使用的 MCP 配置文件并校验写入不逃出显式 profile。",
+      "summary": "优先选择宿主指定的用户 MCP 配置，否则沿用 loader 与用户配置回退路径；通过 state_path 校验显式 profile 的写入范围。",
       "tags": [
         "工具函数",
         "mcp",
@@ -23305,8 +23330,8 @@
       "name": "McpConfigTool",
       "filePath": "box_agent/tools/mcp_config_tool.py",
       "lineRange": [
-        166,
-        370
+        172,
+        376
       ],
       "summary": "向模型提供 MCP 配置查看和更新能力，保存变更并刷新可用服务状态。",
       "tags": [
@@ -25747,8 +25772,8 @@
       "name": "trusted_runtime_executable_references",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        128,
-        153
+        129,
+        154
       ],
       "summary": "列出被信任的运行时可执行文件引用，供 Shell 安全分析识别。",
       "tags": [
@@ -25765,8 +25790,8 @@
       "name": "detect_dangerous_command",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        156,
-        198
+        157,
+        199
       ],
       "summary": "检测破坏性命令模式并返回需审批的风险原因。",
       "tags": [
@@ -25783,8 +25808,8 @@
       "name": "detect_invalid_runtime_executable_syntax",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        201,
-        213
+        202,
+        214
       ],
       "summary": "检测以错误 Shell 语法引用运行时可执行变量的命令。",
       "tags": [
@@ -25801,8 +25826,8 @@
       "name": "is_safe_scratch_cleanup",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        216,
-        289
+        217,
+        290
       ],
       "summary": "验证清理命令仅作用于当前受控 scratch 后代目录。",
       "tags": [
@@ -25819,8 +25844,8 @@
       "name": "_expand_scratch_reference",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        292,
-        303
+        293,
+        304
       ],
       "summary": "展开命令中的 scratch 路径变量以检查实际清理目标。",
       "tags": [
@@ -25837,8 +25862,8 @@
       "name": "_is_real_scratch_descendant",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        306,
-        325
+        307,
+        326
       ],
       "summary": "解析真实路径并确认其严格位于 scratch 根下，排除符号链接越界。",
       "tags": [
@@ -25855,8 +25880,8 @@
       "name": "_normalized_executable",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        328,
-        332
+        329,
+        333
       ],
       "summary": "规范命令可执行名称以匹配跨平台危险程序。",
       "tags": [
@@ -25873,8 +25898,8 @@
       "name": "_shell_reference_variable",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        335,
-        339
+        336,
+        340
       ],
       "summary": "提取 Shell 参数中的环境变量引用名。",
       "tags": [
@@ -25891,8 +25916,8 @@
       "name": "_shell_environment_mutations",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        342,
-        367
+        343,
+        368
       ],
       "summary": "识别命令对 PATH、HOME 等环境的赋值变化，避免被后续危险调用利用。",
       "tags": [
@@ -25909,8 +25934,8 @@
       "name": "_dangerous_invocation_reason",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        370,
-        390
+        371,
+        391
       ],
       "summary": "根据可执行文件及参数识别危险调用原因。",
       "tags": [
@@ -25927,8 +25952,8 @@
       "name": "_extract_path_token",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        393,
-        431
+        394,
+        432
       ],
       "summary": "从 Shell 词元中恢复用于范围检查的路径。",
       "tags": [
@@ -25945,8 +25970,8 @@
       "name": "_is_path_inside",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        447,
-        461
+        448,
+        462
       ],
       "summary": "判断规范化后的候选路径是否处于指定根目录内。",
       "tags": [
@@ -25963,8 +25988,8 @@
       "name": "_path_is_safe",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        464,
-        473
+        465,
+        474
       ],
       "summary": "按允许根目录集合判断路径是否安全。",
       "tags": [
@@ -25981,8 +26006,8 @@
       "name": "_command_has_unsafe_paths",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        476,
-        499
+        477,
+        500
       ],
       "summary": "检测命令参数中是否含有超出允许范围的路径。",
       "tags": [
@@ -25999,8 +26024,8 @@
       "name": "detect_scope_escape",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        502,
-        540
+        503,
+        541
       ],
       "summary": "分析命令是否通过目录切换、路径或解释器调用逃出工作区范围。",
       "tags": [
@@ -26017,8 +26042,8 @@
       "name": "ask_user_confirmation",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        543,
-        561
+        544,
+        562
       ],
       "summary": "在交互终端显示敏感操作说明并读取用户确认。",
       "tags": [
@@ -26035,8 +26060,8 @@
       "name": "validate_path_in_workspace",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        564,
-        586
+        565,
+        587
       ],
       "summary": "校验文件路径确实位于工作区，拒绝越界及不安全解析。",
       "tags": [
@@ -26053,8 +26078,8 @@
       "name": "backup_file",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        589,
-        615
+        590,
+        616
       ],
       "summary": "在破坏性改动前将文件备份到当前 profile 的 trash 区域。",
       "tags": [
@@ -26071,8 +26096,8 @@
       "name": "extract_rm_targets",
       "filePath": "box_agent/tools/safety.py",
       "lineRange": [
-        618,
-        653
+        619,
+        654
       ],
       "summary": "从删除命令中提取实际目标路径，供安全检查与备份使用。",
       "tags": [
@@ -26264,11 +26289,11 @@
       "type": "file",
       "name": "skill_loader.py",
       "filePath": "box_agent/tools/skill_loader.py",
-      "summary": "发现和缓存多来源 Skill，解析指令与元数据并按查询筛选；显式 profile 使用自己的用户 Skill 根和禁用设置。",
+      "summary": "发现与缓存 builtin、connector、user Skill，解析来源归属和禁用状态，并提供受过滤器约束的目录查询。会话选择器保留已匹配 Skill 的可见性，实际访问继续走独立授权过滤器。",
       "tags": [
-        "skill",
-        "发现",
-        "缓存"
+        "skills",
+        "connectors",
+        "discovery"
       ],
       "complexity": "complex"
     },
@@ -26286,7 +26311,8 @@
         "工具函数",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "simple"
     },
@@ -26304,7 +26330,8 @@
         "工具函数",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "simple"
     },
@@ -26322,7 +26349,8 @@
         "工具函数",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "simple"
     },
@@ -26340,7 +26368,8 @@
         "工具函数",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "simple"
     },
@@ -26351,14 +26380,15 @@
       "filePath": "box_agent/tools/skill_loader.py",
       "lineRange": [
         102,
-        182
+        186
       ],
-      "summary": "保存 Skill 指令、描述、路径、来源和可用状态，并生成提示及宿主元数据。",
+      "summary": "封装 Skill 正文、路径、builtin/connector/user 来源、ownerId 和禁用状态，生成提示与宿主目录元数据。",
       "tags": [
         "数据模型",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "moderate"
     },
@@ -26368,15 +26398,16 @@
       "name": "_SourceEntry",
       "filePath": "box_agent/tools/skill_loader.py",
       "lineRange": [
-        186,
-        198
+        190,
+        202
       ],
       "summary": "记录一个 Skill 来源的目录、名称和来源优先级信息。",
       "tags": [
         "数据模型",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "simple"
     },
@@ -26386,15 +26417,16 @@
       "name": "SkillLoader",
       "filePath": "box_agent/tools/skill_loader.py",
       "lineRange": [
-        201,
-        997
+        205,
+        1033
       ],
-      "summary": "从用户、内置及扩展来源加载 Skill，解析清单、检测变更、缓存结果并提供元数据查询。",
+      "summary": "加载与重载多来源 Skill，解析 connector 目录归属和 disable 标记，并在目录匹配及提示生成时应用可选 skill_filter。",
       "tags": [
         "数据模型",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "complex"
     },
@@ -26404,15 +26436,16 @@
       "name": "SkillSelector",
       "filePath": "box_agent/tools/skill_loader.py",
       "lineRange": [
-        1000,
-        1099
+        1036,
+        1151
       ],
-      "summary": "维护累计查询及匹配名称，按会话绑定和更新可见 Skill 集合。",
+      "summary": "按累计查询更新会话 Skill 目录并应用可见性过滤器，保留已匹配 Skill 的 sticky 名称集合；不替代独立的工具访问授权。",
       "tags": [
         "数据模型",
         "skill",
         "发现",
-        "缓存"
+        "缓存",
+        "skills"
       ],
       "complexity": "moderate"
     },
@@ -27471,12 +27504,11 @@
       "type": "file",
       "name": "session_assembly.py",
       "filePath": "box_agent/session_assembly.py",
-      "summary": "按插件初始化顺序预备模型、记忆、工具、提示与 Hook，复用显式宿主能力并登记自建资源清理。共享 cwd 提示和会话恢复逻辑供 CLI、ACP 与 Python 入口使用。",
+      "summary": "按共享插件初始化顺序装配模型、工具、提示与恢复状态，并转交宿主提供的 Skill 访问和目录过滤器；连接器可用性与授权策略仍由能力模块和宿主回调负责。",
       "tags": [
-        "session-assembly",
-        "plugin-runtime",
-        "resource-ownership",
-        "prompt-composition"
+        "session",
+        "composition",
+        "ownership"
       ],
       "complexity": "complex"
     },
@@ -27486,15 +27518,16 @@
       "name": "_prepared",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        41,
-        43
+        42,
+        44
       ],
       "summary": "判断宿主是否同时提供工具与系统提示，以保留旧的已预备资源入口。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27504,15 +27537,16 @@
       "name": "_stop_task",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        46,
-        52
+        47,
+        53
       ],
       "summary": "取消尚未完成的背景任务并等待结束，消费预期的取消异常。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27522,15 +27556,16 @@
       "name": "prepare_model",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        55,
-        82
+        56,
+        83
       ],
       "summary": "复用借用的 LLM 或按配置创建自有客户端，传递 reasoning_effort_when_disabled，并仅为自建客户端登记关闭回调。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27540,15 +27575,16 @@
       "name": "prepare_memory",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        85,
-        121
+        86,
+        122
       ],
       "summary": "在配置与会话类型允许时创建记忆管理和提取器，CLI 可导入 OpenClaw 并启动维护任务；utility 与已预备资源入口跳过自动初始化。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27558,15 +27594,16 @@
       "name": "prepare_tools",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        124,
-        222
+        125,
+        225
       ],
-      "summary": "复用显式工具或按配置装配基于会话 cwd 的基础和工作区能力，登记自建资源清理；utility 不自动注册工具。",
+      "summary": "装配 cwd 下工具并登记清理，向 GetSkillTool 和工作区工具传递 HostBindings.skill_access_filter；仅转交能力访问策略，utility 不自动注册工具。",
       "tags": [
         "session-assembly",
         "plugin-runtime",
         "resource-ownership",
-        "function"
+        "function",
+        "session"
       ],
       "complexity": "moderate"
     },
@@ -27576,15 +27613,16 @@
       "name": "prepare_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        225,
-        314
+        228,
+        317
       ],
       "summary": "按 CLI、ACP 或 Python profile 组合 cwd、模式、运行时与环境提示；utility 跳过自动记忆和生图，但 ACP 宿主附加提示仍可携带恢复信息。",
       "tags": [
         "session-assembly",
         "plugin-runtime",
         "resource-ownership",
-        "function"
+        "function",
+        "session"
       ],
       "complexity": "moderate"
     },
@@ -27594,15 +27632,16 @@
       "name": "prepare_hooks",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        317,
-        324
+        320,
+        327
       ],
       "summary": "优先借用宿主 Hook 列表，仅在适用的非 ACP、未预备入口按配置加载 Hook。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27612,15 +27651,16 @@
       "name": "finish_session",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        327,
-        371
+        330,
+        378
       ],
-      "summary": "在 Agent 拥有提示后恢复仍可用的持久 Skill，跳过无效或缺失条目，并为旧元数据补齐加载顺序，再绑定共享 SkillSelector。",
+      "summary": "恢复仍可用的持久 Skill 并为已恢复 connector Skill 补回会话 grant，再以 HostBindings.skill_catalog_filter 绑定 SkillSelector 的目录可见性。",
       "tags": [
         "session-assembly",
         "plugin-runtime",
         "resource-ownership",
-        "function"
+        "function",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27630,15 +27670,16 @@
       "name": "_workspace_layout_path",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        374,
-        395
+        381,
+        402
       ],
       "summary": "规范共享工作区布局中的目录值，用于提示路径约定。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27648,15 +27689,16 @@
       "name": "_workspace_layout_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        398,
-        427
+        405,
+        434
       ],
       "summary": "描述宿主选定工作区与稳定会话 cwd，明确工具相对路径、产物扫描和目录判空规则；不恢复旧输出根目录语义。",
       "tags": [
         "session-assembly",
         "plugin-runtime",
         "resource-ownership",
-        "function"
+        "function",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27666,15 +27708,16 @@
       "name": "_filesystem_access_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        430,
-        483
+        437,
+        490
       ],
       "summary": "根据能力策略与工作区生成可访问范围和目录授权提示。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "moderate"
     },
@@ -27684,15 +27727,16 @@
       "name": "_build_action_hints_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        486,
-        503
+        493,
+        515
       ],
-      "summary": "结合记忆稀疏和 Playwright 可用性构造当前会话的宿主引导提示。",
+      "summary": "结合记忆与 Playwright 可用性生成宿主引导提示，优先使用 BOX_AGENT_MCP_CONFIG_PATH 指向的 MCP 配置。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27702,15 +27746,16 @@
       "name": "build_acp_session_prompt",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        506,
-        600
+        518,
+        612
       ],
       "summary": "集中组合 ACP 模式、固定 cwd、访问策略、运行环境、专家和后续建议提示，并按显式开关加入通用任务目录组织规则。",
       "tags": [
         "session-assembly",
         "plugin-runtime",
         "resource-ownership",
-        "function"
+        "function",
+        "session"
       ],
       "complexity": "moderate"
     },
@@ -27720,15 +27765,16 @@
       "name": "create_application_runtime",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        603,
-        606
+        615,
+        618
       ],
       "summary": "创建应用级 PluginRuntime，避免宿主适配器直接依赖插件初始化细节。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27738,15 +27784,16 @@
       "name": "build_session_permission_policy",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        609,
-        621
+        621,
+        633
       ],
       "summary": "将配置能力与已规范的宿主文件系统上下文合并，在默认模式下重建会话工作区边界。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27756,15 +27803,16 @@
       "name": "close_owned_clients",
       "filePath": "box_agent/session_assembly.py",
       "lineRange": [
-        624,
-        643
+        636,
+        655
       ],
       "summary": "按对象身份去重并逆序关闭进程拥有的模型客户端，继续尝试全部清理并保留原始异常。",
       "tags": [
         "工具函数",
         "会话组装",
         "配置",
-        "生命周期"
+        "生命周期",
+        "session"
       ],
       "complexity": "simple"
     },
@@ -27804,7 +27852,7 @@
       "type": "file",
       "name": "mcp_tool_catalog.py",
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
-      "summary": "维护可检索的 MCP 工具目录、冲突状态与 BM25 排序，支持给定候选集及工具别名，供本地/MCP 联合发现复用。",
+      "summary": "维护进程级 MCP 工具目录、发现就绪和名称冲突，保留 Connector 身份及远端原名以供过滤检索。只读 initial_loading 单独表示冷发现，与包含单服务热刷新的 loading 区分。",
       "tags": [
         "mcp",
         "工具目录",
@@ -27821,7 +27869,7 @@
         19,
         21
       ],
-      "summary": "`_normalize` 函数负责 normalize 相关逻辑，是 `box_agent/tools/mcp_tool_catalog.py` 职责的一部分。",
+      "summary": "统一搜索文本的大小写、下划线、连字符和连续空白，供工具名与元数据匹配复用。",
       "tags": [
         "function",
         "normalization",
@@ -27840,7 +27888,7 @@
         24,
         26
       ],
-      "summary": "`_tokenize` 函数负责 tokenize 相关逻辑，是 `box_agent/tools/mcp_tool_catalog.py` 职责的一部分。",
+      "summary": "把规范化搜索文本切分为支持 Unicode 的词项，用于工具元数据索引和查询。",
       "tags": [
         "function",
         "python",
@@ -27858,7 +27906,7 @@
         29,
         30
       ],
-      "summary": "`_prefix_term_frequency` 函数负责 prefix、term、frequency 相关逻辑，是 `box_agent/tools/mcp_tool_catalog.py` 职责的一部分。",
+      "summary": "统计字段词项中以查询词为前缀的数量，支持未写完的工具名和关键词匹配。",
       "tags": [
         "function",
         "python",
@@ -27876,7 +27924,7 @@
         33,
         56
       ],
-      "summary": "`_bm25_term_score` 函数负责 bm25、term、score 相关逻辑，是 `box_agent/tools/mcp_tool_catalog.py` 职责的一部分。",
+      "summary": "按词频、文档频率与字段长度计算单个 BM25 相关性分量，无有效命中时返回零。",
       "tags": [
         "function",
         "python",
@@ -27891,10 +27939,10 @@
       "name": "get_mcp_tool_catalog",
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
       "lineRange": [
-        445,
-        446
+        580,
+        581
       ],
-      "summary": "`get_mcp_tool_catalog` 函数负责 get、mcp、tool、catalog 相关逻辑，是 `box_agent/tools/mcp_tool_catalog.py` 职责的一部分。",
+      "summary": "返回进程内共享的 MCP 工具目录实例，供加载器和会话工具发现复用。",
       "tags": [
         "function",
         "tools",
@@ -27911,9 +27959,9 @@
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
       "lineRange": [
         60,
-        68
+        71
       ],
-      "summary": "`MCPToolEntry` 类负责 MCPToolEntry 相关逻辑，是 `box_agent/tools/mcp_tool_catalog.py` 职责的一部分。",
+      "summary": "保存工具身份、实例、代际、加载方式和冲突标记，并保留 Connector ID、显示名及远端原始名称。",
       "tags": [
         "class",
         "tools",
@@ -27929,10 +27977,10 @@
       "name": "MCPToolCatalog",
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
       "lineRange": [
-        71,
-        439
+        74,
+        574
       ],
-      "summary": "维护工具注册快照与就绪状态，提供精确查找及多查询排名，并可对显式候选集按规范名和别名检索。",
+      "summary": "维护工具快照、名称匹配和过滤查询；只读 initial_loading 暴露冷发现状态，loading 仍覆盖冷发现与热刷新，来源更新据此避免被普通热重连全局阻塞。",
       "tags": [
         "class",
         "tools",
@@ -27947,7 +27995,7 @@
       "type": "file",
       "name": "mcp_tool_search.py",
       "filePath": "box_agent/tools/mcp_tool_search.py",
-      "summary": "统一允许的本地与 MCP 工具发现和会话激活；MCP 仍在加载时本地查询可返回结果，并分别报告两类目录数量。",
+      "summary": "统一本地与 MCP 工具搜索、会话激活和暴露，支持 Connector 或服务器整组激活。提供授权查询器时，eager/deferred 两种模式都过滤连接器工具暴露、子 Agent 继承与调用前授权；缺省查询器继续兼容放行。",
       "tags": [
         "mcp",
         "工具发现",
@@ -27998,9 +28046,9 @@
       "filePath": "box_agent/tools/mcp_tool_search.py",
       "lineRange": [
         36,
-        387
+        469
       ],
-      "summary": "检索并激活当前允许的本地/MCP 工具，隔离 server 范围、名称冲突和未就绪目录，返回独立的本地与 MCP 统计。",
+      "summary": "检索并激活当前允许的本地/MCP 工具，支持 Connector 身份、服务器范围、精确名称和关键词查询；注入授权查询器时先过滤 Connector，再计算目录统计、排名和伴随工具。",
       "tags": [
         "数据模型",
         "mcp",
@@ -28015,10 +28063,10 @@
       "name": "MCPToolExposureManager",
       "filePath": "box_agent/tools/mcp_tool_search.py",
       "lineRange": [
-        390,
-        494
+        472,
+        597
       ],
-      "summary": "结合本地延迟名称、已激活实例与 MCP 加载模式构建可见工具视图，保留允许的本地委派能力并检查远端代际变化。",
+      "summary": "结合本地延迟名称与 MCP 激活实例构建工具视图，eager/deferred 两种模式都按注入的连接器授权查询器限制暴露及子任务继承，并在实际调用前检查目标授权和工具代际。未提供查询器时保留兼容行为。",
       "tags": [
         "数据模型",
         "mcp",
@@ -28032,7 +28080,7 @@
       "type": "file",
       "name": "setup.py",
       "filePath": "box_agent/tools/setup.py",
-      "summary": "按配置装配内置工具、Skill 和 MCP 并提供共享初始化与同步入口；工作区工具统一使用会话 cwd，每套工具拥有独立的 Skill scratch 清理范围。",
+      "summary": "按配置装配内置工具、Skill 和 MCP，共享入口接入用户、Connector 与内置 Skill 来源及宿主隔离 MCP 配置；工作区工具使用会话 cwd、独立 scratch，并向子任务传递会话 Skill 过滤器。",
       "tags": [
         "能力装配",
         "工具",
@@ -28046,8 +28094,8 @@
       "name": "render_system_prompt_template",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        65,
-        71
+        66,
+        72
       ],
       "summary": "替换系统提示中的运行时占位内容。",
       "tags": [
@@ -28063,8 +28111,8 @@
       "name": "_image_capable_llm",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        74,
-        108
+        75,
+        109
       ],
       "summary": "从已配置模型中选择具备图片理解能力的客户端。",
       "tags": [
@@ -28080,8 +28128,8 @@
       "name": "build_sandbox_info_prompt",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        111,
-        149
+        112,
+        150
       ],
       "summary": "生成基于会话 cwd 的 Python 沙箱说明，覆盖路径、附件定位、依赖和执行约束。",
       "tags": [
@@ -28097,8 +28145,8 @@
       "name": "build_file_delivery_prompt",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        152,
-        180
+        153,
+        181
       ],
       "summary": "生成统一 cwd 下的文件交付、附件定位、命名和本地 HTML 预览说明，不预设 output 子目录。",
       "tags": [
@@ -28114,8 +28162,8 @@
       "name": "image_generation_service_configured",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        183,
-        190
+        184,
+        191
       ],
       "summary": "检查生图端点及必要配置是否可用。",
       "tags": [
@@ -28131,8 +28179,8 @@
       "name": "build_image_generation_prompt",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        193,
-        214
+        194,
+        215
       ],
       "summary": "为已配置的生图服务生成模型使用说明。",
       "tags": [
@@ -28148,10 +28196,10 @@
       "name": "initialize_base_tools",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        233,
-        453
+        234,
+        488
       ],
-      "summary": "创建基础内置工具并发起 Skill 与 MCP 发现，返回供宿主继续组装的能力集合。",
+      "summary": "创建基础工具并发起 Skill 与 MCP 发现；Skill 来源保持 user→connector→builtin 优先级，宿主指定 MCP 来源时直接接入，普通启动继续执行托管配置引导。",
       "tags": [
         "能力装配",
         "工具",
@@ -28165,8 +28213,8 @@
       "name": "await_skill_discovery",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        456,
-        471
+        491,
+        506
       ],
       "summary": "等待异步 Skill 发现结束并返回 loader 与发现结果。",
       "tags": [
@@ -28182,8 +28230,8 @@
       "name": "await_mcp_tools",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        474,
-        485
+        509,
+        520
       ],
       "summary": "等待 MCP 加载任务并返回可用工具列表。",
       "tags": [
@@ -28199,8 +28247,8 @@
       "name": "register_mcp_tools",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        488,
-        496
+        523,
+        531
       ],
       "summary": "将加载到的 MCP 工具登记到目标工具映射。",
       "tags": [
@@ -28216,8 +28264,8 @@
       "name": "sync_mcp_tools",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        499,
-        521
+        534,
+        556
       ],
       "summary": "按来源更新工具映射，删除过期 MCP 项并恢复被覆盖的回退工具。",
       "tags": [
@@ -28233,8 +28281,8 @@
       "name": "merge_mcp_tools",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        524,
-        539
+        559,
+        574
       ],
       "summary": "合并基础与 MCP 工具，保持名称冲突处理规则一致。",
       "tags": [
@@ -28250,8 +28298,8 @@
       "name": "sync_mcp_tool_list",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        542,
-        550
+        577,
+        585
       ],
       "summary": "以列表形式同步 MCP 工具目录并保留列表身份和回退工具。",
       "tags": [
@@ -28267,10 +28315,10 @@
       "name": "add_workspace_tools",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        553,
-        795
+        588,
+        834
       ],
-      "summary": "依据工作区、权限、模型和环境装配文件、Bash、Jupyter、生图及委派能力，以稳定 cwd 解析相对路径并为每套工具分配独立 scratch。",
+      "summary": "依据工作区、权限、模型和环境装配文件、Bash、Jupyter、生图及委派能力，以稳定 cwd 解析路径并分配独立 scratch；将实时 Skill 目录、会话访问过滤器和能力状态接入子任务。",
       "tags": [
         "能力装配",
         "工具",
@@ -28284,8 +28332,8 @@
       "name": "Colors",
       "filePath": "box_agent/tools/setup.py",
       "lineRange": [
-        223,
-        230
+        224,
+        231
       ],
       "summary": "定义工具初始化过程使用的终端颜色常量。",
       "tags": [
@@ -28300,7 +28348,7 @@
       "type": "file",
       "name": "sub_agent_tool.py",
       "filePath": "box_agent/tools/sub_agent_tool.py",
-      "summary": "实现单任务及批量文件子 Agent 委派，继承运行能力并收紧写入范围，通过共享权限执行链和结果事件回传完成子任务。",
+      "summary": "实现单任务及批量文件子 Agent 委派，继承父会话能力、Skill 访问过滤器和权限链并收紧写入范围，通过结果与进度事件回传子任务状态。",
       "tags": [
         "子agent",
         "权限",
@@ -28366,9 +28414,9 @@
       "filePath": "box_agent/tools/sub_agent_tool.py",
       "lineRange": [
         244,
-        1409
+        1415
       ],
-      "summary": "使用父会话提供的工具、Skill、权限和模型启动普通或批量文件子任务，回传进度、结果和预算用量；以共享 cwd 约束写入范围及产物发现。",
+      "summary": "使用父会话提供的工具、Skill、权限和模型启动普通或批量文件子任务；启动子模型前将会话 Skill 访问过滤器交给 CapabilityResolver，执行中以共享 cwd 约束写入并回传进度、结果和预算用量。",
       "tags": [
         "子agent",
         "权限",
@@ -28381,7 +28429,7 @@
       "type": "file",
       "name": "__init__.py",
       "filePath": "box_agent/acp/__init__.py",
-      "summary": "实现 ACP 协议、宿主元数据和权限交互，通过共享 AgentSession 预备能力并管理资源关闭。会话 cwd 同时作为稳定执行根和产物扫描根，恢复受损日志时向模型说明历史与副作用核查要求。",
+      "summary": "实现 ACP 协议、宿主元数据和权限交互，通过共享 AgentSession 维护稳定 cwd、日志恢复与资源关闭。承接连接器选择、状态、会话 Skill 授权及 MCP 凭证和来源扩展，共享 MCP 工具注册表同步在常规对账与后台发现中跳过 utility 会话，运行时状态提示也不注入活跃 utility 回合。",
       "tags": [
         "acp",
         "protocol-adapter",
@@ -28396,8 +28444,8 @@
       "name": "_artifact_envelope",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        259,
-        304
+        261,
+        306
       ],
       "summary": "将产物事件序列化为带稳定类型判别、会话/任务/轮次标识和修订谱系的 ACP 封装，不再注入 output_dir。",
       "tags": [
@@ -28414,8 +28462,8 @@
       "name": "_inject_item_text",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        307,
-        310
+        309,
+        312
       ],
       "summary": "从字符串或结构化注入项中提取用户文本。",
       "tags": [
@@ -28432,8 +28480,8 @@
       "name": "_inject_item_id",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        313,
-        317
+        315,
+        319
       ],
       "summary": "读取注入请求标识，供队列去重与事件确认使用。",
       "tags": [
@@ -28450,8 +28498,8 @@
       "name": "_text_stream_event_like",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        415,
-        428
+        417,
+        430
       ],
       "summary": "复制流事件的关联信息并替换文本内容，保持包装器输出兼容。",
       "tags": [
@@ -28468,8 +28516,8 @@
       "name": "_injected_marker",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        431,
-        434
+        433,
+        436
       ],
       "summary": "为已接收的注入项生成可识别的确认标记。",
       "tags": [
@@ -28486,8 +28534,8 @@
       "name": "_remove_inject_queue_item",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        437,
-        448
+        439,
+        450
       ],
       "summary": "移除注入队列中的目标请求，同时保留其他项顺序。",
       "tags": [
@@ -28504,8 +28552,8 @@
       "name": "_meta_bool",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        451,
-        454
+        453,
+        456
       ],
       "summary": "从宿主元数据读取布尔配置并应用默认值。",
       "tags": [
@@ -28522,8 +28570,8 @@
       "name": "_meta_string",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        457,
-        464
+        459,
+        466
       ],
       "summary": "清理元数据中的可选字符串，拒绝不符合约定的类型。",
       "tags": [
@@ -28540,8 +28588,8 @@
       "name": "_meta_string_list",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        467,
-        481
+        469,
+        483
       ],
       "summary": "从元数据提取去重后的非空字符串列表。",
       "tags": [
@@ -28558,8 +28606,8 @@
       "name": "_normalize_llm_binding",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        484,
-        553
+        486,
+        555
       ],
       "summary": "校验模型绑定身份、版本及能力字段，拒绝在绑定中夹带不允许的提供商配置。",
       "tags": [
@@ -28576,8 +28624,8 @@
       "name": "_plan_approval_from_meta",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        556,
-        569
+        558,
+        571
       ],
       "summary": "提取 ACP 元数据中待处理的计划审批载荷。",
       "tags": [
@@ -28594,8 +28642,8 @@
       "name": "_user_decision_response_from_meta",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        572,
-        603
+        574,
+        605
       ],
       "summary": "将宿主决策响应规范化为运行循环使用的审批数据。",
       "tags": [
@@ -28612,8 +28660,8 @@
       "name": "_plan_approval_is_approved",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        606,
-        620
+        608,
+        622
       ],
       "summary": "识别计划批准状态，供 ACP 的计划交互入口使用。",
       "tags": [
@@ -28630,8 +28678,8 @@
       "name": "_looks_like_plan_approval_text",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        623,
-        660
+        625,
+        662
       ],
       "summary": "判断用户短回复是否表达批准计划，避免把普通任务文本当作审批。",
       "tags": [
@@ -28648,8 +28696,8 @@
       "name": "_plan_approval_from_pending_text",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        663,
-        677
+        665,
+        679
       ],
       "summary": "将对待审批计划的文字回复映射为带计划身份的审批响应。",
       "tags": [
@@ -28666,8 +28714,8 @@
       "name": "_strip_history_text_prefix",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        692,
-        698
+        694,
+        700
       ],
       "summary": "剥离历史拼接标记以恢复用户原文。",
       "tags": [
@@ -28684,8 +28732,8 @@
       "name": "_latest_user_request_for_plan_detection",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        701,
-        751
+        703,
+        753
       ],
       "summary": "从本轮输入及历史文本中选择真正的最新用户请求供计划识别。",
       "tags": [
@@ -28702,8 +28750,8 @@
       "name": "_user_source_text_for_binding",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        754,
-        805
+        756,
+        807
       ],
       "summary": "为 Skill 来源绑定选择用户原始文本，排除宿主历史包装内容。",
       "tags": [
@@ -28720,8 +28768,8 @@
       "name": "_update_pending_plan_approval_from_raw",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        808,
-        828
+        810,
+        830
       ],
       "summary": "从工具结果更新待批准计划及审批状态。",
       "tags": [
@@ -28738,8 +28786,8 @@
       "name": "_normalize_workspace_layout",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        863,
-        877
+        865,
+        879
       ],
       "summary": "兼容工作区布局字段的 snake_case 与 camelCase 名称；规范值本身不改变会话 cwd。",
       "tags": [
@@ -28756,8 +28804,8 @@
       "name": "_workspace_layout_prompt",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        880,
-        883
+        882,
+        885
       ],
       "summary": "规范宿主布局字段后委托共享 session_assembly 生成工作区与稳定 cwd 提示。",
       "tags": [
@@ -28774,8 +28822,8 @@
       "name": "_goal_payload",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        886,
-        887
+        888,
+        889
       ],
       "summary": "复用公共目标序列化函数生成 ACP 返回载荷。",
       "tags": [
@@ -28792,8 +28840,8 @@
       "name": "_goal_request_from_meta",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        890,
-        907
+        892,
+        909
       ],
       "summary": "从 ACP 元数据提取创建或更新持久目标的请求。",
       "tags": [
@@ -28810,8 +28858,8 @@
       "name": "_tool_result_raw_output",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        910,
-        940
+        912,
+        942
       ],
       "summary": "为结构化工具结果补齐会话、任务、轮次和权限决策元数据，不再注入独立输出目录。",
       "tags": [
@@ -28828,8 +28876,8 @@
       "name": "_bind_user_source_text",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        973,
-        976
+        1161,
+        1164
       ],
       "summary": "委托共享 Skill 环境绑定器将用户原文写入会话工具执行上下文。",
       "tags": [
@@ -28846,8 +28894,8 @@
       "name": "run_acp_server",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        5049,
-        5312
+        5378,
+        5641
       ],
       "summary": "装配应用级 runtime 与 ACP 服务，运行 stdio 协议，并在退出时按所有权关闭会话和模型客户端。",
       "tags": [
@@ -28864,8 +28912,8 @@
       "name": "main",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        5315,
-        5316
+        5644,
+        5645
       ],
       "summary": "启动 ACP 异步服务的命令行入口。",
       "tags": [
@@ -28882,8 +28930,8 @@
       "name": "_ActionHintNormalizingLLM",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        320,
-        359
+        322,
+        361
       ],
       "summary": "包装 LLM 的同步与流式结果，规范面向宿主的 action-hint 块。",
       "tags": [
@@ -28900,8 +28948,8 @@
       "name": "_FollowUpSuggestionsExtractingLLM",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        362,
-        412
+        364,
+        414
       ],
       "summary": "从模型输出提取后续建议并从用户可见文本中移除结构标记。",
       "tags": [
@@ -28918,10 +28966,10 @@
       "name": "SessionState",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        944,
-        966
+        946,
+        973
       ],
-      "summary": "继承受管 AgentSession，保存 ACP 会话标识、专家和宿主元数据，不复制共享生命周期策略。",
+      "summary": "继承受管 AgentSession 保存 ACP 宿主元数据，并记录会话选择的连接器、目录状态快照、内部 Skill 授权和 utility 标记，供每轮能力过滤与提示更新使用。",
       "tags": [
         "数据模型",
         "acp",
@@ -28936,10 +28984,10 @@
       "name": "BoxACPAgent",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        979,
-        4629
+        1167,
+        4958
       ],
-      "summary": "处理 ACP 会话和协议事件，将标准化选项与借用资源交给共享会话入口。会话 cwd 保持稳定，日志受损恢复时注入核查既有结果与副作用的提示。",
+      "summary": "处理 ACP 会话及协议扩展，把连接器选择、目录状态和内部 Skill 授权接入共享组装，并调用 MCP 凭证、来源替换与对账能力。MCP 工具注册表同步统一委托共享控制器，其会话注册表包含常规会话并排除 utility 会话，后台发现使用同一边界，活跃 utility 回合也不会接收 MCP 状态提示与 tool_search 指导。",
       "tags": [
         "acp",
         "protocol-adapter",
@@ -28954,8 +29002,8 @@
       "name": "_PermissionNegotiator",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        4632,
-        4887
+        4961,
+        5216
       ],
       "summary": "串行化和去重宿主权限请求，把审批结果转换为工具授权与目录授权。",
       "tags": [
@@ -28972,8 +29020,8 @@
       "name": "_MemoryProposalNegotiator",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        4890,
-        5046
+        5219,
+        5375
       ],
       "summary": "向宿主发出记忆提升提案并将用户响应交回共享记忆流程。",
       "tags": [
@@ -29287,7 +29335,7 @@
       "type": "file",
       "name": "agent.py",
       "filePath": "box_agent/agent.py",
-      "summary": "提供 Agent 公共 API、运行选项和目标状态，协调 SessionLog、Skill 状态与稳定循环。相对工具路径和产物扫描统一基于会话 cwd，旧 artifact_root_dir 参数仅保留兼容接收。",
+      "summary": "提供 Agent 公共 API、运行选项和目标状态，协调 SessionLog、Skill 状态与稳定循环。保持会话 cwd 路径合同，并把连接器许可回调交给 MCP 工具搜索和可见性管理。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29537,9 +29585,9 @@
       "filePath": "box_agent/agent.py",
       "lineRange": [
         436,
-        1289
+        1295
       ],
-      "summary": "维护消息、目标与 Skill 公共接口，将有效能力传入稳定循环并管理模型可见工具。工具相对路径遵循会话 cwd，旧产物根参数只触发一次兼容提示。",
+      "summary": "维护消息、目标与 Skill 公共接口，把有效能力传入稳定循环并管理模型可见工具。将宿主连接器许可回调传给 MCPToolExposureManager 和 ToolSearchTool，同时提示模型使用本轮最新连接器状态。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29553,7 +29601,7 @@
       "type": "file",
       "name": "agent_runtime.py",
       "filePath": "box_agent/agent_runtime.py",
-      "summary": "集中构造 LLM、Agent、权限和记忆对象，保留可注入工厂；传递可选推理强度与内置工具开关，使共享会话路径和宿主入口行为一致。",
+      "summary": "集中构造 LLM、Agent、权限和记忆对象，保留可注入工厂与兼容参数转发；把连接器许可回调传入 Agent，使共享会话和宿主入口使用同一能力过滤入口。",
       "tags": [
         "runtime",
         "依赖注入",
@@ -29586,9 +29634,9 @@
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
         73,
-        136
+        138
       ],
-      "summary": "集中转发 Agent 配置与能力，并仅在显式提供时传递内置工具开关，保留已有工厂替换点。",
+      "summary": "通过可替换工厂构造 Agent，集中转发运行参数、SessionLog 和内置工具选项，并将宿主提供的连接器许可回调传给 Agent。",
       "tags": [
         "工具函数",
         "runtime",
@@ -29603,8 +29651,8 @@
       "name": "build_permission_engine",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        139,
-        153
+        141,
+        155
       ],
       "summary": "使用宿主解析的策略、工作目录和授权存储创建共享权限引擎。",
       "tags": [
@@ -29621,8 +29669,8 @@
       "name": "build_memory_manager",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        156,
-        167
+        158,
+        169
       ],
       "summary": "根据显式记忆配置创建共享 MemoryManager，保留可注入构造工厂。",
       "tags": [
@@ -29639,8 +29687,8 @@
       "name": "build_memory_extractor",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        170,
-        192
+        172,
+        194
       ],
       "summary": "为记忆管理器绑定 LLM、冷却时间与步骤间隔，创建共享提取器。",
       "tags": [
@@ -29656,7 +29704,7 @@
       "type": "file",
       "name": "agent_session.py",
       "filePath": "box_agent/agent_session.py",
-      "summary": "统一活跃会话状态和配置引用，通过 PluginRuntime 预备能力，为每轮绑定受管 KernelServices，并按 run、session、拥有的 runtime 顺序释放资源。会话仅使用工作区 cwd，不再保存独立产物目录或模式。",
+      "summary": "统一活跃会话状态和配置引用，通过 PluginRuntime 预备能力、为每轮绑定 KernelServices，并按所有权释放资源。显式接收连接器许可回调并经 Agent 工厂转发，继续使用会话 cwd。",
       "tags": [
         "session-lifecycle",
         "plugin-runtime",
@@ -29671,9 +29719,9 @@
       "filePath": "box_agent/agent_session.py",
       "lineRange": [
         32,
-        404
+        406
       ],
-      "summary": "管理显式配置、运行选项和受管插件会话；禁止并发轮次与外部覆盖受管服务，协调取消、暂停在 yield 的流关闭和按所有权释放资源。",
+      "summary": "管理显式配置、运行选项和受管插件会话，协调取消、流关闭和按所有权释放资源。创建会话时将连接器许可回调传入 Agent 工厂，保留禁止并发轮次及外部覆盖受管服务的约束。",
       "tags": [
         "数据模型",
         "会话",
@@ -35371,7 +35419,7 @@
       "type": "file",
       "name": "session_context.py",
       "filePath": "box_agent/session_context.py",
-      "summary": "用显式数据对象分离配置、会话选项、宿主借用能力和本轮执行输入，诊断输出避免暴露 Config。工作区 cwd 是会话选项中的目录边界，不再另存 artifact root 或 artifact mode。",
+      "summary": "用显式数据对象分离配置、会话选项、宿主借用能力与本轮输入，诊断输出避免暴露 Config。HostBindings 允许宿主提供 Skill 访问和目录过滤回调，供共享能力组装接入策略。",
       "tags": [
         "data-model",
         "host-bindings",
@@ -35404,9 +35452,9 @@
       "filePath": "box_agent/session_context.py",
       "lineRange": [
         38,
-        64
+        66
       ],
-      "summary": "声明宿主回调及借用的模型、工具、记忆、Hook、SessionLog 和异步任务，区分已预备与待组装入口。",
+      "summary": "声明宿主借用的模型、工具、记忆、Hook、SessionLog、异步任务与组装回调，并提供可选 Skill 访问和目录过滤函数，供共享会话预备阶段使用。",
       "tags": [
         "数据模型",
         "会话",
@@ -35421,8 +35469,8 @@
       "name": "SessionContext",
       "filePath": "box_agent/session_context.py",
       "lineRange": [
-        68,
-        84
+        70,
+        86
       ],
       "summary": "绑定 Config、SessionOptions、HostBindings 与唯一会话键，解析工作区并发送不会改变模型行为的诊断事件。",
       "tags": [
@@ -35439,8 +35487,8 @@
       "name": "RunContext",
       "filePath": "box_agent/session_context.py",
       "lineRange": [
-        88,
-        92
+        90,
+        94
       ],
       "summary": "把当前会话、Agent、有效运行选项和唯一轮次 ID 绑定为 run scope 工厂输入。",
       "tags": [
@@ -36809,8 +36857,8 @@
       "name": "_deprecated_artifact_fields",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        831,
-        860
+        833,
+        862
       ],
       "summary": "列出宿主元数据及 workspace_layout 中已废弃、仅接受但忽略的产物路径字段，供诊断日志记录。",
       "tags": [
@@ -36980,6 +37028,550 @@
         "自检"
       ],
       "complexity": "simple"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connector_ids_from_meta",
+      "type": "function",
+      "name": "_connector_ids_from_meta",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        983,
+        1000
+      ],
+      "summary": "读取宿主每会话的连接器选择，校验数组和 ID 格式，规范大小写并去重；缺失字段保留为未提供选择。"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connector_statuses_from_meta",
+      "type": "function",
+      "name": "_connector_statuses_from_meta",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1003,
+        1043
+      ],
+      "summary": "校验宿主提供的完整连接器目录快照，限制条目数并验证唯一 ID、名称及 connected/disconnected 状态，返回不可变记录。"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connector_status_unavailable_from_meta",
+      "type": "function",
+      "name": "_connector_status_unavailable_from_meta",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1046,
+        1057
+      ],
+      "summary": "读取并严格校验宿主的连接器状态刷新失败标记，区分未提供字段与显式布尔值。"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "type": "function",
+      "name": "_connector_server_statuses",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1060,
+        1082
+      ],
+      "summary": "从 MCP 运行时状态中筛选 connector 所有者且仍在当前连接器配置内的服务器，按规范连接器 ID 汇总名称和状态，排除已移除服务器的历史状态；当前配置服务器缺少状态仍会阻止授权。"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connected_connector_ids",
+      "type": "function",
+      "name": "_connected_connector_ids",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1085,
+        1095
+      ],
+      "summary": "只返回会话已选择且预期服务器集合完整匹配、所有服务器均 connected 的连接器 ID。"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connector_skill_is_available",
+      "type": "function",
+      "name": "_connector_skill_is_available",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1098,
+        1104
+      ],
+      "summary": "对连接器来源 Skill 的新识别要求所属连接器已选中且运行时完整连接，其他来源直接允许；不移除已经加载的指导。"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connector_skill_is_granted",
+      "type": "function",
+      "name": "_connector_skill_is_granted",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1107,
+        1111
+      ],
+      "summary": "访问连接器 Skill 时要求其名称已获本会话内部选择器授权，其他来源 Skill 保持可用。"
+    },
+    {
+      "id": "function:box_agent/acp/__init__.py:_connector_status_context",
+      "type": "function",
+      "name": "_connector_status_context",
+      "filePath": "box_agent/acp/__init__.py",
+      "tags": [
+        "connector",
+        "session-policy",
+        "validation",
+        "utility"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1114,
+        1158
+      ],
+      "summary": "生成连接器级状态提示，优先使用宿主完整快照，缺失时聚合已选连接器的运行时状态；刷新失败时明确禁止沿用旧状态。"
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_mcp_tool_always_load",
+      "type": "function",
+      "name": "_mcp_tool_always_load",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        110,
+        112
+      ],
+      "summary": "使用工具所属服务器的 alwaysLoad 设置决定常驻或延迟加载，不由远端工具覆盖该策略。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:get_mcp_config_paths",
+      "type": "function",
+      "name": "get_mcp_config_paths",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1003,
+        1004
+      ],
+      "summary": "按 owner 返回已注册的 MCP 配置来源路径，不返回凭证内容。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:set_mcp_runtime_credential",
+      "type": "function",
+      "name": "set_mcp_runtime_credential",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1096,
+        1121
+      ],
+      "summary": "校验 credentialRef 与 headers 后仅写入进程内存并递增版本，返回引用该凭证的 connector 服务名；system/user 服务不进入受影响目标列表。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:get_mcp_connector_server_names",
+      "type": "function",
+      "name": "get_mcp_connector_server_names",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1124,
+        1134
+      ],
+      "summary": "从全部已配置定义按 connector_id 汇总预期服务名，供完整连接器状态判断。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:clear_mcp_runtime_credential",
+      "type": "function",
+      "name": "clear_mcp_runtime_credential",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1137,
+        1147
+      ],
+      "summary": "移除进程内凭证并递增版本，仅返回引用该 credentialRef 的 connector 服务名以供后续重连。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_materialize_server_config",
+      "type": "function",
+      "name": "_materialize_server_config",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1150,
+        1164
+      ],
+      "summary": "复制服务定义并移除来源标记，仅允许 connector 通过 credentialRef 合入最新内存 headers；system/user 引用凭证时在构造传输前失败。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_waiting_for_credential",
+      "type": "function",
+      "name": "_waiting_for_credential",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1167,
+        1169
+      ],
+      "summary": "检查声明了 credentialRef 的服务是否仍缺少宿主恢复的内存凭证。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "type": "function",
+      "name": "_build_connection",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1172,
+        1208
+      ],
+      "summary": "用已解析定义和最新内存凭证统一构造连接，复用冷启动与重连的认证、超时、连接器身份及加载策略。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "type": "function",
+      "name": "_resolve_registered_sources",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1211,
+        1246
+      ],
+      "summary": "组合环境来源与内存 connector 覆盖，解析受保护服务名，调用来源解析器并报告冲突；不提交其他服务已使用新凭证的假状态。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
+      "type": "function",
+      "name": "reconcile_mcp_sources",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1480,
+        1486
+      ],
+      "summary": "先取得来源更新锁，再等待冷发现就绪；等待超时返回失败而不对账或修改配置，就绪后按来源范围执行连接调整。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:replace_mcp_source",
+      "type": "function",
+      "name": "replace_mcp_source",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1489,
+        1554
+      ],
+      "summary": "验证 connector 局部替换并持有来源锁，冷发现就绪前不修改覆盖配置；超时失败后可重试，仍拒绝跨 connectorIds 范围的同名覆盖。",
+      "complexity": "moderate",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "type": "function",
+      "name": "_reconcile_mcp_sources_locked",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "lineRange": [
+        1557,
+        1638
+      ],
+      "summary": "按来源范围生成移除、禁用和重连操作并通过 gather 并发启动。内嵌 retire 与 reconnect 共享逐服务锁，撤销等待同名连接完成发布后关闭，保持其他服务独立，且不激活范围外同名后备来源。",
+      "complexity": "moderate",
+      "tags": [
+        "mcp",
+        "connectors",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "file:box_agent/tools/mcp_sources.py",
+      "type": "file",
+      "name": "mcp_sources.py",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "summary": "按优先级隔离的来源解析 MCP 服务，校验连接器身份、受保护名称、命名冲突及 credentialRef 的 connector 所有权，并生成包含配置和凭证版本的指纹；不建立连接或持久化凭证。",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:box_agent/tools/mcp_sources.py:McpConfigSource",
+      "type": "class",
+      "name": "McpConfigSource",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        19,
+        21
+      ],
+      "summary": "以不可变数据类保存 MCP 来源的 owner 与配置文件路径。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "class:box_agent/tools/mcp_sources.py:ResolvedMcpServer",
+      "type": "class",
+      "name": "ResolvedMcpServer",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        25,
+        33
+      ],
+      "summary": "保存服务配置、来源归属、config_id、连接器身份、source_path 及版本化配置指纹，供 loader 调整连接。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "class:box_agent/tools/mcp_sources.py:ResolvedMcpSources",
+      "type": "class",
+      "name": "ResolvedMcpSources",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        37,
+        40
+      ],
+      "summary": "封装本次解析使用的来源列表、有效服务字典及被跳过的命名冲突。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_sources.py:configured_mcp_sources",
+      "type": "function",
+      "name": "configured_mcp_sources",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        43,
+        63
+      ],
+      "summary": "依据显式环境路径按 system、connector、user 顺序列出配置来源；宿主未启用隔离时保留单个 user 配置文件行为。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_sources.py:_read_servers",
+      "type": "function",
+      "name": "_read_servers",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        66,
+        81
+      ],
+      "summary": "读取来源文件并验证 mcpServers 对象及每个服务条目；缺失文件视为空来源，格式错误明确失败。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_sources.py:_copy_servers",
+      "type": "function",
+      "name": "_copy_servers",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        84,
+        92
+      ],
+      "summary": "验证内存来源覆盖的 mcpServers 字典并复制条目，避免直接复用输入容器。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_sources.py:_server_identity",
+      "type": "function",
+      "name": "_server_identity",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        95,
+        120
+      ],
+      "summary": "按 owner 生成 system、connector 或 custom-mcp 身份，严格规范连接器 ID，并给缺失展示名使用 ID 回退。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_sources.py:_fingerprint",
+      "type": "function",
+      "name": "_fingerprint",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        123,
+        140
+      ],
+      "summary": "将来源、configId、配置内容和独立凭证版本组合为 SHA-256，供 loader 识别需重新连接的服务。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "type": "function",
+      "name": "resolve_mcp_sources",
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "lineRange": [
+        143,
+        191
+      ],
+      "summary": "按来源优先级解析文件或内存覆盖，阻止受保护名称和同名覆盖，拒绝 system/user 的 credentialRef，并返回版本化服务定义与冲突列表。",
+      "complexity": "simple",
+      "tags": [
+        "mcp",
+        "source-isolation",
+        "configuration"
+      ]
+    },
+    {
+      "id": "document:docs/CONNECTOR_RUNTIME_RESTORE.md",
+      "type": "document",
+      "name": "CONNECTOR_RUNTIME_RESTORE.md",
+      "filePath": "docs/CONNECTOR_RUNTIME_RESTORE.md",
+      "summary": "规定 connector 凭证恢复、局部更新、撤销和授权边界；来源更新须持锁等待冷发现，就绪超时保持配置不变，移除与禁用等待同名连接发布后撤销。连接器授权只计算当前配置服务，忽略历史 tombstone，但当前服务缺失状态仍阻断授权，并保留 eager/deferred、继承与 utility 隔离要求。",
+      "tags": [
+        "documentation",
+        "connectors",
+        "restoration"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "function",
+      "name": "_mcp_startup_ready",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "summary": "在冷发现或首次加载尚未完成时有界等待目录就绪，覆盖 startup gate；仅有普通热重连时直接允许继续，由调用方持有来源锁并处理超时失败。",
+      "tags": [
+        "mcp",
+        "startup",
+        "lifecycle"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1470,
+        1477
+      ]
     }
   ],
   "edges": [
@@ -41356,7 +41948,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_warn",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41370,7 +41962,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_public_mcp_tool_name",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41384,7 +41976,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_replace_server_catalog",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41398,7 +41990,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_structured_mcp_error_message",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41412,7 +42004,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_walk_exception_tree",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41426,7 +42018,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_http_statuses_from_exception",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41440,7 +42032,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_mcp_auth_status",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41454,7 +42046,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_is_mcp_authentication_error",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41468,7 +42060,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_mcp_connection_error_message",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41482,7 +42074,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_has_authorization_header",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41496,7 +42088,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_dynamic_bearer_auth_for_url",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41510,7 +42102,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:set_mcp_timeout_config",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41524,7 +42116,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:get_mcp_timeout_config",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41538,7 +42130,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_current_mcp_auth_fingerprint",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41552,7 +42144,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:is_mcp_loading",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41566,7 +42158,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:get_mcp_config_path",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41580,7 +42172,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:get_mcp_tools_for_server",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41594,7 +42186,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:get_all_mcp_tools",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41608,7 +42200,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:disconnect_mcp_server",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41622,7 +42214,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_record_status",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41636,7 +42228,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:get_mcp_status",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41650,7 +42242,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_determine_connection_type",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41664,7 +42256,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_resolve_mcp_config_path",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41678,7 +42270,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41692,7 +42284,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:cleanup_mcp_connections",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41706,7 +42298,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:reconnect_mcp_server",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41720,7 +42312,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:reconnect_auth_failed_mcp_servers_if_token_changed",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41734,7 +42326,7 @@
       "target": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41748,7 +42340,7 @@
       "target": "class:box_agent/tools/mcp_loader.py:MCPTimeoutConfig",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41762,7 +42354,7 @@
       "target": "class:box_agent/tools/mcp_loader.py:DynamicBearerAuth",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41776,7 +42368,7 @@
       "target": "class:box_agent/tools/mcp_loader.py:MCPTool",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41790,7 +42382,7 @@
       "target": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41804,7 +42396,7 @@
       "target": "class:box_agent/tools/mcp_loader.py:McpServerStatus",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
@@ -41955,20 +42547,6 @@
     },
     {
       "source": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
-      "target": "function:box_agent/tools/mcp_loader.py:_dynamic_bearer_auth_for_url",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
-      "target": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
       "target": "function:box_agent/tools/mcp_loader.py:_mcp_auth_status",
       "type": "calls",
       "direction": "forward",
@@ -42005,27 +42583,6 @@
     {
       "source": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
       "target": "function:box_agent/tools/mcp_loader.py:_record_status",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
-      "target": "function:box_agent/tools/mcp_loader.py:_determine_connection_type",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
-      "target": "function:box_agent/tools/mcp_loader.py:_dynamic_bearer_auth_for_url",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
-      "source": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
-      "target": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
@@ -44825,7 +45382,7 @@
       "target": "function:box_agent/tools/skill_tool.py:create_skill_tools",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_tool.py",
@@ -44839,7 +45396,7 @@
       "target": "class:box_agent/tools/skill_tool.py:GetSkillTool",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_tool.py",
@@ -45085,7 +45642,7 @@
       "target": "function:scripts/build_runtime.py:env_flag",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45099,7 +45656,7 @@
       "target": "function:scripts/build_runtime.py:pyinstaller_hidden_imports",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45113,7 +45670,7 @@
       "target": "function:scripts/build_runtime.py:pyinstaller_collect_args",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45127,7 +45684,7 @@
       "target": "function:scripts/build_runtime.py:pyinstaller_exclude_args",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45141,7 +45698,7 @@
       "target": "function:scripts/build_runtime.py:detect_platform",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45155,7 +45712,7 @@
       "target": "function:scripts/build_runtime.py:parse_target",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45169,7 +45726,7 @@
       "target": "function:scripts/build_runtime.py:require_supported_build_process",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45183,7 +45740,7 @@
       "target": "function:scripts/build_runtime.py:verify_entry_binary_arch",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45197,7 +45754,7 @@
       "target": "function:scripts/build_runtime.py:pyinstaller_target_arch_args",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45211,7 +45768,7 @@
       "target": "function:scripts/build_runtime.py:bundled_stable_runtime_components",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45225,7 +45782,7 @@
       "target": "function:scripts/build_runtime.py:build_runtime_manifest",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45239,7 +45796,7 @@
       "target": "function:scripts/build_runtime.py:resolve_officev3_dir",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45253,7 +45810,7 @@
       "target": "function:scripts/build_runtime.py:install_runtime_into_officev3",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45267,7 +45824,7 @@
       "target": "function:scripts/build_runtime.py:build_runtime",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45281,7 +45838,7 @@
       "target": "function:scripts/build_runtime.py:_install_bundled_node_runtime",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45295,7 +45852,7 @@
       "target": "function:scripts/build_runtime.py:_install_bundled_win_runtimes",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45309,7 +45866,7 @@
       "target": "function:scripts/build_runtime.py:_install_portable_git_win",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45323,7 +45880,7 @@
       "target": "function:scripts/build_runtime.py:_install_portable_python_win",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45337,7 +45894,7 @@
       "target": "function:scripts/build_runtime.py:_install_sandbox_packages_win",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45351,7 +45908,7 @@
       "target": "function:scripts/build_runtime.py:_download_to",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45365,7 +45922,7 @@
       "target": "function:scripts/build_runtime.py:_sha256_file",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45379,7 +45936,7 @@
       "target": "function:scripts/build_runtime.py:_verify_sha256",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45393,7 +45950,7 @@
       "target": "function:scripts/build_runtime.py:_relativize_node_manifest",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -45407,7 +45964,7 @@
       "target": "function:scripts/build_runtime.py:main",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:scripts/build_runtime.py",
@@ -54238,7 +54795,8 @@
       "target": "file:box_agent/tools/safety.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/tools/bash_tool.py",
@@ -54434,7 +54992,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_runtime_root",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54448,7 +55006,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:default_managed_mcp_config_path",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54462,7 +55020,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_normalize_hosted_search_url",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54476,7 +55034,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_is_official_hosted_search_url",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54490,7 +55048,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_resolve_hosted_search_server",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54504,7 +55062,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_bundled_mcp_servers",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54518,7 +55076,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_web_extract_server",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54532,7 +55090,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_merge_managed_entry",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54546,7 +55104,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_merge_hosted_search_url",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54560,7 +55118,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:_atomic_write_json",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54574,7 +55132,7 @@
       "target": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54588,7 +55146,7 @@
       "target": "class:box_agent/tools/mcp_bootstrap.py:McpBootstrapResult",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_bootstrap.py",
@@ -54609,7 +55167,7 @@
       "target": "function:box_agent/tools/mcp_config_tool.py:_updated_server_config",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_config_tool.py",
@@ -54623,7 +55181,7 @@
       "target": "function:box_agent/tools/mcp_config_tool.py:_browser_config_summary",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_config_tool.py",
@@ -54637,7 +55195,7 @@
       "target": "function:box_agent/tools/mcp_config_tool.py:_resolve_write_target",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_config_tool.py",
@@ -54651,7 +55209,7 @@
       "target": "class:box_agent/tools/mcp_config_tool.py:McpConfigTool",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_config_tool.py",
@@ -55589,7 +56147,8 @@
       "target": "file:box_agent/tools/skill_loader.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/skill_runtime.py",
@@ -56598,7 +57157,7 @@
       "target": "function:box_agent/tools/safety.py:trusted_runtime_executable_references",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56612,7 +57171,7 @@
       "target": "function:box_agent/tools/safety.py:detect_dangerous_command",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56626,7 +57185,7 @@
       "target": "function:box_agent/tools/safety.py:detect_invalid_runtime_executable_syntax",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56640,7 +57199,7 @@
       "target": "function:box_agent/tools/safety.py:is_safe_scratch_cleanup",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56654,7 +57213,7 @@
       "target": "function:box_agent/tools/safety.py:_expand_scratch_reference",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56668,7 +57227,7 @@
       "target": "function:box_agent/tools/safety.py:_is_real_scratch_descendant",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56682,7 +57241,7 @@
       "target": "function:box_agent/tools/safety.py:_normalized_executable",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56696,7 +57255,7 @@
       "target": "function:box_agent/tools/safety.py:_shell_reference_variable",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56710,7 +57269,7 @@
       "target": "function:box_agent/tools/safety.py:_shell_environment_mutations",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56724,7 +57283,7 @@
       "target": "function:box_agent/tools/safety.py:_dangerous_invocation_reason",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56738,7 +57297,7 @@
       "target": "function:box_agent/tools/safety.py:_extract_path_token",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56752,7 +57311,7 @@
       "target": "function:box_agent/tools/safety.py:_is_path_inside",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56766,7 +57325,7 @@
       "target": "function:box_agent/tools/safety.py:_path_is_safe",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56780,7 +57339,7 @@
       "target": "function:box_agent/tools/safety.py:_command_has_unsafe_paths",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56794,7 +57353,7 @@
       "target": "function:box_agent/tools/safety.py:detect_scope_escape",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56808,7 +57367,7 @@
       "target": "function:box_agent/tools/safety.py:ask_user_confirmation",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56822,7 +57381,7 @@
       "target": "function:box_agent/tools/safety.py:validate_path_in_workspace",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56836,7 +57395,7 @@
       "target": "function:box_agent/tools/safety.py:backup_file",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -56850,7 +57409,7 @@
       "target": "function:box_agent/tools/safety.py:extract_rm_targets",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/safety.py",
@@ -57102,7 +57661,7 @@
       "target": "function:box_agent/tools/skill_loader.py:_warn",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -57116,7 +57675,7 @@
       "target": "function:box_agent/tools/skill_loader.py:_tokenize",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -57130,7 +57689,7 @@
       "target": "function:box_agent/tools/skill_loader.py:move_skill_slot_to_end",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -57144,7 +57703,7 @@
       "target": "function:box_agent/tools/skill_loader.py:_read_disabled_skill_names",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -57158,7 +57717,7 @@
       "target": "class:box_agent/tools/skill_loader.py:Skill",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -57172,7 +57731,7 @@
       "target": "class:box_agent/tools/skill_loader.py:_SourceEntry",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -57186,7 +57745,7 @@
       "target": "class:box_agent/tools/skill_loader.py:SkillLoader",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -57200,7 +57759,7 @@
       "target": "class:box_agent/tools/skill_loader.py:SkillSelector",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/skill_loader.py",
@@ -58253,7 +58812,8 @@
       "target": "file:box_agent/tools/safety.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/tools/image_generation_tool.py",
@@ -58267,22 +58827,23 @@
       "target": "file:box_agent/tools/safety.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/tools/image_inspection_tool.py",
       "target": "file:box_agent/tools/safety.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
       "target": "file:box_agent/auth.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/skill_preload.py",
@@ -58297,8 +58858,7 @@
       "target": "file:box_agent/tools/skill_loader.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/skillhub_install_tool.py",
@@ -58321,24 +58881,21 @@
       "target": "file:box_agent/tools/jupyter_tool.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:scripts/build_runtime.py",
       "target": "file:box_agent/tools/mcp_bootstrap.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:scripts/build_runtime.py",
       "target": "file:box_agent/tools/runtime.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/session_assembly.py",
@@ -58668,7 +59225,7 @@
       "target": "function:box_agent/tools/mcp_tool_catalog.py:_normalize",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_catalog.py",
@@ -58682,7 +59239,7 @@
       "target": "function:box_agent/tools/mcp_tool_catalog.py:_tokenize",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_catalog.py",
@@ -58696,7 +59253,7 @@
       "target": "function:box_agent/tools/mcp_tool_catalog.py:_prefix_term_frequency",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_catalog.py",
@@ -58710,7 +59267,7 @@
       "target": "function:box_agent/tools/mcp_tool_catalog.py:_bm25_term_score",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_catalog.py",
@@ -58724,7 +59281,7 @@
       "target": "function:box_agent/tools/mcp_tool_catalog.py:get_mcp_tool_catalog",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_catalog.py",
@@ -58738,7 +59295,7 @@
       "target": "class:box_agent/tools/mcp_tool_catalog.py:MCPToolEntry",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_catalog.py",
@@ -58752,7 +59309,7 @@
       "target": "class:box_agent/tools/mcp_tool_catalog.py:MCPToolCatalog",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_catalog.py",
@@ -58773,7 +59330,7 @@
       "target": "class:box_agent/tools/mcp_tool_search.py:ActivatedMCPTool",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_search.py",
@@ -58787,7 +59344,7 @@
       "target": "class:box_agent/tools/mcp_tool_search.py:ToolExposure",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_search.py",
@@ -58801,7 +59358,7 @@
       "target": "class:box_agent/tools/mcp_tool_search.py:ToolSearchTool",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_search.py",
@@ -58815,7 +59372,7 @@
       "target": "class:box_agent/tools/mcp_tool_search.py:MCPToolExposureManager",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/mcp_tool_search.py",
@@ -58836,7 +59393,8 @@
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "function:box_agent/session_assembly.py:prepare_tools",
@@ -59382,14 +59940,16 @@
       "target": "file:box_agent/tools/mcp_loader.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/tools/setup.py",
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/tools/setup.py",
@@ -61449,14 +62009,16 @@
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/agent.py",
       "target": "file:box_agent/tools/mcp_tool_search.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/agent.py",
@@ -61596,7 +62158,7 @@
       "target": "function:box_agent/agent_runtime.py:build_llm_client",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/agent_runtime.py",
@@ -61610,7 +62172,7 @@
       "target": "function:box_agent/agent_runtime.py:build_agent",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/agent_runtime.py",
@@ -61624,7 +62186,7 @@
       "target": "function:box_agent/agent_runtime.py:build_permission_engine",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/agent_runtime.py",
@@ -61638,7 +62200,7 @@
       "target": "function:box_agent/agent_runtime.py:build_memory_manager",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/agent_runtime.py",
@@ -61652,7 +62214,7 @@
       "target": "function:box_agent/agent_runtime.py:build_memory_extractor",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/agent_runtime.py",
@@ -61666,8 +62228,7 @@
       "target": "file:box_agent/agent.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/agent_runtime.py",
@@ -62633,21 +63194,24 @@
       "target": "file:box_agent/agent.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/cli.py",
       "target": "file:box_agent/agent_runtime.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/cli.py",
       "target": "file:box_agent/agent_session.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/cli.py",
@@ -62710,7 +63274,8 @@
       "target": "file:box_agent/session_context.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/cli.py",
@@ -62745,7 +63310,8 @@
       "target": "file:box_agent/tools/mcp_loader.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/cli.py",
@@ -62759,7 +63325,8 @@
       "target": "file:box_agent/tools/setup.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/cli.py",
@@ -70097,14 +70664,16 @@
       "target": "file:box_agent/agent.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/agent_service.py",
       "target": "file:box_agent/agent_runtime.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/kernel/__init__.py",
@@ -70166,24 +70735,21 @@
       "target": "file:box_agent/config.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
       "target": "file:box_agent/config.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/mcp_loader.py",
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/skill_preload.py",
@@ -71020,13 +71586,1224 @@
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/acp/__init__.py:_connected_connector_ids",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/acp/__init__.py:_connector_ids_from_meta",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/acp/__init__.py:_connector_skill_is_available",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/acp/__init__.py:_connector_skill_is_granted",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/acp/__init__.py:_connector_status_context",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/acp/__init__.py:_connector_status_unavailable_from_meta",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/acp/__init__.py:_connector_statuses_from_meta",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:clear_mcp_runtime_credential",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:get_all_mcp_tools",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_config_paths",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_status",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_tools_for_server",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:replace_mcp_source",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/acp/__init__.py:BoxACPAgent",
+      "target": "function:box_agent/tools/mcp_loader.py:set_mcp_runtime_credential",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_config_tool.py:McpConfigTool",
+      "target": "class:box_agent/tools/base.py:Tool",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "target": "class:box_agent/tools/mcp_loader.py:MCPTool",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "target": "function:box_agent/tools/mcp_loader.py:_is_mcp_authentication_error",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_auth_status",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_connection_error_message",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_tool_always_load",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "target": "function:box_agent/tools/mcp_loader.py:_public_mcp_tool_name",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "target": "function:box_agent/tools/mcp_loader.py:_warn",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPTool",
+      "target": "function:box_agent/tools/mcp_loader.py:_structured_mcp_error_message",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_loader.py:MCPTool",
+      "target": "class:box_agent/tools/base.py:Tool",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/tools/mcp_tool_search.py:MCPToolExposureManager",
+      "target": "class:box_agent/tools/mcp_tool_catalog.py:MCPToolCatalog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_tool_search.py:ToolSearchTool",
+      "target": "class:box_agent/tools/mcp_tool_catalog.py:MCPToolCatalog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/mcp_tool_search.py:ToolSearchTool",
+      "target": "class:box_agent/tools/base.py:Tool",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "target": "class:box_agent/tools/skill_loader.py:Skill",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "target": "class:box_agent/tools/skill_loader.py:_SourceEntry",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "target": "function:box_agent/tools/skill_loader.py:_read_disabled_skill_names",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "target": "function:box_agent/tools/skill_loader.py:_tokenize",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "target": "function:box_agent/tools/skill_loader.py:_warn",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/skill_tool.py:GetSkillTool",
+      "target": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/skill_tool.py:GetSkillTool",
+      "target": "class:box_agent/tools/base.py:Tool",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/tools/sub_agent_tool.py:SubAgentTool",
+      "target": "class:box_agent/tools/sub_agent_capabilities.py:CapabilityResolver",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/sub_agent_tool.py:SubAgentTool",
+      "target": "function:box_agent/tools/sub_agent_capabilities.py:parse_delegation_spec",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/sub_agent_tool.py:SubAgentTool",
+      "target": "class:box_agent/tools/base.py:EventEmittingTool",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/tools/sub_agent_tool.py:_PermissionGatedBashTool",
+      "target": "class:box_agent/tools/base.py:Tool",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/tools/sub_agent_tool.py:_WriteScopedTool",
+      "target": "class:box_agent/tools/base.py:Tool",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "document:docs/CONNECTOR_RUNTIME_RESTORE.md",
+      "target": "file:box_agent/acp/__init__.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONNECTOR_RUNTIME_RESTORE.md",
+      "target": "file:box_agent/tools/mcp_loader.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONNECTOR_RUNTIME_RESTORE.md",
+      "target": "file:box_agent/tools/mcp_sources.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/CONNECTOR_RUNTIME_RESTORE.md",
+      "target": "file:scripts/build_runtime.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connected_connector_ids",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_ids_from_meta",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_skill_is_available",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_skill_is_granted",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_status_context",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_status_unavailable_from_meta",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_statuses_from_meta",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connected_connector_ids",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_ids_from_meta",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_skill_is_available",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_skill_is_granted",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_status_context",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_status_unavailable_from_meta",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "function:box_agent/acp/__init__.py:_connector_statuses_from_meta",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/acp/__init__.py",
+      "target": "file:box_agent/tools/mcp_loader.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/session_assembly.py",
+      "target": "file:box_agent/session_context.py",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_materialize_server_config",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_tool_always_load",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_waiting_for_credential",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:clear_mcp_runtime_credential",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_config_paths",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_connector_server_names",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:replace_mcp_source",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:set_mcp_runtime_credential",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_materialize_server_config",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_tool_always_load",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_waiting_for_credential",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:clear_mcp_runtime_credential",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_config_paths",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_connector_server_names",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:replace_mcp_source",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:set_mcp_runtime_credential",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "file:box_agent/tools/mcp_sources.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "class:box_agent/tools/mcp_sources.py:McpConfigSource",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "class:box_agent/tools/mcp_sources.py:ResolvedMcpServer",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "class:box_agent/tools/mcp_sources.py:ResolvedMcpSources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_copy_servers",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_fingerprint",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_read_servers",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_server_identity",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:configured_mcp_sources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "class:box_agent/tools/mcp_sources.py:McpConfigSource",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "class:box_agent/tools/mcp_sources.py:ResolvedMcpServer",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "class:box_agent/tools/mcp_sources.py:ResolvedMcpSources",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_copy_servers",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_fingerprint",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_read_servers",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:_server_identity",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:configured_mcp_sources",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_sources.py",
+      "target": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connected_connector_ids",
+      "target": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connected_connector_ids",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_connector_server_names",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_status",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connector_skill_is_available",
+      "target": "function:box_agent/acp/__init__.py:_connected_connector_ids",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connector_status_context",
+      "target": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connector_status_context",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_connector_server_names",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:_workspace_layout_prompt",
+      "target": "function:box_agent/session_assembly.py:_workspace_layout_path",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:build_acp_session_prompt",
+      "target": "function:box_agent/session_assembly.py:_build_action_hints_prompt",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:build_acp_session_prompt",
+      "target": "function:box_agent/session_assembly.py:_filesystem_access_prompt",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:build_acp_session_prompt",
+      "target": "function:box_agent/session_assembly.py:_workspace_layout_prompt",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:finish_session",
+      "target": "class:box_agent/tools/skill_loader.py:SkillSelector",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:finish_session",
+      "target": "function:box_agent/session_assembly.py:_prepared",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:prepare_hooks",
+      "target": "function:box_agent/session_assembly.py:_prepared",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:prepare_memory",
+      "target": "function:box_agent/session_assembly.py:_prepared",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:prepare_prompt",
+      "target": "function:box_agent/session_assembly.py:_prepared",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:prepare_prompt",
+      "target": "function:box_agent/session_assembly.py:build_acp_session_prompt",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/session_assembly.py:prepare_tools",
+      "target": "class:box_agent/tools/skill_tool.py:GetSkillTool",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:_merge_hosted_search_url",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_is_official_hosted_search_url",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:_resolve_hosted_search_server",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_normalize_hosted_search_url",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "class:box_agent/tools/mcp_bootstrap.py:McpBootstrapResult",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_atomic_write_json",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_bundled_mcp_servers",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_merge_hosted_search_url",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_merge_managed_entry",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_resolve_hosted_search_server",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_runtime_root",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_bootstrap.py:bootstrap_managed_mcp_config",
+      "target": "function:box_agent/tools/mcp_bootstrap.py:_web_extract_server",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "target": "class:box_agent/tools/mcp_loader.py:MCPServerConnection",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "target": "function:box_agent/auth.py:request_auth_headers",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "target": "function:box_agent/tools/mcp_loader.py:_determine_connection_type",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "target": "function:box_agent/tools/mcp_loader.py:_dynamic_bearer_auth_for_url",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "target": "function:box_agent/tools/mcp_loader.py:_materialize_server_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:_record_status",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:disconnect_mcp_server",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_config_paths",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:reconnect_mcp_server",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:_materialize_server_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_reconnect_mcp_server_locked",
+      "target": "function:box_agent/tools/mcp_loader.py:_waiting_for_credential",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "target": "class:box_agent/tools/mcp_sources.py:McpConfigSource",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "target": "function:box_agent/tools/mcp_loader.py:_warn",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "target": "function:box_agent/tools/mcp_sources.py:configured_mcp_sources",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "target": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
+      "target": "function:box_agent/tools/mcp_loader.py:_build_connection",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
+      "target": "function:box_agent/tools/mcp_loader.py:_materialize_server_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
+      "target": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:load_mcp_tools_async",
+      "target": "function:box_agent/tools/mcp_loader.py:_waiting_for_credential",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
+      "target": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:reconnect_mcp_server",
+      "target": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:replace_mcp_source",
+      "target": "function:box_agent/tools/mcp_loader.py:_reconcile_mcp_sources_locked",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_sources.py:configured_mcp_sources",
+      "target": "class:box_agent/tools/mcp_sources.py:McpConfigSource",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "target": "class:box_agent/tools/mcp_sources.py:ResolvedMcpServer",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "target": "class:box_agent/tools/mcp_sources.py:ResolvedMcpSources",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "target": "function:box_agent/tools/mcp_sources.py:_copy_servers",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "target": "function:box_agent/tools/mcp_sources.py:_fingerprint",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "target": "function:box_agent/tools/mcp_sources.py:_read_servers",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_sources.py:resolve_mcp_sources",
+      "target": "function:box_agent/tools/mcp_sources.py:_server_identity",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/setup.py:add_workspace_tools",
+      "target": "class:box_agent/tools/sub_agent_tool.py:SubAgentTool",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/setup.py:initialize_base_tools",
+      "target": "function:box_agent/tools/skill_tool.py:create_skill_tools",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/skill_tool.py:create_skill_tools",
+      "target": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_connector_server_names",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_timeout_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "target": "function:box_agent/tools/mcp_tool_catalog.py:get_mcp_tool_catalog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:replace_mcp_source",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
     }
   ],
   "layers": [
     {
       "id": "layer:core-agent-runtime",
       "name": "核心 Agent 与 Kernel 运行层",
-      "description": "承载共享 AgentSession、会话上下文与能力装配、Agent 运行入口、稳定 Kernel 循环与端口、唯一工具消息提交、SessionLog 及事件契约，使 CLI 与 ACP 在稳定 cwd 下复用配置门控、日志恢复、取消、流恢复和会话生命周期。",
+      "description": "承载共享 AgentSession、会话上下文与能力装配、Agent 运行入口、稳定 Kernel 循环与端口、唯一工具消息提交、SessionLog 及事件契约，使 CLI 与 ACP 在稳定 cwd 下复用配置门控、日志恢复、取消、流恢复和会话生命周期。共享会话装配接入宿主提供的 Skill 访问与识别过滤回调。",
       "nodeIds": [
         "file:box_agent/__init__.py",
         "file:box_agent/agent.py",
@@ -71084,7 +72861,7 @@
     {
       "id": "layer:acp-host-integration",
       "name": "ACP 宿主集成层",
-      "description": "实现 ACP 会话与 stdio 入口、宿主元数据、权限协商、action hint、后续建议及调试日志；通过共享 AgentSession 管理活跃状态，以稳定会话 cwd 承接宿主工作区和产物路径，并保留环境与项目上下文兼容入口。",
+      "description": "实现 ACP 会话与 stdio 入口、宿主元数据、权限协商、action hint、后续建议及调试日志；通过共享 AgentSession 管理活跃状态，以稳定会话 cwd 承接宿主工作区和产物路径，并保留环境与项目上下文兼容入口。承接连接器选择和状态快照、会话 grant 与凭证及来源恢复请求，将来源策略交给 MCP 能力模块。",
       "nodeIds": [
         "file:box_agent/acp/__init__.py",
         "file:box_agent/acp/action_hints.py",
@@ -71125,7 +72902,7 @@
     {
       "id": "layer:tools-sandbox",
       "name": "工具、MCP 与沙箱层",
-      "description": "提供工具、MCP 与沙箱能力，由 tools/engine 借用调用方能力统一冻结定义、权限继续、预算调度和结果适配，统一 cwd 相对路径、有界产物扫描及工具集独立 scratch，并结合文件与 Shell 安全、网页搜索和媒体处理执行实际动作。",
+      "description": "提供工具、MCP 与沙箱能力，由 tools/engine 借用调用方能力统一冻结定义、权限继续、预算调度和结果适配，统一 cwd 相对路径、有界产物扫描及工具集独立 scratch，并结合文件与 Shell 安全、网页搜索和媒体处理执行实际动作。MCP 配置按 system、connector、user 来源隔离；运行时凭证扩展只维护进程内 headers 和版本，来源替换只更新内存快照。宿主注入的过滤器约束连接器能力，未提供过滤器时保持兼容行为。",
       "nodeIds": [
         "file:box_agent/mcp_servers/__init__.py",
         "file:box_agent/mcp_servers/web_extract_server.py",
@@ -71186,7 +72963,8 @@
         "file:box_agent/tools/skill_result_adapter.py",
         "file:box_agent/tools/web_search_policy.py",
         "file:box_agent/tools/web_search_runtime.py",
-        "file:box_agent/tools/engine/__init__.py"
+        "file:box_agent/tools/engine/__init__.py",
+        "file:box_agent/tools/mcp_sources.py"
       ]
     },
     {
@@ -71204,7 +72982,7 @@
     {
       "id": "layer:skills-experts",
       "name": "Skills、插件与委派层",
-      "description": "统一插件描述符、依赖排序和能力注册表，由 PluginRuntime、PluginSession 与内置初始化器管理 process/session/run 资源所有权，并负责 Skills 发现安装、专家配置和受能力、cwd 相对写入范围及预算约束的委派。 失败 Run 激活的中断回滚归属于相应会话，关闭时先重试 Run 再释放 Session 依赖，并阻止未完成清理的会话再次激活。",
+      "description": "统一插件描述符、依赖排序和能力注册表，由 PluginRuntime、PluginSession 与内置初始化器管理 process/session/run 资源所有权，并负责 Skills 发现安装、专家配置和受能力、cwd 相对写入范围及预算约束的委派。 失败 Run 激活的中断回滚归属于相应会话，关闭时先重试 Run 再释放 Session 依赖，并阻止未完成清理的会话再次激活。宿主可注入独立的 Skill 识别与访问过滤器，连接器 Skill 的会话授权和子 Agent 授权快照在能力入口生效。",
       "nodeIds": [
         "file:.gitmodules",
         "file:box_agent/experts.py",
@@ -71436,7 +73214,8 @@
         "document:docs/design/tool-refactor/runtime.md",
         "document:docs/design/tool-refactor/testing.md",
         "document:docs/design/tool-refactor/verification.md",
-        "document:docs/reasoning-configuration.md"
+        "document:docs/reasoning-configuration.md",
+        "document:docs/CONNECTOR_RUNTIME_RESTORE.md"
       ]
     },
     {
@@ -71543,7 +73322,7 @@
     {
       "order": 4,
       "title": "共享运行入口",
-      "description": "两个宿主通过 AgentSession.open 进入受管会话，原有同步 create 与 AgentService 构造入口继续兼容。SessionContext 显式区分配置、选项、宿主借用能力与本轮输入，session_assembly 按插件顺序准备模型、记忆、工具、提示和 Hook，并统一 utility 配置门控、cwd 提示和会话恢复。AgentSession 为每轮绑定 KernelServices，经 Agent 与 composition 驱动稳定循环，退出时依次释放 run、session 和自身拥有的 runtime。",
+      "description": "两个宿主通过 AgentSession.open 进入受管会话，原有同步 create 与 AgentService 构造入口继续兼容。SessionContext 显式区分配置、选项、宿主借用能力与本轮输入，session_assembly 按插件顺序准备模型、记忆、工具、提示和 Hook，接入宿主的 Skill 访问与识别过滤回调，并统一 utility 配置门控、cwd 提示和会话恢复。AgentSession 为每轮绑定 KernelServices，经 Agent 与 composition 驱动稳定循环，退出时依次释放 run、session 和自身拥有的 runtime。",
       "nodeIds": [
         "file:box_agent/agent_session.py",
         "file:box_agent/session_context.py",
@@ -71604,7 +73383,7 @@
     {
       "order": 9,
       "title": "MCP 动态能力",
-      "description": "MCP 启动配置先声明托管服务，loader 再处理连接、认证、工具包装和重连。工具目录与按需搜索限制每轮暴露给模型的能力集合，而网页抽取服务把 SSRF 防护和重定向校验放在外部内容进入模型之前。",
+      "description": "MCP 配置按 system、connector、user 来源隔离，mcp_sources 统一服务身份与指纹，loader 负责连接和认证恢复。运行时凭证扩展只保存进程内 headers 与版本；ACP 进程重建后，宿主必须先恢复凭证，再发布连接器来源快照。重连时只推进被选中服务的指纹，失败状态允许同配置重试；工具目录和按需搜索在宿主提供过滤器时按当前会话授权限制可调用能力。网页抽取服务继续在外部内容入模前执行 SSRF 与重定向校验。",
       "nodeIds": [
         "file:box_agent/tools/mcp_bootstrap.py",
         "file:box_agent/tools/mcp_loader.py",
@@ -71639,7 +73418,7 @@
     {
       "order": 12,
       "title": "Skills 与委派",
-      "description": "SkillLoader 发现并筛选多来源技能，SkillHub 工具把检索与经授权安装拆成明确步骤。专家配置与子 Agent 工具共同描述角色、能力、写入范围和预算，让并行委派仍受父 Agent 的契约与验收边界控制。文件写入范围相对会话 cwd 声明，平行子任务仍需使用互不重叠的范围。",
+      "description": "SkillLoader 发现并筛选多来源技能，SkillHub 工具把检索与经授权安装拆成明确步骤。专家配置与子 Agent 工具共同描述角色、能力、写入范围和预算，让并行委派仍受父 Agent 的契约与验收边界控制。文件写入范围相对会话 cwd 声明，平行子任务仍需使用互不重叠的范围。连接器 Skill 经宿主识别与访问回调过滤，子 Agent 继续使用受父会话约束的连接器授权快照。",
       "nodeIds": [
         "file:box_agent/tools/skill_loader.py",
         "file:box_agent/tools/skillhub_search_tool.py",

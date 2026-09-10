@@ -50,6 +50,7 @@ def configured_adapter(tmp_path, monkeypatch, llm):
     # level override escape that profile while this fixture builds an adapter
     # directly instead of going through run_acp_server().
     monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("BOX_AGENT_SKILL_TOOLS_ROOT", raising=False)
     config = Config(
         llm=LLMConfig(api_key="test-key", model=llm.model),
         agent=AgentConfig(workspace_dir=str(workspace), enable_memory=False),
@@ -130,3 +131,49 @@ async def test_utility_preserves_box_session_log_context_after_recreation(tmp_pa
         assert llm.calls and all(not tools for _, tools in llm.calls)
     finally:
         state.agent.session_log.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refresh", ["mcp/source/replace", "mcp/reconcile", "background"])
+async def test_eager_mcp_refresh_keeps_utility_registry_and_provider_tools_empty(
+    tmp_path, monkeypatch, refresh,
+):
+    from unittest.mock import AsyncMock
+    from box_agent.tools import mcp_loader
+    from tests.test_mcp_tool_search import FakeMCPTool
+
+    llm = RecordingLLM()
+    adapter, workspace = configured_adapter(tmp_path, monkeypatch, llm)
+    adapter._config.tools.enable_mcp = True
+    adapter._config.tools.mcp.deferred_loading_enabled = False
+    remote = FakeMCPTool("connector_lookup", "law", connector_id="law")
+    monkeypatch.setattr(mcp_loader, "get_all_mcp_tools", lambda: [remote])
+    monkeypatch.setattr(mcp_loader, "get_mcp_tools_for_server", lambda name: [remote])
+    result = {"success": True, "results": [{"name": "law", "action": "added", "success": True}]}
+    monkeypatch.setattr(mcp_loader, "replace_mcp_source", AsyncMock(return_value=result))
+    monkeypatch.setattr(mcp_loader, "reconcile_mcp_sources", AsyncMock(return_value=result))
+    try:
+        utility = await adapter.newSession(SimpleNamespace(cwd=str(workspace), field_meta={"utility": True}))
+        normal = await adapter.newSession(SimpleNamespace(cwd=str(workspace), field_meta={}))
+        state = adapter._sessions[utility.sessionId]
+        assert state.agent.tools == {}
+        state.turn_active = True
+        adapter._sessions[normal.sessionId].turn_active = True
+        if refresh == "background":
+            adapter._sync_mcp_registries([remote])
+            adapter._inject_mcp_runtime_update(name="law", state="connected", tool_count=1)
+        else:
+            await adapter.extMethod(refresh, {"source": "connector", "config": {"mcpServers": {}}})
+        assert "connector_lookup" in adapter._sessions[normal.sessionId].agent.tools
+        assert state.agent.tools == {}
+        assert not state.mcp_fallback_tools
+        assert state.inject_queue.empty()
+        assert not adapter._sessions[normal.sessionId].inject_queue.empty()
+        state.turn_active = False
+        adapter._sessions[normal.sessionId].turn_active = False
+        await adapter.prompt(SimpleNamespace(
+            sessionId=utility.sessionId, prompt=[{"text": "write a title"}], field_meta={},
+        ))
+        assert llm.calls and all(not tools for _, tools in llm.calls)
+    finally:
+        await adapter.aclose()

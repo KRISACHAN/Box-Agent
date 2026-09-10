@@ -93,6 +93,52 @@ async def test_acp_sessions_share_runtime_and_rebind_closes_only_old_session(tmp
 
 
 @pytest.mark.asyncio
+async def test_managed_session_keeps_connector_skill_grants_for_parent_and_child(tmp_path, monkeypatch):
+    from box_agent.tools.skill_loader import SKILL_SLOT_SENTINEL, SkillLoader
+    from box_agent.tools.skill_tool import GetSkillTool
+    from tests.test_connector_skill_source import _write_connector_skill
+
+    connector_root = tmp_path / "connector-skills"
+    _write_connector_skill(connector_root)
+    loader = SkillLoader(sources=[(connector_root, "connector")])
+    loader.discover_skills()
+    monkeypatch.setattr(acp, "_connected_connector_ids", lambda selected: frozenset(selected))
+    config = Config(
+        llm=LLMConfig(api_key="test"),
+        agent=AgentConfig(workspace_dir=str(tmp_path), enable_memory=False),
+        tools=ToolsConfig(enable_mcp=False, enable_skills=True, enable_sub_agent=True,
+                          enable_file_tools=False, enable_bash=False),
+    )
+    adapter = acp.BoxACPAgent(
+        DummyConn(), config, DoneLLM(), [GetSkillTool(loader)],
+        f"BASE\n{SKILL_SLOT_SENTINEL}", skill_loader=loader,
+    )
+    try:
+        response = await adapter.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={}))
+        state = adapter._sessions[response.sessionId]
+        skill_tool = state.agent.tools["get_skill"]
+        child_tool = state.agent.tools["sub_agent"]
+        denied = await skill_tool.execute(skill_name="pkulaw")
+        assert not denied.success and "not enabled" in denied.error
+        denied_child = await child_tool.execute(task="Search the law", skills=["pkulaw"], required_tools=[])
+        assert not denied_child.success
+        catalog_update = state.skill_selector.update("pkulaw")
+        assert "pkulaw" not in (catalog_update or "")
+        assert "pkulaw" not in state.skill_selector.matched_skill_names
+
+        await adapter.prompt(SimpleNamespace(
+            sessionId=response.sessionId, prompt=[{"text": "pkulaw legal search"}],
+            field_meta={"selected_connector_ids": ["pkulaw"]},
+        ))
+        assert state.connector_skill_grants == {"pkulaw"}
+        assert (await skill_tool.execute(skill_name="pkulaw")).success
+        allowed_child = await child_tool.execute(task="Search the law", skills=["pkulaw"], required_tools=[])
+        assert allowed_child.success
+    finally:
+        await adapter.aclose()
+
+
+@pytest.mark.asyncio
 async def test_cli_shared_prompt_controls_model_and_session_closes(tmp_path, monkeypatch):
     import sys
 
