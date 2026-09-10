@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T20:34:14.531Z",
-    "gitCommitHash": "e880181c5219cb957b0cf28bce1595c26fde935f"
+    "analyzedAt": "2026-09-10T20:59:08.389Z",
+    "gitCommitHash": "b7b884768974bb5ca5103a1740349eef9e3e7c0f"
   },
   "nodes": [
     {
@@ -26290,7 +26290,7 @@
       "type": "file",
       "name": "skill_loader.py",
       "filePath": "box_agent/tools/skill_loader.py",
-      "summary": "按有序来源发现、解析与缓存 builtin、connector、user Skill，维护禁用、损坏、可用性与原始文件摘要。提供完整本地搜索及有字节上限、转义为数据的系统目录预览，查询可见性与实际读取授权分别处理。",
+      "summary": "按有序来源发现、解析与缓存 builtin、connector、user Skill，维护禁用、损坏、可用性与原始文件摘要。提供完整本地搜索及有字节上限、转义为数据的系统目录预览，查询可见性与实际读取授权分别处理。目录推荐先应用会话可见性再截取名额，隐藏主候选不会占额或触发依赖扩展。",
       "tags": [
         "skills",
         "connectors",
@@ -26423,7 +26423,7 @@
         277,
         1151
       ],
-      "summary": "按靠前来源优先的规则加载与重载 Skill，保留 connector 归属、用户禁用及 reserved builtin 约束，校验必填 frontmatter、记录原始字节摘要，并把 manifest 平台或环境条件拒绝项保留为无正文诊断。完整搜索按名称、关键词和描述加权；受可见性过滤的系统目录预览最多 12,000 字节并提示继续分页，正文保持原样供按需读取。",
+      "summary": "按靠前来源优先的规则加载与重载 Skill，保留 connector 归属、用户禁用及 reserved builtin 约束，校验必填 frontmatter、记录原始字节摘要，并把 manifest 平台或环境条件拒绝项保留为无正文诊断。完整搜索按名称、关键词和描述加权；受可见性过滤的系统目录预览最多 12,000 字节并提示继续分页，正文保持原样供按需读取。filter_by_query 先把主候选限制在会话可见 skill_pool，再截取 max_skills 与扩展其依赖，隐藏条目不影响可见推荐名额。",
       "tags": [
         "数据模型",
         "skill",
@@ -29338,7 +29338,7 @@
       "type": "file",
       "name": "agent.py",
       "filePath": "box_agent/agent.py",
-      "summary": "提供 Agent 公共 API、消息与目标状态，由 Agent 持有会话唯一的 SkillRuntime；旧激活接口改为注册普通参考资料，每轮构造 Context 处理正文投影。SessionLog 继续保存持久事实，plugins、连接器许可回调及稳定 cwd 约束沿原运行入口传递。",
+      "summary": "提供 Agent 公共 API、消息与目标状态，由 Agent 持有会话唯一的 SkillRuntime；旧激活接口改为注册普通参考资料，每轮构造 Context 处理正文投影。SessionLog 继续保存持久事实，plugins、连接器许可回调及稳定 cwd 约束沿原运行入口传递。公共构造只在 Runtime 为 None 时新建实例，并复用共享 Store 绑定检查，保留 falsey 借用实例及已有持久化归属。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29588,9 +29588,9 @@
       "filePath": "box_agent/agent.py",
       "lineRange": [
         437,
-        1279
+        1281
       ],
-      "summary": "持有消息、目标与会话唯一 SkillRuntime，旧 Skill 激活接口登记普通宿主资料，每轮创建 Context 并通过通用组合入口执行。直接 API 恢复严格验证当前来源；连接器许可继续约束 MCP 目录和搜索，受管能力沿 KernelServices 传递。",
+      "summary": "持有消息、目标与会话唯一 SkillRuntime，旧 Skill 激活接口登记普通宿主资料，每轮创建 Context 并通过通用组合入口执行。直接 API 恢复严格验证当前来源；连接器许可继续约束 MCP 目录和搜索，受管能力沿 KernelServices 传递。公共构造复用 _bind_skill_store，拒绝更换或清空借用 SkillRuntime 已绑定的 Store；仅 None 触发默认创建，falsey 实例保持身份。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -39031,7 +39031,7 @@
         "实现边界"
       ],
       "complexity": "moderate",
-      "summary": "解释本地目录发现、按需读取与显式宿主资料的实现：Skill 管来源和读取事实，Context 管普通消息投影、可见范围与完整请求预算，Tool 管曝光与权限，Kernel 管真实历史和请求提交。记录版本分页、来源快照、恢复与子任务材料包的兼容边界。"
+      "summary": "解释本地目录发现、按需读取与显式宿主资料的实现：Skill 管来源和读取事实，Context 管普通消息投影、可见范围与完整请求预算，Tool 管曝光与权限，Kernel 管真实历史和请求提交。记录版本分页、来源快照、恢复与子任务材料包的兼容边界。明确公共 Agent/AgentSession 构造不能静默更换或清空 Store，目录推荐在截取名额前过滤可见性。"
     },
     {
       "id": "document:docs/design/tool-skill-workflows.md",
@@ -77321,6 +77321,20 @@
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/agent.py:Agent",
+      "target": "function:box_agent/plugins/defaults.py:_bind_skill_store",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "document:docs/design/skill-engine.md",
+      "target": "file:box_agent/agent_session.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [

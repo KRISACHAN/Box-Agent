@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "e880181c5219cb957b0cf28bce1595c26fde935f",
-  "generatedAt": "2026-09-10T20:34:15.325Z",
+  "gitCommitHash": "b7b884768974bb5ca5103a1740349eef9e3e7c0f",
+  "generatedAt": "2026-09-10T21:00:36.250Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -2278,7 +2278,7 @@
     },
     "box_agent/agent.py": {
       "filePath": "box_agent/agent.py",
-      "contentHash": "042e2704625c2f78600eb0ee0c22cea5e04fe3608d682bf81aae5c1aef672736",
+      "contentHash": "8eda3ef74f2b98583c0e22916b30ca88876236bd00d0ef6f956e9b1062a2cfe2",
       "functions": [
         {
           "name": "_clean_goal_text",
@@ -2492,7 +2492,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 843
+          "lineCount": 845
         }
       ],
       "imports": [
@@ -2716,7 +2716,7 @@
         "_GoalWriteTool",
         "Agent"
       ],
-      "totalLines": 1280,
+      "totalLines": 1282,
       "hasStructuralAnalysis": true
     },
     "box_agent/artifacts.py": {
@@ -30968,7 +30968,7 @@
     },
     "box_agent/tools/skill_loader.py": {
       "filePath": "box_agent/tools/skill_loader.py",
-      "contentHash": "9595682d7ce73fd01c3cecd40914c5f1d13aed6e71a61203f4eb129006178198",
+      "contentHash": "f014054dc1a1d0522812e6f172d2ebe7c1b0e301090db7ff3b4cfaf976f5f6d7",
       "functions": [
         {
           "name": "_clip_metadata_text",
@@ -34091,12 +34091,12 @@
     },
     "docs/design/skill-engine.md": {
       "filePath": "docs/design/skill-engine.md",
-      "contentHash": "cc78b96b8455f8c42014d80c1e6deeb0e076caa501d820496307f71cdb86f0cc",
+      "contentHash": "631d3f6243ee774fdb6a417a1441c66a566df7d2b36e4c6acfb78d6cad5a6b41",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 157,
+      "totalLines": 159,
       "hasStructuralAnalysis": true
     },
     "docs/design/tool-refactor/design.md": {
