@@ -1497,6 +1497,7 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
 ):
     monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path))
     monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("BOX_AGENT_SKILL_TOOLS_ROOT", raising=False)
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
@@ -2644,6 +2645,7 @@ async def test_acp_seeds_negotiated_session_continuation_once(
 ):
     monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path / "profile"))
     monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("BOX_AGENT_SKILL_TOOLS_ROOT", raising=False)
     agent, _ = acp_agent
     session = await agent.newSession(
         SimpleNamespace(
