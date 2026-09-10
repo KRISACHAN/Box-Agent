@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "9472d12b4717d12af2407227acbfc142db884251",
-  "generatedAt": "2026-09-10T20:02:07.503Z",
+  "gitCommitHash": "8d9a9694b72014826eaae0202f83571295eb4106",
+  "generatedAt": "2026-09-10T20:17:13.026Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -7133,7 +7133,7 @@
     },
     "box_agent/hook_bus.py": {
       "filePath": "box_agent/hook_bus.py",
-      "contentHash": "0696d6a5d0e6328ad5c0c38973f2fadf6cbdee50b6afa7eaec423d190fcca3e7",
+      "contentHash": "553896c9d5f07a2ff73322440f7085245ab3e4724bcbe14a7b4542964ac838fe",
       "functions": [
         {
           "name": "build_hook_context",
@@ -7264,7 +7264,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 439
+          "lineCount": 440
         }
       ],
       "imports": [
@@ -7357,7 +7357,7 @@
         "_snapshot_legacy",
         "HookBus"
       ],
-      "totalLines": 557,
+      "totalLines": 558,
       "hasStructuralAnalysis": true
     },
     "box_agent/hooks.py": {
