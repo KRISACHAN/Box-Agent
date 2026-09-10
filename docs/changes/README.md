@@ -100,6 +100,10 @@ Release, provider API, and ACP compatibility have their own sources under
   ordinary task subdirectories and ignored legacy artifact roots. Session Log
   degradation hints and unavailable-Skill recovery remain effective after their
   assembly moves out of the adapters.
+  Interrupted rollback of a failed Run activation retains its session owner,
+  including runtime Port validation failures. Session close retries those Run
+  resources before releasing Session dependencies and prevents a new activation
+  from bypassing unfinished cleanup.
 - **Proof anchors:** `tests/test_session_plugins.py`, `test_session_adapter_assembly.py`,
   `test_plugin_runtime_lifecycle.py`, `test_plugin_host_context.py`,
   `test_managed_kernel_services.py`, and existing ACP/CLI/kernel/provider suites.

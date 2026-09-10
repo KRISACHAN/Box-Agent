@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import pytest
 
@@ -9,6 +10,7 @@ from box_agent.agent_session import AgentSession
 from box_agent.plugins.builtins import SessionInitializerPort
 from box_agent.plugins.descriptors import PluginDescriptor, PluginScope
 from box_agent.plugins.registries import CapabilityBinding, CapabilityPolicy
+from box_agent.plugins.host import PluginScopeError
 from box_agent.plugins.runtime import PluginRuntime
 from box_agent.session_context import HostBindings
 from tests.test_agent_session import session_config
@@ -129,6 +131,99 @@ async def test_cancelled_run_disposal_is_retried_before_session_resources_close(
     assert len(attempts) == 2
     assert attempts[0] is attempts[1]
     await runtime.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_site", ["factory", "port_validation"])
+@pytest.mark.parametrize("cancelled_attempts", [1, 2])
+async def test_failed_run_rollback_stays_with_its_session_until_cleanup_finishes(
+    tmp_path, failure_site, cancelled_attempts,
+):
+    class ProcessResource:
+        pass
+
+    class SessionResource:
+        def __init__(self, owner):
+            self.owner = owner
+
+    class RunResource:
+        def __init__(self, owner):
+            self.owner = owner
+
+    @runtime_checkable
+    class CheckedPort(Protocol):
+        def required(self) -> None: ...
+
+    class CheckedResource(RunResource):
+        def required(self):
+            pass
+
+    target = None
+    attempts = {}
+    order = []
+
+    def create_run(context):
+        return RunResource(context.context.session.session_key)
+
+    def create_checked(context):
+        owner = context.context.session.session_key
+        if owner == target:
+            if failure_site == "factory":
+                raise ValueError("run factory failed")
+            return RunResource(owner)  # Deliberately lacks CheckedPort.required.
+        return CheckedResource(owner)
+
+    async def interrupted_dispose(resource):
+        attempts[resource.owner] = attempts.get(resource.owner, 0) + 1
+        if resource.owner == target and attempts[resource.owner] <= cancelled_attempts:
+            raise asyncio.CancelledError("run rollback interrupted")
+        order.append(("run-finished", resource.owner))
+
+    runtime = PluginRuntime(
+        plugins=(
+            PluginDescriptor("test.process", "1.0.0", (ProcessResource,),
+                             factory=ProcessResource, scope=PluginScope.PROCESS,
+                             disposer=lambda resource: order.append(("process", None))),
+            PluginDescriptor("test.session", "1.0.0", (SessionResource,),
+                             context_factory=lambda context: SessionResource(context.context.session_key),
+                             scope=PluginScope.SESSION, dependencies=("test.process",),
+                             disposer=lambda resource: order.append(("session", resource.owner))),
+            PluginDescriptor("test.run", "1.0.0", (RunResource,),
+                             context_factory=create_run, dependencies=("test.session",),
+                             disposer=interrupted_dispose if failure_site == "factory" else None),
+            PluginDescriptor("test.checked", "1.0.0", (CheckedPort,),
+                             context_factory=create_checked, dependencies=("test.run",),
+                             disposer=interrupted_dispose if failure_site == "port_validation" else None),
+        ),
+        bindings=tuple(CapabilityBinding(port, CapabilityPolicy.REQUIRED_SINGLE)
+                       for port in (ProcessResource, SessionResource, RunResource, CheckedPort)),
+    )
+    first = await open_session(tmp_path / "first", runtime)
+    second = await open_session(tmp_path / "second", runtime)
+    target = first.plugin_session.context.session_key
+    try:
+        with pytest.raises(asyncio.CancelledError, match="rollback interrupted"):
+            _ = [event async for event in first.run_events()]
+        assert attempts[target] == 1
+        with pytest.raises(PluginScopeError, match="cleanup is incomplete"):
+            _ = [event async for event in first.run_events()]
+        if cancelled_attempts > 1:
+            with pytest.raises(asyncio.CancelledError, match="rollback interrupted"):
+                await first.aclose()
+            assert not first._closed and ("session", target) not in order
+
+        second.agent.add_user_message("other session remains usable")
+        assert [event async for event in second.run_events()]
+        assert ("process", None) not in order
+        assert not second._closed
+
+        await first.aclose()
+        assert first._closed and attempts[target] == cancelled_attempts + 1
+        assert order.index(("run-finished", target)) < order.index(("session", target))
+        assert ("session", second.plugin_session.context.session_key) not in order
+        assert ("process", None) not in order
+    finally:
+        await runtime.aclose()
 
 
 @pytest.mark.asyncio

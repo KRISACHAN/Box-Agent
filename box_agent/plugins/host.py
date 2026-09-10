@@ -149,6 +149,7 @@ class PluginHost:
         self._process_instances: dict[str, _InstanceRecord] = {}
         self._session_instances: dict[Hashable, dict[str, _InstanceRecord]] = {}
         self._closing_sessions: set[Hashable] = set()
+        self._pending_run_rollbacks: dict[Hashable, list[_InstanceRecord]] = {}
         self._live_records: list[_InstanceRecord] = []
         self._closed = False
         self._lock = asyncio.Lock()
@@ -438,6 +439,7 @@ class PluginHost:
         ):
             if session_key is None:
                 raise PluginScopeError("session-scoped plugins require a session key")
+        if session_key is not None:
             try:
                 hash(session_key)
             except TypeError as error:
@@ -507,6 +509,7 @@ class PluginHost:
                     self._remove_live_records(
                         record for record in created if record.disposed
                     )
+                    self._retain_run_rollback(created, session_key=session_key)
                 self._raise_activation_failure(
                     activation_error,
                     cleanup_errors=cleanup_errors,
@@ -551,6 +554,7 @@ class PluginHost:
             async with self._lock:
                 if record.disposed:
                     self._remove_live_records((record,))
+                self._retain_run_rollback((record,), session_key=session_key)
             if cleanup_cancellation is not None:
                 if cleanup_errors:
                     raise cleanup_cancellation from PluginCleanupError(cleanup_errors)
@@ -651,11 +655,43 @@ class PluginHost:
         finally:
             await self._release_operation(reservation)
 
+    def _retain_run_rollback(
+        self,
+        records: Iterable[_InstanceRecord],
+        *,
+        session_key: Hashable | None,
+    ) -> None:
+        """Keep failed activation cleanup owned by its session after activate raises."""
+        if session_key is None:
+            return
+        retained = [
+            record for record in records
+            if record.descriptor.scope is PluginScope.RUN and not record.disposed
+        ]
+        if retained:
+            pending = self._pending_run_rollbacks.setdefault(session_key, [])
+            known = {id(record) for record in pending}
+            pending.extend(record for record in retained if id(record) not in known)
+            self._closing_sessions.add(session_key)
+
     async def dispose_session(self, session_key: Hashable) -> None:
-        """Dispose one session cache without affecting other sessions."""
+        """Retry this session's failed RUN rollback before releasing SESSION resources."""
 
         reservation = await self._reserve_operation("dispose session")
         try:
+            pending = tuple(self._pending_run_rollbacks.get(session_key, ()))
+            rollback_errors, rollback_cancellation = await self._dispose_records(
+                reversed(pending)
+            )
+            async with self._lock:
+                remaining = [record for record in pending if not record.disposed]
+                if remaining:
+                    self._pending_run_rollbacks[session_key] = remaining
+                else:
+                    self._pending_run_rollbacks.pop(session_key, None)
+                self._remove_live_records(record for record in pending if record.disposed)
+            if rollback_cancellation is not None:
+                self._raise_cleanup_failures(rollback_errors, rollback_cancellation)
             async with self._lock:
                 owned_records = tuple(
                     self._session_instances.get(session_key, {}).values()
@@ -681,7 +717,7 @@ class PluginHost:
                 self._remove_live_records(
                     record for record in owned_records if record.disposed
                 )
-            self._raise_cleanup_failures(cleanup_errors, cancellation)
+            self._raise_cleanup_failures(rollback_errors + cleanup_errors, cancellation)
         finally:
             await self._release_operation(reservation)
 
@@ -750,6 +786,12 @@ class PluginHost:
         record_ids = {id(record) for record in records}
         if not record_ids:
             return
+        for session_key, pending in tuple(self._pending_run_rollbacks.items()):
+            remaining = [record for record in pending if id(record) not in record_ids]
+            if remaining:
+                self._pending_run_rollbacks[session_key] = remaining
+            else:
+                del self._pending_run_rollbacks[session_key]
         self._process_instances = {
             plugin_id: record
             for plugin_id, record in self._process_instances.items()

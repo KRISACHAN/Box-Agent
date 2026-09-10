@@ -152,6 +152,13 @@ Rebinding closes the old session after workspace validation; failed restoration
 releases the unpublished session. Server shutdown closes sessions, background
 tasks, owned models and tool runtime resources.
 
+If a Run activation fails and its rollback is interrupted, PluginHost retains
+the unfinished Run resources under that session key, including resources that
+failed runtime Port validation. The session cannot activate another Run until
+cleanup finishes. Closing it retries those Run resources before releasing its
+Session dependencies; a second interruption leaves the session retryable and
+does not affect other sessions or Process resources.
+
 CLI retains configuration setup/probing, terminal input, commands and rendering.
 One managed session serves task mode, interactive turns and goal continuations.
 `/clear` and `/clear_all` reuse that session. The CLI closes its session and every
