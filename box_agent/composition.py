@@ -276,12 +276,26 @@ async def _cleanup_hook_run(
     """Drain handlers before releasing providers; carry failures across Task boundaries."""
     try:
         await bus.close()
-        if host is not None:
-            await _cleanup_plugin_run(activation=activation, host=host)
     except BaseException as error:
-        # Python 3.10 wraps cancellation raised by Task.result(), losing its
-        # top-level cause. A successful task result preserves the exact object.
         return error
+    if host is not None:
+        try:
+            await _cleanup_plugin_run(activation=activation, host=host)
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                # This private Run Host has no later Session owner to retry it.
+                # Keep its cleanup lease until all interrupted records settle.
+                while host.has_live_instances:
+                    try:
+                        await host.close()
+                    except asyncio.CancelledError:
+                        await asyncio.sleep(0)
+                    except BaseException as retry_error:
+                        _attach_cleanup_error(error, retry_error)
+                        break
+            # Python 3.10 wraps cancellation raised by Task.result(), losing its
+            # top-level cause. A task result preserves the exact error object.
+            return error
     return None
 
 

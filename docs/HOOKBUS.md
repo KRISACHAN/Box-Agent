@@ -57,6 +57,8 @@ Managed Session 先校验已有 KernelServices 与运行选项的一致性，然
 
 Managed Run 传播取消或结束之前，必须等待 HookBus 排空和扩展 Provider 清理完成，之后 Session 才能释放自身资源。受保护的清理任务以返回值传递异常对象，保留 Python 3.10 上原始取消异常及其清理失败原因；不会依赖 `Task.result()` 对取消异常的版本差异。
 
+每轮独立的扩展宿主没有后续 Session 来代为重试。若 Provider 清理再次被取消，Run owner 会保留清理任务并继续关闭尚存的实例，清理完成后再传播原始取消；持续中断的 Provider 会推迟该 Run 的清理完成。
+
 ## 装配与调用
 
 ```text

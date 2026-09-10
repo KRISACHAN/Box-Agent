@@ -217,6 +217,11 @@ class PluginHost:
 
         return self._descriptors
 
+    @property
+    def has_live_instances(self) -> bool:
+        """Whether this Host still owns records that close must release."""
+        return bool(self._live_records)
+
     def validate(self) -> None:
         """Validate the whole static graph before any factory is invoked."""
 

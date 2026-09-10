@@ -460,6 +460,42 @@ async def test_managed_hook_plugins_cannot_replace_other_session_capabilities(tm
         await session.aclose()
 
 
+@pytest.mark.parametrize("managed", [False, True])
+async def test_run_owner_retries_repeatedly_interrupted_provider_cleanup(tmp_path, managed):
+    attempts, order = [], []
+
+    async def dispose(provider):
+        attempts.append(provider)
+        if len(attempts) <= 2:
+            raise asyncio.CancelledError("provider cleanup interrupted")
+        order.append("provider")
+
+    descriptor = plugin([], disposer=dispose)
+    session = None
+    if managed:
+        session = await AgentSession.open(
+            config=Config(llm={"model": "fixture"}, agent={}, tools={}),
+            options=SessionOptions(workspace_dir=tmp_path, utility=True),
+            host=HostBindings(llm_client=Model([]), tools=[], system_prompt="system"),
+            plugins=(descriptor,),
+        )
+        session.plugin_session.resources.cleanup.callback(order.append, "session")
+        events = session.run_events()
+    else:
+        events = run_agent_loop(llm=Model([]), tools={}, messages=[], plugins=(descriptor,))
+    try:
+        with pytest.raises(asyncio.CancelledError, match="provider cleanup interrupted"):
+            _ = [event async for event in events]
+        assert len(attempts) == 3 and all(item is attempts[0] for item in attempts)
+        assert order == ["provider"]
+    finally:
+        await events.aclose()
+        if session is not None:
+            await session.aclose()
+    if managed:
+        assert order == ["provider", "session"]
+
+
 def test_agent_preserves_existing_positional_constructor_parameters(tmp_path):
     agent = Agent(Model([]), "sys", [], 2, str(tmp_path), 1000, None, True, enable_builtin_tools=False)
     assert agent.thinking_enabled is True and agent.default_run_options().plugins == ()
