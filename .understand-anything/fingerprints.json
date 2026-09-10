@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "ceb907506fbf99a1ea14a583958505687ec10c43",
-  "generatedAt": "2026-09-10T15:51:12.845Z",
+  "gitCommitHash": "ea99fc5ae17f19f2dd752b2264cd3134a36c07ae",
+  "generatedAt": "2026-09-10T16:15:04.013Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -12543,7 +12543,7 @@
     },
     "box_agent/plugins/host.py": {
       "filePath": "box_agent/plugins/host.py",
-      "contentHash": "eb29c208feac19a879c24e334058dbf02db3ffc02de16d77643918978e0e4bba",
+      "contentHash": "645d686b239ec9a8b880f884885971059fcb233ad58c1b60b5f1b979fac13e4a",
       "functions": [
         {
           "name": "_is_valid_semver",
@@ -12665,7 +12665,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 682
+          "lineCount": 686
         }
       ],
       "imports": [
@@ -12751,7 +12751,7 @@
         "PluginActivation",
         "PluginHost"
       ],
-      "totalLines": 831,
+      "totalLines": 835,
       "hasStructuralAnalysis": true
     },
     "box_agent/plugins/registries.py": {

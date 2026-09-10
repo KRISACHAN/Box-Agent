@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T15:50:17.983Z",
-    "gitCommitHash": "ceb907506fbf99a1ea14a583958505687ec10c43"
+    "analyzedAt": "2026-09-10T16:13:23.313Z",
+    "gitCommitHash": "ea99fc5ae17f19f2dd752b2264cd3134a36c07ae"
   },
   "nodes": [
     {
@@ -35288,7 +35288,7 @@
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
         138,
-        819
+        823
       ],
       "summary": "校验依赖闭包与能力基数，防止寿命倒置并管理作用域实例。按会话保留失败 Run 激活的未完成回滚，dispose_session 先重试 Run 清理再释放 Session 依赖；再次中断时保持可重试，其他会话与 Process 资源不受该会话关闭影响。",
       "tags": [
