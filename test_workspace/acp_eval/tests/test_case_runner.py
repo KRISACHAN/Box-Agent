@@ -181,8 +181,9 @@ def test_absent_case_metadata_keeps_acp_defaults(tmp_path: Path) -> None:
     prompt = next(message["params"] for message in sent
                   if message.get("method") == "session/prompt")
     assert set(session["_meta"]) == {
-        "title", "session_id", "permission_mode", "filesystem_policy", "workspace_layout"
+        "title", "session_id", "permission_mode", "filesystem_policy"
     }
+    assert session["cwd"] == str((attempt / "workspace").resolve())
     assert session["_meta"]["filesystem_policy"]["allowed_directories"] == []
     assert prompt["_meta"] == {"title": "acp", "turnId": "eval-acp-normal-turn-1"}
     assert "clientCapabilities" not in sent[0]["params"]

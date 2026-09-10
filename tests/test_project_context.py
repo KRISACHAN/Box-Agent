@@ -73,8 +73,8 @@ def test_acp_session_prompt_builder_preserves_overlay_order(monkeypatch, tmp_pat
         agent=SimpleNamespace(code_prompt_path=None, analysis_prompt_path=None),
     )
 
-    monkeypatch.setattr(acp_module, "build_sandbox_info_prompt", lambda *, use_output_dir: "sandbox")
-    monkeypatch.setattr(acp_module, "build_file_delivery_prompt", lambda *, use_output_dir: "delivery")
+    monkeypatch.setattr(acp_module, "build_sandbox_info_prompt", lambda: "sandbox")
+    monkeypatch.setattr(acp_module, "build_file_delivery_prompt", lambda: "delivery")
     monkeypatch.setattr(acp_module, "_workspace_layout_prompt", lambda **_: "layout")
     monkeypatch.setattr(acp_module, "build_project_startup_context_prompt", lambda _: "startup")
     monkeypatch.setattr(acp_module, "build_env_context_prompt", lambda _: "env")
@@ -89,8 +89,6 @@ def test_acp_session_prompt_builder_preserves_overlay_order(monkeypatch, tmp_pat
         policy=None,
         env_context=object(),
         skill_runtime_context=object(),
-        artifact_mode="project",
-        artifact_root=tmp_path / "output",
         workspace_layout={"mode": "project"},
         follow_up_suggestions_enabled=True,
     )

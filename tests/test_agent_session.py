@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
-from box_agent.events import DoneEvent, StepStart, StopReason
+from box_agent.events import ArtifactEvent, DoneEvent, StepStart, StopReason
 from box_agent.schema import FunctionCall, StreamEvent, ToolCall
 
 
@@ -76,6 +76,46 @@ async def test_session_config_controls_actual_loop_step_limit(
     assert session.run_handle.config is config
     assert llm.calls == expected_calls
     assert [e.stop_reason for e in events if isinstance(e, DoneEvent)] == [expected_reason]
+
+
+@pytest.mark.asyncio
+async def test_session_artifacts_stay_relative_to_session_cwd(tmp_path):
+    from box_agent.agent_session import AgentSession
+    from box_agent.tools.file_tools import WriteTool
+
+    class WriteArtifactLLM(ToolThenAnswerLLM):
+        async def generate_stream(self, **kwargs):
+            async for event in super().generate_stream(**kwargs):
+                if event.tool_calls:
+                    event.tool_calls = [ToolCall(
+                        id="write-1", type="function",
+                        function=FunctionCall(
+                            name="write_file",
+                            arguments={"path": "report/summary.md", "content": "Verified result."},
+                        ),
+                    )]
+                yield event
+
+    workspace = tmp_path / "session-cwd"
+    legacy_root = tmp_path / "legacy-output"
+    session = AgentSession.create(
+        config=session_config(tmp_path / "config-workspace"),
+        llm_client=WriteArtifactLLM(), system_prompt="system",
+        tools=[WriteTool(workspace_dir=str(workspace))],
+        workspace_dir=workspace,
+    )
+    session.agent.add_user_message("Write the verified result to report/summary.md.")
+    events = [event async for event in session.run_events(
+        options=session.build_run_options(logger=None, artifact_root_dir=legacy_root),
+    )]
+
+    assert (workspace / "report" / "summary.md").read_text() == "Verified result."
+    assert [event.rel_path for event in events if isinstance(event, ArtifactEvent)] == [
+        "report/summary.md",
+    ]
+    assert session.agent.workspace_dir == workspace
+    assert not legacy_root.exists()
+    assert not (workspace / "output").exists()
 
 
 @pytest.mark.asyncio

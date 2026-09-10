@@ -629,7 +629,7 @@ def test_cli_uses_saved_code_workspace_mode(tmp_path: Path, monkeypatch) -> None
     )
 
     assert exit_code == 0
-    assert workspace_tool_options["use_output_dir"] is False
+    assert "use_output_dir" not in workspace_tool_options
     system_prompt = _CaptureStreamLLM.instances[0].system_prompts[0]
     assert "Project Workspace Mode" in system_prompt
     assert "Software Engineering Mode (code_agent)" in system_prompt

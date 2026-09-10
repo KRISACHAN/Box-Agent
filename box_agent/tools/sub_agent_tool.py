@@ -267,7 +267,6 @@ class SubAgentTool(EventEmittingTool):
         no_progress_limit: int | None = None,
         batch_synthesis_timeout_seconds: float = _DEFAULT_BATCH_SYNTHESIS_TIMEOUT_SECONDS,
         artifact_detection_enabled: bool = True,
-        artifact_root_dir: str | None = None,
         provider_stale_seconds: float | None = None,
         thinking_enabled: bool = False,
     ):
@@ -300,7 +299,6 @@ class SubAgentTool(EventEmittingTool):
         )
         self._batch_synthesis_timeout_seconds = batch_synthesis_timeout_seconds
         self._artifact_detection_enabled = artifact_detection_enabled
-        self._artifact_root_dir = artifact_root_dir
         # Inherit the parent's provider-stale cutoff so slow-model configs also
         # apply to child agents. None lets run_agent_loop resolve env/default.
         self._provider_stale_seconds = provider_stale_seconds
@@ -504,7 +502,7 @@ class SubAgentTool(EventEmittingTool):
                 "write_scope": {
                     "type": "array",
                     "description": (
-                        "Exact artifact-root-relative output paths or directories for "
+                        "Exact session-cwd-relative output paths or directories for "
                         "write_file, append_file, or edit_file. Required for those tools; "
                         "parallel children must use disjoint scopes."
                     ),
@@ -783,7 +781,6 @@ class SubAgentTool(EventEmittingTool):
                 provider_stale_seconds=self._provider_stale_seconds,
                 no_progress_limit=self._no_progress_limit,
                 artifact_detection_enabled=self._artifact_detection_enabled,
-                artifact_root_dir=self._artifact_root_dir,
                 permission_negotiator=self._permission_negotiator,
                 cache_fingerprint_context={
                     "sub_agent_strategy": diagnostic.get("strategy"),

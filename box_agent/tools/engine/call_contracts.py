@@ -48,6 +48,7 @@ class ToolRunContext:
     validate_followup: Callable[[ToolResult, Tool | None, int], tuple[ToolResult, list[dict[str, Any]] | None, int]]
     policy_error: Callable[[str, dict[str, Any]], str | None]
     workspace_dir: str | None = None
+    # Deprecated compatibility input; artifact discovery always uses workspace_dir.
     artifact_root_dir: str | Path | None = None
     session_id: str = ""
     turn_id: str = ""
@@ -85,7 +86,7 @@ class ToolCallRecord:
     started_at: float = 0.0
     snapshot_target: Path | None = None
     screenshot_target: Path | None = None
-    before_files: dict[Path, tuple[int, int]] = field(default_factory=dict)
+    before_files: dict[Path, tuple[int, int]] | None = None
     execution_result: ToolResult | None = None
     policy_decision: dict[str, Any] | None = None
     parallel: bool = False

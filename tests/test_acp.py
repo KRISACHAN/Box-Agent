@@ -314,18 +314,13 @@ async def test_acp_uses_saved_code_type_when_host_omits_session_mode(tmp_path, m
     state = agent._sessions[session.sessionId]
 
     assert state.session_mode == "code_agent"
-    assert state.artifact_mode == "project"
-    assert state.output_dir == str(workspace / "output")
     assert not (workspace / "output").exists()
     bash_tool = state.agent.tools["bash"]
     assert Path(bash_tool.workspace_dir) == workspace.resolve()
-    assert bash_tool._subprocess_env["BOX_AGENT_OUTPUT_DIR"] == str(
-        (workspace / "output").resolve()
-    )
+    assert "BOX_AGENT_OUTPUT_DIR" not in bash_tool._subprocess_env
     scratch_dir = Path(bash_tool._subprocess_env["BOX_AGENT_SCRATCH_DIR"])
     assert scratch_dir.is_dir()
-    assert scratch_dir.is_relative_to(workspace / ".box-agent" / "scratch")
-    assert not (workspace / ".box-agent-scratch").exists()
+    assert scratch_dir.parent == workspace / ".box-agent-scratch"
     assert "Software Engineering Mode (code_agent)" in state.agent.system_prompt
     assert "Project Workspace Mode" in state.agent.system_prompt
 
@@ -751,17 +746,17 @@ def test_sandbox_prompt_limits_single_execute_code_argument_size():
     assert "不要把大段内容塞进一个工具参数" in SANDBOX_INFO_PROMPT
 
 
-def test_project_sandbox_prompt_does_not_point_at_output_dir():
-    prompt = build_sandbox_info_prompt(use_output_dir=False)
+def test_sandbox_prompt_uses_stable_session_cwd():
+    prompt = build_sandbox_info_prompt()
 
-    assert "当前工作区/代码项目根目录" in prompt
+    assert "cwd 是当前会话工作目录" in prompt
     assert "不要默认创建或使用 `output/`" in prompt
     assert "cwd 已是 `{workspace}/output/`" not in prompt
 
 
 def test_output_prompts_rebuild_absolute_attachment_path_from_workspace_search():
-    sandbox_prompt = build_sandbox_info_prompt(use_output_dir=True)
-    delivery_prompt = build_file_delivery_prompt(use_output_dir=True)
+    sandbox_prompt = build_sandbox_info_prompt()
+    delivery_prompt = build_file_delivery_prompt()
 
     for prompt in (sandbox_prompt, delivery_prompt):
         assert "BOX_AGENT_WORKSPACE_DIR" not in prompt
@@ -779,7 +774,7 @@ def test_output_prompts_rebuild_absolute_attachment_path_from_workspace_search()
 
 
 def test_file_delivery_prompt_uses_dynamic_loopback_preview_and_reclaims_it():
-    prompt = build_file_delivery_prompt(use_output_dir=True)
+    prompt = build_file_delivery_prompt()
 
     assert "Playwright MCP 不要打开 `file://`" in prompt
     assert "http.server 0 --bind 127.0.0.1" in prompt
@@ -791,17 +786,14 @@ def test_file_delivery_prompt_uses_dynamic_loopback_preview_and_reclaims_it():
     assert "启动服务我看一下" in prompt
 
 
-def test_file_delivery_prompt_uses_mode_specific_naming_and_overwrite_policy():
-    output_prompt = build_file_delivery_prompt(use_output_dir=True)
-    project_prompt = build_file_delivery_prompt(use_output_dir=False)
+def test_file_delivery_prompt_has_one_cwd_rooted_policy():
+    prompt = build_file_delivery_prompt()
 
-    assert "新产物使用描述性小写名称" in output_prompt
-    assert "\n- **多文件交付**" in output_prompt
-    assert "用户需要单一下载包时才用" in output_prompt
-    assert "zip -r bundle.zip" in output_prompt
-    assert "遵循项目已有命名约定" in project_prompt
-    assert "不重命名或覆盖无关文件" in project_prompt
-    assert "新产物使用描述性小写名称" not in project_prompt
+    assert "当前会话工作目录" in prompt
+    assert "不要默认创建或使用 `output/`" in prompt
+    assert "\n- **多文件交付**" in prompt
+    assert "用户需要单一下载包时才" in prompt
+    assert "不重命名或覆盖无关文件" in prompt
 
 
 def test_acp_plan_approval_text_accepts_short_confirmations():
@@ -3407,7 +3399,7 @@ async def test_acp_goal_autopilot_stops_when_goal_blocks(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_project_artifact_mode_does_not_create_output(tmp_path):
+async def test_acp_deprecated_artifact_mode_is_ignored(tmp_path, capsys):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
@@ -3422,21 +3414,81 @@ async def test_acp_project_artifact_mode_does_not_create_output(tmp_path):
     state = agent._sessions[session.sessionId]
 
     assert not (tmp_path / "output").exists()
-    assert state.output_dir == str(tmp_path / "output")
-    assert state.artifact_mode == "project"
     bash_tool = state.agent.tools["bash"]
     assert Path(bash_tool.workspace_dir) == tmp_path.resolve()
-    assert bash_tool._subprocess_env["BOX_AGENT_OUTPUT_DIR"] == str(
-        (tmp_path / "output").resolve()
-    )
+    assert "BOX_AGENT_OUTPUT_DIR" not in bash_tool._subprocess_env
     scratch_dir = Path(bash_tool._subprocess_env["BOX_AGENT_SCRATCH_DIR"])
     assert scratch_dir.is_dir()
-    assert scratch_dir.is_relative_to(tmp_path / ".box-agent" / "scratch")
-    assert not (tmp_path / ".box-agent-scratch").exists()
-    assert "Do not create or use an `output/` folder" in state.agent.system_prompt
-    assert "当前工作区/代码项目根目录" in state.agent.system_prompt
+    assert scratch_dir.parent == tmp_path / ".box-agent-scratch"
+    assert "不要默认创建或使用 `output/`" in state.agent.system_prompt
     assert "{SANDBOX_INFO}" not in state.agent.system_prompt
-    assert session.field_meta["artifact_mode"] == "project"
+    assert "artifact_mode" not in session.field_meta
+    assert "session/deprecated_artifact_paths" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_mode", ["general", "code_agent"])
+async def test_acp_turn_cleanup_preserves_running_session_scratch(
+    tmp_path, session_mode
+):
+    second_started = asyncio.Event()
+    release_second = asyncio.Event()
+
+    class ConcurrentLLM(DoneLLM):
+        async def generate_stream(self, messages, tools=None, **kwargs):
+            if any(
+                message.role == "user" and message.content == "keep running"
+                for message in messages
+            ):
+                second_started.set()
+                await release_second.wait()
+            async for event in super().generate_stream(messages, tools, **kwargs):
+                yield event
+
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, ConcurrentLLM(), [], "system")
+    first = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"session_mode": session_mode})
+    )
+    second = await agent.newSession(
+        SimpleNamespace(cwd=str(tmp_path), field_meta={"session_mode": session_mode})
+    )
+    first_state = agent._sessions[first.sessionId]
+    second_state = agent._sessions[second.sessionId]
+    second_turn = asyncio.create_task(
+        agent.prompt(
+            SimpleNamespace(
+                sessionId=second.sessionId,
+                prompt=[{"text": "keep running"}],
+                field_meta={},
+            )
+        )
+    )
+    try:
+        await asyncio.wait_for(second_started.wait(), timeout=5)
+        first_file = first_state.skill_scratch_dir.path / "first-session.txt"
+        first_file.write_text("remove", encoding="utf-8")
+        second_file = second_state.skill_scratch_dir.path / "second-session.txt"
+        second_file.write_text("keep", encoding="utf-8")
+
+        await agent.prompt(
+            SimpleNamespace(
+                sessionId=first.sessionId, prompt=[{"text": "hello"}], field_meta={}
+            )
+        )
+
+        assert not first_file.exists()
+        assert second_file.read_text(encoding="utf-8") == "keep"
+        assert second_state.turn_active
+    finally:
+        release_second.set()
+        await asyncio.wait_for(second_turn, timeout=5)
+
+    assert not second_file.exists()
 
 
 @pytest.mark.asyncio
@@ -3495,7 +3547,7 @@ async def test_acp_project_artifact_mode_publishes_generated_artifact(tmp_path):
     assert len(artifact_outputs) == 1
     assert artifact_outputs[0]["filename"] == "roadmap-v1.html"
     assert artifact_outputs[0]["rel_path"] == "output/roadmap-v1.html"
-    assert artifact_outputs[0]["output_dir"] == str(output_dir)
+    assert "output_dir" not in artifact_outputs[0]
 
 
 @pytest.mark.asyncio
@@ -3538,30 +3590,59 @@ async def test_acp_project_artifact_mode_uses_generic_run_options(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_default_artifact_mode_creates_output(tmp_path):
+async def test_acp_general_mode_keeps_cwd_and_injects_directory_policy(tmp_path):
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
         tools=ToolsConfig(),
     )
     conn = DummyConn()
-    agent = BoxACPAgent(conn, config, DoneLLM(), [], "system {SANDBOX_INFO}")
+    system_prompt = (
+        Path(__file__).resolve().parents[1]
+        / "box_agent" / "config" / "system_prompt.md"
+    ).read_text(encoding="utf-8")
+    agent = BoxACPAgent(conn, config, DoneLLM(), [], system_prompt)
 
     session = await agent.newSession(
         SimpleNamespace(cwd=str(tmp_path), field_meta={"session_mode": "general"})
     )
     state = agent._sessions[session.sessionId]
 
-    assert (tmp_path / "output").is_dir()
-    assert state.output_dir == str(tmp_path / "output")
-    assert state.artifact_mode == "output"
-    assert "cwd 已是 `{workspace}/output/`" in state.agent.system_prompt
+    assert not (tmp_path / "output").exists()
+    assert Path(state.agent.workspace_dir) == tmp_path.resolve()
+    assert "## General Task Directory Organization" in state.agent.system_prompt
+    assert "保持当前会话工作目录（cwd）不变" in state.agent.system_prompt
+    assert "不要使用固定文件数量阈值" in state.agent.system_prompt
+    # Exercise the complete prompt: an empty cwd remains the default even
+    # when a presentation will produce several related files.
+    assert state.agent.system_prompt.count("只有较多无关文件时才建语义化任务目录") == 1
+    assert "cwd 空、文件少或均属本任务时直接使用 cwd" in state.agent.system_prompt
+    assert "会生成多份相关文件" not in state.agent.system_prompt
     assert session.field_meta == {
         "capabilities": {
             "session_continuation_versions": [1],
             "managed_mcp_config_versions": [1],
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_acp_creates_missing_host_cwd_without_allocating_output(tmp_path):
+    workspace = tmp_path / "selected-workspace"
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=1, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False),
+    )
+    agent = BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+
+    session = await agent.newSession(
+        SimpleNamespace(cwd=str(workspace), field_meta={"session_mode": "general"})
+    )
+
+    assert workspace.is_dir()
+    assert not (workspace / "output").exists()
+    assert Path(agent._sessions[session.sessionId].agent.workspace_dir) == workspace
 
 
 @pytest.mark.asyncio
@@ -3588,7 +3669,7 @@ async def test_acp_injects_standard_box_agent_image_generation_policy(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path, monkeypatch):
+async def test_acp_ignores_host_artifact_root_dir(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("BOX_AGENT_WORKSPACE_DIR", raising=False)
     workspace = tmp_path / "session-a"
@@ -3607,9 +3688,10 @@ async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path, monkeyp
     session = await agent.newSession(
         SimpleNamespace(
             cwd=str(workspace),
-            field_meta={
-                "session_id": "office-session-a",
-                "workspace_layout": {"artifact_root_dir": str(artifact_root)},
+                field_meta={
+                    "session_id": "office-session-a",
+                    "artifact_root": str(workspace / "also-ignored"),
+                    "workspace_layout": {"artifact_root_dir": str(artifact_root)},
             },
         )
     )
@@ -3618,18 +3700,19 @@ async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path, monkeyp
     bash_tool = state.agent.tools["bash"]
     search_tool = state.agent.tools["search_files"]
 
-    assert artifact_root.is_dir()
-    assert state.output_dir == str(artifact_root.resolve())
+    assert not artifact_root.exists()
     assert state.upstream_session_id == "office-session-a"
     assert not (tmp_path / "output").exists()
-    assert sandbox_tool._get_workspace("ignored") == artifact_root.resolve()
+    assert sandbox_tool._get_workspace("ignored") == workspace.resolve()
     assert "BOX_AGENT_WORKSPACE_DIR" not in bash_tool._subprocess_env
-    assert bash_tool._subprocess_env["BOX_AGENT_OUTPUT_DIR"] == str(
-        artifact_root.resolve()
-    )
+    assert "BOX_AGENT_OUTPUT_DIR" not in bash_tool._subprocess_env
     assert attachment.is_file()
     assert not (Path(bash_tool.workspace_dir).parent / attachment.name).exists()
     assert str(workspace.resolve()) in state.agent.system_prompt
+    assert str(artifact_root.resolve()) not in state.agent.system_prompt
+    warning = capsys.readouterr().err
+    assert warning.count("session/deprecated_artifact_paths") == 1
+    assert "artifact_root" in warning
 
     recovered = await search_tool.execute(
         pattern=attachment.name,
@@ -3652,7 +3735,7 @@ async def test_acp_uses_host_artifact_root_dir_for_output_mode(tmp_path, monkeyp
         ("selectedRootDir", "sessionWorkspaceDir", "artifactRootDir"),
     ],
 )
-async def test_acp_workspace_layout_prompt_distinguishes_root_roles(
+async def test_acp_workspace_layout_prompt_ignores_legacy_roots(
     tmp_path,
     monkeypatch,
     artifact_mode,
@@ -3687,18 +3770,12 @@ async def test_acp_workspace_layout_prompt_distinguishes_root_roles(
     prompt = state.agent.system_prompt
 
     assert f"工作区（selected workspace root）：`{selected_root}`" in prompt
-    assert f"当前任务目录（current task root）：`{task_root}`" in prompt
-    assert f"交付物目录（artifact root）：`{artifact_root}`" in prompt
-    assert "用户说“工作区”“当前文件夹”或“当前目录”时，默认指 selected workspace root" in prompt
-    assert "只有明确说“当前任务目录”时才指 current task root" in prompt
+    assert f"当前会话工作目录（cwd）：`{task_root}`" in prompt
+    assert str(artifact_root) not in prompt
     assert "必须先使用目标目录的绝对路径实际查询其内容" in prompt
     assert "只有查询成功且确认无内容时，才可判断该目标目录为空" in prompt
-    assert "不得用当前任务目录、交付物目录或工具默认目录的空结果推断工作区为空" in prompt
     assert "查询失败、权限不足或结果被过滤、截断时，不得据此判空" in prompt
-    if artifact_mode == "output":
-        assert "不得称为工作区或当前任务目录" in prompt
-    expected_cwd = artifact_root if artifact_mode == "output" else task_root
-    assert Path(state.agent.tools["bash"].workspace_dir) == expected_cwd.resolve()
+    assert Path(state.agent.tools["bash"].workspace_dir) == task_root.resolve()
 
 
 def test_acp_artifact_raw_output_gets_session_metadata():
@@ -3707,12 +3784,11 @@ def test_acp_artifact_raw_output_gets_session_metadata():
         "[OK] done",
         None,
         session_id="office-session-a",
-        output_dir="/tmp/session-a/output",
     )
 
     assert output["session_id"] == "office-session-a"
     assert output["sessionId"] == "office-session-a"
-    assert output["output_dir"] == "/tmp/session-a/output"
+    assert "output_dir" not in output
 
 
 @pytest.mark.asyncio
@@ -5791,12 +5867,10 @@ async def test_acp_host_env_context_feeds_bash_and_execute_code_runtime_env(
     assert bash_env["BOX_AGENT_NODE"] == str(node_path)
     assert bash_env["BOX_AGENT_NPM"] == str(npm_path)
     assert bash_env["BOX_AGENT_NPX"] == str(npx_path)
-    assert bash_env["BOX_AGENT_SCRATCH_DIR"] == str(
-        workspace / ".box-agent-scratch"
-    )
-    assert execute_code_env["BOX_AGENT_SCRATCH_DIR"] == str(
-        workspace / ".box-agent-scratch"
-    )
+    scratch_dir = state.skill_scratch_dir.path
+    assert scratch_dir.parent == workspace / ".box-agent-scratch"
+    assert bash_env["BOX_AGENT_SCRATCH_DIR"] == str(scratch_dir)
+    assert execute_code_env["BOX_AGENT_SCRATCH_DIR"] == str(scratch_dir)
     assert "BOX_AGENT_WORKSPACE_DIR" not in bash_env
     assert "BOX_AGENT_WORKSPACE_DIR" not in execute_code_env
     assert bash_env["NODE_PATH"].split(os.pathsep)[-1] == str(node_modules)

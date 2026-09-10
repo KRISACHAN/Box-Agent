@@ -917,7 +917,6 @@ def test_workspace_tools_register_search_files(tmp_path):
         tmp_path,
         allow_full_access=False,
         output=lambda *_: None,
-        use_output_dir=False,
     )
 
     tool_names = {tool.name for tool in tools}
@@ -950,7 +949,6 @@ def test_add_workspace_tools_applies_configured_bash_timeouts(tmp_path):
         tmp_path,
         allow_full_access=False,
         output=lambda *_: None,
-        use_output_dir=False,
     )
 
     bash_tool = next(tool for tool in tools if tool.name == "bash")
@@ -1040,7 +1038,7 @@ def test_write_tool_schema_names_active_relative_root(tmp_path):
 
     description = tool.parameters["properties"]["path"]["description"]
 
-    assert "Prefer a path relative to the active project/artifact root" in description
+    assert "Prefer a path relative to the active file root" in description
     assert str(artifact_root) in description
     assert "Absolute paths are used exactly as supplied" in description
 

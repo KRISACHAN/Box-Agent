@@ -93,6 +93,10 @@ class DefaultToolEngine:
 
     def configure_run(self, context: ToolRunContext, options: ToolExecutionOptions) -> None:
         """Bind run services once; keep every session-owned object borrowed."""
+        if context.artifact_root_dir is not None:
+            _log.warning(
+                "artifact_root_dir is deprecated and ignored; artifact discovery uses workspace_dir"
+            )
         self._context, self._options = context, options
         self._budget = ToolBudgetState(
             tool_call_limits=options.tool_call_limits,
@@ -163,10 +167,10 @@ class DefaultToolEngine:
             elif call.name == "managed_browser_take_screenshot":
                 call.screenshot_target = None
         snapshot, snapshot_error = _prepare_browser_snapshot_output(
-            call.name, call.arguments, context.workspace_dir, context.artifact_root_dir,
+            call.name, call.arguments, context.workspace_dir,
         )
         screenshot, screenshot_error = _prepare_browser_screenshot_output(
-            call.name, call.arguments, context.workspace_dir, context.artifact_root_dir,
+            call.name, call.arguments, context.workspace_dir,
         )
         # The adapters consume a managed filename. Preserve that saved target
         # when rechecking unchanged arguments after a Hook, replace it if a Hook
@@ -187,13 +191,13 @@ class DefaultToolEngine:
                 self._recovery = _ModelHistoryPlaceholderRecovery(
                     tool_name=call.name, argument_name=argument,
                     target=_model_history_recovery_target(
-                        call.name, call.arguments, context.workspace_dir, context.artifact_root_dir,
+                        call.name, call.arguments, context.workspace_dir,
                     ),
                     action=str(call.arguments.get("action")) if call.name == "staged_file_write" else None,
                 )
             return f"{_MODEL_HISTORY_PLACEHOLDER_TOOL_ERROR} Rejected argument: {call.name}.{argument}."
         return _model_history_placeholder_recovery_error(
-            self._recovery, call.name, call.arguments, context.workspace_dir, context.artifact_root_dir,
+            self._recovery, call.name, call.arguments, context.workspace_dir,
         )
 
     async def _start_call(self, call: ToolCallRecord, prepared: PreparedTools,
@@ -257,7 +261,7 @@ class DefaultToolEngine:
                            tool_call_id=call.call_id, data=trace)
         if (not call.parallel and self._options.artifact_detection_enabled
                 and call.allowed and call.user_visible and context.workspace_dir):
-            call.before_files = _snapshot_workspace_signatures(context.workspace_dir, context.artifact_root_dir)
+            call.before_files = _snapshot_workspace_signatures(context.workspace_dir)
 
     def _request(self, call: ToolCallRecord, prepared: PreparedTools) -> ToolInvocationRequest:
         error = call.rejection if not call.allowed else prepared.validate_call(call.name)
@@ -359,16 +363,16 @@ class DefaultToolEngine:
                 if call.user_visible:
                     artifacts, paths = _detect_regex_artifacts(
                         call.call_id, call.name, outcome.visible_content, result.raw_output,
-                        context.workspace_dir, context.artifact_root_dir,
+                        context.workspace_dir,
                     )
                     emitted_paths.update(paths)
                     for artifact in artifacts:
                         yield artifact
             else:
-                after = _snapshot_workspace_signatures(context.workspace_dir, context.artifact_root_dir)
+                after = _snapshot_workspace_signatures(context.workspace_dir)
                 for artifact in _detect_tool_artifacts(
                     call.call_id, call.name, outcome.visible_content, result.raw_output,
-                    call.before_files, after, context.workspace_dir, context.artifact_root_dir,
+                    call.before_files, after, context.workspace_dir,
                 ):
                     yield artifact
 
@@ -435,8 +439,8 @@ class DefaultToolEngine:
             if context.is_cancelled():
                 return
         if parallel:
-            before = (_snapshot_workspace_signatures(context.workspace_dir, context.artifact_root_dir)
-                      if self._options.artifact_detection_enabled and context.workspace_dir else {})
+            before = (_snapshot_workspace_signatures(context.workspace_dir)
+                      if self._options.artifact_detection_enabled and context.workspace_dir else None)
             for call in parallel:
                 async for event in self._start_call(call, prepared, control, summary, search):
                     yield event
@@ -461,7 +465,7 @@ class DefaultToolEngine:
                             outcomes[call.call_id] = event.success
                         yield event
             if self._options.artifact_detection_enabled and context.workspace_dir:
-                after = _snapshot_workspace_signatures(context.workspace_dir, context.artifact_root_dir)
+                after = _snapshot_workspace_signatures(context.workspace_dir)
                 for artifact in _detect_changed_files(parallel[0].call_id, before, after, emitted, context.workspace_dir):
                     yield artifact
             if context.is_cancelled():

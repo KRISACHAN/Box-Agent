@@ -99,7 +99,7 @@ class ImageInspectionTool(Tool):
                     },
                     "description": (
                         "Local PNG/JPEG paths. Relative paths resolve from the active "
-                        "project/artifact root."
+                        "session cwd."
                     ),
                 },
                 "instruction": {

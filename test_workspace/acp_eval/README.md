@@ -82,8 +82,11 @@ incorrect types are rejected before execution. The original record, including
 metadata, remains in `input.json` and participates in the case fingerprint.
 Omitting these fields preserves the default thinking mode, filesystem policy,
 and client capabilities. The runner retains its own session/turn IDs, workspace
-layout, and default permission mode; permission requests are still cancelled.
+cwd, and default permission mode; permission requests are still cancelled.
 Plan approval metadata does not approve tool permission requests.
+
+When no legacy `output/` directory exists, artifact inventory lists the files
+named by cwd-relative ACP artifact events without treating staged inputs as outputs.
 
 ## v1 evidence layout
 

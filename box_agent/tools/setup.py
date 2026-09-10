@@ -12,6 +12,7 @@ import sys
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional
+from uuid import uuid4
 
 from box_agent.config import Config, ToolLimitsConfig
 from box_agent.llm.capabilities import image_input_support, model_candidate_has_tag
@@ -47,7 +48,7 @@ from box_agent.tools.request_user_decision_tool import RequestUserDecisionTool
 from box_agent.tools.request_user_input_tool import RequestUserInputTool
 from box_agent.tools.runtime import SkillRuntimeContext, build_skill_runtime_context
 from box_agent.tools.skill_execution_env import build_skill_execution_env
-from box_agent.tools.skill_scratch import prepare_skill_scratch_dir
+from box_agent.tools.skill_scratch import SKILL_SCRATCH_DIR_NAME, prepare_skill_scratch_dir
 from box_agent.tools.mcp_config_tool import McpConfigTool
 from box_agent.tools.schedule_tool import CreateScheduledTaskTool
 from box_agent.tools.skill_tool import create_skill_tools
@@ -107,26 +108,18 @@ def _image_capable_llm(llm: Any | None) -> Any | None:
     return None if current_support is False else llm
 
 
-def build_sandbox_info_prompt(use_output_dir: bool = True) -> str:
-    """Build the sandbox prompt block for output or project workspace mode."""
-    if use_output_dir:
-        location_line = (
-            "沙箱有独立 `sys.executable`，cwd 已是 `{workspace}/output/`"
-            "（或 host 指定的当前会话 output 根），"
-            "存盘用相对路径（如 `plt.savefig(\"chart.png\")`）；禁写 `/mnt/data/`、"
-            "`sandbox:` 前缀；读取用户上传文件时优先原样使用 host 在当前消息中提供的完整路径；"
-            "若仅有文件名，或完整路径返回 `FileNotFoundError` / `No such file or directory`，"
-            "不要猜测 `../` 层级；直接调用 `search_files`，以 `File Access Context` 中的 "
-            "`Current workspace` 为 `path`、原文件名为 `pattern`、`target=\"files\"` 精确定位，"
-            "找到唯一结果后，将搜索 `path` 与返回的相对路径拼接为绝对路径再重试；"
-            "无结果或有多个同名结果时停止并请用户确认。"
-        )
-    else:
-        location_line = (
-            "沙箱有独立 `sys.executable`，cwd 已是当前工作区/代码项目根目录，"
-            "存盘用项目内相对路径；不要默认创建或使用 `output/` 目录；"
-            "禁写 `/mnt/data/`、`sandbox:` 前缀。"
-        )
+def build_sandbox_info_prompt() -> str:
+    """Build the sandbox prompt block for a cwd-rooted session."""
+    location_line = (
+        "沙箱有独立 `sys.executable`，cwd 是当前会话工作目录；"
+        "存盘路径由当前任务和用户要求决定，不要默认创建或使用 `output/` 目录；"
+        "禁写 `/mnt/data/`、`sandbox:` 前缀。读取用户上传文件时优先原样使用 host "
+        "在当前消息中提供的完整路径；若仅有文件名，或完整路径返回 `FileNotFoundError` / "
+        "`No such file or directory`，不要猜测 `../` 层级；直接调用 `search_files`，以 "
+        "`File Access Context` 中的 `Current workspace` 为 `path`、原文件名为 `pattern`、"
+        "`target=\"files\"` 精确定位，找到唯一结果后，将搜索 `path` 与返回的相对路径"
+        "拼接为绝对路径再重试；无结果或有多个同名结果时停止并请用户确认。"
+    )
 
     return f"""
 ## Python Sandbox (execute_code)
@@ -156,9 +149,9 @@ Excel/Word/PDF/PowerPoint 优先在沙箱内用 Python 包，避免外部 CLI：
 """
 
 
-def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
-    """Build file-delivery guidance for output or project workspace mode."""
-    preview_directory = '"$BOX_AGENT_OUTPUT_DIR"' if use_output_dir else '"$PWD"'
+def build_file_delivery_prompt() -> str:
+    """Build file-delivery guidance for a cwd-rooted session."""
+    preview_directory = '"$PWD"'
     preview_guidance = (
         "\n- **本地 HTML 预览**：Playwright MCP 不要打开 `file://`。用 bash 后台启动仅监听 "
         "loopback 的动态端口预览：`${BOX_AGENT_PYTHON:-python3} -u -m http.server 0 "
@@ -168,26 +161,21 @@ def build_file_delivery_prompt(use_output_dir: bool = True) -> str:
         "使用 `lifetime=\"runtime\"`，验证后只关闭自动化浏览器，不停止服务，最终回复提供链接、`bash_id`，"
         "并说明服务会持续到显式 `bash_kill`、Box-Agent 重启或客户端退出。"
     )
-    if use_output_dir:
-        return (
-            "- **目录**：交付物落当前会话的 output 根目录；以沙箱 cwd 和 host 提供的工作区信息为准，"
-            "不要写到 `~/.box-agent/` 等内部目录。\n"
-            "- **相对路径**：bash、文件工具、`generate_image` 和视觉检查的相对路径都已从当前 output 根开始；"
-            "使用 `assets/generated/a.png`，不要再添加 `output/` 前缀。读取上传文件时优先原样使用 host 提供的完整路径；"
-            "若仅有文件名，或完整路径返回 `FileNotFoundError` / `No such file or directory`，"
-            "不要猜测 `../` 层级；直接调用 `search_files`，以 `File Access Context` 中的 "
-            "`Current workspace` 为 `path`、原文件名为 `pattern`、`target=\"files\"` 精确定位，"
-            "找到唯一结果后，将搜索 `path` 与返回的相对路径拼接为绝对路径再重试；"
-            "无结果或有多个同名结果时停止并请用户确认。\n"
-            "- **命名**：新产物使用描述性小写名称和 `-` 分隔；除非用户要求，不加时间戳或 UUID。\n"
-            "- **桌面交付**：完成后说明文件名即可。宿主会从结构化 ArtifactEvent 渲染可打开的文件卡。\n"
-            "- **多文件交付**：用户需要单一下载包时才用 `zip -r bundle.zip 文件1 文件2` 将多文件打包为 ZIP。"
-            + preview_guidance
-        )
     return (
-        "- **目录**：这是现有项目工作区。交付物可以在项目树中合适的位置；不要默认创建或使用 `output/`。\n"
-        "- **命名与覆盖**：遵循项目已有命名约定；仅在任务明确需要时覆盖目标文件，不重命名或覆盖无关文件。\n"
-        "- **桌面交付**：完成后说明文件名和项目内相对位置即可。宿主会根据文件变更渲染可验证的文件入口。"
+        "- **目录**：bash、文件工具、`generate_image`、视觉检查和 Python 沙箱的相对路径"
+        "均从当前会话工作目录开始。交付物位置由用户要求和当前任务决定；不要默认创建或使用 `output/`，"
+        "也不要写到 `~/.box-agent/` 等内部目录。\n"
+        "- **命名与覆盖**：遵循现有项目约定；独立产物使用简短、语义明确的名称。"
+        "仅在任务明确需要时覆盖目标文件，不重命名或覆盖无关文件。\n"
+        "- **附件定位**：优先原样使用 host 提供的完整路径；若仅有文件名，或完整路径返回 "
+        "`FileNotFoundError` / `No such file or directory`，不要猜测 `../` 层级；调用 "
+        "`search_files`，以 `File Access Context` 中的 `Current workspace` 为 `path`、"
+        "原文件名为 `pattern`、`target=\"files\"` 精确定位。将搜索 `path` 与返回的相对路径"
+        "拼接为绝对路径再重试；无结果或有多个同名结果时停止并请用户确认。\n"
+        "- **桌面交付**：完成后说明文件名和工作目录内相对位置即可。"
+        "宿主会根据结构化 ArtifactEvent 渲染可验证的文件入口。\n"
+        "- **多文件交付**：用户需要单一下载包时才将多文件打包为 ZIP，"
+        "例如 `zip -r bundle.zip 文件1 文件2`。"
         + preview_guidance
     )
 
@@ -226,10 +214,8 @@ def build_image_generation_prompt(
     )
 
 
-# Single source of truth for the default sandbox / Python-execution block
-# injected into the system prompt. ACP may build a per-session variant when a
-# host marks the session as an existing project workspace.
-SANDBOX_INFO_PROMPT = build_sandbox_info_prompt(use_output_dir=True)
+# Shared sandbox / Python-execution block for all cwd-rooted sessions.
+SANDBOX_INFO_PROMPT = build_sandbox_info_prompt()
 
 
 # Minimal color constants used in status messages.
@@ -569,10 +555,6 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                         llm=None, permission_engine: PermissionEngine | None = None,
                         skill_runtime_context: SkillRuntimeContext | None = None,
                         skill_loader=None, capability_state_provider=None,
-                        use_output_dir: bool = True,
-                        artifact_root_dir: str | Path | None = None,
-                        create_artifact_root: bool = True,
-                        skill_scratch_root_dir: str | Path | None = None,
                         env_context=None,
                         process_owner_id: str | None = None,
                         bypass_dangerous_command_approval: bool = False):
@@ -594,12 +576,6 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         skill_runtime_context: Runtime env to expose to subprocess-backed tools
         skill_loader: Current live SkillLoader for explicit child Skill selection
         capability_state_provider: Read-only callable returning MCP loading/ready state
-        use_output_dir: If True, execute_code chdirs into {workspace}/output.
-        artifact_root_dir: Optional host-supplied output root for this session.
-        create_artifact_root: Create the artifact root during tool setup. Project
-            sessions can defer creation until an artifact-producing tool runs.
-        skill_scratch_root_dir: Optional workspace-contained session-private
-            scratch root.
         process_owner_id: Optional ACP session identifier used to scope and
             reclaim background shell processes.
         bypass_dangerous_command_approval: Skip dangerous-command approval for
@@ -608,33 +584,18 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     _out = output or print
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
-    artifact_root = None
-    if use_output_dir or artifact_root_dir is not None:
-        artifact_root = (
-            Path(artifact_root_dir).expanduser().resolve()
-            if artifact_root_dir
-            else (workspace_dir / "output").resolve()
-        )
-        if create_artifact_root:
-            artifact_root.mkdir(parents=True, exist_ok=True)
-    relative_root = artifact_root if use_output_dir and artifact_root else workspace_dir
+    relative_root = workspace_dir
 
-    # Relative tool paths use the project root or the active artifact root.
+    # Relative tool paths always use the stable session cwd.
     runtime_context = skill_runtime_context or build_skill_runtime_context(sandbox_mode=sandbox_mode)
     runtime_env = build_skill_execution_env(runtime_context)
-    skill_scratch_dir = None
-    if artifact_root is not None:
-        # Make the canonical delivery root available to subprocess-backed
-        # skills even when a generated command unnecessarily changes cwd.
-        # File tools and generate_image already resolve relative paths from
-        # this directory; exposing the same root keeps shell authoring on the
-        # identical boundary.
-        runtime_env["BOX_AGENT_OUTPUT_DIR"] = str(artifact_root)
-        skill_scratch_dir = prepare_skill_scratch_dir(
-            workspace_dir,
-            scratch_root_dir=skill_scratch_root_dir,
-        )
-        runtime_env["BOX_AGENT_SCRATCH_DIR"] = str(skill_scratch_dir.path)
+    # Each tool set owns its cleanup boundary, including CLI sessions without
+    # a process owner. Other sessions may keep using the same workspace.
+    skill_scratch_dir = prepare_skill_scratch_dir(
+        workspace_dir,
+        scratch_root_dir=workspace_dir / SKILL_SCRATCH_DIR_NAME / uuid4().hex,
+    )
+    runtime_env["BOX_AGENT_SCRATCH_DIR"] = str(skill_scratch_dir.path)
     if config.tools.enable_bash:
         sandbox_venv_path = None
         if sandbox_mode and not getattr(sys, "frozen", False):
@@ -702,9 +663,6 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
                 ),
             ]
         )
-        for tool in tools:
-            if tool.name == "append_file":
-                tool._model_exposure_direct = use_output_dir
         _out(
             f"{Colors.GREEN}✅ Loaded file operation tools "
             f"(relative root: {relative_root}, scope: {workspace_dir}){Colors.RESET}"
@@ -745,14 +703,10 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
     # Jupyter sandbox tool - Python code execution environment
     if sandbox_mode:
         sandbox_runtime_env = runtime_context.env()
-        if artifact_root is not None and skill_scratch_dir is not None:
-            sandbox_runtime_env["BOX_AGENT_OUTPUT_DIR"] = str(artifact_root)
-            sandbox_runtime_env["BOX_AGENT_SCRATCH_DIR"] = str(skill_scratch_dir.path)
+        sandbox_runtime_env["BOX_AGENT_SCRATCH_DIR"] = str(skill_scratch_dir.path)
         sandbox_tool = JupyterSandboxTool(
             workspace_dir=str(workspace_dir),
             runtime_env=sandbox_runtime_env,
-            use_output_dir=use_output_dir,
-            output_dir=str(artifact_root) if artifact_root else None,
             process_owner_id=process_owner_id,
         )
         tools.append(sandbox_tool)
@@ -790,7 +744,6 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
         tools.append(
             GenerateImageTool(
                 workspace_dir=str(workspace_dir),
-                output_dir=str(artifact_root) if artifact_root else None,
                 allow_full_access=allow_full_access,
                 permission_engine=permission_engine,
                 endpoint=getattr(image_generation_config, "endpoint", "") or None,
@@ -829,8 +782,7 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path, 
             batch_synthesis_timeout_seconds=(
                 config.agent.sub_agent_batch_synthesis_timeout_seconds
             ),
-            artifact_detection_enabled=artifact_root is not None,
-            artifact_root_dir=str(artifact_root) if artifact_root else None,
+            artifact_detection_enabled=True,
             provider_stale_seconds=config.agent.provider_stale_seconds,
         )
         if skill_loader is not None:

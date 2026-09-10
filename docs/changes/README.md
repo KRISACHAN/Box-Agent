@@ -49,6 +49,7 @@ decision, read those entries together.
 
 | Area | Affected paths or keywords | Current effective decision | Relationship | Details |
 | --- | --- | --- | --- | --- |
+| Session/output directories | `params.cwd`, `artifact_mode`, `artifact_root_dir`, `BOX_AGENT_OUTPUT_DIR`, artifact scan, PPT, research | Session cwd is stable; legacy path selectors warn and are ignored; General-mode task folders are model-created file organization only. | Supersedes fixed per-session output-root behavior. | [2026-09-09 cwd-owned task organization](#2026-09-09--cwd-owned-task-organization-and-legacy-output-root-deprecation) |
 | Tool name aliases | `Tool.aliases`, `build_tool_name_index`, OpenClaw, Hermes | Compatibility names are execution-only, use canonical Box-Agent argument schemas, and fail closed on conflicts. | Built-in mappings complete the generic alias mechanism in `fad2436`. | [2026-08-20 built-in aliases](#2026-08-20--built-in-tool-name-compatibility-aliases) |
 | Filesystem path resolution | `SearchFilesTool`, `path_candidates.py`, `PATH_NOT_FOUND`, ACP file-access prompt | Missing paths may return bounded structural candidates, but the model must retry a specific path and the permission engine remains final authority. | Hardens the broad-Home-search block without adding aliases or automatic authorization. | [2026-08-20 path candidates](#2026-08-20--bounded-structural-candidates-for-missing-filesystem-paths) |
 | File writes | `box_agent/tools/file_tools.py`, `write_file` | Ordered chunks commit atomically, with bounded transactions, replay protection, and whole-body safety checks. | PR #37 hardens PR #34; both remain relevant. | [PR #37](#2026-08-17--transactional-write-safety-follow-up-pr-37), [PR #34](#2026-08-17--unified-transactional-write_file-protocol-pr-34) |
@@ -130,6 +131,49 @@ Release, provider API, and ACP compatibility have their own sources under
   host restart, and fresh live-task verification before packaged behavior is
   established. Revert the session extraction and adapter wiring together;
   existing Session Logs need no migration.
+
+### 2026-09-09 — cwd-owned task organization and legacy output-root deprecation
+
+- **Implementation:** `fix/stable-session-cwd` is rebased onto `7c85e82`,
+  retaining PR #113's Tool Engine/result adapters and PR #114's shared live
+  AgentSession. The accompanying Draft PR records the final tested Head.
+- **Change:** General sessions keep `session/new.params.cwd` unchanged and no
+  longer create a fixed per-conversation or `output/` directory. A model may
+  create a semantic child directory when an independent task would otherwise
+  clutter the selected workspace; this remains ordinary file organization.
+- **Compatibility:** `artifact_mode`, `artifact_root`, `artifact_root_dir`, and
+  `session_workspace_dir` spellings are accepted for the current compatibility
+  series, warned once per ACP session, and ignored. Remove them from the next
+  major schema. The legacy output-directory environment variable is stripped
+  from Skill subprocesses and has no replacement. With the output-mode selector
+  removed, `append_file` uses the Tool catalog's default discoverable exposure.
+- **Artifact boundary:** pre/post discovery scans the original cwd recursively,
+  excluding VCS, dependencies, virtual environments, caches, and Box-Agent
+  internals. File-count and elapsed-time caps disable only the incomplete diff;
+  explicit structured/text tool paths remain available.
+- **Isolation and scan failures:** each workspace tool set has its own reserved
+  Skill scratch subdirectory, so finishing one session cannot delete another
+  session's temporary files. An incomplete pre- or post-scan disables the entire
+  changed-file diff, including filesystem access failures; it never represents
+  an empty workspace.
+- **PPT/research:** both workflows consume the absolute directory selected in
+  conversation. A research-backed deck shares that same directory and never
+  changes session cwd.
+- **PowerShell PPT images:** the image-status synchronizer accepts a narrowly
+  scoped `Set-Location -LiteralPath ... -ErrorAction Stop;` prefix for a task
+  subdirectory. The Skill uses this command instead of an unsupported Bash-tool
+  `workspaceDir` parameter, and a failed directory switch stops synchronization.
+- **Host action:** pass the user-selected workspace as `params.cwd`; stop
+  allocating a conversation directory or sending legacy path selectors.
+- **Runtime gap:** source tests and distribution builds are separate from a
+  standalone runtime rebuild, host installation/restart, and fresh live-task
+  verification. Those packaged-host steps remain required before rollout.
+- **Rollback:** revert the runtime change together with the corresponding host
+  cwd/path configuration. Preserve existing session cwd values and generated
+  task files; do not automatically move, merge, or delete user directories.
+- **Proof anchors:** ACP/tool/core/task-registry tests, PPT and research Skill
+  contracts, Roadmap cwd-boundary tests, and the generated builtin Skill
+  manifest.
 
 ### 2026-09-08 — native CLI session tracing
 

@@ -213,7 +213,7 @@ class CapabilityFailure:
             denied_tool = self.details.get("tool")
             if denied_reason == "write_scope_required" and denied_tool in PATH_SCOPED_WRITE_TOOLS:
                 payload["correction_hint"] = (
-                    "Retry once with an exact artifact-root-relative write_scope for "
+                    "Retry once with an exact session-cwd-relative write_scope for "
                     "only this child's output. Parallel children must use disjoint scopes."
                 )
         return payload

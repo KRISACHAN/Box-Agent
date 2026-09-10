@@ -99,7 +99,7 @@ class AgentRunOptions:
     web_search_total_limit: int | None = None
     no_progress_limit: int | None = None
     artifact_detection_enabled: bool = True
-    artifact_root_dir: str | Path | None = None
+    artifact_root_dir: str | Path | None = None  # deprecated; accepted and ignored
     cache_fingerprint_context: dict[str, Any] | None = None
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None
     current_turn_text: str | None = None
@@ -524,6 +524,7 @@ class Agent:
         self.memory_promotion_enabled = memory_promotion_enabled
         self.memory_promotion_hit_threshold = memory_promotion_hit_threshold
         self.memory_promotion_cooldown_days = memory_promotion_cooldown_days
+        self._deprecated_artifact_root_warned = False
 
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
 
@@ -531,12 +532,10 @@ class Agent:
             workspace_info = (
                 f"\n\n## Current Workspace\n"
                 f"You are currently working in: `{self.workspace_dir.absolute()}`\n"
-                "This directory is the session workspace and default working root; "
+                "This directory is the stable session cwd and default working root; "
                 "it does not by itself define every path the runtime may allow. "
-                "Relative tool paths resolve from each tool's active "
-                "project/artifact root; in output mode, prefer the artifact-relative "
-                "paths named by the active Skill or durable artifact state instead of deriving "
-                "absolute paths from this workspace."
+                "Relative tool paths resolve from this cwd. Model-created task "
+                "subdirectories organize files but do not change the session cwd."
             )
             system_prompt = system_prompt + workspace_info
 
@@ -1058,6 +1057,15 @@ class Agent:
             session_turn_open = True
             self._persist_unlogged_messages(turn=session_turn, step=None)
 
+        if (
+            effective_options.artifact_root_dir is not None
+            and not self._deprecated_artifact_root_warned
+        ):
+            _log.warning(
+                "artifact_root_dir is deprecated and ignored; the agent uses its workspace cwd"
+            )
+            self._deprecated_artifact_root_warned = True
+
         events = run_agent_loop(
             llm=effective_options.llm,
             summary_llm=effective_options.summary_llm,
@@ -1099,7 +1107,6 @@ class Agent:
             max_truncated_tool_call_retries=self.max_truncated_tool_call_retries,
             truncated_tool_call_boost_cap=self.truncated_tool_call_boost_cap,
             artifact_detection_enabled=effective_options.artifact_detection_enabled,
-            artifact_root_dir=effective_options.artifact_root_dir,
             cache_fingerprint_context=effective_options.cache_fingerprint_context,
             cache_fingerprint_sink=effective_options.cache_fingerprint_sink,
             active_skill_activator=self.activate_skill_instructions,
