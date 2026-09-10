@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T19:38:24.659Z",
-    "gitCommitHash": "30c1adc1e0e69258487e0aa70209d9e43bee0c6b"
+    "analyzedAt": "2026-09-10T19:59:25.085Z",
+    "gitCommitHash": "9472d12b4717d12af2407227acbfc142db884251"
   },
   "nodes": [
     {
@@ -37707,7 +37707,7 @@
       "type": "file",
       "name": "hook_bus.py",
       "filePath": "box_agent/hook_bus.py",
-      "summary": "实现每 Run 独立的注册、冻结和分发，保留 legacy 结果解包的受保护异常语义。追踪未观察任务的迟到日志耐久性错误，在后续分发或关闭时传播；关闭先排空任务并释放令牌，再进入 Closed 并抛出待处理错误。",
+      "summary": "实现每 Run 独立的注册、冻结和分发，保留 legacy 结果完整构造与字段校验的受保护异常语义。追踪未观察任务的迟到日志耐久性错误，在后续分发或关闭时传播；关闭先排空任务并释放令牌，再进入 Closed 并抛出待处理错误。",
       "tags": [
         "hooks",
         "dispatch",
@@ -37875,9 +37875,9 @@
       "filePath": "box_agent/hook_bus.py",
       "lineRange": [
         118,
-        557
+        556
       ],
-      "summary": "按固定注册索引执行独立参数与文本决策；legacy 结果两项解包受普通异常保护，非法返回告警后沿用已有文本。未观察 Handler 任务的迟到 SessionLogDurabilityError 按原对象保留，在下一次分发或进入 Closed 的关闭过程继续传播，普通取消与既有资源边界不变。",
+      "summary": "按固定注册索引执行独立参数与文本决策；legacy 结果的完整 ResultText 构造与字段校验受普通异常保护，非法长度、字段类型或不可展开的返回值告警后沿用已有文本。未观察 Handler 任务的迟到 SessionLogDurabilityError 按原对象保留，在下一次分发或进入 Closed 的关闭过程继续传播，普通取消与既有资源边界不变。",
       "complexity": "complex",
       "tags": [
         "hooks",
