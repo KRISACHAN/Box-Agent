@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T18:48:16.163Z",
-    "gitCommitHash": "438a6b768b4af5158e2d36ef9f6fc50f89a691bd"
+    "analyzedAt": "2026-09-10T19:38:24.659Z",
+    "gitCommitHash": "30c1adc1e0e69258487e0aa70209d9e43bee0c6b"
   },
   "nodes": [
     {
@@ -34406,8 +34406,8 @@
       "name": "run_agent_loop_with_default_services",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        332,
-        417
+        335,
+        420
       ],
       "summary": "先校验 managed 能力一致性，为本 Run 注册 Hook 并仅重绑 hook_bus、hook_dispatch、hook_context；额外插件使用独立 RUN 宿主且不能替换其他借用能力。关闭事件流后执行受保护的总线和 Provider 清理。",
       "tags": [
@@ -37658,9 +37658,9 @@
       "filePath": "box_agent/composition.py",
       "lineRange": [
         273,
-        299
+        302
       ],
-      "summary": "先等待 HookBus 排空再释放 Provider；私有 Run 宿主清理再次取消时持续关闭剩余实例，最终以任务返回值传递原始异常对象。",
+      "summary": "先排空并关闭总线；若关闭报错但状态已为 Closed，仍释放 Provider 并合并清理失败，未 Closed 时不提前释放 Provider。私有 Run 宿主仍重试被取消的剩余实例清理，并以任务返回值保留原始异常对象。",
       "complexity": "simple",
       "tags": [
         "composition",
@@ -37674,8 +37674,8 @@
       "name": "_wait_for_hook_cleanup",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        302,
-        323
+        305,
+        326
       ],
       "summary": "通过 shield 等待受保护清理任务；managed 路径延后传播重复取消，确保 Hook 与 Provider 清理完成后 Session 才能释放依赖。",
       "complexity": "simple",
@@ -37691,8 +37691,8 @@
       "name": "_cleanup_task_finished",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        326,
-        329
+        329,
+        332
       ],
       "summary": "释放已完成清理任务的全局保留引用，并消费未取消任务异常。",
       "complexity": "simple",
@@ -37707,7 +37707,7 @@
       "type": "file",
       "name": "hook_bus.py",
       "filePath": "box_agent/hook_bus.py",
-      "summary": "实现每个 Run 独立的 Hook 注册、冻结索引和事件分发，按优先级执行 observer、参数决策与结果文本处理，并兼容旧回调。关闭停止分发、取消并等待在途任务，再逆序释放注册令牌。",
+      "summary": "实现每 Run 独立的注册、冻结和分发，保留 legacy 结果解包的受保护异常语义。追踪未观察任务的迟到日志耐久性错误，在后续分发或关闭时传播；关闭先排空任务并释放令牌，再进入 Closed 并抛出待处理错误。",
       "tags": [
         "hooks",
         "dispatch",
@@ -37875,9 +37875,9 @@
       "filePath": "box_agent/hook_bus.py",
       "lineRange": [
         118,
-        512
+        557
       ],
-      "summary": "在 Registering 阶段校验当前 Run 归属并按优先级冻结索引，逐次分发独立持有参数、文本和期限；前置失败拒绝、文本失败抑制，取消和日志耐久性失败向外传播。close 停止接收分发并等待所有任务结束后逆序撤销注册。",
+      "summary": "按固定注册索引执行独立参数与文本决策；legacy 结果两项解包受普通异常保护，非法返回告警后沿用已有文本。未观察 Handler 任务的迟到 SessionLogDurabilityError 按原对象保留，在下一次分发或进入 Closed 的关闭过程继续传播，普通取消与既有资源边界不变。",
       "complexity": "complex",
       "tags": [
         "hooks",
@@ -38205,7 +38205,7 @@
       "type": "document",
       "name": "HOOKBUS.md",
       "filePath": "docs/HOOKBUS.md",
-      "summary": "说明静态 HookProvider 接入、Run 级总线、事件决策、只读上下文及期限规则，区分 kernel 数据合同与插件生命周期。明确 managed 能力身份保留，以及 Session 释放前的总线排空、Provider 清理和重复取消重试边界。",
+      "summary": "说明 HookProvider、Run 总线与 managed 清理归属，并明确非法 legacy 结果的兼容回退及迟到日志耐久性错误的传播。result_text 只控制可见文本，不是全部模型输入的审核屏障，也不能撤销已激活的 Skill/system 指导或清除原始产物。",
       "tags": [
         "documentation",
         "hooks",
@@ -64752,7 +64752,8 @@
       "target": "file:box_agent/composition.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/core.py",
@@ -74053,7 +74054,8 @@
       "target": "file:box_agent/hook_bus.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/kernel/hook_types.py",
@@ -74548,6 +74550,13 @@
     {
       "source": "function:box_agent/plugins/defaults.py:default_plugin_descriptors",
       "target": "function:box_agent/plugins/defaults.py:_captured_instance_descriptor",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_cleanup_hook_run",
+      "target": "function:box_agent/composition.py:_combined_cleanup_error",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
