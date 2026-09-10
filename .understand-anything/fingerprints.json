@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "affe4e2b57c0de58db749543333eae4b2e27aab1",
-  "generatedAt": "2026-09-10T16:52:54.361Z",
+  "gitCommitHash": "9f1bb264f5b9356a5b9f4b5c49026612301cc03d",
+  "generatedAt": "2026-09-10T17:31:11.523Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -178,7 +178,7 @@
     },
     "box_agent/acp/__init__.py": {
       "filePath": "box_agent/acp/__init__.py",
-      "contentHash": "e61090db394fc554e20b45e6480b1783000da18c1a1e1d178ba5546dbbd55efc",
+      "contentHash": "1f094802023e674aa3daa5c394edaf3dac80cd19885dd9ab406ecdc910b9250a",
       "functions": [
         {
           "name": "_artifact_envelope",
@@ -619,7 +619,7 @@
             "_SESSION_UPDATE_TIMEOUT_SECONDS"
           ],
           "exported": true,
-          "lineCount": 3802
+          "lineCount": 3792
         },
         {
           "name": "_PermissionNegotiator",
@@ -1235,7 +1235,7 @@
         "run_acp_server",
         "main"
       ],
-      "totalLines": 5655,
+      "totalLines": 5645,
       "hasStructuralAnalysis": true
     },
     "box_agent/acp/action_hints.py": {
@@ -25537,7 +25537,7 @@
     },
     "box_agent/tools/mcp_loader.py": {
       "filePath": "box_agent/tools/mcp_loader.py",
-      "contentHash": "8a0e73057b1dd729683e9cb61d023b8f74a012fb85e763d3aea6e5b86acd9f1d",
+      "contentHash": "2031e0b99d73ead3b6204d0173ebdb903b93bfa43a2154720f277ae0f39fd776",
       "functions": [
         {
           "name": "_warn",
@@ -25788,7 +25788,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 13
+          "lineCount": 15
         },
         {
           "name": "_waiting_for_credential",
@@ -25870,7 +25870,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 59
+          "lineCount": 64
         },
         {
           "name": "_reconcile_mcp_sources_locked",
@@ -25880,7 +25880,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 72
+          "lineCount": 80
         },
         {
           "name": "reconnect_auth_failed_mcp_servers_if_token_changed",
@@ -26197,12 +26197,12 @@
         "reconnect_auth_failed_mcp_servers_if_token_changed",
         "_reconnect_mcp_server_locked"
       ],
-      "totalLines": 1719,
+      "totalLines": 1734,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_sources.py": {
       "filePath": "box_agent/tools/mcp_sources.py",
-      "contentHash": "9399974dc6214c0e453e843bd53561d6ac6914137dcf3a89aa60396f085306f4",
+      "contentHash": "3b03e8be49ab60123caf76a6400839b05688527e1aef5173d8ad92c4e692d3a9",
       "functions": [
         {
           "name": "configured_mcp_sources",
@@ -26265,7 +26265,7 @@
           ],
           "returnType": "ResolvedMcpSources",
           "exported": true,
-          "lineCount": 47
+          "lineCount": 49
         }
       ],
       "classes": [
@@ -26362,7 +26362,7 @@
         "_fingerprint",
         "resolve_mcp_sources"
       ],
-      "totalLines": 190,
+      "totalLines": 192,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_tool_catalog.py": {
@@ -26528,7 +26528,7 @@
     },
     "box_agent/tools/mcp_tool_search.py": {
       "filePath": "box_agent/tools/mcp_tool_search.py",
-      "contentHash": "d41e09b4a0fc7b619a07ebb7eb62225b6f563523aefbfacb43216c3611485d90",
+      "contentHash": "f3d412184cc19881e0daae971caeccb3a2ea14988ffffd02aee096cb09032f5b",
       "functions": [],
       "classes": [
         {
@@ -26572,13 +26572,14 @@
           "methods": [
             "__init__",
             "_entry_is_allowed",
+            "_connector_is_allowed",
             "prepare_tools",
             "inherited_tools",
             "validate_call"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 118
+          "lineCount": 126
         }
       ],
       "imports": [
@@ -26630,7 +26631,7 @@
         "ToolSearchTool",
         "MCPToolExposureManager"
       ],
-      "totalLines": 590,
+      "totalLines": 598,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/memory_tool.py": {
@@ -32478,12 +32479,12 @@
     },
     "docs/CONNECTOR_RUNTIME_RESTORE.md": {
       "filePath": "docs/CONNECTOR_RUNTIME_RESTORE.md",
-      "contentHash": "7b0cbfa223093043ec3ac1b8fa02a75ba2bdbbf8aa3b967418e59c5900f1ec14",
+      "contentHash": "7cba91561267f3e56006bc6d073496f431afef711021a51b33f53d8205b063a3",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 28,
+      "totalLines": 38,
       "hasStructuralAnalysis": true
     },
     "docs/CONTEXT_COMPRESSION_CN.md": {
