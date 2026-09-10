@@ -23,7 +23,13 @@ class AgentService:
     def create_agent(self, **kwargs: Any) -> Agent:
         """Create one Agent using the shared constructor forwarding helper."""
 
-        return build_agent(agent_factory=self._agent_factory, **kwargs)
+        try:
+            return build_agent(agent_factory=self._agent_factory, **kwargs)
+        except BaseException:
+            session_log = kwargs.get("session_log")
+            if session_log is not None:
+                session_log.close()
+            raise
 
 
 __all__ = ["AgentService"]

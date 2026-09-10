@@ -170,6 +170,16 @@ content hash mismatch does not block recovery. In-memory hashes reflect the
 current content, and restoration does not rewrite historical logs.
 Unavailable Skills are skipped while available Skills are restored. If no
 SkillLoader is available, the session resumes without restoring active Skills.
+Malformed optional Skill/Todo state is ignored; valid conversation history remains.
+
+ACP enables recovery for incompatible versions/events or invalid message records
+only after verifying the session ID and workspace. The original bytes are saved
+as `session.recovery-*.jsonl` before the runtime log is replaced. Historical tools
+are not replayed. An empty replacement can accept the matching host continuation
+on the next prompt, including after another restart. Without that host snapshot,
+the new runtime has no recovered conversation history. Missing logs can be created
+in leftover directories, while existing logs and active writer locks are protected.
+Failed construction or resume preparation releases the session writer immediately.
 
 A Session owns one normalized cwd for its entire lifetime. Opening the same
 Session with another workspace fails before the log is repaired or mutated.

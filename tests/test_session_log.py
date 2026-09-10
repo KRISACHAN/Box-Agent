@@ -647,6 +647,84 @@ def test_unknown_required_event_rejects_restore_but_ignorable_event_is_skipped(
     restored.close()
 
 
+@pytest.mark.parametrize("damage", ["version", "unknown-event", "message", "json"])
+def test_recovery_preserves_original_log_before_starting_fresh(tmp_path, damage):
+    log = SessionLog.create(tmp_path, session_id="recover", cwd=tmp_path)
+    if damage == "unknown-event":
+        log.append("future/state-change", {})
+    elif damage == "message":
+        log.append("user/message", {"role": "unknown"}, surface_op="append")
+    log.flush()
+    path = log.path
+    log.close()
+    if damage == "version":
+        header = json.loads(path.read_text())
+        header["version"] = 999
+        path.write_text(json.dumps(header) + "\n")
+    elif damage == "json":
+        with path.open("ab") as handle:
+            handle.write(b'{broken}\n{"partial":')
+    original = path.read_bytes()
+
+    restored = SessionLog.open(tmp_path, session_id="recover", cwd=tmp_path, recover=True)
+    try:
+        assert restored.recovery_source.read_bytes() == original
+        assert restored.replay().messages == []
+        assert restored.events == ()
+        with pytest.raises(SessionLogInUseError):
+            SessionLog.open(tmp_path, session_id="recover", cwd=tmp_path, recover=True)
+    finally:
+        restored.close()
+    again = SessionLog.open(tmp_path, session_id="recover", cwd=tmp_path, recover=True)
+    assert again.recovery_source == restored.recovery_source
+    assert len(list(path.parent.glob("session.recovery-*.jsonl"))) == 1
+    again.close()
+
+
+@pytest.mark.parametrize("mismatch", ["id", "cwd"])
+def test_recovery_does_not_replace_a_different_session_or_workspace(tmp_path, mismatch):
+    log = SessionLog.create(tmp_path, session_id="bound", cwd=tmp_path)
+    path = log.path
+    log.close()
+    header = json.loads(path.read_text())
+    header["version"] = 999
+    header[mismatch] = "another-session" if mismatch == "id" else str(tmp_path / "other")
+    path.write_text(json.dumps(header) + "\n")
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        SessionLog.open(tmp_path, session_id="bound", cwd=tmp_path, recover=True)
+    assert path.read_bytes() == before
+    assert list(path.parent.glob("session.recovery-*.jsonl")) == []
+
+
+def test_failed_recovery_keeps_original_and_releases_writer_lock(tmp_path, monkeypatch):
+    log = SessionLog.create(tmp_path, session_id="backup-failure", cwd=tmp_path)
+    log.append("future/state-change", {})
+    log.flush()
+    path = log.path
+    log.close()
+    before = path.read_bytes()
+    with monkeypatch.context() as patch:
+        def fail_replace(*args):
+            raise OSError("replacement failed")
+        patch.setattr(session_log_module.os, "replace", fail_replace)
+        with pytest.raises(OSError, match="replacement failed"):
+            SessionLog.open(tmp_path, session_id="backup-failure", cwd=tmp_path, recover=True)
+    assert path.read_bytes() == before
+    restored = SessionLog.open(tmp_path, session_id="backup-failure", cwd=tmp_path, recover=True)
+    restored.close()
+
+
+def test_session_log_can_be_recreated_in_an_orphaned_directory(tmp_path):
+    log = SessionLog.create(tmp_path, session_id="orphan", cwd=tmp_path)
+    path = log.path
+    log.close()
+    path.unlink()
+    recreated = SessionLog.create(tmp_path, session_id="orphan", cwd=tmp_path)
+    assert recreated.replay().messages == []
+    recreated.close()
+
+
 def test_replay_restores_latest_box_agent_domain_state(tmp_path):
     log = SessionLog.create(tmp_path, session_id="domain-state", cwd=tmp_path)
     log.append("goal/change", {"goal": {"objective": "ship", "status": "active"}})
