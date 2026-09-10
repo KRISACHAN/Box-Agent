@@ -1228,7 +1228,7 @@ async def test_repetitive_stream_is_aborted_before_it_floods_history():
     content_events = [event for event in events if isinstance(event, ContentEvent)]
     errors = [event for event in events if isinstance(event, ErrorEvent)]
     done = [event for event in events if isinstance(event, DoneEvent)]
-    assert len(content_events) == 7
+    assert len(content_events) == 14  # At most seven chunks per attempt, one retry.
     assert len(errors) == 1 and errors[0].is_fatal is True
     assert "repetitive output" in errors[0].message
     assert done and done[-1].stop_reason == StopReason.ERROR

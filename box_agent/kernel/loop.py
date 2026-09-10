@@ -67,6 +67,7 @@ from ..tools.engine.call_contracts import (
 )
 from .stream_controller import (
     StreamInterruptionRecovery,
+    RepetitiveStreamRecovery,
     resolve_provider_stale_seconds as _kernel_resolve_provider_stale_seconds,
     stream_with_activity as _kernel_stream_with_activity,
 )
@@ -916,6 +917,7 @@ async def _run_agent_loop_impl(
     no_progress_steps = 0
     turn_continuation = TurnContinuationController()
     stream_recovery = StreamInterruptionRecovery()
+    repetitive_recovery = RepetitiveStreamRecovery()
 
     plan_write_succeeded = False
     # Suspected-truncation continuation (opt-in via
@@ -1280,15 +1282,26 @@ async def _run_agent_loop_impl(
             yield await cancellation_done_event()
             return
         if result.blocked:
+            budget_details = {
+                "stage": "history_compaction", "totalLimitTokens": token_limit,
+                "historyLimitTokens": history_token_limit,
+                "estimatedHistoryTokens": result.estimated_after,
+                "extraInputTokens": extra_tokens, "transientInputTokens": transient_tokens,
+                "skillReferenceTokens": 0,
+            }
             msg = (
                 "Context remains above the safe input limit after bounded compaction "
-                f"({result.estimated_after} estimated tokens; limit {token_limit}). "
+                f"({result.estimated_after} estimated history tokens; history limit {history_token_limit}; "
+                f"total input limit {token_limit}; extra input {extra_tokens}; transient input {transient_tokens}; "
+                "Skill references not yet projected). "
                 "Start a new session or reduce active instructions/tool output before retrying."
             )
             if hook_mgr.hooks:
                 await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
                 await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
-            yield ErrorEvent(message=msg, is_fatal=True)
+            yield ErrorEvent(message=msg, is_fatal=True,
+                             error_code="CONTEXT_INPUT_BUDGET_EXCEEDED", error_category="context_length",
+                             error_details=budget_details)
             yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
             return
 
@@ -1576,14 +1589,33 @@ async def _run_agent_loop_impl(
                     len(text_content),
                     len(thinking_content),
                 )
+                if cancelled():
+                    yield await cancellation_done_event()
+                    return
+                recovery_text = repetitive_recovery.request(step=step, max_steps=max_steps)
+                if recovery_text is not None:
+                    messages.append(Message(role="user", content=recovery_text))
+                    yield InjectedMessageEvent(content=recovery_text, injection_id=None, user_visible=False)
+                    yield ProgressEvent(step=step + 1, content="模型输出异常重复，正在重新生成（1/1）。")
+                    elapsed = perf_counter() - step_start
+                    total = perf_counter() - run_start
+                    if hook_mgr.hooks:
+                        await hook_mgr.fire_step_end(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
+                    yield StepEnd(step=step + 1, elapsed_seconds=elapsed, total_elapsed_seconds=total)
+                    continue
                 msg = (
                     "LLM stream aborted after repetitive output was detected. "
-                    "Retry the turn; the repeated output was not saved to conversation history."
+                    "Bounded recovery is exhausted or no steps remain. "
+                    "The repeated output was not saved to conversation history."
                 )
                 if hook_mgr.hooks:
                     await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
                     await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
-                yield ErrorEvent(message=msg, is_fatal=True)
+                yield ErrorEvent(message=msg, is_fatal=True, error_code="LLM_REPETITIVE_OUTPUT",
+                                 error_category="invalid_response", error_details={
+                                     "recoveryAttempts": repetitive_recovery.attempts,
+                                     "maxRecoveryAttempts": 1, "retryable": False,
+                                 })
                 yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
                 return
 
