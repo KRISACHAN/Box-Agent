@@ -818,3 +818,27 @@ def test_open_or_create_releases_writer_lock_when_resume_repair_fails(tmp_path, 
     reopened = SessionLog.open(tmp_path / "sessions", session_id="failed-resume", cwd=tmp_path)
     reopened.close()
     assert path.read_bytes() == before
+
+
+def test_reset_then_append_and_compact_preserves_only_the_new_surface_after_reopen(tmp_path):
+    log = SessionLog.create(tmp_path, session_id="reset-compact", cwd=tmp_path)
+    log.append("goal/change", {"goal": {"objective": "retained goal", "status": "active"}})
+    log.append("skill/change", {"skills": [{"name": "method", "sha256": "old", "loadOrder": 1}]})
+    log.append_unlogged_messages([Message(role="user", content="cleared history")], turn=1, step=1)
+    log.reset_surface(reason="clear")
+    log.append_unlogged_messages([
+        Message(role="user", content="new request"),
+        Message(role="assistant", content="new answer"),
+    ], turn=2, step=1)
+    log.replace_surface([Message(role="user", content="new summary")], turn=2, step=2)
+    log.close()
+    reopened = SessionLog.open(tmp_path, session_id="reset-compact", cwd=tmp_path)
+    try:
+        projection = reopened.replay()
+        assert [message.content for message in projection.messages] == ["new summary"]
+        assert projection.goal["objective"] == "retained goal"
+        assert projection.skills[0]["name"] == "method"
+        assert any(event["type"] == "surface/reset" for event in reopened.events)
+        assert any(event.get("data", {}).get("content") == "cleared history" for event in reopened.events)
+    finally:
+        reopened.close()

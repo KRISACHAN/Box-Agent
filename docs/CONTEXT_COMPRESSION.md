@@ -127,6 +127,23 @@ Unsupported blocks and persistence failures remain unchanged. Since IDs are mark
 
 ## Context-limit compaction
 
+### Capability and commit boundary
+
+The Kernel supplies a `CompactionInput` to `CompactEnginePort`. The default
+engine delegates to the existing compression algorithm; it does not replace
+the request Context interface or introduce a second Skill loading policy.
+Inputs distinguish the tool catalog used for runtime-state recovery from the
+exact offered schemas used for estimation, and retain forced recovery and the
+summary-request input limit.
+
+Context projects effective history before compaction. The engine calls the
+Kernel's `before_summary` callback before a summary attempt or deterministic
+fallback. The Kernel commits the returned surface and flushes it before changing
+live messages; request delivery/response callbacks and the one-retry input-budget
+rule are unchanged. Static and managed composition preserve supplied compactors,
+including falsey instances. `CompactionOutcome` retains legacy tuple iteration;
+its limit flag must agree with its existing blocked mode.
+
 ### Threshold
 
 The trigger is derived from the model's input budget:

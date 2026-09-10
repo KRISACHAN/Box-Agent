@@ -18,6 +18,7 @@ from typing import Any, BinaryIO
 from uuid import uuid4
 
 from .schema import Message
+from .session_projection import SessionProjection
 
 
 _log = logging.getLogger(__name__)
@@ -67,17 +68,6 @@ class SessionLogInUseError(RuntimeError):
 
 class SessionLogWorkspaceMismatch(ValueError):
     """The requested cwd does not own this immutable Session."""
-
-
-@dataclass(frozen=True, slots=True)
-class SessionProjection:
-    """Values reconstructed from one committed Session Log prefix."""
-
-    messages: list[Message]
-    goal: dict[str, Any] | None
-    plan: dict[str, Any] | None
-    todos: list[dict[str, Any]]
-    skills: list[dict[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)

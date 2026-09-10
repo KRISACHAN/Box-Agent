@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from ..tools.engine.call_contracts import ToolExecutionOptions, ToolRunContext, ToolStepControl, ToolStepSummary
     from ..tools.engine.contracts import PreparedTools
 
+from .context_types import CompactionInput, CompactionOutcome
+
 
 @runtime_checkable
 class SummaryLLMPort(Protocol):
@@ -391,6 +393,17 @@ class ContextEnginePort(Protocol):
                         transient_tokens: int = 0) -> PreparedContextPort: ...
 
 
+@runtime_checkable
+class CompactEnginePort(Protocol):
+    """Decide compaction without applying the durable or live surface.
+
+    Call inputs.before_summary before summary execution; propagate its errors.
+    The Kernel commits the result before replacing live history.
+    """
+
+    async def compact_if_needed(self, inputs: "CompactionInput") -> "CompactionOutcome": ...
+
+
 @dataclass(frozen=True, slots=True)
 class KernelServices:
     """Resolved per-run capabilities consumed directly by the kernel."""
@@ -411,9 +424,11 @@ class KernelServices:
     hook_context: HookContext | None = None
     skill_engine: SkillEnginePort | None = None
     context_engine: ContextEnginePort | None = None
+    compact_engine: CompactEnginePort | None = None
 
 
 __all__ = [
+    "CompactEnginePort",
     "PreparedContextPort",
     "ContextEnginePort",
     "SkillEnginePort",

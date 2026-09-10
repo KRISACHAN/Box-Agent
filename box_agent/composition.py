@@ -37,6 +37,7 @@ _SERVICE_OWNED_RUN_ARGUMENTS = frozenset(
         "kernel_services",
         "skill_engine",
         "context_engine",
+        "compact_engine",
     }
 )
 
@@ -73,6 +74,7 @@ def _default_capabilities(run_arguments: Mapping[str, Any]) -> dict[str, Any]:
         "tool_result_store": run_arguments.get("tool_result_storage"),
         "skill_engine": skill_engine,
         "context_engine": run_arguments.get("context_engine"),
+        "compact_engine": run_arguments.get("compact_engine"),
     }
 
 
@@ -364,13 +366,22 @@ async def run_agent_loop_with_default_services(
             supplied = getattr(managed_services, name)
             if supplied is not None and supplied is not capabilities[name]:
                 raise ValueError(f"kernel_services contradict effective run capabilities: {name}")
+        supplied_compact = managed_services.compact_engine
+        requested_compact = capabilities["compact_engine"]
+        if (supplied_compact is not None and requested_compact is not None
+                and supplied_compact is not requested_compact):
+            raise ValueError("kernel_services contradict effective run capabilities: compact_engine")
+        capabilities["compact_engine"] = (
+            supplied_compact if supplied_compact is not None else requested_compact
+        )
         bound = compose_default_services(**capabilities)
         managed_services = replace(
             managed_services, skill_engine=bound.skill_engine,
-            context_engine=bound.context_engine,
+            context_engine=bound.context_engine, compact_engine=bound.compact_engine,
         )
         capabilities["skill_engine"] = bound.skill_engine
         capabilities["context_engine"] = bound.context_engine
+        capabilities["compact_engine"] = bound.compact_engine
     bus = capabilities["hook_bus"]
     plugins = tuple(run_arguments.get("plugins") or ())
     host: PluginHost | None = None
