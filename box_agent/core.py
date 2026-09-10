@@ -310,6 +310,7 @@ async def run_agent_loop(
     workspace_dir: str | None = None,
     permission_negotiator: Any | None = None,
     hooks: list | None = None,
+    plugins: tuple[Any, ...] = (),
     memory_manager: Any | None = None,
     memory_extractor: Any | None = None,
     memory_turn_id: str = "",

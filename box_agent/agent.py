@@ -105,6 +105,7 @@ class AgentRunOptions:
     cache_fingerprint_sink: Callable[[dict[str, Any]], None] | None = None
     current_turn_text: str | None = None
     kernel_services: KernelServices | None = None
+    plugins: tuple[Any, ...] = ()
 
 
 @dataclass
@@ -462,6 +463,7 @@ class Agent:
         deferred_mcp_loading_enabled: bool = True,
         session_log: SessionLog | None = None,
         enable_builtin_tools: bool = True,
+        plugins: tuple[Any, ...] = (),
     ):
         self.llm = llm_client
         self.tools = {
@@ -524,6 +526,7 @@ class Agent:
         self._permission_negotiator = None  # set by CLI/ACP when permission engine is active
         self._proposal_negotiator = None  # set by CLI/ACP to handle MemoryProposalEvent
         self._hooks = hooks
+        self._plugins = tuple(plugins)
         self._memory_extractor = None  # set by CLI/ACP when memory extraction is enabled
         self.thinking_enabled = thinking_enabled
         self.memory_promotion_enabled = memory_promotion_enabled
@@ -983,6 +986,7 @@ class Agent:
             logger=self.logger,
             permission_negotiator=self._permission_negotiator,
             hooks=self._hooks,
+            plugins=self._plugins,
             memory_manager=getattr(self._memory_extractor, "_mgr", None),
             memory_extractor=self._memory_extractor,
             inject_queue=self.inject_queue,
@@ -1090,6 +1094,7 @@ class Agent:
             workspace_dir=str(self.workspace_dir),
             permission_negotiator=effective_options.permission_negotiator,
             hooks=effective_options.hooks,
+            plugins=effective_options.plugins,
             memory_manager=effective_options.memory_manager,
             memory_extractor=effective_options.memory_extractor,
             memory_turn_id=effective_options.memory_turn_id,

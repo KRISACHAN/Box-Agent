@@ -168,7 +168,11 @@ async def test_acp_public_path_reaches_plugin_composition_and_agent_loop_kernel(
     assert response.stopReason == "end_turn"
     assert [len(bridge_calls), len(host_calls), len(kernel_calls)] == [1, 0, 1]
     services = kernel_calls[0]["services"]
-    assert services is bridge_calls[0]["kernel_services"]
+    provided = bridge_calls[0]["kernel_services"]
+    assert services.llm is provided.llm
+    assert services.tool_catalog is provided.tool_catalog
+    assert services.hook_dispatch is services.hook_bus
+    assert services.hook_context is services.hook_bus.context
     assert services.llm is bridge_calls[0]["llm"]
     assert services.tool_catalog is bridge_calls[0]["tools"]
     assert kernel_calls[0]["run_arguments"]["messages"] is bridge_calls[0]["messages"]

@@ -9,11 +9,12 @@ from dataclasses import dataclass
 import heapq
 import inspect
 import re
-from typing import Any, Hashable, Iterable
+from typing import Any, Generic, Hashable, Iterable, cast
 
 from .descriptors import PluginDescriptor, PluginFactoryContext, PluginScope
 from .registries import (
     ActivatedRegistry,
+    CapabilityT,
     CapabilityBinding,
     CapabilityPolicy,
     CapabilitySchema,
@@ -107,21 +108,37 @@ class _InstanceRecord:
     disposed: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class PluginContribution(Generic[CapabilityT]):
+    """把激活后的能力实例与真实插件描述符关联。"""
+
+    descriptor: PluginDescriptor
+    instance: CapabilityT
+
+
 class PluginActivation:
     """One immutable registry plus the run-scoped resources that own it."""
 
-    __slots__ = ("_disposed", "_host", "_run_records", "registry")
+    __slots__ = ("_disposed", "_host", "_run_records", "registry", "_contributions")
 
     def __init__(
         self,
         host: "PluginHost",
         registry: ActivatedRegistry,
         run_records: tuple[_InstanceRecord, ...],
+        contributions: tuple[PluginContribution, ...] = (),
     ) -> None:
         self._host = host
         self.registry = registry
         self._run_records = run_records
         self._disposed = False
+        self._contributions = contributions
+
+    def contributions(self, port_type: type[CapabilityT]) -> tuple[PluginContribution[CapabilityT], ...]:
+        """按激活顺序取得指定能力的实例与归属。"""
+        return cast(tuple[PluginContribution[CapabilityT], ...], tuple(
+            item for item in self._contributions if port_type in item.descriptor.capabilities
+        ))
 
     async def dispose(self) -> None:
         """Dispose this activation's run-scoped instances once."""
@@ -483,6 +500,7 @@ class PluginHost:
                     instances[dependency] = record.instance
             created: list[_InstanceRecord] = []
             run_records: list[_InstanceRecord] = []
+            contributions: list[PluginContribution] = []
             try:
                 for descriptor in ordered:
                     record = await self._get_or_create(
@@ -495,6 +513,7 @@ class PluginHost:
                         ),
                     )
                     instances[descriptor.plugin_id] = record.instance
+                    contributions.append(PluginContribution(descriptor, record.instance))
                     if descriptor.scope is PluginScope.RUN:
                         run_records.append(record)
                     for port_type in descriptor.capabilities:
@@ -517,7 +536,7 @@ class PluginHost:
                 )
                 raise AssertionError("unreachable")
 
-            return PluginActivation(self, builder.freeze(), tuple(run_records))
+            return PluginActivation(self, builder.freeze(), tuple(run_records), tuple(contributions))
         finally:
             await self._release_operation(reservation)
 

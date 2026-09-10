@@ -416,7 +416,8 @@ def test_default_capability_schema_covers_kernel_services_in_field_order() -> No
 
     bindings = DEFAULT_CAPABILITY_SCHEMA.bindings
 
-    from box_agent.kernel.ports import ToolEnginePort
+    from box_agent.kernel.ports import ToolEnginePort, HookDispatchPort
+    from box_agent.plugins.hooks import HookProviderPort
 
     ports_by_field = {
         "llm": LLMPort,
@@ -431,10 +432,11 @@ def test_default_capability_schema_covers_kernel_services_in_field_order() -> No
         "tool_exposure": ToolExposurePort,
         "tool_result_store": ToolResultStorePort,
         "tool_engine": ToolEnginePort,
+        "hook_dispatch": HookDispatchPort,
     }
-    assert tuple(binding.port_type for binding in bindings) == tuple(
-        ports_by_field[field.name] for field in fields(KernelServices)
-    )
+    # Provider 是多实现贡献，调用身份是值对象，二者不按服务字段一一映射。
+    assert {binding.port_type for binding in bindings} == set(ports_by_field.values()) | {HookProviderPort}
+    assert {item.name for item in fields(KernelServices)} == set(ports_by_field) | {"hook_context"}
     policies = {binding.port_type: binding.policy for binding in bindings}
     assert policies[LLMPort] is CapabilityPolicy.REQUIRED_SINGLE
     assert policies[HookBusPort] is CapabilityPolicy.REQUIRED_SINGLE
@@ -442,7 +444,8 @@ def test_default_capability_schema_covers_kernel_services_in_field_order() -> No
     assert sum(
         policy is CapabilityPolicy.REQUIRED_SINGLE for policy in policies.values()
     ) == 3
-    assert all(policy is not CapabilityPolicy.MULTI for policy in policies.values())
+    assert policies[HookDispatchPort] is CapabilityPolicy.OPTIONAL_SINGLE
+    assert policies[HookProviderPort] is CapabilityPolicy.MULTI
 
 
 def test_default_descriptors_are_deterministic_and_preserve_exact_instances() -> None:
