@@ -13,7 +13,8 @@ from ..base import Tool, ToolResult
 if TYPE_CHECKING:
     from ...context_resources import ContextResourceLedger
     from ...events import ToolCallResult
-    from ...hooks import HookManager
+    from ...kernel.ports import HookBusPort, HookDispatchPort
+    from ...kernel.hook_types import HookContext
     from ...logger import AgentLogger
     from ...tool_result_storage import ToolResultStorage
 
@@ -39,7 +40,7 @@ class ToolRunContext:
     """Borrowed services and narrow kernel callbacks for one outer run."""
 
     messages: list[Message]
-    hooks: HookManager
+    hooks: HookBusPort
     result_storage: ToolResultStorage
     is_cancelled: Callable[[], bool]
     record_call: Callable[[ToolCallRecord, int], None]
@@ -56,6 +57,8 @@ class ToolRunContext:
     logger: AgentLogger | None = None
     resource_ledger: ContextResourceLedger | None = None
     activate_skill: Callable[[str, str], None] | None = None
+    hook_dispatch: HookDispatchPort | None = None
+    hook_context: HookContext | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +93,9 @@ class ToolCallRecord:
     execution_result: ToolResult | None = None
     policy_decision: dict[str, Any] | None = None
     parallel: bool = False
+    invoked: bool = False
+    executed: bool = False
+    hook_rejection: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

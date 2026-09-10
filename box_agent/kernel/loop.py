@@ -946,6 +946,7 @@ async def _run_agent_loop_impl(
     tool_engine.configure_run(
         ToolRunContext(
             messages=messages, hooks=hook_mgr, result_storage=result_storage,
+            hook_dispatch=_services.hook_dispatch, hook_context=_services.hook_context,
             is_cancelled=cancelled, record_call=tool_messages.record_call,
             flush_calls=tool_messages.flush_calls,
             commit_result=tool_messages.commit_result,
@@ -2485,6 +2486,7 @@ _SERVICE_OWNED_RUN_ARGUMENTS = frozenset(
         "tools",
         "permission_negotiator",
         "hooks",
+        "plugins",
         "memory_manager",
         "memory_extractor",
         "session_log",

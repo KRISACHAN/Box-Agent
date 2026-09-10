@@ -80,6 +80,7 @@ def build_agent(
     workspace_dir: str,
     token_limit: int,
     hooks: list[Any] | None | object = _UNSET,
+    plugins: tuple[Any, ...] | object = _UNSET,
     thinking_enabled: bool = False,
     memory_promotion_enabled: bool = False,
     memory_promotion_hit_threshold: int = 5,
@@ -129,6 +130,8 @@ def build_agent(
         "allowed_connector_ids_provider": allowed_connector_ids_provider,
         "deferred_mcp_loading_enabled": deferred_mcp_loading_enabled,
     }
+    if plugins is not _UNSET:
+        kwargs["plugins"] = plugins
     if hooks is not _UNSET:
         kwargs["hooks"] = hooks
     if session_log is not _UNSET:

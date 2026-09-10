@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
+from .hook_types import HookContext, BeforeToolResolution, ResultText, ResultTextResolution
 from ..schema import LLMResponse, Message, StreamEvent
 from ..tools.base import Tool
 
@@ -201,6 +202,17 @@ class HookBusPort(Protocol):
 
 
 @runtime_checkable
+class HookDispatchPort(Protocol):
+    """内核通过结构化接口消费 Hook 决策，旧端口保持原签名。"""
+
+    async def observe(self, context: HookContext) -> None: ...
+
+    async def before_tool(self, context: HookContext, arguments: Mapping[str, Any]) -> BeforeToolResolution: ...
+
+    async def after_tool(self, context: HookContext, result_text: ResultText) -> ResultTextResolution: ...
+
+
+@runtime_checkable
 class ToolCatalogPort(Protocol):
     """Stable collection operations used with existing ``Tool`` objects."""
 
@@ -319,10 +331,13 @@ class KernelServices:
     tool_exposure: ToolExposurePort | None
     tool_result_store: ToolResultStorePort | None
     tool_engine: ToolEnginePort | None = None
+    hook_dispatch: HookDispatchPort | None = None
+    hook_context: HookContext | None = None
 
 
 __all__ = [
     "HookBusPort",
+    "HookDispatchPort",
     "KernelServices",
     "LLMPort",
     "MemoryExtractionPort",

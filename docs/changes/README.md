@@ -59,6 +59,7 @@ decision, read those entries together.
 | Shell safety inspection | `shell_inspection.py`, `safety.py`, `bash_tool.py`, dangerous commands, DWS | Policy checks inspect shell structure and executable invocations while treating embedded-language bodies as data; bounded parsing fails closed for policy-relevant ambiguity. | Pending PR #63; must be reviewed as a security-boundary change. | [PR #63](#2026-08-21--structure-aware-shell-policy-inspection-pr-63) |
 | Context compression | `box_agent/core.py`, tool-call arguments, history summarization | Normal unsummarized history retains exact tool-call arguments; whole-history summarization remains a separate boundary. | Current at this baseline. | [PR #35](#2026-08-17--preserve-tool-call-arguments-in-normal-history-pr-35) |
 | Agent kernel and plugin composition | `box_agent/kernel/`, `box_agent/plugins/`, `composition.py`, `KernelServices`, `AgentLoopKernel`, `PluginHost` | ACP/CLI public entry points keep their signatures while the shared loop consumes an immutable Port bundle resolved by an explicit startup-static plugin host. | Pending implementation; reorganizes ownership without adding discovery, hot reload, or a protocol migration. | [2026-09-03 kernel/plugin boundary](#2026-09-03--stable-kernel-and-static-plugin-composition) |
+| Hook dispatch and static providers | `hook_bus.py`, `kernel/hook_types.py`, `plugins/hooks.py`, HookDispatchPort, HookProviderPort | One frozen bus per Run dispatches lifecycle observers, tool-argument decisions and visible-result decisions; cleanup finishes before plugin disposal. | Extends static plugin composition and the Tool Engine execution seam while preserving legacy hooks, context ownership and Session Log contracts. | [2026-09-10 HookBus](#2026-09-10--run-scoped-hookbus-and-static-hook-providers), [kernel/plugin boundary](#2026-09-03--stable-kernel-and-static-plugin-composition), [Tool Engine](#2026-09-09--tool-engine-ownership-and-local-discovery) |
 | MCP deferred loading | `mcp_tool_catalog.py`, `mcp_tool_search.py`, `tool_search` | Ordinary MCP schemas are hidden by default until session-scoped activation; `alwaysLoad` remains eager. | Current; later research hardening may also apply to research paths. | [PR #31](#2026-08-17--deferred-mcp-catalog-and-session-exposure-pr-31), [later hardening](#other-target-branch-changes-after-or-adjacent-to-those-prs) |
 | Sub-agent delegation | `sub_agent_tool.py`, `sub_agent_capabilities.py`, `required_tools`, `write_scope`, `files` | The public request is flat; runtime-derived policy limits implicit tools to trusted local readers, keeps process/external/unknown MCP capabilities fail-closed, and scopes path writes. | Supersedes the caller-authored nested constraint contract while retaining its runtime enforcement goals. | [2026-08-19 flattened contract](#2026-08-19--flattened-sub-agent-contract-with-derived-policy) |
 | Shared live session ownership | `agent_session.py`, `session_assembly.py`, `session_context.py`, `plugins/runtime.py`, `cli.py`, `acp/` | Managed sessions prepare capabilities once, reuse a PluginRuntime and bind fresh run services. Owned resources close after active runs; borrowed host resources retain their owner. | Extends PR #114 with scoped preparation and cleanup; legacy creation, Config identity and Session Log persistence remain compatible. | [2026-09-10 managed lifecycle](#2026-09-10--managed-session-assembly-and-plugin-lifecycle), [2026-09-09 AgentSession](#2026-09-09--shared-agent-session-state-and-configuration) |
@@ -112,6 +113,52 @@ Release, provider API, and ACP compatibility have their own sources under
   installed host behavior. Packaged consumers require rebuild/install/probe,
   host restart and a fresh live task. Revert session assembly, lifecycle and
   adapter wiring together; existing Session Logs require no migration.
+
+
+### 2026-09-10 — run-scoped HookBus and static hook providers
+
+- **Change:** [PR #121](https://github.com/Raccoon-Office/Box-Agent/pull/121)
+  integrates HookBus with the managed Session lifecycle. [HookBus](../HOOKBUS.md) describes the public
+  Python integration, handler decisions and lifecycle.
+- **Ownership:** composition creates one HookBus per Run, registers legacy
+  callbacks and `HookProviderPort` contributions with their owner identity,
+  then freezes the registry. Handlers run in priority and registration order.
+  Agent and AgentSession carry explicit plugin descriptors; factories bind
+  resolved host configuration. The bus does not assemble model context or
+  introduce durable session state.
+- **Tool arguments and results:** a before-tool decision may replace the
+  complete argument object or deny execution. Tool Engine revalidates final
+  arguments, paths and execution constraints before permission negotiation;
+  permission retries do not run the before-hook again. Result handlers may
+  replace or suppress visible text in model history and host events without
+  changing the actual success flag, raw output, separately persisted content,
+  or artifact references. Calls rejected before invocation skip new result
+  handlers and report `executed=false` through the completion observer.
+- **Compatibility:** existing `hooks` arguments, hook classes, loaders and
+  callback argument semantics remain available. Legacy callbacks retain their
+  ordinary-error and timeout behavior. New observers warn and continue on
+  ordinary failure; invalid, failed or timed-out interceptors deny execution
+  or suppress text. Cancellation and `SessionLogDurabilityError` propagate.
+  The default path adds no custom provider, configuration schema, protocol
+  field or Session Log migration.
+- **Lifecycle:** matcher and handler share a per-hook budget, bounded by the
+  chain and Run deadlines. Closing stops new dispatch, drains in-flight
+  calls and releases registrations before plugin disposal. Repeated
+  cancellation retains the cleanup task and its resources. Cancellation is
+  cooperative: handlers that block synchronously or ignore cancellation can
+  delay cleanup. Managed runs wait for the Bus and their RUN-only extension
+  providers before allowing Session resources to close. Cleanup tasks carry
+  exception objects as results to preserve cancellation causes on Python 3.10.
+- **Proof anchors:** `tests/test_hook_bus.py` and `tests/test_hook_plugins.py`
+  cover ordering, decisions, deadlines, cancellation, run isolation and
+  visible tool results. Plugin-host, kernel compatibility, Tool Engine,
+  permissions, session and ACP regressions cover integration boundaries.
+  Exact-Head execution results belong in the submitting PR's Proof section.
+- **Runtime and rollback:** packaged consumers need a rebuild, install, host
+  restart and fresh task verification. Revert the HookBus integration and its
+  structured tool-dispatch path together; preserve existing Session Logs and
+  the legacy hooks API. Changes to kernel contracts and tool permission
+  boundaries require core-maintainer review.
 
 ### 2026-09-09 — Tool Engine ownership and local discovery
 

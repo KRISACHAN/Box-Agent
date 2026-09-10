@@ -9,7 +9,7 @@ import box_agent.agent as agent_module
 import box_agent.composition as composition
 from box_agent.agent import Agent
 from box_agent.events import ContentEvent, DoneEvent, StopReason
-from box_agent.hooks import HookManager
+from box_agent.hooks import BaseHook, HookManager
 from box_agent.kernel.ports import KernelServices
 from box_agent.schema import StreamEvent
 
@@ -126,12 +126,20 @@ async def test_managed_services_preserve_optional_capability_identity_and_run_ho
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
+    observed = []
+
+    class Legacy(BaseHook):
+        async def on_agent_start(self, **kwargs):
+            observed.append(self)
 
     class Kernel:
         def __init__(self, *, _services, **_kwargs):
             captured["services"] = _services
 
         async def run(self):
+            await captured["services"].hook_bus.fire_agent_start(
+                messages=[], tools={}, max_steps=1,
+            )
             yield DoneEvent(stop_reason=StopReason.END_TURN, final_content="done")
 
     monkeypatch.setattr(composition, "AgentLoopKernel", Kernel)
@@ -142,7 +150,7 @@ async def test_managed_services_preserve_optional_capability_identity_and_run_ho
     extractor = object()
     exposure = object()
     result_store = object()
-    hooks = [object()]
+    hooks = [Legacy()]
     services = managed_services(
         llm=llm,
         tools=agent.tools,
@@ -167,17 +175,20 @@ async def test_managed_services_preserve_optional_capability_identity_and_run_ho
     _ = [event async for event in agent.run_events(options=options)]
 
     resolved = captured["services"]
-    assert resolved is services
+    assert resolved.llm is services.llm
+    assert resolved.summary_llm is services.summary_llm
+    assert resolved.session_store is services.session_store
+    assert resolved.tool_catalog is services.tool_catalog
+    assert resolved.tool_engine is services.tool_engine
     assert resolved.permission_gateway is permission
     assert resolved.memory_lookup is memory
     assert resolved.memory_extraction is extractor
     assert resolved.tool_exposure is exposure
     assert resolved.tool_result_store is result_store
-    assert len(resolved.hook_bus.hooks) == len(options.hooks)
-    assert all(
-        actual is expected
-        for actual, expected in zip(resolved.hook_bus.hooks, options.hooks)
-    )
+    assert observed == hooks and observed[0] is hooks[0]
+    assert services.hook_bus.hooks[0] is hooks[0]
+    assert resolved.hook_dispatch is resolved.hook_bus
+    assert resolved.hook_context is resolved.hook_bus.context
 
 
 @pytest.mark.asyncio

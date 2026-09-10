@@ -108,6 +108,7 @@ class AgentSession:
         workspace_dir: str | Path | None = None,
         token_limit: int | None = None,
         hooks: list[Any] | None = None,
+        plugins: tuple[Any, ...] = (),
         session_log: SessionLog | None = None,
         utility: bool = False,
         allowed_connector_ids_provider: Callable[[], frozenset[str]] | None = None,
@@ -154,6 +155,7 @@ class AgentSession:
             ),
             session_log=session_log,
             **({"enable_builtin_tools": False} if utility else {}),
+            **({"plugins": plugins} if plugins else {}),
         )
         return cls(agent=agent, config=config, **state)
 
