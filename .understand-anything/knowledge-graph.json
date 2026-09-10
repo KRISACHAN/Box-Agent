@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T22:00:13.512Z",
-    "gitCommitHash": "4199338c498d1b04fda1a9a18df733d4aa73cc2f"
+    "analyzedAt": "2026-09-10T22:39:36.344Z",
+    "gitCommitHash": "b77220fbe666d38246b22a246f3b34d906b16d83"
   },
   "nodes": [
     {
@@ -13078,9 +13078,9 @@
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/app.py",
       "lineRange": [
         35,
-        398
+        399
       ],
-      "summary": "注册运行、案例、效果报告和后台启动/轮询路由；远程启动需服务器显式开启，默认同时检查Request.client的loopback地址和本机URL主机名，有Origin则要求同源。HTML-disabled Markdown保留诊断正文并将原始HTML显示为文本，后台启动把服务器选中的完整模型binding交给EvaluationRunner。",
+      "summary": "注册运行、案例、效果报告和后台启动/轮询路由；远程启动需服务器显式开启，默认同时检查Request.client的loopback地址和本机URL主机名，有Origin则要求同源。HTML-disabled Markdown保留诊断正文并将原始HTML显示为文本，后台启动把服务器选中的完整模型binding交给EvaluationRunner，效果页面同时传递仓库的effect_error以显示无效响应诊断。",
       "tags": [
         "python",
         "app",
@@ -13346,7 +13346,7 @@
       "type": "file",
       "name": "repository.py",
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
-      "summary": "只读访问box-agent-acp-eval/v1运行与最新attempt，约束输出目录路径并读取诊断及产物索引；新增读取effect_evaluation.json中的阶段得分、权重和成本，不重新执行评分。",
+      "summary": "只读访问标准ACP运行和最新attempt；列表摘要与详情共用效果文档校验，检查schema、结构、显式来源错配和评分有限数值，invalid时隐藏分数。保留原始响应文件及ACP/completeness状态，不重新执行评分。",
       "tags": [
         "viewer",
         "repository",
@@ -13360,8 +13360,8 @@
       "name": "NotFoundError",
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
       "lineRange": [
-        16,
-        17
+        17,
+        18
       ],
       "summary": "封装 `NotFoundError` 对应的状态与行为，为 repository 模块提供可复用的领域对象。",
       "tags": [
@@ -13379,10 +13379,10 @@
       "name": "EvaluationRepository",
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
       "lineRange": [
-        20,
-        292
+        21,
+        342
       ],
-      "summary": "只读定位标准运行及最新attempt，验证路径边界，提供案例、诊断和文件查询；读取效果报告，汇总process/result分数和权重及Agent成本，缺失或不完整报告保留明确状态与默认权重。",
+      "summary": "只读提供案例与诊断查询，新增共享_effect_document检查agent-eval-effect/v1、summary/source/judge结构、显式case/attempt错配及摘要和指标的有限数值或空值。列表和详情统一隐藏invalid分数，optional confidence/evidence保留兼容默认，原响应和ACP状态不改写。",
       "tags": [
         "python",
         "repository",
@@ -17692,7 +17692,7 @@
       "type": "document",
       "name": "README.md",
       "filePath": "test_workspace/trace_viewer/README.md",
-      "summary": "说明“Offline ACP Trace Viewer”相关的仓库约定与操作流程，共组织为 3 个可导航章节。 同时覆盖 Ops 数据集启动现有 ACP 评测、被测模型目录、附件披露确认及部署访问边界，并说明按 Attempt 独立读取效果 JSON 和呈现缺失或服务错误状态。",
+      "summary": "说明“Offline ACP Trace Viewer”相关的仓库约定与操作流程，共组织为 3 个可导航章节。 同时覆盖 Ops 数据集启动现有 ACP 评测、被测模型目录、附件披露确认及部署访问边界，并说明按 Attempt 独立读取效果 JSON 和呈现缺失或服务错误状态；补充无效或显式错配响应隐藏分数的只读展示边界，以及缺失可选confidence/evidence的兼容行为。",
       "tags": [
         "documentation",
         "developer-guide",
@@ -35492,7 +35492,7 @@
       "type": "file",
       "name": "batch_runner.py",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
-      "summary": "读取并校验数据集、输入与运行指纹，按不可变 attempt 审计路径限并发执行或复用 ACP 用例。把被测模型绑定和可选效果评估配置传入 CaseConfig，保留原批次汇总与终态判定。",
+      "summary": "读取数据集并沿原输入、运行时和不可变 attempt 审计路径调度 ACP 评测，执行前深拷贝模型绑定并生成模型、token 上限及完整绑定的 model_config_sha256。该身份写入批次 manifest/summary 和生成结果的 run.json，终态复用还要求模型身份一致。",
       "tags": [
         "评估",
         "批处理",
@@ -35506,8 +35506,8 @@
       "name": "_iso_now",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        41,
-        42
+        42,
+        43
       ],
       "summary": "生成带 UTC 时区的当前 ISO 时间，供批次状态与尝试元数据记录。",
       "tags": [
@@ -35523,8 +35523,8 @@
       "name": "_read_mapping",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        45,
-        50
+        46,
+        51
       ],
       "summary": "读取 JSON 对象文件，遇到读取、编码、解析或类型错误时返回空值供验证器处理。",
       "tags": [
@@ -35540,8 +35540,8 @@
       "name": "_canonical_sha256",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        53,
-        60
+        54,
+        61
       ],
       "summary": "以稳定键顺序和紧凑 JSON 序列化计算 SHA-256，避免格式差异改变评估指纹。",
       "tags": [
@@ -35557,8 +35557,8 @@
       "name": "_case_fingerprint",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        63,
-        82
+        64,
+        83
       ],
       "summary": "对用例记录和每份输入附件的字节摘要生成指纹，使比较绑定实际问题与输入内容。",
       "tags": [
@@ -35574,8 +35574,8 @@
       "name": "_dataset_fingerprint",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        85,
-        100
+        86,
+        101
       ],
       "summary": "按数据集用例顺序组合各 case 指纹，生成整批输入的一致性标识。",
       "tags": [
@@ -35591,8 +35591,8 @@
       "name": "_command_value",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        103,
-        120
+        104,
+        121
       ],
       "summary": "在指定仓库目录执行有界探测命令并提取文本结果，失败时返回无可用值。",
       "tags": [
@@ -35608,8 +35608,8 @@
       "name": "_runtime_identity",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        123,
-        168
+        124,
+        169
       ],
       "summary": "探测 Python 实现与版本、Box-Agent 版本和源码身份，记录本批实际使用的运行时。",
       "tags": [
@@ -35625,8 +35625,8 @@
       "name": "_stable_runtime_identity",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        171,
-        210
+        172,
+        211
       ],
       "summary": "从运行时探测信息中抽取可稳定比较的身份字段，拒绝缺失或不可用的记录。",
       "tags": [
@@ -35642,8 +35642,8 @@
       "name": "_validate_case_id",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        213,
-        223
+        214,
+        224
       ],
       "summary": "校验用例 ID 为安全非空名称，禁止目录分隔符、点路径和空字符。",
       "tags": [
@@ -35659,8 +35659,8 @@
       "name": "_validate_input_files",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        226,
-        254
+        227,
+        255
       ],
       "summary": "核验附件路径列表的类型与数据集根目录边界，并确保输入文件可读取。",
       "tags": [
@@ -35676,8 +35676,8 @@
       "name": "load_dataset",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        257,
-        293
+        258,
+        294
       ],
       "summary": "在启动任何尝试前完整读取并验证 UTF-8 JSONL 数据集、用例唯一性与附件路径。",
       "tags": [
@@ -35693,8 +35693,8 @@
       "name": "_select_records",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        296,
-        310
+        297,
+        311
       ],
       "summary": "按指定 case ID 选择记录，拒绝重复选择或不存在的用例。",
       "tags": [
@@ -35710,8 +35710,8 @@
       "name": "_existing_run_id",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        313,
-        323
+        314,
+        324
       ],
       "summary": "读取既有批次清单中的运行 ID，检查 schema 版本和标识有效性。",
       "tags": [
@@ -35727,8 +35727,8 @@
       "name": "_validate_case_storage",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        326,
-        354
+        327,
+        355
       ],
       "summary": "检查 case、attempts 和最新索引所在目录，拒绝符号链接或不安全存储布局。",
       "tags": [
@@ -35744,10 +35744,10 @@
       "name": "_terminal_attempt",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        357,
-        428
+        358,
+        432
       ],
-      "summary": "核验已结束尝试的最新索引、身份、输入指纹和运行时，决定它是否可以用于跳过重复执行。",
+      "summary": "校验最新索引、run/case/attempt 身份、输入指纹、可比运行时和 model_config_sha256，全部匹配才复用终态；旧 attempt 缺少模型身份时重新执行。",
       "tags": [
         "评估",
         "批处理",
@@ -35761,8 +35761,8 @@
       "name": "_case_summary",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        431,
-        448
+        435,
+        452
       ],
       "summary": "从一次执行或复用结果提取状态、尝试路径、stderr 数量和完整性，形成批次条目。",
       "tags": [
@@ -35778,8 +35778,8 @@
       "name": "_counts",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        451,
-        476
+        455,
+        480
       ],
       "summary": "汇总选中、执行、跳过、ACP 成败和采集完整性等批次计数。",
       "tags": [
@@ -35795,8 +35795,8 @@
       "name": "_successful",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        479,
-        485
+        483,
+        489
       ],
       "summary": "仅在用例已执行或合法复用、ACP 完成且证据完整时判定该批次条目成功。",
       "tags": [
@@ -35812,8 +35812,8 @@
       "name": "_python_executable",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        488,
-        490
+        492,
+        494
       ],
       "summary": "优先选取仓库 .venv/bin/python，缺失时使用当前 Python 解释器。",
       "tags": [
@@ -35829,10 +35829,10 @@
       "name": "_write_attempt_batch_metadata",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        493,
-        543
+        497,
+        549
       ],
-      "summary": "向不可变尝试产物写入实际与预期输入指纹及运行时身份，保留批次比较所需证据。",
+      "summary": "向生成结果的 run.json 写入实际输入指纹、运行时与 model_config_sha256；输入不一致时保留原 attempt，并同步标记完整性损坏和未完成状态。",
       "tags": [
         "评估",
         "批处理",
@@ -35846,8 +35846,8 @@
       "name": "_copied_case_fingerprint",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        546,
-        594
+        552,
+        600
       ],
       "summary": "依据尝试工作区的输入快照计算实际评估字节指纹，检测执行前后复制输入漂移。",
       "tags": [
@@ -35863,8 +35863,8 @@
       "name": "_batch_error",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        597,
-        612
+        603,
+        618
       ],
       "summary": "将用例级异常转换为含处置方式和错误文本的批次结果，避免一个失败中止全部汇总。",
       "tags": [
@@ -35880,10 +35880,10 @@
       "name": "run_batch",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        615,
-        800
+        621,
+        818
       ],
-      "summary": "校验完整数据集和输入指纹，限并发运行或复用终态用例，并保存不可变 attempt 元数据与批次汇总；同时验证并传递模型绑定、输出上限和可选效果评估配置。",
+      "summary": "执行前深拷贝完整模型绑定，将模型、输出上限与路由配置规范化哈希，固定本批次模型身份。复用终态时匹配该身份与原输入/运行时指纹，并把模型摘要写入批次 manifest、summary 及新 attempt 的 run.json。",
       "tags": [
         "评估",
         "批处理",
@@ -35897,8 +35897,8 @@
       "name": "LatestIndexError",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        33,
-        34
+        34,
+        35
       ],
       "summary": "标记不安全或损坏的最新尝试索引，禁止评估器继续跟随该索引。",
       "tags": [
@@ -35914,8 +35914,8 @@
       "name": "InputFingerprintMismatch",
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "lineRange": [
-        37,
-        38
+        38,
+        39
       ],
       "summary": "标记实际被评估的输入字节与执行前指纹不一致。",
       "tags": [
@@ -36831,7 +36831,7 @@
       "type": "document",
       "name": "README.md",
       "filePath": "test_workspace/acp_eval/README.md",
-      "summary": "介绍 ACP 离线评估输入、附件、批量执行和不可变证据布局；没有旧 output/ 目录时，按 cwd 相对产物事件建清单并排除已暂存输入。 补充 Case 原状态终结后的可选独立效果服务调用，以及每次 ACP 会话的被测模型绑定；服务失败不改变 ACP 和证据完整性结果。",
+      "summary": "说明 ACP 数据集、附件、不可变证据布局与保守恢复规则，新增模型配置冻结摘要及终态身份匹配要求。区分 effect_response.json 的解析响应审计与 effect_evaluation.json 的验证结果或服务错误，维持 ACP 完成性和效果评估的独立边界。",
       "tags": [
         "文档",
         "评估",
@@ -39244,7 +39244,7 @@
         "http-client",
         "audit"
       ],
-      "summary": "在 ACP attempt 证据落盘后同步 POST 本地 attempt 路径及样本标识，等待一次 JSON 响应并写入 effect_evaluation.json。客户端不携带 Box-Agent 或 Judge 凭证，服务错误单独记录且不改变原 ACP/completeness 状态。",
+      "summary": "同步 POST attempt 引用后先将成功解析的服务 JSON 保存到 effect_response.json，再校验对象、schema 和显式提供的样本/attempt 身份。有效效果结果或独立 service_error 写入 effect_evaluation.json，原 ACP/completeness 结果保持独立。",
       "complexity": "moderate"
     },
     {
@@ -39260,8 +39260,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        22,
-        31
+        23,
+        32
       ],
       "summary": "保存独立效果服务地址与超时，并规范为单次 POST 使用的 effect-evaluations 端点。"
     },
@@ -39278,8 +39278,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        34,
-        35
+        35,
+        36
       ],
       "summary": "返回效果客户端审计时间戳使用的 UTC ISO 字符串。"
     },
@@ -39296,8 +39296,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        38,
-        81
+        39,
+        82
       ],
       "summary": "构造 service_error 文档，把无法得到的评分留空并标记 Judge 未到达，避免把通信失败伪装为有效分数。"
     },
@@ -39314,10 +39314,10 @@
       ],
       "complexity": "moderate",
       "lineRange": [
-        84,
-        138
+        85,
+        147
       ],
-      "summary": "同步提交 attempt 路径和样本标识，等待单次 JSON 响应并校验 schema；将响应或独立错误文档原子写到 effect_evaluation.json，不实现轮询接口。"
+      "summary": "同步提交 attempt 引用，先原子保存解析后的服务响应供审计，再校验 schema、source 形状及其中显式 case_id/attempt_id；标识错配转为独立 service_error。结果文件保存验证后的效果文档或错误，缺省 source 或未提供的标识仍兼容接受。"
     },
     {
       "id": "config:test_workspace/evaluation_models.json",
@@ -40009,7 +40009,7 @@
       "type": "file",
       "name": "effect.html",
       "filePath": "test_workspace/trace_viewer/templates/effect.html",
-      "summary": "展示服务端读取的当前 Attempt 效果评估，分别呈现过程和结果评分、覆盖率、评判证据、性能与可审计成本；评估文件缺失、指标不可用和服务错误保留独立状态。",
+      "summary": "展示当前Attempt的过程/结果评分、证据、性能与成本；effect_error诊断优先于missing空状态，无效响应隐藏评分并保留原文件。可选confidence缺失时显示破折号，继续区分service_error与指标不可用状态。",
       "tags": [
         "template",
         "trace-viewer",
@@ -50377,7 +50377,7 @@
       "target": "function:test_workspace/trace_viewer/src/trace_viewer/app.py:create_app",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/trace_viewer/src/trace_viewer/app.py",
@@ -50440,7 +50440,8 @@
       "target": "file:test_workspace/trace_viewer/src/trace_viewer/app.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:test_workspace/trace_viewer/src/trace_viewer/presentation.py",
@@ -50601,7 +50602,7 @@
       "target": "class:test_workspace/trace_viewer/src/trace_viewer/repository.py:NotFoundError",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/trace_viewer/src/trace_viewer/repository.py",
@@ -50615,7 +50616,7 @@
       "target": "class:test_workspace/trace_viewer/src/trace_viewer/repository.py:EvaluationRepository",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/trace_viewer/src/trace_viewer/repository.py",
@@ -71543,7 +71544,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_iso_now",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71557,7 +71558,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_read_mapping",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71571,7 +71572,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_canonical_sha256",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71585,7 +71586,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_case_fingerprint",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71599,7 +71600,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_dataset_fingerprint",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71613,7 +71614,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_command_value",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71627,7 +71628,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_runtime_identity",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71641,7 +71642,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_stable_runtime_identity",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71655,7 +71656,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_validate_case_id",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71669,7 +71670,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_validate_input_files",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71683,7 +71684,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:load_dataset",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71697,7 +71698,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_select_records",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71711,7 +71712,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_existing_run_id",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71725,7 +71726,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_validate_case_storage",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71739,7 +71740,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_terminal_attempt",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71753,7 +71754,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_case_summary",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71767,7 +71768,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_counts",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71781,7 +71782,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_successful",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71795,7 +71796,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_python_executable",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71809,7 +71810,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_write_attempt_batch_metadata",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71823,7 +71824,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_copied_case_fingerprint",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71837,7 +71838,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_batch_error",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71851,7 +71852,7 @@
       "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:run_batch",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71865,7 +71866,7 @@
       "target": "class:test_workspace/acp_eval/src/acp_eval/batch_runner.py:LatestIndexError",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -71879,7 +71880,7 @@
       "target": "class:test_workspace/acp_eval/src/acp_eval/batch_runner.py:InputFingerprintMismatch",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
@@ -73058,7 +73059,8 @@
       "target": "file:test_workspace/acp_eval/src/acp_eval/batch_runner.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/stderr_scan.py",
@@ -78862,7 +78864,8 @@
       "target": "file:test_workspace/acp_eval/src/acp_eval/effect_client.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/cli.py",
@@ -78897,28 +78900,28 @@
       "target": "class:test_workspace/acp_eval/src/acp_eval/effect_client.py:EffectEvaluationConfig",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/effect_client.py",
       "target": "function:test_workspace/acp_eval/src/acp_eval/effect_client.py:_error_document",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/effect_client.py",
       "target": "function:test_workspace/acp_eval/src/acp_eval/effect_client.py:_iso_now",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/effect_client.py",
       "target": "function:test_workspace/acp_eval/src/acp_eval/effect_client.py:evaluate_attempt",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/acp_eval/src/acp_eval/effect_client.py",
@@ -79366,7 +79369,7 @@
       "target": "class:test_workspace/trace_viewer/src/trace_viewer/app.py:EvaluationLaunchRequest",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:test_workspace/trace_viewer/src/trace_viewer/app.py",
@@ -80256,6 +80259,13 @@
       "type": "depends_on",
       "direction": "forward",
       "weight": 0.6
+    },
+    {
+      "source": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:run_batch",
+      "target": "function:test_workspace/acp_eval/src/acp_eval/batch_runner.py:_canonical_sha256",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
     }
   ],
   "layers": [

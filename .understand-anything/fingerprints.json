@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "4199338c498d1b04fda1a9a18df733d4aa73cc2f",
-  "generatedAt": "2026-09-10T22:00:13.444Z",
+  "gitCommitHash": "b77220fbe666d38246b22a246f3b34d906b16d83",
+  "generatedAt": "2026-09-10T22:40:15.339Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -36022,12 +36022,12 @@
     },
     "test_workspace/acp_eval/README.md": {
       "filePath": "test_workspace/acp_eval/README.md",
-      "contentHash": "bcb46ba84112357156812e6321aa2c42a9b4f433dbccc9d7fdda50fbdbacea66",
+      "contentHash": "87035bfd51a7b09b75b0f1dc349df93cbfdc6c0fee036a550c48b1acf243c7dd",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 188,
+      "totalLines": 195,
       "hasStructuralAnalysis": true
     },
     "test_workspace/acp_eval/src/acp_eval/__init__.py": {
@@ -36042,7 +36042,7 @@
     },
     "test_workspace/acp_eval/src/acp_eval/batch_runner.py": {
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
-      "contentHash": "c919a7a08bebe3d37d4607ec4604f9c8162a040a326c9887b51e438eea92d438",
+      "contentHash": "859a19899850fa87870d1f9d4f11280707ba81b78db0d3015323157c613fbaeb",
       "functions": [
         {
           "name": "_iso_now",
@@ -36184,11 +36184,12 @@
             "run_id",
             "case_id",
             "current_fingerprint",
-            "current_runtime"
+            "current_runtime",
+            "model_config_sha256"
           ],
           "returnType": "dict[str, Any] | None",
           "exported": true,
-          "lineCount": 72
+          "lineCount": 75
         },
         {
           "name": "_case_summary",
@@ -36235,11 +36236,12 @@
             "result",
             "case_fingerprint",
             "expected_fingerprint",
-            "runtime"
+            "runtime",
+            "model_config_sha256"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 51
+          "lineCount": 53
         },
         {
           "name": "_copied_case_fingerprint",
@@ -36281,7 +36283,7 @@
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 186
+          "lineCount": 198
         }
       ],
       "classes": [
@@ -36335,6 +36337,12 @@
           "source": "sys",
           "specifiers": [
             "sys"
+          ]
+        },
+        {
+          "source": "copy",
+          "specifiers": [
+            "deepcopy"
           ]
         },
         {
@@ -36426,7 +36434,7 @@
         "_batch_error",
         "run_batch"
       ],
-      "totalLines": 801,
+      "totalLines": 819,
       "hasStructuralAnalysis": true
     },
     "test_workspace/acp_eval/src/acp_eval/case_runner.py": {
@@ -37157,7 +37165,7 @@
     },
     "test_workspace/acp_eval/src/acp_eval/effect_client.py": {
       "filePath": "test_workspace/acp_eval/src/acp_eval/effect_client.py",
-      "contentHash": "b311384d3dcfd5fd9875d7cd502d994395201a082a9b0426a8bcddef9c1b691c",
+      "contentHash": "9c85f5508a11a4ab517abc2989f8dfd77ca521f4b6944951ecf1a9fcdf96d025",
       "functions": [
         {
           "name": "_iso_now",
@@ -37188,7 +37196,7 @@
           ],
           "returnType": "dict[str, Any]",
           "exported": true,
-          "lineCount": 55
+          "lineCount": 63
         }
       ],
       "classes": [
@@ -37269,7 +37277,7 @@
         "_error_document",
         "evaluate_attempt"
       ],
-      "totalLines": 139,
+      "totalLines": 148,
       "hasStructuralAnalysis": true
     },
     "test_workspace/acp_eval/src/acp_eval/ids.py": {
@@ -38698,12 +38706,12 @@
     },
     "test_workspace/trace_viewer/README.md": {
       "filePath": "test_workspace/trace_viewer/README.md",
-      "contentHash": "bfbf94df5fb096e18de4c7f7b4eca9d73e86f921dc76d26d6dcd29f962a20aa7",
+      "contentHash": "40d58486c11cf6d2739e4a8388e6048c0e6ae0e3f9b89c7b8d6a8cbd23beffb7",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 73,
+      "totalLines": 75,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/__init__.py": {
@@ -38718,7 +38726,7 @@
     },
     "test_workspace/trace_viewer/src/trace_viewer/app.py": {
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/app.py",
-      "contentHash": "fbd942ed02a22f8a24e9e3dda7213485ee6c353dd05160361b149c7a52ed21fc",
+      "contentHash": "67b58277bd22671670162f111cd59527cfcb8ead9c51b43e91833efe9503a374",
       "functions": [
         {
           "name": "create_app",
@@ -38729,7 +38737,7 @@
           ],
           "returnType": "FastAPI",
           "exported": true,
-          "lineCount": 364
+          "lineCount": 365
         }
       ],
       "classes": [
@@ -38869,7 +38877,7 @@
         "EvaluationLaunchRequest",
         "create_app"
       ],
-      "totalLines": 399,
+      "totalLines": 400,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/cli.py": {
@@ -39268,7 +39276,7 @@
     },
     "test_workspace/trace_viewer/src/trace_viewer/repository.py": {
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
-      "contentHash": "1242b97f98816f487ca3f6c7bd95df23beb51f382e966286fb48207038ec87dc",
+      "contentHash": "0b75d1e39f75aecc675280a371d65ac275e8d8e160c6ab132028b9f9448830fe",
       "functions": [],
       "classes": [
         {
@@ -39289,6 +39297,7 @@
             "_attempt_path",
             "_duration",
             "_task_type",
+            "_effect_document",
             "_effect_summary",
             "_case_summary",
             "list_cases",
@@ -39301,7 +39310,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 273
+          "lineCount": 322
         }
       ],
       "imports": [
@@ -39309,6 +39318,12 @@
           "source": "json",
           "specifiers": [
             "json"
+          ]
+        },
+        {
+          "source": "math",
+          "specifiers": [
+            "math"
           ]
         },
         {
@@ -39340,7 +39355,7 @@
         "NotFoundError",
         "EvaluationRepository"
       ],
-      "totalLines": 293,
+      "totalLines": 343,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/timeline.py": {
@@ -39577,12 +39592,12 @@
     },
     "test_workspace/trace_viewer/templates/effect.html": {
       "filePath": "test_workspace/trace_viewer/templates/effect.html",
-      "contentHash": "99f482d4364e46135b6f62b17463a9c68cccd9f66bc982918320c1b16f35dbe1",
+      "contentHash": "11a34244f25dc483059624bcb6eb15eafbaf314de258e022c32fa24822b19c83",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 59,
+      "totalLines": 61,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/files.html": {
