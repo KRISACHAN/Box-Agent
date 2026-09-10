@@ -130,11 +130,17 @@ def _bind_skill_runtime(resources: SessionResources) -> None:
     loader = None if options.utility else resources.skill_loader
     if loader is None and not options.utility:
         loader = AgentService.resolve_skill_loader(resources.tools)
-    if loader is not None or options.profile == "acp":
-        resources.state.setdefault("skill_runtime", SkillRuntime(
+    if loader is not None or options.profile == "acp" or options.resume_session_log:
+        runtime = resources.state.setdefault("skill_runtime", SkillRuntime(
             loader, session_log=resources.context.host.session_log,
             allow_partial_restore=options.profile == "acp",
         ))
+        if options.resume_session_log:
+            session_log = resources.context.host.session_log
+            if session_log is None:
+                raise ValueError("resume_session_log requires a borrowed SessionLog")
+            runtime.restore_records(session_log.replay().skills)
+            session_log.prepare_resume()
 
 
 async def prepare_tools(resources: SessionResources) -> None:

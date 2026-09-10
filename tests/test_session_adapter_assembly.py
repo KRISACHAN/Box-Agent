@@ -148,6 +148,8 @@ async def test_managed_session_keeps_connector_skill_grants_for_parent_and_child
 async def test_cli_shared_prompt_controls_model_and_session_closes(tmp_path, monkeypatch):
     import sys
 
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("BOX_AGENT_HOME", raising=False)
     # Python 3.10 has exc_info(), but not exception().
     monkeypatch.delattr(sys, "exception", raising=False)
     import box_agent.cli as cli

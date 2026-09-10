@@ -800,3 +800,21 @@ def test_replay_restores_latest_box_agent_domain_state(tmp_path):
         {"name": "pdfs", "sha256": "abc", "loadOrder": 1}
     ]
     restored.close()
+
+
+def test_open_or_create_releases_writer_lock_when_resume_repair_fails(tmp_path, monkeypatch):
+    log = SessionLog.create(tmp_path / "sessions", session_id="failed-resume", cwd=tmp_path)
+    path = log.path
+    log.close()
+    before = path.read_bytes()
+
+    def failed_prepare(self):
+        raise RuntimeError("resume repair failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SessionLog, "prepare_resume", failed_prepare)
+        with pytest.raises(RuntimeError, match="resume repair failed"):
+            SessionLog.open_or_create(tmp_path / "sessions", session_id="failed-resume", cwd=tmp_path)
+    reopened = SessionLog.open(tmp_path / "sessions", session_id="failed-resume", cwd=tmp_path)
+    reopened.close()
+    assert path.read_bytes() == before

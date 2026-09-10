@@ -748,3 +748,26 @@ log.close()
     assert replayed["skills"] == expected.skills
     assert replayed["messages"] == [[message.role, message.content] for message in expected.messages]
     assert log.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["append", "flush"])
+def test_clear_history_keeps_live_messages_when_reset_commit_fails(tmp_path, monkeypatch, failure):
+    from box_agent.agent import Agent
+    from box_agent.schema import Message
+
+    log = SessionLog.create(tmp_path / "sessions", session_id="reset-failure", cwd=tmp_path)
+    agent = Agent(llm_client=object(), system_prompt="system", tools=[], session_log=log,
+                  workspace_dir=str(tmp_path), deferred_mcp_loading_enabled=False)
+    agent.messages.append(Message(role="user", content="keep this history"))
+    original = [message.model_copy(deep=True) for message in agent.messages]
+
+    def fail(*args, **kwargs):
+        log._failed = True
+        raise OSError("reset write failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(log, failure, fail)
+        with pytest.raises(OSError, match="reset write failed"):
+            agent.clear_history()
+    assert agent.messages == original
+    log.close()

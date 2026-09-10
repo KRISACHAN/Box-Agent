@@ -110,6 +110,7 @@ class AgentSession:
         hooks: list[Any] | None = None,
         plugins: tuple[Any, ...] = (),
         session_log: SessionLog | None = None,
+        session_id: str | None = None,
         skill_runtime: Any = _UNSET,
         utility: bool = False,
         allowed_connector_ids_provider: Callable[[], frozenset[str]] | None = None,
@@ -126,6 +127,8 @@ class AgentSession:
         capabilities = {}
         if skill_runtime is not _UNSET:
             capabilities["skill_runtime"] = skill_runtime
+        if session_id is not None:
+            capabilities["session_id"] = session_id
         agent = AgentService(agent_factory=agent_factory).create_agent(
             llm_client=llm_client,
             system_prompt=system_prompt,
