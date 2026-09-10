@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 import heapq
@@ -10,7 +11,7 @@ import inspect
 import re
 from typing import Any, Hashable, Iterable
 
-from .descriptors import PluginDescriptor, PluginScope
+from .descriptors import PluginDescriptor, PluginFactoryContext, PluginScope
 from .registries import (
     ActivatedRegistry,
     CapabilityBinding,
@@ -201,6 +202,13 @@ class PluginHost:
     def validate(self) -> None:
         """Validate the whole static graph before any factory is invoked."""
 
+        self.resolve_dependencies()
+
+    def _select_descriptors(
+        self, plugin_ids: Iterable[str] | None,
+    ) -> tuple[PluginDescriptor, ...]:
+        """Validate catalog metadata, then cardinality for the selected closure."""
+
         policies = self._validate_schema(self._schema)
         descriptor_ids: dict[str, PluginDescriptor] = {}
         capability_ids: dict[type[Any], list[str]] = {
@@ -216,28 +224,47 @@ class PluginHost:
                 )
             descriptor_ids[descriptor.plugin_id] = descriptor
             for port_type in descriptor.capabilities:
-                policy = policies.get(port_type)
-                if policy is None:
+                if port_type not in policies:
                     raise PluginValidationError(
                         "undeclared capability in descriptor "
                         f"{descriptor.plugin_id!r}: {port_type.__qualname__}"
                     )
+
+        selected: set[str] = set()
+        pending = list(descriptor_ids if plugin_ids is None else plugin_ids)
+        while pending:
+            plugin_id = pending.pop()
+            if not isinstance(plugin_id, str) or plugin_id not in descriptor_ids:
+                raise PluginValidationError(f"unknown plugin id: {plugin_id!r}")
+            if plugin_id in selected:
+                continue
+            selected.add(plugin_id)
+            descriptor = descriptor_ids[plugin_id]
+            for dependency in descriptor.dependencies:
+                if dependency not in descriptor_ids:
+                    raise PluginValidationError(
+                        f"missing dependency {dependency!r} for {descriptor.plugin_id!r}"
+                    )
+                pending.append(dependency)
+
+        descriptors = tuple(d for d in self._descriptors if d.plugin_id in selected)
+        lifetime = {PluginScope.PROCESS: 0, PluginScope.SESSION: 1, PluginScope.RUN: 2}
+        for descriptor in descriptors:
+            for dependency in descriptor.dependencies:
+                if lifetime[descriptor.scope] < lifetime[descriptor_ids[dependency].scope]:
+                    raise PluginValidationError(
+                        f"plugin {descriptor.plugin_id!r} cannot depend on "
+                        f"shorter-lived plugin {dependency!r}"
+                    )
+            for port_type in descriptor.capabilities:
                 providers = capability_ids[port_type]
-                if providers and policy is not CapabilityPolicy.MULTI:
+                if providers and policies[port_type] is not CapabilityPolicy.MULTI:
                     raise PluginValidationError(
                         "duplicate capability registration: "
                         f"{port_type.__qualname__} "
                         f"({providers[0]}, {descriptor.plugin_id})"
                     )
                 providers.append(descriptor.plugin_id)
-
-        known_ids = set(descriptor_ids)
-        for descriptor in self._descriptors:
-            for dependency in descriptor.dependencies:
-                if dependency not in known_ids:
-                    raise PluginValidationError(
-                        f"missing dependency {dependency!r} for {descriptor.plugin_id!r}"
-                    )
 
         for port_type, policy in policies.items():
             if (
@@ -247,6 +274,7 @@ class PluginHost:
                 raise PluginValidationError(
                     f"missing required capability: {port_type.__qualname__}"
                 )
+        return descriptors
 
     @staticmethod
     def _validate_schema(
@@ -328,16 +356,21 @@ class PluginHost:
                 )
         if len(set(descriptor.capabilities)) != len(descriptor.capabilities):
             raise PluginValidationError("duplicate capability declaration")
-        if not callable(descriptor.factory):
+        if (descriptor.factory is None) == (descriptor.context_factory is None):
+            raise PluginValidationError("plugin requires exactly one factory or context_factory")
+        if descriptor.factory is not None and not callable(descriptor.factory):
             raise PluginValidationError("plugin factory must be callable")
+        if descriptor.context_factory is not None and not callable(descriptor.context_factory):
+            raise PluginValidationError("plugin context_factory must be callable")
         if descriptor.disposer is not None and not callable(descriptor.disposer):
             raise PluginValidationError("plugin disposer must be callable")
 
-    def resolve_dependencies(self) -> tuple[PluginDescriptor, ...]:
+    def resolve_dependencies(
+        self, plugin_ids: Iterable[str] | None = None,
+    ) -> tuple[PluginDescriptor, ...]:
         """Return a deterministic stable topological ordering."""
 
-        self.validate()
-        descriptors = self._descriptors
+        descriptors = self._select_descriptors(plugin_ids)
         by_id = {descriptor.plugin_id: descriptor for descriptor in descriptors}
         indexes = {
             descriptor.plugin_id: index for index, descriptor in enumerate(descriptors)
@@ -383,10 +416,23 @@ class PluginHost:
         self,
         *,
         session_key: Hashable | None = None,
+        plugin_ids: Iterable[str] | None = None,
+        scopes: Iterable[PluginScope] | None = None,
+        contexts: Mapping[PluginScope, object] | None = None,
     ) -> PluginActivation:
         """Activate or reuse instances and return an immutable registry."""
 
-        ordered = self.resolve_dependencies()
+        plan = self.resolve_dependencies(plugin_ids)
+        selected_scopes = tuple(PluginScope) if scopes is None else tuple(scopes)
+        if any(not isinstance(scope, PluginScope) for scope in selected_scopes):
+            raise PluginScopeError("activation scopes must contain PluginScope values")
+        if contexts is not None and (
+            not isinstance(contexts, Mapping)
+            or any(not isinstance(scope, PluginScope) for scope in contexts)
+        ):
+            raise PluginScopeError("contexts must map PluginScope values to context objects")
+        scope_contexts = {} if contexts is None else dict(contexts)
+        ordered = tuple(d for d in plan if d.scope in selected_scopes)
         if any(
             descriptor.scope is PluginScope.SESSION for descriptor in ordered
         ):
@@ -409,6 +455,30 @@ class PluginHost:
             if self._schema is None:  # Guarded by resolve_dependencies().
                 raise PluginValidationError("malformed capability schema")
             builder = TypedRegistry(self._schema)
+            instances: dict[str, object] = {}
+            # Resolve excluded dependencies before invoking any factory. Partial
+            # activation may consume already-owned process/session dependencies.
+            active_ids = {descriptor.plugin_id for descriptor in ordered}
+            by_id = {descriptor.plugin_id: descriptor for descriptor in plan}
+            for descriptor in ordered:
+                for dependency in descriptor.dependencies:
+                    if dependency in active_ids:
+                        continue
+                    dependency_descriptor = by_id[dependency]
+                    cache = (
+                        self._process_instances
+                        if dependency_descriptor.scope is PluginScope.PROCESS
+                        else self._session_instances.get(session_key, {})
+                        if dependency_descriptor.scope is PluginScope.SESSION
+                        else {}
+                    )
+                    record = cache.get(dependency)
+                    if record is None:
+                        raise PluginScopeError(
+                            f"dependency {dependency!r} is outside activation scopes "
+                            "and has no cached instance"
+                        )
+                    instances[dependency] = record.instance
             created: list[_InstanceRecord] = []
             run_records: list[_InstanceRecord] = []
             try:
@@ -417,7 +487,12 @@ class PluginHost:
                         descriptor,
                         session_key=session_key,
                         created=created,
+                        factory_context=PluginFactoryContext(
+                            scope_contexts.get(descriptor.scope),
+                            {dependency: instances[dependency] for dependency in descriptor.dependencies},
+                        ),
                     )
+                    instances[descriptor.plugin_id] = record.instance
                     if descriptor.scope is PluginScope.RUN:
                         run_records.append(record)
                     for port_type in descriptor.capabilities:
@@ -449,6 +524,7 @@ class PluginHost:
         *,
         session_key: Hashable | None,
         created: list[_InstanceRecord],
+        factory_context: PluginFactoryContext,
     ) -> _InstanceRecord:
         async with self._lock:
             if descriptor.scope is PluginScope.PROCESS:
@@ -461,7 +537,10 @@ class PluginHost:
                 if cached is not None:
                     return cached
 
-        instance = await self._invoke_callback(descriptor.factory)
+        if descriptor.context_factory is not None:
+            instance = await self._invoke_callback(descriptor.context_factory, factory_context)
+        else:
+            instance = await self._invoke_callback(descriptor.factory)
         record = _InstanceRecord(descriptor=descriptor, instance=instance)
         try:
             self._validate_runtime_ports(descriptor, instance)

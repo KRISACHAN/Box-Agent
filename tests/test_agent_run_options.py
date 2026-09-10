@@ -145,6 +145,9 @@ async def test_agent_run_events_forwards_host_run_options(
         if option_field.name == "artifact_root_dir":
             assert option_field.name not in captured
             continue
+        if option_field.name == "kernel_services" and options.kernel_services is None:
+            assert "kernel_services" not in captured
+            continue
         actual = captured[option_field.name]
         expected = getattr(options, option_field.name)
         if option_field.name in identity_fields:

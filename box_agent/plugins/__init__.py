@@ -7,7 +7,7 @@ from .defaults import (
     default_plugin_descriptors,
     kernel_services_from_registry,
 )
-from .descriptors import PluginDescriptor, PluginScope
+from .descriptors import PluginDescriptor, PluginFactoryContext, PluginScope
 from .host import (
     PluginActivation,
     PluginCleanupError,
@@ -38,6 +38,7 @@ __all__ = [
     "PluginDependencyCycleError",
     "PluginDescriptor",
     "PluginError",
+    "PluginFactoryContext",
     "PluginHost",
     "PluginScope",
     "PluginScopeError",

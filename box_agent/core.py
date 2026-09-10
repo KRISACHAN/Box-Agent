@@ -228,6 +228,7 @@ from .kernel.tool_result_pipeline import (
     process_tool_result,
 )
 from .logger import AgentLogger
+from .kernel.ports import KernelServices
 from .llm.debug_logging import reset_llm_debug_sink, set_llm_debug_sink
 from .loop_guards import (
     EMPTY_ARGS_LIMIT,
@@ -346,6 +347,7 @@ async def run_agent_loop(
     tool_result_storage: ToolResultStorage | None = None,
     session_log: SessionLog | None = None,
     session_turn: int | None = None,
+    kernel_services: KernelServices | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Delegate one run while honoring monkeypatched core timing defaults."""
     run_arguments = dict(locals())
