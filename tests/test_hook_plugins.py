@@ -520,18 +520,24 @@ async def test_legacy_hooks_keep_the_callers_context_variables():
     assert marker.get() == "after"
 
 
-@pytest.mark.parametrize("malformed", [(), ("text", None, "extra"), 123,
+@pytest.mark.parametrize("malformed", [(), ("text",), ("text", None, "extra"), 123,
                                      (None, None), (123, None), ("text", 123)])
-async def test_malformed_legacy_result_preserves_text_and_run_completion(malformed):
+@pytest.mark.parametrize("success", [False, True])
+async def test_malformed_legacy_result_preserves_text_and_run_completion(malformed, success):
     class Legacy(BaseHook):
         async def on_tool_result(self, **kwargs):
             return malformed
 
-    tool = Echo()
+    tool = Echo(success=success)
     events, messages, model = await run(tool, [], hooks=[Legacy()])
     assert tool.calls == ["original"] and model.requests == 2
-    assert all(event.success for event in events if isinstance(event, ToolCallResult))
-    assert [message.content for message in messages if message.role == "tool"] == ["原始模型专用文本"]
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    assert result.success is success
+    assert result.content == "original"
+    assert result.error == (None if success else "原始失败")
+    assert [message.content for message in messages if message.role == "tool"] == [
+        "原始模型专用文本" if success else "Error: 原始失败"
+    ]
 
 
 @pytest.mark.parametrize("managed", [False, True])

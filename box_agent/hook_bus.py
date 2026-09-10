@@ -273,7 +273,8 @@ class HookBus:
                 if context.event == "tool.after_execution" and decision is not None:
                     # Match HookManager's protected two-value unpacking. An
                     # invalid legacy return is an ordinary callback failure.
-                    decision = ResultText(*decision)
+                    content, error = decision
+                    decision = ResultText(content, error)
                 return HookExecution("completed", decision)
             if spec.matcher is not None:
                 matched = await getattr(spec.matcher, "matches", spec.matcher)(context)
