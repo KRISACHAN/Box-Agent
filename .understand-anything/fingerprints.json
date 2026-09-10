@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "f501eebf61a6934c1fceee713f207db39b73354c",
-  "generatedAt": "2026-09-10T21:45:40.960Z",
+  "gitCommitHash": "4199338c498d1b04fda1a9a18df733d4aa73cc2f",
+  "generatedAt": "2026-09-10T22:00:13.444Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -36022,12 +36022,12 @@
     },
     "test_workspace/acp_eval/README.md": {
       "filePath": "test_workspace/acp_eval/README.md",
-      "contentHash": "ac6c3c90250417c51d0c5ea2547ea540aa44be1bf0fc3c1a2e350b307b990201",
+      "contentHash": "bcb46ba84112357156812e6321aa2c42a9b4f433dbccc9d7fdda50fbdbacea66",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 163,
+      "totalLines": 188,
       "hasStructuralAnalysis": true
     },
     "test_workspace/acp_eval/src/acp_eval/__init__.py": {
@@ -36042,7 +36042,7 @@
     },
     "test_workspace/acp_eval/src/acp_eval/batch_runner.py": {
       "filePath": "test_workspace/acp_eval/src/acp_eval/batch_runner.py",
-      "contentHash": "c6ef47cc217cd71ad32b354d71219a1d35d0c34c58b7999c0a141cea3664d435",
+      "contentHash": "c919a7a08bebe3d37d4607ec4604f9c8162a040a326c9887b51e438eea92d438",
       "functions": [
         {
           "name": "_iso_now",
@@ -36272,11 +36272,16 @@
             "timeout_seconds",
             "parallelism",
             "case_ids",
-            "retry_terminal"
+            "retry_terminal",
+            "effect_eval_url",
+            "effect_eval_timeout_seconds",
+            "model",
+            "model_max_tokens",
+            "model_binding"
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 161
+          "lineCount": 186
         }
       ],
       "classes": [
@@ -36421,12 +36426,12 @@
         "_batch_error",
         "run_batch"
       ],
-      "totalLines": 776,
+      "totalLines": 801,
       "hasStructuralAnalysis": true
     },
     "test_workspace/acp_eval/src/acp_eval/case_runner.py": {
       "filePath": "test_workspace/acp_eval/src/acp_eval/case_runner.py",
-      "contentHash": "b3042291fd7cd42a8ef130f494561239e395c78b2b06856eb4244f12a3ae3b42",
+      "contentHash": "38e46e268d30c2fc58e2478fdc073b6ebe23713e19eace983ade681b0805eff9",
       "functions": [
         {
           "name": "_iso_now",
@@ -36496,11 +36501,24 @@
           "params": [
             "workspace",
             "case_id",
-            "metadata"
+            "metadata",
+            "model",
+            "model_max_tokens",
+            "model_binding"
           ],
           "returnType": "dict[str, Any]",
           "exported": true,
-          "lineCount": 20
+          "lineCount": 30
+        },
+        {
+          "name": "_resolve_model_binding",
+          "params": [
+            "model_binding",
+            "query"
+          ],
+          "returnType": "dict[str, Any] | None",
+          "exported": true,
+          "lineCount": 40
         },
         {
           "name": "_prompt_params",
@@ -36586,11 +36604,14 @@
             "query",
             "timeout_seconds",
             "metadata",
-            "input_files"
+            "input_files",
+            "model",
+            "model_max_tokens",
+            "model_binding"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 99
+          "lineCount": 106
         },
         {
           "name": "_signal_process_group",
@@ -36633,7 +36654,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 111
+          "lineCount": 114
         },
         {
           "name": "_process_events",
@@ -36800,7 +36821,7 @@
           ],
           "returnType": "RunResult",
           "exported": true,
-          "lineCount": 355
+          "lineCount": 372
         }
       ],
       "classes": [
@@ -36812,10 +36833,15 @@
             "evaluation_dir",
             "dataset_root",
             "timeout_seconds",
-            "python_executable"
+            "python_executable",
+            "effect_eval_url",
+            "effect_eval_timeout_seconds",
+            "model",
+            "model_max_tokens",
+            "model_binding"
           ],
           "exported": true,
-          "lineCount": 6
+          "lineCount": 11
         },
         {
           "name": "_AttemptState",
@@ -36867,6 +36893,12 @@
           "source": "os",
           "specifiers": [
             "os"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
           ]
         },
         {
@@ -36922,6 +36954,13 @@
           "source": "acp_eval",
           "specifiers": [
             "SCHEMA_VERSION"
+          ]
+        },
+        {
+          "source": "acp_eval.effect_client",
+          "specifiers": [
+            "EffectEvaluationConfig",
+            "evaluate_attempt"
           ]
         },
         {
@@ -36987,6 +37026,7 @@
         "_copy_inputs",
         "_new_attempt_dir",
         "_session_params",
+        "_resolve_model_binding",
         "_prompt_params",
         "_send",
         "_permission_reply",
@@ -37013,12 +37053,12 @@
         "_run_status_can_be_synchronized",
         "run_case"
       ],
-      "totalLines": 1499,
+      "totalLines": 1593,
       "hasStructuralAnalysis": true
     },
     "test_workspace/acp_eval/src/acp_eval/cli.py": {
       "filePath": "test_workspace/acp_eval/src/acp_eval/cli.py",
-      "contentHash": "775f5f0b174646c09114c1f4ce8c0479f69206dff6fa47d7b09b52e7f92a5c85",
+      "contentHash": "99f40272bc3410d962092d6a1d0b1a340bcaa482db9e8f903adc5da015f9859e",
       "functions": [
         {
           "name": "_positive_float",
@@ -37043,7 +37083,7 @@
           "params": [],
           "returnType": "argparse.ArgumentParser",
           "exported": true,
-          "lineCount": 17
+          "lineCount": 40
         },
         {
           "name": "main",
@@ -37052,7 +37092,7 @@
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 15
+          "lineCount": 27
         }
       ],
       "classes": [],
@@ -37064,9 +37104,21 @@
           ]
         },
         {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
           "source": "math",
           "specifiers": [
             "math"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
           ]
         },
         {
@@ -37100,7 +37152,124 @@
         "build_parser",
         "main"
       ],
-      "totalLines": 66,
+      "totalLines": 103,
+      "hasStructuralAnalysis": true
+    },
+    "test_workspace/acp_eval/src/acp_eval/effect_client.py": {
+      "filePath": "test_workspace/acp_eval/src/acp_eval/effect_client.py",
+      "contentHash": "b311384d3dcfd5fd9875d7cd502d994395201a082a9b0426a8bcddef9c1b691c",
+      "functions": [
+        {
+          "name": "_iso_now",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_error_document",
+          "params": [
+            "case_id",
+            "attempt_id",
+            "started_at",
+            "elapsed_ms",
+            "error"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 44
+        },
+        {
+          "name": "evaluate_attempt",
+          "params": [
+            "attempt_dir",
+            "record",
+            "config"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 55
+        }
+      ],
+      "classes": [
+        {
+          "name": "EffectEvaluationConfig",
+          "methods": [
+            "endpoint"
+          ],
+          "properties": [
+            "service_url",
+            "timeout_seconds"
+          ],
+          "exported": true,
+          "lineCount": 10
+        }
+      ],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "urllib.error",
+          "specifiers": [
+            "urllib.error"
+          ]
+        },
+        {
+          "source": "urllib.request",
+          "specifiers": [
+            "urllib.request"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime",
+            "timezone"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "monotonic"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Mapping"
+          ]
+        },
+        {
+          "source": "acp_eval.storage",
+          "specifiers": [
+            "atomic_write_json"
+          ]
+        }
+      ],
+      "exports": [
+        "EffectEvaluationConfig",
+        "_iso_now",
+        "_error_document",
+        "evaluate_attempt"
+      ],
+      "totalLines": 139,
       "hasStructuralAnalysis": true
     },
     "test_workspace/acp_eval/src/acp_eval/ids.py": {
@@ -37786,12 +37955,22 @@
     },
     "test_workspace/AGENTS.md": {
       "filePath": "test_workspace/AGENTS.md",
-      "contentHash": "23ca1b59e9e49cc31996dc096ec351fb926cfe8e7b3a6ff391b9a37089f41229",
+      "contentHash": "b53bca26686466d4f9844d215e7560afff181a669ecfd52cc88834942742a6e3",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 80,
+      "totalLines": 84,
+      "hasStructuralAnalysis": true
+    },
+    "test_workspace/evaluation_models.json": {
+      "filePath": "test_workspace/evaluation_models.json",
+      "contentHash": "f425918329e40161e15fc4cc2b88f040ba3260811a2977d5d7f02de74d9dde2e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 76,
       "hasStructuralAnalysis": true
     },
     "test_workspace/inputs/smoke_test/dataset.jsonl": {
@@ -37806,17 +37985,247 @@
     },
     "test_workspace/README.md": {
       "filePath": "test_workspace/README.md",
-      "contentHash": "b91c0a5cd1a5e0c1f1d4f32221475fc4fbbb93a0b09dbb0a7dfd788714260aef",
+      "contentHash": "2bbdd8b332f8ba5336c9a2300b07ea144867a7d6c0760a04d358063ac0a4764f",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 82,
+      "totalLines": 122,
+      "hasStructuralAnalysis": true
+    },
+    "test_workspace/refresh_box_agent_auth.py": {
+      "filePath": "test_workspace/refresh_box_agent_auth.py",
+      "contentHash": "c6190fd73496acd24e5770eaebe34f8d9ca279405d9697e100df07af294dc7b0",
+      "functions": [
+        {
+          "name": "_decode_jwt_expiry",
+          "params": [
+            "token"
+          ],
+          "returnType": "int | None",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "_read_auth_document",
+          "params": [
+            "auth_file"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_validate_refresh_url",
+          "params": [
+            "refresh_url"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "_atomic_write_auth",
+          "params": [
+            "auth_file",
+            "document"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "_default_urlopen",
+          "params": [
+            "request",
+            "timeout"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_request_new_tokens",
+          "params": [
+            "refresh_token",
+            "refresh_url",
+            "timeout_seconds",
+            "urlopen"
+          ],
+          "returnType": "tuple[str, str | None]",
+          "exported": true,
+          "lineCount": 55
+        },
+        {
+          "name": "ensure_fresh_auth",
+          "params": [
+            "auth_file",
+            "refresh_url",
+            "refresh_window_seconds",
+            "timeout_seconds",
+            "now",
+            "urlopen"
+          ],
+          "returnType": "AuthRefreshResult",
+          "exported": true,
+          "lineCount": 71
+        },
+        {
+          "name": "build_parser",
+          "params": [],
+          "returnType": "argparse.ArgumentParser",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "main",
+          "params": [
+            "argv"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 14
+        }
+      ],
+      "classes": [
+        {
+          "name": "AuthRefreshError",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "AuthRefreshResult",
+          "methods": [
+            "to_safe_dict"
+          ],
+          "properties": [
+            "refreshed",
+            "access_expires_at",
+            "refresh_token_rotated"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_RejectRedirects",
+          "methods": [
+            "redirect_request"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "imports": [
+        {
+          "source": "argparse",
+          "specifiers": [
+            "argparse"
+          ]
+        },
+        {
+          "source": "base64",
+          "specifiers": [
+            "base64"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "stat",
+          "specifiers": [
+            "stat"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "tempfile"
+          ]
+        },
+        {
+          "source": "threading",
+          "specifiers": [
+            "threading"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "urllib.error",
+          "specifiers": [
+            "urllib.error"
+          ]
+        },
+        {
+          "source": "urllib.parse",
+          "specifiers": [
+            "urllib.parse"
+          ]
+        },
+        {
+          "source": "urllib.request",
+          "specifiers": [
+            "urllib.request"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Callable",
+            "Mapping",
+            "Sequence"
+          ]
+        }
+      ],
+      "exports": [
+        "AuthRefreshError",
+        "AuthRefreshResult",
+        "_RejectRedirects",
+        "_decode_jwt_expiry",
+        "_read_auth_document",
+        "_validate_refresh_url",
+        "_atomic_write_auth",
+        "_default_urlopen",
+        "_request_new_tokens",
+        "ensure_fresh_auth",
+        "build_parser",
+        "main"
+      ],
+      "totalLines": 324,
       "hasStructuralAnalysis": true
     },
     "test_workspace/run_acp_eval.py": {
       "filePath": "test_workspace/run_acp_eval.py",
-      "contentHash": "5797b32cda7d5bee03f3737aa7d8a8792485487a9ef7edf17802ca35546fd706",
+      "contentHash": "ba1bb5cefd7793a95791de16ee3088ae4830fb83aac3740188b999e1edfc8f53",
       "functions": [
         {
           "name": "load_case_ids",
@@ -37857,18 +38266,23 @@
             "output_dir",
             "case_ids",
             "timeout_seconds",
-            "parallelism"
+            "parallelism",
+            "effect_eval_url",
+            "effect_eval_timeout_seconds",
+            "model",
+            "model_max_tokens",
+            "model_binding"
           ],
           "returnType": "list[str]",
           "exported": true,
-          "lineCount": 28
+          "lineCount": 53
         },
         {
           "name": "build_parser",
           "params": [],
           "returnType": "argparse.ArgumentParser",
           "exported": true,
-          "lineCount": 11
+          "lineCount": 27
         },
         {
           "name": "main",
@@ -37877,7 +38291,7 @@
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 47
+          "lineCount": 88
         }
       ],
       "classes": [],
@@ -37892,6 +38306,12 @@
           "source": "json",
           "specifiers": [
             "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
           ]
         },
         {
@@ -37945,12 +38365,156 @@
         "build_parser",
         "main"
       ],
-      "totalLines": 154,
+      "totalLines": 245,
+      "hasStructuralAnalysis": true
+    },
+    "test_workspace/test_refresh_box_agent_auth.py": {
+      "filePath": "test_workspace/test_refresh_box_agent_auth.py",
+      "contentHash": "097c190221aca47b45fde3e2efd289fec619f3a81e2973c262ecd1eb7c2437e0",
+      "functions": [
+        {
+          "name": "_unsigned_jwt",
+          "params": [
+            "expiry"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "test_refreshes_expired_auth_rotates_refresh_token_and_preserves_metadata",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 52
+        },
+        {
+          "name": "test_does_not_call_refresh_service_for_a_fresh_access_token",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "test_rejects_non_official_refresh_url_before_sending_credentials",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "test_http_failure_does_not_modify_auth_file",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "test_rejects_redirect_without_following_it",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "test_rejects_refresh_response_with_an_expired_access_token",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "test_default_auth_file_respects_active_box_agent_profile",
+          "params": [
+            "tmp_path",
+            "monkeypatch"
+          ],
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
+      "classes": [
+        {
+          "name": "_Response",
+          "methods": [
+            "__init__",
+            "__enter__",
+            "__exit__",
+            "read"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
+      "imports": [
+        {
+          "source": "base64",
+          "specifiers": [
+            "base64"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "stat",
+          "specifiers": [
+            "stat"
+          ]
+        },
+        {
+          "source": "urllib.error",
+          "specifiers": [
+            "urllib.error"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "pytest",
+          "specifiers": [
+            "pytest"
+          ]
+        },
+        {
+          "source": "test_workspace.refresh_box_agent_auth",
+          "specifiers": [
+            "AuthRefreshError",
+            "ensure_fresh_auth"
+          ]
+        }
+      ],
+      "exports": [
+        "_unsigned_jwt",
+        "_Response",
+        "test_refreshes_expired_auth_rotates_refresh_token_and_preserves_metadata",
+        "test_does_not_call_refresh_service_for_a_fresh_access_token",
+        "test_rejects_non_official_refresh_url_before_sending_credentials",
+        "test_http_failure_does_not_modify_auth_file",
+        "test_rejects_redirect_without_following_it",
+        "test_rejects_refresh_response_with_an_expired_access_token",
+        "test_default_auth_file_respects_active_box_agent_profile"
+      ],
+      "totalLines": 224,
       "hasStructuralAnalysis": true
     },
     "test_workspace/test_run_acp_eval.py": {
       "filePath": "test_workspace/test_run_acp_eval.py",
-      "contentHash": "4825be1c4f60ad6fdec8056c1ea892f53445697339925d8c8542a6a41c738f73",
+      "contentHash": "b0a76ce2794c249a7e66f4a227de89ae4c6f689cad4cd1f159c73653b16774e8",
       "functions": [
         {
           "name": "test_default_dataset_is_committed_text_only_smoke_cases",
@@ -37999,6 +38563,30 @@
           "lineCount": 5
         },
         {
+          "name": "test_command_passes_optional_effect_service_without_credentials",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "test_command_passes_selected_tested_model_to_acp_eval",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "test_command_passes_complete_auto_model_binding_to_acp_eval",
+          "params": [
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 29
+        },
+        {
           "name": "test_main_records_selection_and_invokes_acp",
           "params": [
             "monkeypatch",
@@ -38015,6 +38603,24 @@
           ],
           "exported": true,
           "lineCount": 32
+        },
+        {
+          "name": "test_main_ensures_builtin_auth_before_creating_output",
+          "params": [
+            "monkeypatch",
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "test_main_auth_refresh_failure_leaves_no_output_directory",
+          "params": [
+            "monkeypatch",
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 27
         }
       ],
       "classes": [],
@@ -38044,6 +38650,12 @@
           ]
         },
         {
+          "source": "test_workspace.refresh_box_agent_auth",
+          "specifiers": [
+            "AuthRefreshError"
+          ]
+        },
+        {
           "source": "test_workspace.run_acp_eval",
           "specifiers": [
             "DEFAULT_DATASET",
@@ -38063,10 +38675,15 @@
         "test_run_name_rejects_title_that_is_not_one_directory_segment",
         "test_random_selection_is_reproducible",
         "test_command_uses_only_acp_eval",
+        "test_command_passes_optional_effect_service_without_credentials",
+        "test_command_passes_selected_tested_model_to_acp_eval",
+        "test_command_passes_complete_auto_model_binding_to_acp_eval",
         "test_main_records_selection_and_invokes_acp",
-        "test_main_uses_title_for_directory_and_records_it"
+        "test_main_uses_title_for_directory_and_records_it",
+        "test_main_ensures_builtin_auth_before_creating_output",
+        "test_main_auth_refresh_failure_leaves_no_output_directory"
       ],
-      "totalLines": 122,
+      "totalLines": 251,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/pyproject.toml": {
@@ -38081,12 +38698,12 @@
     },
     "test_workspace/trace_viewer/README.md": {
       "filePath": "test_workspace/trace_viewer/README.md",
-      "contentHash": "5c932e683aa9f2ebcbee89ef2b5695f35c1034aeb3537fbdd69d8460ad38393a",
+      "contentHash": "bfbf94df5fb096e18de4c7f7b4eca9d73e86f921dc76d26d6dcd29f962a20aa7",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 34,
+      "totalLines": 73,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/__init__.py": {
@@ -38101,20 +38718,49 @@
     },
     "test_workspace/trace_viewer/src/trace_viewer/app.py": {
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/app.py",
-      "contentHash": "fe1af5d0e19eae0d6d565b0abc1ea70f20a1621fb3c9a33e66ef059133a536fb",
+      "contentHash": "fbd942ed02a22f8a24e9e3dda7213485ee6c353dd05160361b149c7a52ed21fc",
       "functions": [
         {
           "name": "create_app",
           "params": [
-            "repo_root"
+            "repo_root",
+            "evaluation_runner",
+            "allow_remote_evaluations"
           ],
           "returnType": "FastAPI",
           "exported": true,
-          "lineCount": 150
+          "lineCount": 364
         }
       ],
-      "classes": [],
+      "classes": [
+        {
+          "name": "EvaluationLaunchRequest",
+          "methods": [],
+          "properties": [
+            "dataset_id",
+            "model_id",
+            "task_type",
+            "execution_count",
+            "approved_data_disclosure"
+          ],
+          "exported": true,
+          "lineCount": 6
+        }
+      ],
       "imports": [
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime",
+            "timezone"
+          ]
+        },
+        {
+          "source": "ipaddress",
+          "specifiers": [
+            "ip_address"
+          ]
+        },
         {
           "source": "pathlib",
           "specifiers": [
@@ -38122,8 +38768,27 @@
           ]
         },
         {
+          "source": "threading",
+          "specifiers": [
+            "Lock"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid4"
+          ]
+        },
+        {
           "source": "fastapi",
           "specifiers": [
+            "BackgroundTasks",
             "FastAPI",
             "HTTPException",
             "Request"
@@ -38162,6 +38827,20 @@
           ]
         },
         {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel",
+            "Field"
+          ]
+        },
+        {
+          "source": "trace_viewer.evaluation",
+          "specifiers": [
+            "EvaluationLaunchError",
+            "EvaluationRunner"
+          ]
+        },
+        {
           "source": "trace_viewer.presentation",
           "specifiers": [
             "annotate_timing",
@@ -38187,21 +38866,22 @@
         }
       ],
       "exports": [
+        "EvaluationLaunchRequest",
         "create_app"
       ],
-      "totalLines": 170,
+      "totalLines": 399,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/cli.py": {
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/cli.py",
-      "contentHash": "6432877c22bc6cef55e6bd62120d016186f3ae97be28f733b1c45e458cfdb5be",
+      "contentHash": "fa8a8b16f3ce70496678f5481ccf396a41bfc5110db14dfba8e299962e8f6c16",
       "functions": [
         {
           "name": "build_parser",
           "params": [],
           "returnType": "argparse.ArgumentParser",
           "exported": true,
-          "lineCount": 6
+          "lineCount": 8
         },
         {
           "name": "main",
@@ -38210,7 +38890,7 @@
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 4
+          "lineCount": 5
         }
       ],
       "classes": [],
@@ -38250,7 +38930,189 @@
         "build_parser",
         "main"
       ],
-      "totalLines": 28,
+      "totalLines": 31,
+      "hasStructuralAnalysis": true
+    },
+    "test_workspace/trace_viewer/src/trace_viewer/evaluation.py": {
+      "filePath": "test_workspace/trace_viewer/src/trace_viewer/evaluation.py",
+      "contentHash": "f8975a7b5bc6d00893883134faf1f9832d56962e3a01cfd0d7eb47599933889e",
+      "functions": [
+        {
+          "name": "_ensure_fresh_builtin_auth",
+          "params": [
+            "repo_root",
+            "model_binding"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 39
+        },
+        {
+          "name": "_item_task_types",
+          "params": [
+            "item"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_attachment_count",
+          "params": [
+            "items"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 7
+        }
+      ],
+      "classes": [
+        {
+          "name": "EvaluationLaunchError",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "OpsSettings",
+          "methods": [
+            "from_env"
+          ],
+          "properties": [
+            "base_url",
+            "project_key",
+            "timeout_seconds"
+          ],
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "OpsClient",
+          "methods": [
+            "__init__",
+            "_get",
+            "list_options",
+            "get_query_set"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 153
+        },
+        {
+          "name": "EvaluationRunner",
+          "methods": [
+            "__init__",
+            "list_options",
+            "_configured_models",
+            "_safe_case_id",
+            "_safe_filename",
+            "_materialize_query_set",
+            "_title",
+            "run"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 283
+        }
+      ],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "shutil",
+          "specifiers": [
+            "shutil"
+          ]
+        },
+        {
+          "source": "subprocess",
+          "specifiers": [
+            "subprocess"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "tempfile"
+          ]
+        },
+        {
+          "source": "threading",
+          "specifiers": [
+            "threading"
+          ]
+        },
+        {
+          "source": "urllib.error",
+          "specifiers": [
+            "urllib.error"
+          ]
+        },
+        {
+          "source": "urllib.parse",
+          "specifiers": [
+            "urllib.parse"
+          ]
+        },
+        {
+          "source": "urllib.request",
+          "specifiers": [
+            "urllib.request"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Mapping"
+          ]
+        }
+      ],
+      "exports": [
+        "EvaluationLaunchError",
+        "_ensure_fresh_builtin_auth",
+        "_item_task_types",
+        "_attachment_count",
+        "OpsSettings",
+        "OpsClient",
+        "EvaluationRunner"
+      ],
+      "totalLines": 550,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/presentation.py": {
@@ -38406,7 +39268,7 @@
     },
     "test_workspace/trace_viewer/src/trace_viewer/repository.py": {
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
-      "contentHash": "9b4a6d5734d7f1f5fc4ecaa816793f3b4f73f9de0bdb309b5c86ead9414b9735",
+      "contentHash": "1242b97f98816f487ca3f6c7bd95df23beb51f382e966286fb48207038ec87dc",
       "functions": [],
       "classes": [
         {
@@ -38426,6 +39288,8 @@
             "list_runs",
             "_attempt_path",
             "_duration",
+            "_task_type",
+            "_effect_summary",
             "_case_summary",
             "list_cases",
             "get_case",
@@ -38437,7 +39301,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 165
+          "lineCount": 273
         }
       ],
       "imports": [
@@ -38476,7 +39340,7 @@
         "NotFoundError",
         "EvaluationRepository"
       ],
-      "totalLines": 185,
+      "totalLines": 293,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/timeline.py": {
@@ -38631,14 +39495,34 @@
       "totalLines": 149,
       "hasStructuralAnalysis": true
     },
-    "test_workspace/trace_viewer/static/styles.css": {
-      "filePath": "test_workspace/trace_viewer/static/styles.css",
-      "contentHash": "b610f589a86608115290612d378668c904089fc98990eef80738a08c168bb40a",
+    "test_workspace/trace_viewer/static/evaluation.css": {
+      "filePath": "test_workspace/trace_viewer/static/evaluation.css",
+      "contentHash": "fd30cd1e4a72767b53fcdbf59703036838d63ee5e4824c5397a47b15f4d6a212",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 8,
+      "totalLines": 11,
+      "hasStructuralAnalysis": false
+    },
+    "test_workspace/trace_viewer/static/evaluation.js": {
+      "filePath": "test_workspace/trace_viewer/static/evaluation.js",
+      "contentHash": "20fe189c0163036075b61b540ba1840df50b864240020f48c0b56d73c4c55432",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 220,
+      "hasStructuralAnalysis": true
+    },
+    "test_workspace/trace_viewer/static/styles.css": {
+      "filePath": "test_workspace/trace_viewer/static/styles.css",
+      "contentHash": "cff32025c2884347832949b7ace1835f6c2f94df61b0ddc3528d2ad2ced344c8",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 16,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/_records.html": {
@@ -38653,32 +39537,32 @@
     },
     "test_workspace/trace_viewer/templates/_tabs.html": {
       "filePath": "test_workspace/trace_viewer/templates/_tabs.html",
-      "contentHash": "82803ddc75eadb8ce4cbdb51972ae131130e657b942b3d63e487950c0ff8ff85",
+      "contentHash": "2b0674958f8c97e8a8b10b09c8ec1ce9a2a4a4d867b787c79aa4503cabb13873",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 10,
+      "totalLines": 11,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/base.html": {
       "filePath": "test_workspace/trace_viewer/templates/base.html",
-      "contentHash": "968d26594d42099c9c2fc08e0e2cc44210aadd90a0a18d3b2ba6354ae4903abb",
+      "contentHash": "18f23ca25f2487b774fe3021af85dc4edfe011dc77ff1aca54c573ececc7e88b",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 15,
+      "totalLines": 16,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/case.html": {
       "filePath": "test_workspace/trace_viewer/templates/case.html",
-      "contentHash": "f18d4c7ae62d02c199158f3badd56c95ae9bcd7e42f66152d9840c0d8367c937",
+      "contentHash": "12394580b8853621ae17defa9aaded26ae390abfbd8e4ebdbbb6ad5d372e27be",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 12,
+      "totalLines": 18,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/diagnosis.html": {
@@ -38689,6 +39573,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 14,
+      "hasStructuralAnalysis": false
+    },
+    "test_workspace/trace_viewer/templates/effect.html": {
+      "filePath": "test_workspace/trace_viewer/templates/effect.html",
+      "contentHash": "99f482d4364e46135b6f62b17463a9c68cccd9f66bc982918320c1b16f35dbe1",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 59,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/files.html": {
@@ -38703,22 +39597,22 @@
     },
     "test_workspace/trace_viewer/templates/index.html": {
       "filePath": "test_workspace/trace_viewer/templates/index.html",
-      "contentHash": "0df202bf8fe3ca746b543e1eba0e383a17c301966deaec26671ab990dee29e4c",
+      "contentHash": "f169eae94b33a0104491cc5d40e14b6b13ee3bbd58af756fdcf6d7bce3279d73",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 15,
+      "totalLines": 65,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/run.html": {
       "filePath": "test_workspace/trace_viewer/templates/run.html",
-      "contentHash": "896aef74566c2ac5795a8d3e283691a2b38eeac9e934eb7e556347c99128b40a",
+      "contentHash": "bbbecc3fca71f0afb38b178d3adbe18e805a8a492a677cb5ab9dce39edd1252f",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 11,
+      "totalLines": 21,
       "hasStructuralAnalysis": false
     },
     "test_workspace/trace_viewer/templates/source.html": {
