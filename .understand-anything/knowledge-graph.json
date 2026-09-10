@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T22:39:36.344Z",
-    "gitCommitHash": "b77220fbe666d38246b22a246f3b34d906b16d83"
+    "analyzedAt": "2026-09-10T22:58:09.934Z",
+    "gitCommitHash": "699b67a2be71fe174f1bd090d48d0c4cf41b5bb3"
   },
   "nodes": [
     {
@@ -13346,7 +13346,7 @@
       "type": "file",
       "name": "repository.py",
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
-      "summary": "只读访问标准ACP运行和最新attempt；列表摘要与详情共用效果文档校验，检查schema、结构、显式来源错配和评分有限数值，invalid时隐藏分数。保留原始响应文件及ACP/completeness状态，不重新执行评分。",
+      "summary": "只读访问标准ACP运行和最新attempt；列表摘要与详情共用效果文档校验，检查schema、结构、显式来源错配和评分有限数值，invalid时隐藏分数。保留原始响应文件及ACP/completeness状态，不重新执行评分。顶层status必须为字符串，metrics/performance/cost条目的phase/status不为None时须为字符串，summary.score_coverage和metrics.confidence不为None时须在0..1内。",
       "tags": [
         "viewer",
         "repository",
@@ -13380,9 +13380,9 @@
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
       "lineRange": [
         21,
-        342
+        353
       ],
-      "summary": "只读提供案例与诊断查询，新增共享_effect_document检查agent-eval-effect/v1、summary/source/judge结构、显式case/attempt错配及摘要和指标的有限数值或空值。列表和详情统一隐藏invalid分数，optional confidence/evidence保留兼容默认，原响应和ACP状态不改写。",
+      "summary": "只读提供案例与诊断查询，新增共享_effect_document检查agent-eval-effect/v1、summary/source/judge结构、显式case/attempt错配及摘要和指标的有限数值或空值。列表和详情统一隐藏invalid分数，optional confidence/evidence保留兼容默认，原响应和ACP状态不改写。顶层status必须为字符串，metrics/performance/cost条目的phase/status不为None时须为字符串，summary.score_coverage和metrics.confidence不为None时须在0..1内。",
       "tags": [
         "python",
         "repository",

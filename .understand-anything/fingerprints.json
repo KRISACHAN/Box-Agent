@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "b77220fbe666d38246b22a246f3b34d906b16d83",
-  "generatedAt": "2026-09-10T22:40:15.339Z",
+  "gitCommitHash": "699b67a2be71fe174f1bd090d48d0c4cf41b5bb3",
+  "generatedAt": "2026-09-10T23:00:21.457Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -39276,7 +39276,7 @@
     },
     "test_workspace/trace_viewer/src/trace_viewer/repository.py": {
       "filePath": "test_workspace/trace_viewer/src/trace_viewer/repository.py",
-      "contentHash": "0b75d1e39f75aecc675280a371d65ac275e8d8e160c6ab132028b9f9448830fe",
+      "contentHash": "761e512781e018098ee25728b189fa25567ebd76b1fc85ec5587b39e5df75a66",
       "functions": [],
       "classes": [
         {
@@ -39310,7 +39310,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 322
+          "lineCount": 333
         }
       ],
       "imports": [
@@ -39355,7 +39355,7 @@
         "NotFoundError",
         "EvaluationRepository"
       ],
-      "totalLines": 343,
+      "totalLines": 354,
       "hasStructuralAnalysis": true
     },
     "test_workspace/trace_viewer/src/trace_viewer/timeline.py": {
