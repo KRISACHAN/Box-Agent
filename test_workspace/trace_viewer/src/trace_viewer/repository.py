@@ -114,6 +114,8 @@ class EvaluationRepository:
             return None, None
         if not isinstance(effect, dict) or effect.get("schema_version") != "agent-eval-effect/v1":
             return None, "效果响应格式无效。"
+        if not isinstance(effect.get("status"), str):
+            return None, "效果响应的状态无效。"
         if any(not isinstance(effect.get(key), dict) for key in ("summary", "source", "judge")):
             return None, "效果响应缺少有效的评估摘要、来源或裁判信息。"
         run = EvaluationRepository._json(attempt / "run.json", {})
@@ -138,17 +140,26 @@ class EvaluationRepository:
             "process_score", "result_score", "total_score", "score_coverage",
         )):
             return None, "效果响应包含无效评分数据。"
+        coverage = summary.get("score_coverage")
+        if coverage is not None and not 0 <= coverage <= 1:
+            return None, "效果响应的评分覆盖率不在有效范围内。"
         normalized = dict(effect)
         normalized["client"] = effect.get("client") if isinstance(effect.get("client"), dict) else {}
         for key in ("metrics", "performance", "cost"):
             values = effect.get(key, [])
             if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
                 return None, f"效果响应的 {key} 数据无效。"
+            if any(value.get(field) is not None and not isinstance(value[field], str)
+                   for value in values for field in ("phase", "status")):
+                return None, "效果响应包含无效指标阶段或状态。"
             normalized[key] = values
         metrics = []
         for metric in normalized["metrics"]:
             if any(not valid_number(metric.get(key)) for key in ("score", "weight", "confidence")):
                 return None, "效果响应包含无效指标数值。"
+            confidence = metric.get("confidence")
+            if confidence is not None and not 0 <= confidence <= 1:
+                return None, "效果响应的置信度不在有效范围内。"
             evidence = metric.get("evidence") or []
             missing = metric.get("missing_evidence") or []
             if (not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence)

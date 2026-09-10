@@ -318,7 +318,9 @@ def test_effect_page_has_empty_state_for_old_attempt(client):
     assert "尚未生成效果评估" in response.text
 
 
-@pytest.mark.parametrize("damage", ["sparse", "wrong-case", "wrong-attempt", "bad-coverage", "bad-confidence", "huge-score"])
+@pytest.mark.parametrize("damage", ["sparse", "wrong-case", "wrong-attempt", "bad-coverage",
+                                  "bad-confidence", "huge-score", "list-phase", "list-cost-status",
+                                  "overflow-confidence", "overflow-coverage"])
 def test_invalid_effect_is_diagnostic_without_scores_or_artifact_changes(client, repo_root, damage):
     import json
     from trace_viewer.repository import EvaluationRepository
@@ -338,6 +340,15 @@ def test_invalid_effect_is_diagnostic_without_scores_or_artifact_changes(client,
         effect["summary"]["score_coverage"] = "invalid"
     elif damage == "huge-score":
         effect["summary"]["total_score"] = 10 ** 400
+    elif damage == "list-phase":
+        effect["metrics"][0]["phase"] = ["process"]
+    elif damage == "list-cost-status":
+        effect["cost"] = [{"metric_id": "other_cost", "scope": "agent", "value": 1,
+                           "status": ["complete"]}]
+    elif damage == "overflow-confidence":
+        effect["metrics"][0]["confidence"] = 1e308
+    elif damage == "overflow-coverage":
+        effect["summary"]["score_coverage"] = 1e308
     else:
         effect["metrics"][0]["confidence"] = "invalid"
     effect_path.write_text(json.dumps(effect))
