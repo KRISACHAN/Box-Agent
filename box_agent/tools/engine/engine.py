@@ -21,7 +21,7 @@ from ...loop_guards import (
 from ...schema import Message, ToolCall
 from ...session_log import SessionLogDurabilityError
 from ...session_trace import emit_session_trace
-from ..base import Tool, ToolResult
+from ..base import Tool, ToolResult, ToolInvocationContext
 from ..browser_result_adapter import (
     _prepare_browser_snapshot_output, _prepare_browser_screenshot_output,
     _persist_browser_snapshot_output, _persist_browser_screenshot_output,
@@ -34,7 +34,6 @@ from ..file_result_adapter import (
     _model_history_placeholder_recovery_error, _model_history_recovery_target,
     _record_model_history_placeholder_recovery_result,
 )
-from ..skill_result_adapter import SkillResultAdapter
 from ..web_search_policy import SearchBatch, WebSearchPolicy
 from .artifact_results import (
     _snapshot_workspace_signatures, _detect_tool_artifacts,
@@ -108,7 +107,6 @@ class DefaultToolEngine:
             logger=_log,
         )
         self._search = WebSearchPolicy(options.web_search_batch_size, options.tool_call_limits.get("web_search", 0))
-        self._skills = SkillResultAdapter(context.messages, context.activate_skill)
         self._recovery: _ModelHistoryPlaceholderRecovery | None = None
         self._placeholder_repairs = 0
         self._framework_errors: dict[str, int] = {}
@@ -301,6 +299,7 @@ class DefaultToolEngine:
         return ToolInvocationRequest(
             call.call_id, call.name, call.arguments, immediate_result=result,
             on_invoke=lambda: setattr(call, "invoked", True),
+            invocation_context=ToolInvocationContext(parent_tool_call_id=call.call_id, skill_reader=self._context.skill_reader),
         )
 
     def _log_result(self, call: ToolCallRecord, result: ToolResult) -> None:
@@ -354,7 +353,8 @@ class DefaultToolEngine:
             result = control.result_transform(call.name, result)
         result = _persist_browser_snapshot_output(result, call.snapshot_target)
         result = _persist_browser_screenshot_output(result, call.screenshot_target)
-        result = self._skills.activate(call.target, call.arguments, result)
+        # Skill text remains an ordinary tool result. The reader has already
+        # applied its shared request budget; no system activation is performed.
         result, blocks, tokens = context.validate_followup(
             result, call.target, control.pending_followup_tokens + summary.transient_tokens,
         )

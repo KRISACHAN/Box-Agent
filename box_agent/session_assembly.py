@@ -122,6 +122,21 @@ async def prepare_memory(resources: SessionResources) -> None:
         ))
 
 
+def _bind_skill_runtime(resources: SessionResources) -> None:
+    from .agent_service import AgentService
+    from .skill_runtime import SkillRuntime
+
+    options = resources.context.options
+    loader = None if options.utility else resources.skill_loader
+    if loader is None and not options.utility:
+        loader = AgentService.resolve_skill_loader(resources.tools)
+    if loader is not None or options.profile == "acp":
+        resources.state.setdefault("skill_runtime", SkillRuntime(
+            loader, session_log=resources.context.host.session_log,
+            allow_partial_restore=options.profile == "acp",
+        ))
+
+
 async def prepare_tools(resources: SessionResources) -> None:
     context = resources.context
     host, options, config = context.host, context.options, context.config
@@ -129,6 +144,7 @@ async def prepare_tools(resources: SessionResources) -> None:
     resources.mcp_task, resources.skill_task = host.mcp_task, host.skill_task
     if host.tools is not None:
         resources.tools = host.tools
+        _bind_skill_runtime(resources)
         return
     expert = resources.state.get("expert_context")
     if expert is not None and resources.skill_loader is not None:
@@ -143,6 +159,7 @@ async def prepare_tools(resources: SessionResources) -> None:
     )
     if options.utility:
         resources.tools = []
+        _bind_skill_runtime(resources)
         return
     from .tools.setup import add_workspace_tools, initialize_base_tools
     from .tools.permissions import CapabilityPolicy, GrantStore
@@ -179,20 +196,26 @@ async def prepare_tools(resources: SessionResources) -> None:
         permission_engine = build_permission_engine(
             policy, context.workspace, grant_store=grant_store,
         )
-    hashes = resources.state.setdefault("preloaded_skill_hashes", {})
     if resources.skill_loader is not None:
+        from .tools.skill_catalog_tool import ListSkillsTool
         from .tools.skill_tool import GetSkillTool
         from .execution_profile import FAST_OPTIONAL_SKILLS
 
         resources.tools = [
-            GetSkillTool(
-                resources.skill_loader, preloaded_skill_hashes=hashes,
-                include_disabled=expert is not None,
+            (ListSkillsTool if isinstance(tool, ListSkillsTool) else GetSkillTool)(
+                resources.skill_loader,
+                include_disabled=False,
+                allowed_skill_names=getattr(tool, "allowed_skill_names", None),
                 skill_access_filter=host.skill_access_filter,
-                blocked_skill_names=(FAST_OPTIONAL_SKILLS if resources.state.get("execution_profile") == "fast" else frozenset()),
+                **({"skill_filter": host.skill_catalog_filter}
+                   if isinstance(tool, ListSkillsTool) else {}),
+                blocked_skill_names=(
+                    frozenset(getattr(tool, "blocked_skill_names", ()))
+                    | (FAST_OPTIONAL_SKILLS if resources.state.get("execution_profile") == "fast" else frozenset())
+                ),
                 explicitly_allowed_skill_names=resources.state.setdefault("explicitly_allowed_skill_names", set()),
             )
-            if isinstance(tool, GetSkillTool) or (expert is not None and getattr(tool, "name", "") == "get_skill") else tool
+            if isinstance(tool, (GetSkillTool, ListSkillsTool)) else tool
             for tool in resources.tools
         ]
     scratch = (host.workspace_tools_factory or add_workspace_tools)(
@@ -219,6 +242,7 @@ async def prepare_tools(resources: SessionResources) -> None:
         skill_runtime_context=runtime_context, skill_loader=resources.skill_loader,
         skill_scratch_dir=scratch,
     )
+    _bind_skill_runtime(resources)
     if scratch is not None:
         from .tools.skill_scratch import cleanup_skill_scratch_dir
 
@@ -334,31 +358,14 @@ async def finish_session(session: Any, resources: SessionResources) -> None:
     agent = session.agent
     session_skill_loader = resources.skill_loader
     expert_context = resources.state.get("expert_context")
-    if getattr(agent, "restored_skills", None) and session_skill_loader is not None:
-        restored_skill_prompts: list[tuple[str, str, str, int]] = []
-        for order, item in enumerate(agent.restored_skills, start=1):
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            prompt_hash = item.get("sha256", "")
-            load_order = item.get("loadOrder", order)
-            if not isinstance(load_order, int):
-                load_order = order
-            skill = session_skill_loader.get_skill(
-                name,
-                include_disabled=expert_context is not None,
-            )
-            if skill is None:
-                continue
-            grants = resources.state.get("connector_skill_grants")
-            if grants is not None and getattr(skill, "source", None) == "connector":
+    grants = resources.state.get("connector_skill_grants")
+    if grants is not None and session_skill_loader is not None:
+        # Agent has already validated and restored the session's read records.
+        # Derive the compatibility grant set without restoring a second time.
+        for name in agent.skill_runtime.active_names:
+            skill = session_skill_loader.get_skill(name)
+            if skill is not None and getattr(skill, "source", None) == "connector":
                 grants.add(skill.name)
-            restored_skill_prompts.append(
-                (name, skill.to_prompt(), prompt_hash, load_order)
-            )
-        agent.restore_active_skill_instructions(restored_skill_prompts)
     if session_skill_loader:
         from box_agent.tools.skill_loader import SkillSelector, move_skill_slot_to_end
 
@@ -367,7 +374,7 @@ async def finish_session(session: Any, resources: SessionResources) -> None:
             agent.set_system_prompt(relocated_prompt)
         selector = SkillSelector(
             session_skill_loader,
-            include_disabled=expert_context is not None,
+            include_disabled=False,
             skill_filter=resources.context.host.skill_catalog_filter,
         )
         selector.bind(agent.messages[0].content)

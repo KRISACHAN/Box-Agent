@@ -97,6 +97,7 @@ def build_agent(
     deferred_mcp_loading_enabled: bool = True,
     session_log: Any = _UNSET,
     enable_builtin_tools: bool | object = _UNSET,
+    skill_runtime: Any = _UNSET,
     agent_factory: AgentFactory = Agent,
 ) -> Agent:
     """Construct an Agent while keeping adapter-specific state outside it.
@@ -138,6 +139,8 @@ def build_agent(
         kwargs["session_log"] = session_log
     if enable_builtin_tools is not _UNSET:
         kwargs["enable_builtin_tools"] = enable_builtin_tools
+    if skill_runtime is not _UNSET:
+        kwargs["skill_runtime"] = skill_runtime
     return agent_factory(**kwargs)
 
 

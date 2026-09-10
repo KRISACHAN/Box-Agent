@@ -161,18 +161,27 @@ def test_sessions_isolate_injection_and_skill_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_acp_creates_configured_session_and_runs_through_it(tmp_path, monkeypatch):
+@pytest.mark.parametrize("selected", [False, True])
+async def test_acp_creates_configured_session_and_runs_through_it(tmp_path, monkeypatch, selected):
     import box_agent.acp as acp_module
     from box_agent.agent_session import AgentSession
     from tests.test_acp import DoneLLM, DummyConn
+    from box_agent.tools.skill_loader import SkillLoader
 
     config = session_config(tmp_path)
+    config.tools.enable_skills = True
     config.tool_limits.web_search.deep_research_total_calls = 7
-    adapter = acp_module.BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system")
+    method = tmp_path / "skills" / "research-synthesis" / "SKILL.md"
+    method.parent.mkdir(parents=True)
+    method.write_text("---\nname: research-synthesis\ndescription: Evidence analysis\n---\nMETHOD_BODY\n")
+    loader = SkillLoader(method.parent.parent)
+    loader.discover_skills()
+    adapter = acp_module.BoxACPAgent(DummyConn(), config, DoneLLM(), [], "system", skill_loader=loader)
     response = await adapter.newSession(SimpleNamespace(
         cwd=None, field_meta={"session_mode": "general"},
     ))
     session = adapter._sessions[response.sessionId]
+    # Historical compatibility views cannot select methods or raise quotas.
     session.preloaded_skill_names.append("research-synthesis")
     seen = []
     original = AgentSession.run_events
@@ -188,12 +197,13 @@ async def test_acp_creates_configured_session_and_runs_through_it(tmp_path, monk
     adapter._config.tool_limits.web_search.deep_research_total_calls = 1
     result = await adapter.prompt(SimpleNamespace(
         sessionId=response.sessionId, prompt=[{"text": "hello"}],
+        field_meta={"selected_skill_names": ["research-synthesis"]} if selected else {},
     ))
 
     assert isinstance(session, AgentSession)
     assert session.config is config
     assert result.stopReason == "end_turn"
-    assert seen == [(config, 7)]
+    assert seen == [(config, 7 if selected else None)]
 
 
 @pytest.mark.asyncio

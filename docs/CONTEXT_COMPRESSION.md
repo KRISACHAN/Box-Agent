@@ -186,7 +186,7 @@ Recent selection applies to user, assistant, and tool messages. Assistant tool c
 
 Compaction does not discover, reread, or replay recent files.
 
-Current goal, todo, and plan state are read through their explicit, side-effect-free `compaction_state` contract; compaction never invokes a normal tool call. Their combined runtime-state message is capped at 12,000 characters. Full active skill instructions remain pinned in the system message and are not reconstructed by replaying historical `get_skill` calls. Internal summary/runtime-state messages are excluded whenever control policy asks for the latest real user text.
+Current goal, todo, and plan state are read through their explicit, side-effect-free `compaction_state` contract; compaction never invokes a normal tool call. Their combined runtime-state message is capped at 12,000 characters. SkillRuntime owns selection and versioned read facts. Context places selected or restored Skill bodies in ordinary request material, or they arrive through real reading-tool replies; it checks coverage against final visible text. Full Skill bodies are not pinned in the system message, and historical `get_skill` calls are never replayed. See [Skill Engine](design/skill-engine.md) for paging, source validation and request-commit behavior. Internal summary/runtime-state messages are excluded whenever control policy asks for the latest real user text.
 
 If the rebuilt request still exceeds the safe limit, the outcome is marked blocked instead of silently sending a known-oversized request.
 

@@ -576,3 +576,65 @@ async def test_late_handler_durability_error_still_releases_run_providers(tmp_pa
         assert len(disposed) == 1
     finally:
         await session.aclose()
+
+
+@pytest.mark.parametrize("managed", [False, True])
+async def test_skill_reread_checks_text_after_hook_suppression(tmp_path, managed):
+    from box_agent.tools.skill_loader import SkillLoader
+    from box_agent.tools.skill_tool import GetSkillTool
+
+    path = tmp_path / "skills" / "method" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("---\nname: method\ndescription: Test method\n---\nPRIVATE_METHOD_BODY\n")
+    loader = SkillLoader(path.parent.parent)
+    loader.discover_skills()
+
+    class ReaderModel:
+        model = "fixture"
+        calls = 0
+
+        async def generate_stream(self, messages, tools=None, **kwargs):
+            self.calls += 1
+            if self.calls <= 2:
+                yield StreamEvent(type="finish", finish_reason="tool_use", tool_calls=[
+                    ToolCall(id=f"read-{self.calls}", type="function", function=FunctionCall(
+                        name="get_skill", arguments={"skill_name": "method"},
+                    )),
+                ])
+            else:
+                yield StreamEvent(type="text", delta="done")
+                yield StreamEvent(type="finish", finish_reason="stop")
+
+    results = []
+
+    async def suppress_first(ctx):
+        results.append(dict(ctx.payload))
+        return ResultTextDecision.replace("REDACTED") if len(results) == 1 else ResultTextDecision.keep()
+
+    kwargs = dict(
+        config=Config(llm={"model": "fixture"}, agent={}, tools={}),
+        llm_client=ReaderModel(), system_prompt="system",
+        tools=[GetSkillTool(loader)], workspace_dir=tmp_path,
+        plugins=(plugin([HookSpec("redact", ("tool.after_execution",), "result_text", suppress_first)]),),
+    )
+    if managed:
+        config = kwargs.pop("config")
+        plugins = kwargs.pop("plugins")
+        workspace = kwargs.pop("workspace_dir")
+        session = await AgentSession.open(
+            config=config, options=SessionOptions(workspace_dir=workspace),
+            host=HostBindings(**kwargs), plugins=plugins,
+        )
+    else:
+        session = AgentSession.create(**kwargs)
+    try:
+        session.agent.add_user_message("read the method twice")
+        events = [event async for event in session.run_events()]
+        tool_messages = [message for message in session.agent.messages if message.role == "tool"]
+        assert tool_messages[0].content == "REDACTED"
+        assert "PRIVATE_METHOD_BODY" in tool_messages[1].content
+        outputs = [event for event in events if isinstance(event, ToolCallResult)]
+        assert len(outputs) == 2 and all(event.success for event in outputs)
+        assert len(session.agent.skill_runtime.read_facts) == 1
+    finally:
+        await session.aclose()

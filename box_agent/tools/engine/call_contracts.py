@@ -59,6 +59,7 @@ class ToolRunContext:
     activate_skill: Callable[[str, str], None] | None = None
     hook_dispatch: HookDispatchPort | None = None
     hook_context: HookContext | None = None
+    skill_reader: Callable[..., ToolResult] | None = None
 
 
 @dataclass(frozen=True, slots=True)

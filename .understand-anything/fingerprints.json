@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "8d9a9694b72014826eaae0202f83571295eb4106",
-  "generatedAt": "2026-09-10T20:17:13.026Z",
+  "gitCommitHash": "b7b884768974bb5ca5103a1740349eef9e3e7c0f",
+  "generatedAt": "2026-09-10T21:00:36.250Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -178,7 +178,7 @@
     },
     "box_agent/acp/__init__.py": {
       "filePath": "box_agent/acp/__init__.py",
-      "contentHash": "4d128cbdfddc929232b56fbd526b57a46e9d7327a28f71b1478e440deb9a4bf6",
+      "contentHash": "cf6a6b94f8126a8c46de43877c68f5f31e96aabf3df2f157e89b6614e90824a9",
       "functions": [
         {
           "name": "_artifact_envelope",
@@ -585,9 +585,6 @@
             "_strip_auto_loaded_skills",
             "_sync_cache_fingerprint_context",
             "_log_cache_fingerprint",
-            "_host_runtime_preload_skill_names",
-            "_turn_preload_skill_names",
-            "_apply_auto_loaded_skills",
             "_ensure_mcp_loaded",
             "_sync_mcp_registries",
             "_sub_agent_capability_state",
@@ -619,7 +616,7 @@
             "_SESSION_UPDATE_TIMEOUT_SECONDS"
           ],
           "exported": true,
-          "lineCount": 3792
+          "lineCount": 3766
         },
         {
           "name": "_PermissionNegotiator",
@@ -803,6 +800,12 @@
           ]
         },
         {
+          "source": "box_agent.agent_service",
+          "specifiers": [
+            "AgentService"
+          ]
+        },
+        {
           "source": "box_agent.agent_runtime",
           "specifiers": [
             "build_agent",
@@ -954,7 +957,7 @@
         {
           "source": "box_agent.skill_runtime",
           "specifiers": [
-            "prepare_auto_loaded_skills"
+            "SkillRuntime"
           ]
         },
         {
@@ -1163,10 +1166,7 @@
           "source": "box_agent.tools.skill_preload",
           "specifiers": [
             "SkillPreloadAttribution",
-            "build_auto_loaded_skills_prompt",
-            "host_runtime_preload_skill_names",
             "strip_auto_loaded_skills",
-            "turn_preload_skill_names",
             "web_search_total_limit_for_active_skills"
           ]
         },
@@ -1235,7 +1235,7 @@
         "run_acp_server",
         "main"
       ],
-      "totalLines": 5649,
+      "totalLines": 5619,
       "hasStructuralAnalysis": true
     },
     "box_agent/acp/action_hints.py": {
@@ -1923,7 +1923,7 @@
     },
     "box_agent/agent_runtime.py": {
       "filePath": "box_agent/agent_runtime.py",
-      "contentHash": "38503de140c12c06877c61d7fde9428cc369d08298c346f7829682ad245f0f7e",
+      "contentHash": "b8cfe73b28d22f1453d47ad0f0813d5f804203f807d62d928a5ca318b17cb19a",
       "functions": [
         {
           "name": "build_llm_client",
@@ -1972,11 +1972,12 @@
             "deferred_mcp_loading_enabled",
             "session_log",
             "enable_builtin_tools",
+            "skill_runtime",
             "agent_factory"
           ],
           "returnType": "Agent",
           "exported": true,
-          "lineCount": 69
+          "lineCount": 72
         },
         {
           "name": "build_permission_engine",
@@ -2082,23 +2083,24 @@
         "build_memory_manager",
         "build_memory_extractor"
       ],
-      "totalLines": 213,
+      "totalLines": 216,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent_service.py": {
       "filePath": "box_agent/agent_service.py",
-      "contentHash": "ccbd4e3350f2f2d15642642bf80557110e575c324cd248f16e2dea79b9929488",
+      "contentHash": "ac6c69e9f0467f597576c7a352d4f2820c87a5682a3b478eac3bf83912492461",
       "functions": [],
       "classes": [
         {
           "name": "AgentService",
           "methods": [
             "__init__",
-            "create_agent"
+            "create_agent",
+            "resolve_skill_loader"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 22
+          "lineCount": 29
         }
       ],
       "imports": [
@@ -2125,12 +2127,12 @@
       "exports": [
         "AgentService"
       ],
-      "totalLines": 36,
+      "totalLines": 43,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent_session.py": {
       "filePath": "box_agent/agent_session.py",
-      "contentHash": "7ae30f697ffa6b42a02e3b47a5472f9bd3ba7fe5b93221d4a5bf3725f9b93612",
+      "contentHash": "9c27e9ec8091cb3d1e20670c15f622cc9e174b72115686390ae3be5d7555cc3d",
       "functions": [],
       "classes": [
         {
@@ -2184,7 +2186,7 @@
             "mcp_fallback_tools"
           ],
           "exported": true,
-          "lineCount": 377
+          "lineCount": 382
         }
       ],
       "imports": [
@@ -2237,7 +2239,8 @@
         {
           "source": ".agent_runtime",
           "specifiers": [
-            "AgentFactory"
+            "AgentFactory",
+            "_UNSET"
           ]
         },
         {
@@ -2270,12 +2273,12 @@
       "exports": [
         "AgentSession"
       ],
-      "totalLines": 412,
+      "totalLines": 417,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent.py": {
       "filePath": "box_agent/agent.py",
-      "contentHash": "b73361f5e7b2e791d57bd59ce6ce50eb64f3c7147f7e1f6477e646981e6e2fa6",
+      "contentHash": "8eda3ef74f2b98583c0e22916b30ca88876236bd00d0ef6f956e9b1062a2cfe2",
       "functions": [
         {
           "name": "_clean_goal_text",
@@ -2455,6 +2458,8 @@
             "_session_turn_reason",
             "_inherited_tools",
             "set_system_prompt",
+            "_project_system_prompt",
+            "_sync_child_system_prompt",
             "activate_skill_instructions",
             "deactivate_skill_instructions",
             "clear_active_skill_instructions",
@@ -2487,7 +2492,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 864
+          "lineCount": 845
         }
       ],
       "imports": [
@@ -2495,12 +2500,6 @@
           "source": "asyncio",
           "specifiers": [
             "asyncio"
-          ]
-        },
-        {
-          "source": "hashlib",
-          "specifiers": [
-            "hashlib"
           ]
         },
         {
@@ -2662,9 +2661,15 @@
           ]
         },
         {
-          "source": ".tools.skill_preload",
+          "source": ".skill_runtime",
           "specifiers": [
-            "build_active_skills_prompt"
+            "SkillRuntime"
+          ]
+        },
+        {
+          "source": ".skill_dependencies",
+          "specifiers": [
+            "SkillDependencyError"
           ]
         },
         {
@@ -2711,7 +2716,7 @@
         "_GoalWriteTool",
         "Agent"
       ],
-      "totalLines": 1301,
+      "totalLines": 1282,
       "hasStructuralAnalysis": true
     },
     "box_agent/artifacts.py": {
@@ -3509,7 +3514,7 @@
     },
     "box_agent/cli.py": {
       "filePath": "box_agent/cli.py",
-      "contentHash": "5fd844a0d5a61416b9f7d7708c0e6bbd38f1d50cf7e684c268575ba04834df2f",
+      "contentHash": "5768eff0c406a1777a7364beb0cca729d5ab51a414b487c053d3a469e4fb8fe2",
       "functions": [
         {
           "name": "run_setup_wizard",
@@ -4025,7 +4030,7 @@
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 879
+          "lineCount": 846
         },
         {
           "name": "main",
@@ -4292,9 +4297,7 @@
         {
           "source": "box_agent.tools.skill_preload",
           "specifiers": [
-            "build_auto_loaded_skills_prompt",
-            "resolve_explicit_skill_invocation",
-            "turn_preload_skill_names"
+            "resolve_explicit_skill_invocation"
           ]
         },
         {
@@ -4353,12 +4356,6 @@
             "append_prompt_segment",
             "build_project_startup_context_prompt",
             "compose_prompt_segments"
-          ]
-        },
-        {
-          "source": "box_agent.skill_runtime",
-          "specifiers": [
-            "prepare_auto_loaded_skills"
           ]
         },
         {
@@ -4437,7 +4434,7 @@
         "run_agent",
         "main"
       ],
-      "totalLines": 2773,
+      "totalLines": 2735,
       "hasStructuralAnalysis": true
     },
     "box_agent/client_info.py": {
@@ -4567,7 +4564,7 @@
     },
     "box_agent/composition.py": {
       "filePath": "box_agent/composition.py",
-      "contentHash": "07e991bf74881d4c2d8ff4d022ddeeec5ec0b6c2d75602485e292378fb3158f8",
+      "contentHash": "0e38a813eaa6cf64ce2e029590913e4451c495dc2fdc49f5c26de59f9b6ff223",
       "functions": [
         {
           "name": "_default_capabilities",
@@ -4576,7 +4573,7 @@
           ],
           "returnType": "dict[str, Any]",
           "exported": true,
-          "lineCount": 24
+          "lineCount": 33
         },
         {
           "name": "_kernel_run_arguments",
@@ -4615,7 +4612,7 @@
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 23
+          "lineCount": 25
         },
         {
           "name": "_validate_managed_services",
@@ -4704,7 +4701,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 86
+          "lineCount": 100
         }
       ],
       "classes": [],
@@ -4769,7 +4766,8 @@
           "specifiers": [
             "compose_default_services",
             "create_default_plugin_host",
-            "kernel_services_from_registry"
+            "kernel_services_from_registry",
+            "skill_loader_from_catalog"
           ]
         },
         {
@@ -4804,7 +4802,7 @@
         "_cleanup_task_finished",
         "run_agent_loop_with_default_services"
       ],
-      "totalLines": 427,
+      "totalLines": 455,
       "hasStructuralAnalysis": true
     },
     "box_agent/config.py": {
@@ -5282,6 +5280,103 @@
       "totalLines": 83,
       "hasStructuralAnalysis": true
     },
+    "box_agent/context_input.py": {
+      "filePath": "box_agent/context_input.py",
+      "contentHash": "d00481ff8a177af25714321f62a208f7ae3460942713e14db33a55b4b0a7f2fa",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PreparedContext",
+          "methods": [],
+          "properties": [
+            "messages",
+            "context_messages",
+            "references",
+            "input_tokens",
+            "request_only_input_tokens",
+            "blocked_reason",
+            "on_committed",
+            "budget_blocked",
+            "on_response"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "DefaultContextEngine",
+          "methods": [
+            "__init__",
+            "configure_run",
+            "bind_history",
+            "project_history",
+            "tool_reader",
+            "reserve_followup",
+            "_can_page",
+            "_read_reference",
+            "prepare_request"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 134
+        }
+      ],
+      "imports": [
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Callable"
+          ]
+        },
+        {
+          "source": ".kernel.context_engine",
+          "specifiers": [
+            "_fallback_context_estimate",
+            "request_input_tokens",
+            "skill_reference_budget_chars"
+          ]
+        },
+        {
+          "source": ".schema",
+          "specifiers": [
+            "Message"
+          ]
+        },
+        {
+          "source": ".skill_context",
+          "specifiers": [
+            "SkillReferenceContext",
+            "effective_system_prompt",
+            "project_legacy_system",
+            "verified_system_suffixes"
+          ]
+        },
+        {
+          "source": ".tools.base",
+          "specifiers": [
+            "ToolResult"
+          ]
+        },
+        {
+          "source": ".tools.engine.contracts",
+          "specifiers": [
+            "PreparedTools"
+          ]
+        }
+      ],
+      "exports": [
+        "PreparedContext",
+        "DefaultContextEngine"
+      ],
+      "totalLines": 169,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/context_resources.py": {
       "filePath": "box_agent/context_resources.py",
       "contentHash": "6ec0bac3e78e5b949891fc266d68de8b82a661ea1ec996255be58965e6ea40c7",
@@ -5461,7 +5556,7 @@
     },
     "box_agent/core.py": {
       "filePath": "box_agent/core.py",
-      "contentHash": "d0f7135df7a0d71e4678daeb90ff651744d0f465019363c17891425b52eb4119",
+      "contentHash": "c690eea8d5a39141517217a478c5abdd5bbad4215222b1faa08caa12edb60e6b",
       "functions": [
         {
           "name": "_resolve_provider_stale_seconds",
@@ -5531,6 +5626,8 @@
             "cache_fingerprint_context",
             "cache_fingerprint_sink",
             "active_skill_activator",
+            "skill_engine",
+            "context_engine",
             "current_turn_text",
             "context_resource_ledger",
             "context_resource_dedup_enabled",
@@ -5542,7 +5639,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 77
+          "lineCount": 79
         }
       ],
       "classes": [],
@@ -5989,7 +6086,7 @@
         "_stream_with_activity",
         "run_agent_loop"
       ],
-      "totalLines": 373,
+      "totalLines": 375,
       "hasStructuralAnalysis": true
     },
     "box_agent/env_context.py": {
@@ -7496,7 +7593,7 @@
     },
     "box_agent/kernel/context_engine.py": {
       "filePath": "box_agent/kernel/context_engine.py",
-      "contentHash": "4bc490992701be03d505e9fb1e660ca59525dcb09b5a4cee9225a04e7cefbe16",
+      "contentHash": "a50a4acdb6612500be270d3a794f02e97fd434cf5c4e67ea06511611204bcc0e",
       "functions": [
         {
           "name": "_summary_message_text",
@@ -7540,13 +7637,40 @@
           "lineCount": 18
         },
         {
+          "name": "_image_token_estimate",
+          "params": [
+            "block"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "_budget_content_json",
+          "params": [
+            "content"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "_budget_image_tokens",
+          "params": [
+            "content"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
           "name": "_transient_followup_token_estimate",
           "params": [
             "blocks"
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 34
+          "lineCount": 21
         },
         {
           "name": "_validate_transient_followup_result",
@@ -7650,11 +7774,14 @@
             "allow_llm_summary",
             "session_log",
             "session_turn",
-            "session_step"
+            "session_step",
+            "force",
+            "estimate_tools",
+            "summary_input_token_limit"
           ],
           "returnType": "CompactionOutcome",
           "exported": true,
-          "lineCount": 166
+          "lineCount": 175
         },
         {
           "name": "_is_summary_marker",
@@ -7673,6 +7800,28 @@
           "returnType": "bool",
           "exported": true,
           "lineCount": 13
+        },
+        {
+          "name": "request_input_tokens",
+          "params": [
+            "messages",
+            "tools"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "skill_reference_budget_chars",
+          "params": [
+            "messages",
+            "tools",
+            "token_limit",
+            "output_tokens"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 10
         }
       ],
       "classes": [
@@ -7767,6 +7916,9 @@
         "_create_summary",
         "_deterministic_history_fallback",
         "_message_chars",
+        "_image_token_estimate",
+        "_budget_content_json",
+        "_budget_image_tokens",
         "_transient_followup_token_estimate",
         "_validate_transient_followup_result",
         "_bound_text_middle",
@@ -7778,9 +7930,11 @@
         "_restore_runtime_state",
         "_maybe_summarize",
         "_is_summary_marker",
-        "_is_compaction_metadata"
+        "_is_compaction_metadata",
+        "request_input_tokens",
+        "skill_reference_budget_chars"
       ],
-      "totalLines": 799,
+      "totalLines": 860,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/hook_types.py": {
@@ -8000,7 +8154,7 @@
     },
     "box_agent/kernel/loop.py": {
       "filePath": "box_agent/kernel/loop.py",
-      "contentHash": "26681f9eb5c0eff2475cb0cd6fd89560426c460d9c2ed1ae5b704b036c1ca2aa",
+      "contentHash": "ba5d3bca8374a7ae46d87d5a5f2313d8c045d846725a8dd7a12db398707706a6",
       "functions": [
         {
           "name": "_resolve_provider_stale_seconds",
@@ -8191,7 +8345,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 1879
+          "lineCount": 2029
         },
         {
           "name": "run_agent_loop",
@@ -8419,6 +8573,8 @@
         {
           "source": ".context_engine",
           "specifiers": [
+            "REQUEST_INPUT_HEADROOM_TOKENS",
+            "_fallback_context_estimate",
             "_is_compaction_metadata",
             "_maybe_summarize",
             "_validate_transient_followup_result"
@@ -8450,6 +8606,7 @@
           "source": ".stream_controller",
           "specifiers": [
             "StreamInterruptionRecovery",
+            "RepetitiveStreamRecovery",
             "_kernel_resolve_provider_stale_seconds",
             "_kernel_stream_with_activity"
           ]
@@ -8572,7 +8729,7 @@
         "AgentLoopKernel",
         "run_agent_loop"
       ],
-      "totalLines": 2609,
+      "totalLines": 2762,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/permission_gateway.py": {
@@ -8600,7 +8757,7 @@
     },
     "box_agent/kernel/ports.py": {
       "filePath": "box_agent/kernel/ports.py",
-      "contentHash": "9e16f615774e6c6081808474f7cc7850600d3e0f4681be5c60951f08156d7092",
+      "contentHash": "d9c4a164e190b7840008470bf9f1cbf4c4727ccbcbfda51f88d7995c81bf45e3",
       "functions": [],
       "classes": [
         {
@@ -8776,6 +8933,49 @@
           "lineCount": 18
         },
         {
+          "name": "PreparedContextPort",
+          "methods": [],
+          "properties": [
+            "messages",
+            "context_messages",
+            "references",
+            "input_tokens",
+            "request_only_input_tokens",
+            "blocked_reason"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "SkillEnginePort",
+          "methods": [
+            "read_facts",
+            "selected_names",
+            "restoring_names",
+            "restore_diagnostics",
+            "legacy_system_suffix",
+            "resolve_reference",
+            "record_delivery",
+            "record_observation"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 29
+        },
+        {
+          "name": "ContextEnginePort",
+          "methods": [
+            "configure_run",
+            "bind_history",
+            "reserve_followup",
+            "tool_reader",
+            "prepare_request"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 29
+        },
+        {
           "name": "KernelServices",
           "methods": [],
           "properties": [
@@ -8792,10 +8992,12 @@
             "tool_result_store",
             "tool_engine",
             "hook_dispatch",
-            "hook_context"
+            "hook_context",
+            "skill_engine",
+            "context_engine"
           ],
           "exported": true,
-          "lineCount": 17
+          "lineCount": 19
         }
       ],
       "imports": [
@@ -8844,7 +9046,8 @@
         {
           "source": "..tools.base",
           "specifiers": [
-            "Tool"
+            "Tool",
+            "ToolResult"
           ]
         }
       ],
@@ -8864,9 +9067,12 @@
         "ToolResultStorePort",
         "ToolResultBudgetOutcomePort",
         "ToolEnginePort",
+        "PreparedContextPort",
+        "SkillEnginePort",
+        "ContextEnginePort",
         "KernelServices"
       ],
-      "totalLines": 356,
+      "totalLines": 437,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/state.py": {
@@ -8894,7 +9100,7 @@
     },
     "box_agent/kernel/stream_controller.py": {
       "filePath": "box_agent/kernel/stream_controller.py",
-      "contentHash": "8c82acb23746718236244beebb9e0a5cb7ed60aef994733b0f6e3794264c620d",
+      "contentHash": "9a23fbb3b13c260f229c3337eb97e40ae3b7e5b26999002501713b658382c56d",
       "functions": [
         {
           "name": "resolve_provider_stale_seconds",
@@ -8929,6 +9135,16 @@
           "properties": [],
           "exported": true,
           "lineCount": 19
+        },
+        {
+          "name": "RepetitiveStreamRecovery",
+          "methods": [
+            "__init__",
+            "request"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 17
         }
       ],
       "imports": [
@@ -8971,10 +9187,11 @@
       ],
       "exports": [
         "StreamInterruptionRecovery",
+        "RepetitiveStreamRecovery",
         "resolve_provider_stale_seconds",
         "stream_with_activity"
       ],
-      "totalLines": 113,
+      "totalLines": 132,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/tool_engine.py": {
@@ -12989,8 +13206,26 @@
     },
     "box_agent/plugins/defaults.py": {
       "filePath": "box_agent/plugins/defaults.py",
-      "contentHash": "062b670e53eeda4d79c452098a449b5c13b41d8e75b31662551d68dff7202256",
+      "contentHash": "4a5a5f6c81faa9b9bfb2ffd91635356d4d81733d76cd3fc55c1a763ba3335278",
       "functions": [
+        {
+          "name": "skill_loader_from_catalog",
+          "params": [
+            "tool_catalog"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_validate_skill_source",
+          "params": [
+            "tool_catalog",
+            "skill_engine"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 13
+        },
         {
           "name": "_captured_instance_descriptor",
           "params": [
@@ -13016,11 +13251,13 @@
             "tool_catalog",
             "tool_exposure",
             "tool_result_store",
-            "tool_engine"
+            "tool_engine",
+            "skill_engine",
+            "context_engine"
           ],
           "returnType": "tuple[PluginDescriptor, ...]",
           "exported": true,
-          "lineCount": 55
+          "lineCount": 68
         },
         {
           "name": "create_default_plugin_host",
@@ -13037,11 +13274,23 @@
             "tool_exposure",
             "tool_result_store",
             "tool_engine",
-            "plugins"
+            "plugins",
+            "skill_engine",
+            "context_engine"
           ],
           "returnType": "PluginHost",
           "exported": true,
-          "lineCount": 38
+          "lineCount": 42
+        },
+        {
+          "name": "_bind_skill_store",
+          "params": [
+            "skill_engine",
+            "session_store"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 13
         },
         {
           "name": "kernel_services_from_registry",
@@ -13050,7 +13299,7 @@
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 18
+          "lineCount": 26
         },
         {
           "name": "compose_default_services",
@@ -13066,11 +13315,13 @@
             "tool_catalog",
             "tool_exposure",
             "tool_result_store",
-            "tool_engine"
+            "tool_engine",
+            "skill_engine",
+            "context_engine"
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 32
+          "lineCount": 43
         }
       ],
       "classes": [],
@@ -13096,6 +13347,8 @@
             "SummaryLLMPort",
             "ToolCatalogPort",
             "ToolEnginePort",
+            "SkillEnginePort",
+            "ContextEnginePort",
             "ToolExposurePort",
             "ToolResultStorePort"
           ]
@@ -13131,13 +13384,16 @@
         }
       ],
       "exports": [
+        "skill_loader_from_catalog",
+        "_validate_skill_source",
         "_captured_instance_descriptor",
         "default_plugin_descriptors",
         "create_default_plugin_host",
+        "_bind_skill_store",
         "kernel_services_from_registry",
         "compose_default_services"
       ],
-      "totalLines": 229,
+      "totalLines": 314,
       "hasStructuralAnalysis": true
     },
     "box_agent/plugins/descriptors.py": {
@@ -14487,7 +14743,7 @@
     },
     "box_agent/session_assembly.py": {
       "filePath": "box_agent/session_assembly.py",
-      "contentHash": "0758bbacdd87f0c9706662cc82fcbf469580369648305ac8412e5a208c3033e2",
+      "contentHash": "b3dd8fe98a6fd070504f18f0f4f3ae2ef617a1dcbbf2a657b4af9230cfc45ac3",
       "functions": [
         {
           "name": "_prepared",
@@ -14526,13 +14782,22 @@
           "lineCount": 37
         },
         {
+          "name": "_bind_skill_runtime",
+          "params": [
+            "resources"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
           "name": "prepare_tools",
           "params": [
             "resources"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 101
+          "lineCount": 110
         },
         {
           "name": "prepare_prompt",
@@ -14560,7 +14825,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 49
+          "lineCount": 32
         },
         {
           "name": "_workspace_layout_path",
@@ -14756,6 +15021,7 @@
         "_stop_task",
         "prepare_model",
         "prepare_memory",
+        "_bind_skill_runtime",
         "prepare_tools",
         "prepare_prompt",
         "prepare_hooks",
@@ -14769,7 +15035,7 @@
         "build_session_permission_policy",
         "close_owned_clients"
       ],
-      "totalLines": 656,
+      "totalLines": 663,
       "hasStructuralAnalysis": true
     },
     "box_agent/session_context.py": {
@@ -14965,7 +15231,7 @@
     },
     "box_agent/session_log.py": {
       "filePath": "box_agent/session_log.py",
-      "contentHash": "3c0bc4e039296a2ff061955d7316ff255331e3adcefeca7522dc22dd4ff9ba12",
+      "contentHash": "3207b60d7abdb4bea332ff0a4a875bbf832c5b4744c6e041011cbd81fab3c18d",
       "functions": [
         {
           "name": "_encode_record",
@@ -15077,6 +15343,9 @@
             "_recover_log",
             "append",
             "flush",
+            "_skill_reference_path",
+            "read_skill_reference",
+            "store_skill_reference",
             "append_unlogged_messages",
             "_surface_nodes",
             "_append_surface_message",
@@ -15088,7 +15357,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 657
+          "lineCount": 755
         }
       ],
       "imports": [
@@ -15123,9 +15392,27 @@
           ]
         },
         {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "tempfile"
+          ]
+        },
+        {
           "source": "time",
           "specifiers": [
             "time"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Mapping"
           ]
         },
         {
@@ -15180,7 +15467,7 @@
         "_release_writer_lock",
         "SessionLog"
       ],
-      "totalLines": 824,
+      "totalLines": 925,
       "hasStructuralAnalysis": true
     },
     "box_agent/session_prompts.py": {
@@ -15582,9 +15869,328 @@
       "totalLines": 480,
       "hasStructuralAnalysis": true
     },
+    "box_agent/skill_context.py": {
+      "filePath": "box_agent/skill_context.py",
+      "contentHash": "d26a8b4180dd6773ac1a04db302e70f668b5e804d8c3cfa3e8ba2fb69f9c72f8",
+      "functions": [
+        {
+          "name": "effective_system_prompt",
+          "params": [
+            "prompt",
+            "suffix"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "project_legacy_system",
+          "params": [
+            "messages",
+            "suffix",
+            "projector"
+          ],
+          "returnType": "list[Message]",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "verified_system_suffixes",
+          "params": [
+            "runtime"
+          ],
+          "returnType": "tuple[str, ...]",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "reference_cost",
+          "params": [
+            "text"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "render_reference",
+          "params": [
+            "metadata",
+            "body"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "read_reference",
+          "params": [
+            "content"
+          ],
+          "returnType": "tuple[dict[str, Any], str] | None",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "visible_ranges",
+          "params": [
+            "messages",
+            "name",
+            "revision",
+            "lines",
+            "source",
+            "path"
+          ],
+          "returnType": "set[int]",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "append_reference",
+          "params": [
+            "message",
+            "text"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "projection_cost",
+          "params": [
+            "message",
+            "text"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 7
+        }
+      ],
+      "classes": [
+        {
+          "name": "ReferenceProjection",
+          "methods": [],
+          "properties": [
+            "messages",
+            "references",
+            "diagnostics",
+            "input_tokens",
+            "blocked_reason",
+            "on_committed",
+            "budget_blocked",
+            "on_response"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "SkillReferenceContext",
+          "methods": [
+            "__init__",
+            "_store_reference",
+            "observe_history",
+            "bind_history",
+            "_selection_fits",
+            "read",
+            "prepare_request"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 275
+        }
+      ],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Iterable"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Callable"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "sha256"
+          ]
+        },
+        {
+          "source": ".kernel.context_engine",
+          "specifiers": [
+            "_message_chars",
+            "_summary_message_text"
+          ]
+        },
+        {
+          "source": ".schema",
+          "specifiers": [
+            "Message"
+          ]
+        },
+        {
+          "source": ".skill_dependencies",
+          "specifiers": [
+            "SkillDependencyError"
+          ]
+        },
+        {
+          "source": ".tools.base",
+          "specifiers": [
+            "ToolResult"
+          ]
+        }
+      ],
+      "exports": [
+        "effective_system_prompt",
+        "project_legacy_system",
+        "verified_system_suffixes",
+        "reference_cost",
+        "render_reference",
+        "read_reference",
+        "visible_ranges",
+        "append_reference",
+        "projection_cost",
+        "ReferenceProjection",
+        "SkillReferenceContext"
+      ],
+      "totalLines": 405,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skill_dependencies.py": {
+      "filePath": "box_agent/skill_dependencies.py",
+      "contentHash": "86900641a09e42d385b21f05e416297d5a3e9efcecd56ea92ab1e1aae1039fb2",
+      "functions": [
+        {
+          "name": "resolve_required_skills",
+          "params": [
+            "loader",
+            "names"
+          ],
+          "returnType": "tuple[Any, ...]",
+          "exported": true,
+          "lineCount": 30
+        }
+      ],
+      "classes": [
+        {
+          "name": "SkillDependencyError",
+          "methods": [
+            "__str__"
+          ],
+          "properties": [
+            "code",
+            "message",
+            "details"
+          ],
+          "exported": true,
+          "lineCount": 7
+        }
+      ],
+      "imports": [
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        }
+      ],
+      "exports": [
+        "SkillDependencyError",
+        "resolve_required_skills"
+      ],
+      "totalLines": 49,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skill_restore.py": {
+      "filePath": "box_agent/skill_restore.py",
+      "contentHash": "52683eec7cd6d2a0b785d874d6918f183307690cfce658ba400a8d867b725376",
+      "functions": [
+        {
+          "name": "invalid_restore",
+          "params": [
+            "field"
+          ],
+          "returnType": "SkillDependencyError",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "validate_restore_records",
+          "params": [
+            "records"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "recover_available_records",
+          "params": [
+            "records",
+            "loader"
+          ],
+          "returnType": "list[dict[str, Any]]",
+          "exported": true,
+          "lineCount": 37
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "sha256"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": ".skill_dependencies",
+          "specifiers": [
+            "SkillDependencyError",
+            "resolve_required_skills"
+          ]
+        }
+      ],
+      "exports": [
+        "invalid_restore",
+        "validate_restore_records",
+        "recover_available_records"
+      ],
+      "totalLines": 85,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/skill_runtime.py": {
       "filePath": "box_agent/skill_runtime.py",
-      "contentHash": "756e749d60ac605b4134dbdaf3784bd1bb325c247a390e071fa79488288c41fc",
+      "contentHash": "8804b0c36f78cee7a133aeed90b15ab24f249a625e5a0f02cdb7188183259003",
       "functions": [
         {
           "name": "prepare_auto_loaded_skills",
@@ -15600,7 +16206,7 @@
           ],
           "returnType": "tuple[AutoLoadedSkillsPrompt, set[str]]",
           "exported": true,
-          "lineCount": 32
+          "lineCount": 30
         },
         {
           "name": "apply_auto_loaded_skill_state",
@@ -15615,7 +16221,41 @@
           "lineCount": 27
         }
       ],
-      "classes": [],
+      "classes": [
+        {
+          "name": "SkillRuntime",
+          "methods": [
+            "__init__",
+            "begin_turn",
+            "select",
+            "deactivate_reference",
+            "clear_references",
+            "active_names",
+            "_resolve",
+            "register_reference",
+            "restore_records",
+            "_restore_notice",
+            "_remember",
+            "log_records",
+            "read_facts",
+            "selected_names",
+            "restoring_names",
+            "restore_diagnostics",
+            "legacy_system_suffix",
+            "legacy_system_suffixes",
+            "resolve_reference",
+            "record_delivery",
+            "record_request_delivery",
+            "prepare_request_confirmation",
+            "record_observation",
+            "read",
+            "_metadata"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 303
+        }
+      ],
       "imports": [
         {
           "source": "collections.abc",
@@ -15629,6 +16269,47 @@
           "source": "typing",
           "specifiers": [
             "Any"
+          ]
+        },
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "sha256"
+          ]
+        },
+        {
+          "source": "types",
+          "specifiers": [
+            "SimpleNamespace"
+          ]
+        },
+        {
+          "source": ".skill_dependencies",
+          "specifiers": [
+            "SkillDependencyError",
+            "resolve_required_skills"
+          ]
+        },
+        {
+          "source": ".skill_state",
+          "specifiers": [
+            "SkillReferenceSnapshot",
+            "SkillRead",
+            "SkillSessionState"
+          ]
+        },
+        {
+          "source": ".skill_restore",
+          "specifiers": [
+            "invalid_restore",
+            "recover_available_records",
+            "validate_restore_records"
+          ]
+        },
+        {
+          "source": ".tools.base",
+          "specifiers": [
+            "ToolResult"
           ]
         },
         {
@@ -15646,10 +16327,100 @@
         }
       ],
       "exports": [
+        "SkillRuntime",
         "prepare_auto_loaded_skills",
         "apply_auto_loaded_skill_state"
       ],
-      "totalLines": 79,
+      "totalLines": 390,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/skill_state.py": {
+      "filePath": "box_agent/skill_state.py",
+      "contentHash": "dca361fc6127ef26784bdf0ef0e8d18c7c43dece42abc2c48d951fcafd695ec7",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SkillRead",
+          "methods": [
+            "log_record"
+          ],
+          "properties": [
+            "name",
+            "source",
+            "path",
+            "revision",
+            "prompt",
+            "order",
+            "reason",
+            "delivered_ranges",
+            "delivered_complete"
+          ],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "SkillReferenceSnapshot",
+          "methods": [
+            "skill_path",
+            "to_prompt",
+            "reference_metadata"
+          ],
+          "properties": [
+            "name",
+            "source",
+            "path",
+            "revision",
+            "prompt",
+            "metadata_json"
+          ],
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "SkillSessionState",
+          "methods": [],
+          "properties": [
+            "reads",
+            "selected",
+            "sequence"
+          ],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "imports": [
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        }
+      ],
+      "exports": [
+        "SkillRead",
+        "SkillReferenceSnapshot",
+        "SkillSessionState"
+      ],
+      "totalLines": 61,
       "hasStructuralAnalysis": true
     },
     "box_agent/skills/document-skills/pptx/agents/openai.yaml": {
@@ -21933,7 +22704,7 @@
     },
     "box_agent/tools/base.py": {
       "filePath": "box_agent/tools/base.py",
-      "contentHash": "3b105d22d486102783836d0b70fb12bffb58da56412bef67bc29204a57836d93",
+      "contentHash": "a93c5f7ef6def04eaf015c5a412f91fb9101ac1fb80f295de6280f402804bccd",
       "functions": [
         {
           "name": "tool_call_name_variants",
@@ -21976,10 +22747,11 @@
           "methods": [],
           "properties": [
             "event_queue",
-            "parent_tool_call_id"
+            "parent_tool_call_id",
+            "skill_reader"
           ],
           "exported": true,
-          "lineCount": 5
+          "lineCount": 6
         },
         {
           "name": "Tool",
@@ -22028,6 +22800,7 @@
         {
           "source": "collections.abc",
           "specifiers": [
+            "Callable",
             "Iterable"
           ]
         },
@@ -22067,7 +22840,7 @@
         "build_tool_name_index",
         "EventEmittingTool"
       ],
-      "totalLines": 258,
+      "totalLines": 259,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/bash_tool.py": {
@@ -23102,7 +23875,7 @@
     },
     "box_agent/tools/engine/call_contracts.py": {
       "filePath": "box_agent/tools/engine/call_contracts.py",
-      "contentHash": "375e832a3d8850bea1457721da8cc9a4bee33be4eb3434ff4faff052aafabbc2",
+      "contentHash": "34ccbfa9aef3d847111ca7f2dba8c556df52b529728328f664b05866f0edf8ae",
       "functions": [],
       "classes": [
         {
@@ -23147,10 +23920,11 @@
             "resource_ledger",
             "activate_skill",
             "hook_dispatch",
-            "hook_context"
+            "hook_context",
+            "skill_reader"
           ],
           "exported": true,
-          "lineCount": 23
+          "lineCount": 24
         },
         {
           "name": "ToolStepControl",
@@ -23258,7 +24032,7 @@
         "ToolCallRecord",
         "ToolStepSummary"
       ],
-      "totalLines": 113,
+      "totalLines": 114,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/engine/contracts.py": {
@@ -23379,7 +24153,7 @@
     },
     "box_agent/tools/engine/engine.py": {
       "filePath": "box_agent/tools/engine/engine.py",
-      "contentHash": "f9741dc7a780d437295e8d4ef01ef2999954b67058ffb36904f65d7ceeb336ba",
+      "contentHash": "39a8a3fa240b5320cbacb60c8816c958e589e7cb3294f40d3fc7fbdb3b4b8f43",
       "functions": [],
       "classes": [
         {
@@ -23404,7 +24178,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 519
+          "lineCount": 520
         }
       ],
       "imports": [
@@ -23509,7 +24283,8 @@
           "source": "..base",
           "specifiers": [
             "Tool",
-            "ToolResult"
+            "ToolResult",
+            "ToolInvocationContext"
           ]
         },
         {
@@ -23533,12 +24308,6 @@
             "_model_history_placeholder_recovery_error",
             "_model_history_recovery_target",
             "_record_model_history_placeholder_recovery_result"
-          ]
-        },
-        {
-          "source": "..skill_result_adapter",
-          "specifiers": [
-            "SkillResultAdapter"
           ]
         },
         {
@@ -23620,7 +24389,7 @@
     },
     "box_agent/tools/engine/execution.py": {
       "filePath": "box_agent/tools/engine/execution.py",
-      "contentHash": "6f37e6de4ef5bcdbe120bb9c0f57f959b31693492e947a4fa0d1749cd5f05ce5",
+      "contentHash": "6bd9a309358d7fcbb94569d862ee7e67a093653f831f25c14f942850e78d096a",
       "functions": [
         {
           "name": "invoke_tool_once",
@@ -23631,7 +24400,7 @@
           ],
           "returnType": "ToolResult",
           "exported": true,
-          "lineCount": 9
+          "lineCount": 10
         },
         {
           "name": "stream_tool_invocation",
@@ -23789,7 +24558,7 @@
         "stream_tool_permission_chain",
         "_negotiate_tool_permission_chain"
       ],
-      "totalLines": 306,
+      "totalLines": 307,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/engine/preparation.py": {
@@ -24014,7 +24783,7 @@
     },
     "box_agent/tools/engine/scheduler.py": {
       "filePath": "box_agent/tools/engine/scheduler.py",
-      "contentHash": "5e425522e232133d1269594729f54bbc759a9cc5004689fa0c5f5c7087b608a2",
+      "contentHash": "6a9e5b91f2ac6c8ffd1948116368b3dcb0fb23b7a83cd3000a06ccbb3059828f",
       "functions": [],
       "classes": [
         {
@@ -24100,7 +24869,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 457
+          "lineCount": 458
         }
       ],
       "imports": [
@@ -24187,7 +24956,7 @@
         "ToolBatchCompleted",
         "ToolEngine"
       ],
-      "totalLines": 547,
+      "totalLines": 548,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/execution_result_tool.py": {
@@ -25490,7 +26259,7 @@
     },
     "box_agent/tools/image_inspection_tool.py": {
       "filePath": "box_agent/tools/image_inspection_tool.py",
-      "contentHash": "033924c8373d4d6966c6a32134f45a4abe8054f75483fa3c45982f4d5ebad8cf",
+      "contentHash": "465e6a820058e2fb09ba73b97d72e454bea79ecf0b508d402074ad63008fad7d",
       "functions": [],
       "classes": [
         {
@@ -25522,11 +26291,12 @@
             "_content_blocks",
             "_is_unsupported_image_input_error",
             "_error",
+            "_provider_error",
             "_display_path"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 474
+          "lineCount": 493
         }
       ],
       "imports": [
@@ -25603,7 +26373,7 @@
         "_PermissionRequired",
         "ImageInspectionTool"
       ],
-      "totalLines": 520,
+      "totalLines": 539,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/jupyter_tool.py": {
@@ -29956,6 +30726,87 @@
       "totalLines": 939,
       "hasStructuralAnalysis": true
     },
+    "box_agent/tools/skill_catalog_tool.py": {
+      "filePath": "box_agent/tools/skill_catalog_tool.py",
+      "contentHash": "5fe4733dd147d304f0954e674349533ad9ffa6b1160afc5dfa27f5efe94cf073",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ListSkillsTool",
+          "methods": [
+            "__init__",
+            "name",
+            "description",
+            "parameters",
+            "_in_scope",
+            "_metadata",
+            "execute"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 140
+        }
+      ],
+      "imports": [
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Callable",
+            "Collection",
+            "MutableSet"
+          ]
+        },
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "sha256"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "types",
+          "specifiers": [
+            "SimpleNamespace"
+          ]
+        },
+        {
+          "source": ".base",
+          "specifiers": [
+            "Tool",
+            "ToolResult"
+          ]
+        },
+        {
+          "source": ".schema_validation",
+          "specifiers": [
+            "validate_tool_arguments"
+          ]
+        },
+        {
+          "source": ".skill_loader",
+          "specifiers": [
+            "Skill",
+            "SkillLoader"
+          ]
+        }
+      ],
+      "exports": [
+        "ListSkillsTool"
+      ],
+      "totalLines": 154,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/tools/skill_execution_env.py": {
       "filePath": "box_agent/tools/skill_execution_env.py",
       "contentHash": "f46d539d39c472275f7f80d9cc125df8ab43b8f8e187a17149a3f35364807b5e",
@@ -30117,8 +30968,36 @@
     },
     "box_agent/tools/skill_loader.py": {
       "filePath": "box_agent/tools/skill_loader.py",
-      "contentHash": "e412d36ac2fc6b046ae26ca95e7393cac0258372f6206aceb73151b12cf127d5",
+      "contentHash": "f014054dc1a1d0522812e6f172d2ebe7c1b0e301090db7ff3b4cfaf976f5f6d7",
       "functions": [
+        {
+          "name": "_clip_metadata_text",
+          "params": [
+            "value",
+            "limit"
+          ],
+          "returnType": "tuple[str, bool]",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_metadata_json",
+          "params": [
+            "record"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_bounded_metadata_record",
+          "params": [
+            "record"
+          ],
+          "returnType": "tuple[str, bool]",
+          "exported": true,
+          "lineCount": 32
+        },
         {
           "name": "_warn",
           "params": [
@@ -30179,10 +31058,11 @@
             "related_skills",
             "capabilities",
             "broken",
-            "broken_reason"
+            "broken_reason",
+            "instruction_digest"
           ],
           "exported": true,
-          "lineCount": 85
+          "lineCount": 86
         },
         {
           "name": "_SourceEntry",
@@ -30194,10 +31074,11 @@
             "signature",
             "manifest_names",
             "manifest_paths",
-            "manifest_loaded"
+            "manifest_loaded",
+            "unavailable_skills"
           ],
           "exported": true,
-          "lineCount": 13
+          "lineCount": 14
         },
         {
           "name": "SkillLoader",
@@ -30216,6 +31097,7 @@
             "_iter_skill_files",
             "_load_manifest",
             "_manifest_item_is_available",
+            "_manifest_item_unavailable_reason",
             "_stat_signature",
             "_file_signature",
             "_source_signature",
@@ -30224,12 +31106,14 @@
             "get_skill",
             "list_skills",
             "list_skills_metadata",
+            "unavailable_skills_metadata",
+            "search_skills",
             "filter_by_query",
             "get_skills_metadata_prompt"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 829
+          "lineCount": 875
         },
         {
           "name": "SkillSelector",
@@ -30243,7 +31127,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 116
+          "lineCount": 114
         }
       ],
       "imports": [
@@ -30251,6 +31135,12 @@
           "source": "json",
           "specifiers": [
             "json"
+          ]
+        },
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "sha256"
           ]
         },
         {
@@ -30269,6 +31159,12 @@
           "source": "sys",
           "specifiers": [
             "sys"
+          ]
+        },
+        {
+          "source": "unicodedata",
+          "specifiers": [
+            "unicodedata"
           ]
         },
         {
@@ -30311,6 +31207,9 @@
         }
       ],
       "exports": [
+        "_clip_metadata_text",
+        "_metadata_json",
+        "_bounded_metadata_record",
         "_warn",
         "_tokenize",
         "move_skill_slot_to_end",
@@ -30320,7 +31219,7 @@
         "SkillLoader",
         "SkillSelector"
       ],
-      "totalLines": 1152,
+      "totalLines": 1268,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/skill_preload.py": {
@@ -30593,61 +31492,6 @@
       "totalLines": 578,
       "hasStructuralAnalysis": true
     },
-    "box_agent/tools/skill_result_adapter.py": {
-      "filePath": "box_agent/tools/skill_result_adapter.py",
-      "contentHash": "e001f38ed0d68ea709e294d37a165a418ddcd87ba50fdb2a13a6efb27638b7d3",
-      "functions": [],
-      "classes": [
-        {
-          "name": "SkillResultAdapter",
-          "methods": [
-            "__init__",
-            "activate"
-          ],
-          "properties": [],
-          "exported": true,
-          "lineCount": 51
-        }
-      ],
-      "imports": [
-        {
-          "source": "collections.abc",
-          "specifiers": [
-            "Callable"
-          ]
-        },
-        {
-          "source": "typing",
-          "specifiers": [
-            "Any"
-          ]
-        },
-        {
-          "source": "..schema",
-          "specifiers": [
-            "Message"
-          ]
-        },
-        {
-          "source": ".skill_preload",
-          "specifiers": [
-            "build_active_skills_prompt"
-          ]
-        },
-        {
-          "source": ".base",
-          "specifiers": [
-            "Tool",
-            "ToolResult"
-          ]
-        }
-      ],
-      "exports": [
-        "SkillResultAdapter"
-      ],
-      "totalLines": 64,
-      "hasStructuralAnalysis": true
-    },
     "box_agent/tools/skill_scratch.py": {
       "filePath": "box_agent/tools/skill_scratch.py",
       "contentHash": "8ea8b007947063fa16128a77d5e4bda1d11941cec5925fde0ffd7b71375fde70",
@@ -30758,7 +31602,7 @@
     },
     "box_agent/tools/skill_tool.py": {
       "filePath": "box_agent/tools/skill_tool.py",
-      "contentHash": "000f08838d1502cf3d954b8339c5ac7ccc77772cbad67e10fb72f9ee66b75c96",
+      "contentHash": "ea98ef2d6b7cd123d9dfd6b075a9f5e2637a3219aa86c71e7d9283acea40567e",
       "functions": [
         {
           "name": "create_skill_tools",
@@ -30769,7 +31613,7 @@
           ],
           "returnType": "tuple[List[Tool], Optional[SkillLoader]]",
           "exported": true,
-          "lineCount": 34
+          "lineCount": 36
         }
       ],
       "classes": [
@@ -30780,11 +31624,14 @@
             "name",
             "description",
             "parameters",
-            "execute"
+            "check_access",
+            "_read",
+            "execute",
+            "_invoke_validated"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 123
+          "lineCount": 101
         }
       ],
       "imports": [
@@ -30792,12 +31639,6 @@
           "source": "pathlib",
           "specifiers": [
             "Path"
-          ]
-        },
-        {
-          "source": "hashlib",
-          "specifiers": [
-            "sha256"
           ]
         },
         {
@@ -30818,12 +31659,14 @@
           "source": ".base",
           "specifiers": [
             "Tool",
-            "ToolResult"
+            "ToolResult",
+            "ToolInvocationContext"
           ]
         },
         {
           "source": ".skill_loader",
           "specifiers": [
+            "SKILL_USAGE_GUIDANCE",
             "SkillLoader"
           ]
         }
@@ -30832,7 +31675,7 @@
         "GetSkillTool",
         "create_skill_tools"
       ],
-      "totalLines": 176,
+      "totalLines": 155,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/skillhub_install_tool.py": {
@@ -31150,7 +31993,7 @@
     },
     "box_agent/tools/sub_agent_capabilities.py": {
       "filePath": "box_agent/tools/sub_agent_capabilities.py",
-      "contentHash": "52073dead9cd85077527873f0ac2988357ba451f788a3ee7279de4b6b7b9ab46",
+      "contentHash": "9600a20bee1d8d6bf7a744ca68c6dbc9d8ce24e54419e13f625162adc568206e",
       "functions": [
         {
           "name": "_tool_capability_metadata",
@@ -31324,7 +32167,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 179
+          "lineCount": 130
         }
       ],
       "imports": [
@@ -31340,6 +32183,12 @@
             "Any",
             "Callable",
             "Mapping"
+          ]
+        },
+        {
+          "source": "..",
+          "specifiers": [
+            "skill_dependencies"
           ]
         },
         {
@@ -31370,12 +32219,12 @@
         "_tool_denial_reason",
         "CapabilityResolver"
       ],
-      "totalLines": 712,
+      "totalLines": 665,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/sub_agent_tool.py": {
       "filePath": "box_agent/tools/sub_agent_tool.py",
-      "contentHash": "c927aaeecaf817925f016b3afaa4e4d2b919996a55ea0afe4c8a38b02641f89f",
+      "contentHash": "7c28213255b888115307e2b12785926e48dbc033b7ceb61011e60f52596470e8",
       "functions": [
         {
           "name": "_child_safe_parent_prompt",
@@ -31384,7 +32233,7 @@
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 20
+          "lineCount": 18
         }
       ],
       "classes": [
@@ -31439,8 +32288,12 @@
             "parameters",
             "execute_with_event_context",
             "_explicit_messages",
+            "_bounded_explicit_messages",
+            "_skill_reference_budget_failure",
             "_failure_result",
             "_invalid_arguments_result",
+            "_validate_skill_scope",
+            "_scope_skill_tools",
             "_apply_write_scopes",
             "_usage_payload",
             "_accumulate_usage",
@@ -31452,7 +32305,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 1172
+          "lineCount": 1301
         }
       ],
       "imports": [
@@ -31553,10 +32406,15 @@
           ]
         },
         {
-          "source": ".skill_preload",
+          "source": ".skill_catalog_tool",
           "specifiers": [
-            "strip_active_skills",
-            "strip_auto_loaded_skills"
+            "ListSkillsTool"
+          ]
+        },
+        {
+          "source": ".skill_tool",
+          "specifiers": [
+            "GetSkillTool"
           ]
         },
         {
@@ -31579,7 +32437,7 @@
         "_PermissionGatedBashTool",
         "SubAgentTool"
       ],
-      "totalLines": 1416,
+      "totalLines": 1544,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/todo_tool.py": {
@@ -33123,12 +33981,12 @@
     },
     "docs/AGENT_SESSION.md": {
       "filePath": "docs/AGENT_SESSION.md",
-      "contentHash": "30f50f0739824b6481645b5040159d08aa4725c6b54ae0cba5e9b070e6e94f4a",
+      "contentHash": "f66a8c5e32d77b4056449b1842ea0aa8ad2b2cbb4242bf8559dd1ee6c826489e",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 185,
+      "totalLines": 201,
       "hasStructuralAnalysis": true
     },
     "docs/ARCHITECTURE_CN.md": {
@@ -33173,12 +34031,22 @@
     },
     "docs/changes/README.md": {
       "filePath": "docs/changes/README.md",
-      "contentHash": "8dee2fb29dcc6e62cfd640f2be8dc768919c3c86b94e7a1eb4158291d73f8dc7",
+      "contentHash": "17212901fd3dc9c807ad29691148dfa36425a9c2d03539b87ca06dc6746e9133",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 864,
+      "totalLines": 875,
+      "hasStructuralAnalysis": true
+    },
+    "docs/changes/request-recovery.md": {
+      "filePath": "docs/changes/request-recovery.md",
+      "contentHash": "c3d6036843d41d0c848aa5b720a133e1fc7abc45d780fb9da0c1f98b6ebfdf41",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 12,
       "hasStructuralAnalysis": true
     },
     "docs/CONNECTOR_RUNTIME_RESTORE.md": {
@@ -33193,7 +34061,7 @@
     },
     "docs/CONTEXT_COMPRESSION_CN.md": {
       "filePath": "docs/CONTEXT_COMPRESSION_CN.md",
-      "contentHash": "1842dcff665dd1e2e67f8e125e5174eb424094429f7262cff7ce11c764825e36",
+      "contentHash": "de9a23c299a179e743bbafc4eb470e163a2984a941f74db21ecb53754b0c0fb3",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -33203,7 +34071,7 @@
     },
     "docs/CONTEXT_COMPRESSION.md": {
       "filePath": "docs/CONTEXT_COMPRESSION.md",
-      "contentHash": "e3a2c5c42b6d8ed428128bede404729b4d74b8f0c20dec588ac22bf0ebfc92e6",
+      "contentHash": "7036f8f712b02862663915e65ec146fb2f6b82764986bca733c3069db26babf2",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -33213,22 +34081,32 @@
     },
     "docs/design/README.md": {
       "filePath": "docs/design/README.md",
-      "contentHash": "35dcd418ac29d2886838cfa976281fd2246fd72ecf19771d55960608210b7b38",
+      "contentHash": "b7bc3e5547d15c1f8920b8703a49181922a8b67c49727fae6e4f98a453ff2655",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 90,
+      "totalLines": 97,
+      "hasStructuralAnalysis": true
+    },
+    "docs/design/skill-engine.md": {
+      "filePath": "docs/design/skill-engine.md",
+      "contentHash": "631d3f6243ee774fdb6a417a1441c66a566df7d2b36e4c6acfb78d6cad5a6b41",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 159,
       "hasStructuralAnalysis": true
     },
     "docs/design/tool-refactor/design.md": {
       "filePath": "docs/design/tool-refactor/design.md",
-      "contentHash": "aec61d23ab66c45ee4910c627963361b8ffd9e77faa6ab50406425bc07d42168",
+      "contentHash": "3c1da3115c2ccb5efafd399e355e3f1eb4fbf7f0bcc2ca5c8c49eb96c9b3296f",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 377,
+      "totalLines": 379,
       "hasStructuralAnalysis": true
     },
     "docs/design/tool-refactor/implementation.md": {
@@ -33253,12 +34131,12 @@
     },
     "docs/design/tool-refactor/runtime.md": {
       "filePath": "docs/design/tool-refactor/runtime.md",
-      "contentHash": "fd733258f2cc0335536e20bd613edecf32e4bcb1c211bfe5d9cdd97043a9dc05",
+      "contentHash": "bfaa58bb6ce4a75956408d0fcf5aa798600812d082f84e913f35122259a073df",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 54,
+      "totalLines": 56,
       "hasStructuralAnalysis": true
     },
     "docs/design/tool-refactor/testing.md": {
@@ -33279,6 +34157,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 88,
+      "hasStructuralAnalysis": true
+    },
+    "docs/design/tool-skill-workflows.md": {
+      "filePath": "docs/design/tool-skill-workflows.md",
+      "contentHash": "8812662f7c5679be10af24c6e7c2839cfb74fd7870e7f6e1eea529a25484622c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 143,
       "hasStructuralAnalysis": true
     },
     "docs/DEVELOPMENT_GUIDE_CN.md": {

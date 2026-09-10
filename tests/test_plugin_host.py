@@ -11,7 +11,7 @@ import pytest
 
 from box_agent.events import ContentEvent
 from box_agent.schema import LLMResponse, Message, StreamEvent
-from box_agent.tools.base import Tool
+from box_agent.tools.base import Tool, ToolResult
 
 
 SERVICE_OWNED_RUN_ARGUMENTS = frozenset(
@@ -26,6 +26,7 @@ SERVICE_OWNED_RUN_ARGUMENTS = frozenset(
         "session_log",
         "tool_exposure_manager",
         "tool_result_storage",
+        "skill_engine",
     }
 )
 
@@ -150,6 +151,23 @@ class _ToolCatalog(dict[str, Tool]):
     pass
 
 
+class _SkillEngine:
+    read_facts = ()
+    selected_names = ()
+    restoring_names = ()
+    restore_diagnostics = {}
+    legacy_system_suffix = ""
+
+    def resolve_reference(self, name):
+        return name
+
+    def record_delivery(self, snapshot, metadata, *, reason):
+        pass
+
+    def record_observation(self, snapshot, metadata):
+        pass
+
+
 class _ExposureOutcome:
     def __init__(self, tools: list[Tool]) -> None:
         self.tools = tools
@@ -218,6 +236,9 @@ def test_current_capability_shapes_satisfy_kernel_ports() -> None:
         MemoryPromotionPort,
         PermissionGatewayPort,
         SessionStorePort,
+        PreparedContextPort,
+        ContextEnginePort,
+        SkillEnginePort,
         SummaryLLMPort,
         ToolCatalogPort,
         ToolExposureResultPort,
@@ -239,6 +260,25 @@ def test_current_capability_shapes_satisfy_kernel_ports() -> None:
     assert isinstance(_ExposureOutcome([]), ToolExposureResultPort)
     assert isinstance(_ToolResultStore(), ToolResultStorePort)
     assert isinstance(_BudgetOutcome(), ToolResultBudgetOutcomePort)
+    assert isinstance(_SkillEngine(), SkillEnginePort)
+    from box_agent.context_input import DefaultContextEngine, PreparedContext
+
+    assert isinstance(DefaultContextEngine(), ContextEnginePort)
+    assert isinstance(PreparedContext([], []), PreparedContextPort)
+
+
+def test_context_port_owns_projection_and_skill_port_exposes_source_facts() -> None:
+    from typing import get_type_hints
+    from box_agent.kernel.ports import ContextEnginePort, PreparedContextPort, SkillEnginePort
+    from box_agent.tools.engine.contracts import PreparedTools
+    from box_agent.skill_runtime import SkillRuntime
+
+    assert get_type_hints(ContextEnginePort.prepare_request, localns={"PreparedTools": PreparedTools})["return"] is PreparedContextPort
+    assert "prepare_context" not in vars(SkillEnginePort)
+    assert "messages" not in inspect.signature(SkillRuntime).parameters
+    assert "resolve_reference" in vars(SkillEnginePort)
+    assert "record_delivery" in vars(SkillEnginePort)
+    inspect.signature(SkillRuntime.read).bind(None, "shared", budget_chars=100)
 
 
 def test_production_defaults_match_port_call_shapes() -> None:
@@ -418,6 +458,7 @@ def test_default_capability_schema_covers_kernel_services_in_field_order() -> No
 
     from box_agent.kernel.ports import ToolEnginePort, HookDispatchPort
     from box_agent.plugins.hooks import HookProviderPort
+    from box_agent.kernel.ports import ContextEnginePort, SkillEnginePort
 
     ports_by_field = {
         "llm": LLMPort,
@@ -433,6 +474,8 @@ def test_default_capability_schema_covers_kernel_services_in_field_order() -> No
         "tool_result_store": ToolResultStorePort,
         "tool_engine": ToolEnginePort,
         "hook_dispatch": HookDispatchPort,
+        "skill_engine": SkillEnginePort,
+        "context_engine": ContextEnginePort,
     }
     # Provider 是多实现贡献，调用身份是值对象，二者不按服务字段一一映射。
     assert {binding.port_type for binding in bindings} == set(ports_by_field.values()) | {HookProviderPort}
@@ -499,7 +542,13 @@ def test_default_descriptors_are_deterministic_and_preserve_exact_instances() ->
     assert by_port[MemoryLookupPort] is memory
     assert by_port[MemoryPromotionPort] is memory
     assert by_port[ToolCatalogPort] is tools
-    assert len(first) == 6
+    from box_agent.context_input import DefaultContextEngine
+    from box_agent.kernel.ports import ContextEnginePort
+
+    assert isinstance(by_port[ContextEnginePort], DefaultContextEngine)
+    context_descriptor = next(item for item in first if item.capabilities == (ContextEnginePort,))
+    assert inspect.signature(context_descriptor.factory).parameters == {}
+    assert len(first) == 7
 
 
 @pytest.mark.asyncio

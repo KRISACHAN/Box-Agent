@@ -149,7 +149,7 @@ recent 选择统一覆盖 user、assistant 和 tool message；assistant 工具�
 
 上下文压缩不再发现、重新读取或重放近期文件。
 
-Goal、Todo 和 Plan 通过显式、无副作用的 `compaction_state` 契约读取；压缩不会执行普通工具调用，合并后的运行状态消息上限为 12,000 字符。完整 active skill 指令继续固定在 system message 中，不再通过回放历史 `get_skill` 调用重建。控制策略查询“最新用户文本”时会排除内部摘要与运行状态消息。
+Goal、Todo 和 Plan 通过显式、无副作用的 `compaction_state` 契约读取；压缩不会执行普通工具调用，合并后的运行状态消息上限为 12,000 字符。SkillRuntime 管理选择及带版本的读取事实；Context 将显式选择或恢复的 Skill 正文放入普通请求资料，或接收真实读取工具的回复，并按最终可见文本核实覆盖。完整 Skill 正文不固定在 system message 中，也不会回放历史 `get_skill` 调用。分页、来源校验和请求提交边界见 [Skill Engine](design/skill-engine.md)。控制策略查询“最新用户文本”时会排除内部摘要与运行状态消息。
 
 若重建后的请求仍超过安全阈值，结果会标记为 blocked，不会静默发送一个已知超限的请求。
 
