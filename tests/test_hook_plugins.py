@@ -520,7 +520,8 @@ async def test_legacy_hooks_keep_the_callers_context_variables():
     assert marker.get() == "after"
 
 
-@pytest.mark.parametrize("malformed", [(), ("text", None, "extra"), 123])
+@pytest.mark.parametrize("malformed", [(), ("text", None, "extra"), 123,
+                                     (None, None), (123, None), ("text", 123)])
 async def test_malformed_legacy_result_preserves_text_and_run_completion(malformed):
     class Legacy(BaseHook):
         async def on_tool_result(self, **kwargs):

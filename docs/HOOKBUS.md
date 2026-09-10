@@ -127,7 +127,7 @@ Skill 正文和 Context 输入的策略由其所属模块负责，不能仅靠 `
 
 Observer 的普通异常和超时记录告警后继续；前置 Handler 的异常、超时或非法返回导致拒绝；文本 Handler 对应情况导致抑制。取消和 `SessionLogDurabilityError` 继续向外传播。旧回调保留原有普通异常告警和期限语义。
 
-旧 `on_tool_result` 返回错误长度或不可解包的值时，保留原有告警并继续使用此前文本；
+旧 `on_tool_result` 返回错误长度、字段类型或不可解包的值时，保留告警并继续使用此前文本；
 返回值转换也属于 legacy 异常边界。
 
 ```text
