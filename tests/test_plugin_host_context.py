@@ -1,6 +1,8 @@
 """Context-aware selection and lifetime behavior of the static plugin host."""
 
 from dataclasses import dataclass
+import asyncio
+from typing import Protocol, runtime_checkable
 
 import pytest
 
@@ -156,6 +158,54 @@ async def test_failure_rollback_does_not_dispose_another_session():
     again = await host.activate(session_key="a")
     assert again.registry[SessionPort] is first.registry[SessionPort]
     await host.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_method", ["dispose_session", "close"])
+async def test_nested_interrupted_rollback_retries_dependents_before_dependencies(close_method):
+    @runtime_checkable
+    class CheckedPort(Protocol):
+        def required(self) -> None: ...
+
+    class Resource:
+        def __init__(self, name, parent=None):
+            self.name = name
+            self.parent = parent
+            self.closed = False
+
+    parent = Resource("parent")
+    child = Resource("child", parent)
+    attempts, closed = {}, []
+
+    async def dispose(resource):
+        attempts[resource.name] = attempts.get(resource.name, 0) + 1
+        if attempts[resource.name] == 1:
+            raise asyncio.CancelledError("rollback interrupted")
+        if resource.parent is not None:
+            assert not resource.parent.closed, "dependency closed before dependent cleanup"
+        resource.closed = True
+        closed.append(resource.name)
+
+    host = PluginHost((
+        PluginDescriptor("parent", "1.0.0", (RunPort,),
+                         factory=lambda: parent, disposer=dispose),
+        PluginDescriptor("child", "1.0.0", (CheckedPort,),
+                         factory=lambda: child, dependencies=("parent",), disposer=dispose),
+    ), schema=schema(RunPort, CheckedPort))
+    try:
+        # The invalid child is retained by Port validation before the outer
+        # activation retains its parent; both require a later cleanup retry.
+        with pytest.raises(asyncio.CancelledError, match="rollback interrupted"):
+            await host.activate(session_key="session")
+        if close_method == "dispose_session":
+            await host.dispose_session("session")
+        else:
+            await host.close()
+        assert closed == ["child", "parent"]
+        assert child.closed and parent.closed
+        assert attempts == {"child": 2, "parent": 2}
+    finally:
+        await host.close()
 
 
 @pytest.mark.asyncio

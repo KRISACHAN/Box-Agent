@@ -669,9 +669,13 @@ class PluginHost:
             if record.descriptor.scope is PluginScope.RUN and not record.disposed
         ]
         if retained:
-            pending = self._pending_run_rollbacks.setdefault(session_key, [])
-            known = {id(record) for record in pending}
-            pending.extend(record for record in retained if id(record) not in known)
+            pending = self._pending_run_rollbacks.get(session_key, ())
+            known = {id(record) for record in (*pending, *retained)}
+            # Validation rollback reaches here before its dependencies' outer
+            # rollback. Preserve creation order, not exception arrival order.
+            self._pending_run_rollbacks[session_key] = [
+                record for record in self._live_records if id(record) in known
+            ]
             self._closing_sessions.add(session_key)
 
     async def dispose_session(self, session_key: Hashable) -> None:
