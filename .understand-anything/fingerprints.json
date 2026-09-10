@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "be3c151a0d056623795b6c799a298919e6ed6ae0",
-  "generatedAt": "2026-09-10T18:08:25.102Z",
+  "gitCommitHash": "438a6b768b4af5158e2d36ef9f6fc50f89a691bd",
+  "generatedAt": "2026-09-10T18:50:26.826Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -1923,7 +1923,7 @@
     },
     "box_agent/agent_runtime.py": {
       "filePath": "box_agent/agent_runtime.py",
-      "contentHash": "fcfa3dfecf886d98b11edaace60b0a00b9d5b4d968673316ec2521655cec2a49",
+      "contentHash": "38503de140c12c06877c61d7fde9428cc369d08298c346f7829682ad245f0f7e",
       "functions": [
         {
           "name": "build_llm_client",
@@ -1955,6 +1955,7 @@
             "workspace_dir",
             "token_limit",
             "hooks",
+            "plugins",
             "thinking_enabled",
             "memory_promotion_enabled",
             "memory_promotion_hit_threshold",
@@ -1975,7 +1976,7 @@
           ],
           "returnType": "Agent",
           "exported": true,
-          "lineCount": 66
+          "lineCount": 69
         },
         {
           "name": "build_permission_engine",
@@ -2081,7 +2082,7 @@
         "build_memory_manager",
         "build_memory_extractor"
       ],
-      "totalLines": 210,
+      "totalLines": 213,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent_service.py": {
@@ -2129,7 +2130,7 @@
     },
     "box_agent/agent_session.py": {
       "filePath": "box_agent/agent_session.py",
-      "contentHash": "fa979b49bd0053474d0661c5e4286e5386b3c379399622b21da7dd96b71bdae1",
+      "contentHash": "7ae30f697ffa6b42a02e3b47a5472f9bd3ba7fe5b93221d4a5bf3725f9b93612",
       "functions": [],
       "classes": [
         {
@@ -2183,7 +2184,7 @@
             "mcp_fallback_tools"
           ],
           "exported": true,
-          "lineCount": 375
+          "lineCount": 377
         }
       ],
       "imports": [
@@ -2269,12 +2270,12 @@
       "exports": [
         "AgentSession"
       ],
-      "totalLines": 410,
+      "totalLines": 412,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent.py": {
       "filePath": "box_agent/agent.py",
-      "contentHash": "2a03a93bd04e9b23248c2d134784543d4a28557da3adb9f80437bd9c317ff029",
+      "contentHash": "b73361f5e7b2e791d57bd59ce6ce50eb64f3c7147f7e1f6477e646981e6e2fa6",
       "functions": [
         {
           "name": "_clean_goal_text",
@@ -2395,10 +2396,11 @@
             "cache_fingerprint_context",
             "cache_fingerprint_sink",
             "current_turn_text",
-            "kernel_services"
+            "kernel_services",
+            "plugins"
           ],
           "exported": true,
-          "lineCount": 37
+          "lineCount": 38
         },
         {
           "name": "GoalState",
@@ -2485,7 +2487,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 860
+          "lineCount": 864
         }
       ],
       "imports": [
@@ -2709,7 +2711,7 @@
         "_GoalWriteTool",
         "Agent"
       ],
-      "totalLines": 1296,
+      "totalLines": 1301,
       "hasStructuralAnalysis": true
     },
     "box_agent/artifacts.py": {
@@ -4565,7 +4567,7 @@
     },
     "box_agent/composition.py": {
       "filePath": "box_agent/composition.py",
-      "contentHash": "3ed59fedc609a55a57634168cb68a7b1c15bb550a4442d44e0be7d64d513396a",
+      "contentHash": "ff6ef4ca56241e6cc9898b97e2da4436f61cd27bf04b5ff44bbf56c5dddfa6a0",
       "functions": [
         {
           "name": "_default_capabilities",
@@ -4574,7 +4576,7 @@
           ],
           "returnType": "dict[str, Any]",
           "exported": true,
-          "lineCount": 21
+          "lineCount": 24
         },
         {
           "name": "_kernel_run_arguments",
@@ -4586,13 +4588,34 @@
           "lineCount": 8
         },
         {
+          "name": "_register_legacy_hooks",
+          "params": [
+            "bus",
+            "hooks"
+          ],
+          "returnType": "list[HookRegistration]",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "register_run_hooks",
+          "params": [
+            "bus",
+            "activation",
+            "legacy_hooks"
+          ],
+          "returnType": "tuple[HookRegistration, ...]",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
           "name": "compose_default_kernel_services",
           "params": [
             "run_arguments"
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 17
+          "lineCount": 23
         },
         {
           "name": "_validate_managed_services",
@@ -4644,6 +4667,36 @@
           "lineCount": 10
         },
         {
+          "name": "_cleanup_hook_run",
+          "params": [
+            "bus",
+            "activation",
+            "host"
+          ],
+          "returnType": "BaseException | None",
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "_wait_for_hook_cleanup",
+          "params": [
+            "task",
+            "settle"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "_cleanup_task_finished",
+          "params": [
+            "task"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
           "name": "run_agent_loop_with_default_services",
           "params": [
             "run_arguments",
@@ -4651,7 +4704,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 72
+          "lineCount": 86
         }
       ],
       "classes": [],
@@ -4666,7 +4719,15 @@
           "source": "collections.abc",
           "specifiers": [
             "AsyncIterator",
-            "Mapping"
+            "Mapping",
+            "Sequence"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "fields",
+            "replace"
           ]
         },
         {
@@ -4684,7 +4745,11 @@
         {
           "source": ".hooks",
           "specifiers": [
-            "HookManager"
+            "HookBus",
+            "HookManager",
+            "HookRegistration",
+            "LegacyHookAdapter",
+            "HookConfigError"
           ]
         },
         {
@@ -4714,20 +4779,32 @@
             "PluginCleanupError",
             "PluginHost"
           ]
+        },
+        {
+          "source": ".plugins.hooks",
+          "specifiers": [
+            "HookOwner",
+            "HookProviderPort"
+          ]
         }
       ],
       "exports": [
         "_default_capabilities",
         "_kernel_run_arguments",
+        "_register_legacy_hooks",
+        "register_run_hooks",
         "compose_default_kernel_services",
         "_validate_managed_services",
         "_add_cleanup_note",
         "_combined_cleanup_error",
         "_cleanup_plugin_run",
         "_attach_cleanup_error",
+        "_cleanup_hook_run",
+        "_wait_for_hook_cleanup",
+        "_cleanup_task_finished",
         "run_agent_loop_with_default_services"
       ],
-      "totalLines": 304,
+      "totalLines": 424,
       "hasStructuralAnalysis": true
     },
     "box_agent/config.py": {
@@ -5384,7 +5461,7 @@
     },
     "box_agent/core.py": {
       "filePath": "box_agent/core.py",
-      "contentHash": "cbd1fffbdc6b16d817c3df2fb29381c7224415b0d8b495b490ba60d4a1e4c860",
+      "contentHash": "d0f7135df7a0d71e4678daeb90ff651744d0f465019363c17891425b52eb4119",
       "functions": [
         {
           "name": "_resolve_provider_stale_seconds",
@@ -5423,6 +5500,7 @@
             "workspace_dir",
             "permission_negotiator",
             "hooks",
+            "plugins",
             "memory_manager",
             "memory_extractor",
             "memory_turn_id",
@@ -5464,7 +5542,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 76
+          "lineCount": 77
         }
       ],
       "classes": [],
@@ -5911,7 +5989,7 @@
         "_stream_with_activity",
         "run_agent_loop"
       ],
-      "totalLines": 372,
+      "totalLines": 373,
       "hasStructuralAnalysis": true
     },
     "box_agent/env_context.py": {
@@ -7053,9 +7131,235 @@
       "totalLines": 101,
       "hasStructuralAnalysis": true
     },
+    "box_agent/hook_bus.py": {
+      "filePath": "box_agent/hook_bus.py",
+      "contentHash": "20d98d1e9a380fba1eaf4370dc4dc29fd3521fc8f96a7da0ad56e97918c295b1",
+      "functions": [
+        {
+          "name": "build_hook_context",
+          "params": [
+            "base",
+            "payload",
+            "deadline"
+          ],
+          "returnType": "HookContext",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "_snapshot_legacy",
+          "params": [
+            "event",
+            "payload"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 16
+        }
+      ],
+      "classes": [
+        {
+          "name": "HookConfigError",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "HookStateError",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "RegistrationEntry",
+          "methods": [],
+          "properties": [
+            "registration_id",
+            "registration_order",
+            "spec",
+            "owner"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "DispatchLease",
+          "methods": [],
+          "properties": [
+            "dispatch_id"
+          ],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "HookExecution",
+          "methods": [],
+          "properties": [
+            "status",
+            "decision",
+            "error"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "HookRegistration",
+          "methods": [
+            "__init__",
+            "dispose"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "LegacyHookAdapter",
+          "methods": [
+            "__init__",
+            "get_hooks",
+            "handle_legacy"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "HookBus",
+          "methods": [
+            "__init__",
+            "hooks",
+            "register",
+            "freeze",
+            "_begin_dispatch",
+            "_end_dispatch",
+            "_select_entries",
+            "_effective_deadline",
+            "_task_finished",
+            "_execute_entry",
+            "_record_execution",
+            "_entry_context",
+            "observe",
+            "_observe",
+            "_apply_before_decision",
+            "before_tool",
+            "_apply_text_decision",
+            "after_tool",
+            "_fire",
+            "fire_agent_start",
+            "fire_step_start",
+            "fire_llm_response",
+            "fire_step_end",
+            "fire_error",
+            "fire_done",
+            "fire_tool_start",
+            "fire_tool_result",
+            "_unregister",
+            "_drain",
+            "close"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 395
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Mapping"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "replace"
+          ]
+        },
+        {
+          "source": "enum",
+          "specifiers": [
+            "Enum"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "monotonic"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid4"
+          ]
+        },
+        {
+          "source": ".kernel.hook_types",
+          "specifiers": [
+            "OBSERVER_EVENTS",
+            "BeforeToolDecision",
+            "BeforeToolResolution",
+            "HookContext",
+            "ResultText",
+            "ResultTextDecision",
+            "ResultTextResolution",
+            "copy_data",
+            "freeze_data"
+          ]
+        },
+        {
+          "source": ".plugins.hooks",
+          "specifiers": [
+            "HookOwner",
+            "HookSpec"
+          ]
+        },
+        {
+          "source": ".session_log",
+          "specifiers": [
+            "SessionLogDurabilityError"
+          ]
+        }
+      ],
+      "exports": [
+        "HookConfigError",
+        "HookStateError",
+        "RegistrationEntry",
+        "DispatchLease",
+        "HookExecution",
+        "HookRegistration",
+        "LegacyHookAdapter",
+        "build_hook_context",
+        "_snapshot_legacy",
+        "HookBus"
+      ],
+      "totalLines": 513,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/hooks.py": {
       "filePath": "box_agent/hooks.py",
-      "contentHash": "cdee5eee33fe73e3f824cbe3e61836397bc2fcdf25a32de88535fee3094221fe",
+      "contentHash": "26c8472a58994bfc968d9bdb7ecc3e7bf867647ef94b4918f5978131c72e3722",
       "functions": [
         {
           "name": "_ensure_hooks_dir_on_path",
@@ -7147,6 +7451,17 @@
           "specifiers": [
             "SessionLogDurabilityError"
           ]
+        },
+        {
+          "source": ".hook_bus",
+          "specifiers": [
+            "HookBus",
+            "HookConfigError",
+            "HookRegistration",
+            "HookStateError",
+            "LegacyHookAdapter",
+            "build_hook_context"
+          ]
         }
       ],
       "exports": [
@@ -7155,7 +7470,7 @@
         "_ensure_hooks_dir_on_path",
         "load_hooks"
       ],
-      "totalLines": 332,
+      "totalLines": 339,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/__init__.py": {
@@ -7465,9 +7780,224 @@
       "totalLines": 799,
       "hasStructuralAnalysis": true
     },
+    "box_agent/kernel/hook_types.py": {
+      "filePath": "box_agent/kernel/hook_types.py",
+      "contentHash": "79ab10e67815c73b8d3ec204c5fe6a39f48d420b41ea09e83f615a9e2ff290fa",
+      "functions": [
+        {
+          "name": "freeze_data",
+          "params": [
+            "value"
+          ],
+          "returnType": "JsonValue",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "copy_data",
+          "params": [
+            "value"
+          ],
+          "returnType": "JsonValue",
+          "exported": true,
+          "lineCount": 7
+        }
+      ],
+      "classes": [
+        {
+          "name": "HookContext",
+          "methods": [
+            "__post_init__"
+          ],
+          "properties": [
+            "event",
+            "run_id",
+            "session_id",
+            "step",
+            "tool_call_id",
+            "payload",
+            "deadline",
+            "is_cancelled",
+            "logger"
+          ],
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "BeforeToolDecision",
+          "methods": [
+            "__post_init__",
+            "allow",
+            "modify",
+            "deny"
+          ],
+          "properties": [
+            "action",
+            "arguments",
+            "reason",
+            "code"
+          ],
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "ResultText",
+          "methods": [
+            "__post_init__"
+          ],
+          "properties": [
+            "content",
+            "error"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "ResultTextDecision",
+          "methods": [
+            "__post_init__",
+            "keep",
+            "replace",
+            "suppress"
+          ],
+          "properties": [
+            "action",
+            "text",
+            "reason"
+          ],
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "BeforeToolResolution",
+          "methods": [
+            "__post_init__"
+          ],
+          "properties": [
+            "action",
+            "arguments",
+            "reason",
+            "code",
+            "hook_id",
+            "source"
+          ],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "ResultTextResolution",
+          "methods": [],
+          "properties": [
+            "text",
+            "suppressed",
+            "reason",
+            "hook_id",
+            "source",
+            "modified"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "ObserverHandler",
+          "methods": [
+            "handle"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "BeforeToolHandler",
+          "methods": [
+            "handle"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "ResultTextHandler",
+          "methods": [
+            "handle"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "HookMatcher",
+          "methods": [
+            "matches"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        }
+      ],
+      "imports": [
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "math",
+          "specifiers": [
+            "math"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Callable",
+            "Mapping"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "types",
+          "specifiers": [
+            "MappingProxyType"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Literal",
+            "Protocol",
+            "TypeAlias",
+            "Union"
+          ]
+        }
+      ],
+      "exports": [
+        "freeze_data",
+        "copy_data",
+        "HookContext",
+        "BeforeToolDecision",
+        "ResultText",
+        "ResultTextDecision",
+        "BeforeToolResolution",
+        "ResultTextResolution",
+        "ObserverHandler",
+        "BeforeToolHandler",
+        "ResultTextHandler",
+        "HookMatcher"
+      ],
+      "totalLines": 206,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/kernel/loop.py": {
       "filePath": "box_agent/kernel/loop.py",
-      "contentHash": "9c7cfa3726b8f6125cf3313625dacd1a0dbf14eb0e8f3b87dafcfb6271586f14",
+      "contentHash": "26681f9eb5c0eff2475cb0cd6fd89560426c460d9c2ed1ae5b704b036c1ca2aa",
       "functions": [
         {
           "name": "_resolve_provider_stale_seconds",
@@ -7658,7 +8188,7 @@
           ],
           "returnType": "AsyncIterator[AgentEvent]",
           "exported": true,
-          "lineCount": 1878
+          "lineCount": 1879
         },
         {
           "name": "run_agent_loop",
@@ -8039,7 +8569,7 @@
         "AgentLoopKernel",
         "run_agent_loop"
       ],
-      "totalLines": 2607,
+      "totalLines": 2609,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/permission_gateway.py": {
@@ -8067,7 +8597,7 @@
     },
     "box_agent/kernel/ports.py": {
       "filePath": "box_agent/kernel/ports.py",
-      "contentHash": "1b57eabaa92ed34da20f80edd315ecafb8b7c5ddd5184486786202a8c9a1ba03",
+      "contentHash": "9e16f615774e6c6081808474f7cc7850600d3e0f4681be5c60951f08156d7092",
       "functions": [],
       "classes": [
         {
@@ -8155,6 +8685,17 @@
           "properties": [],
           "exported": true,
           "lineCount": 53
+        },
+        {
+          "name": "HookDispatchPort",
+          "methods": [
+            "observe",
+            "before_tool",
+            "after_tool"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 8
         },
         {
           "name": "ToolCatalogPort",
@@ -8246,10 +8787,12 @@
             "tool_catalog",
             "tool_exposure",
             "tool_result_store",
-            "tool_engine"
+            "tool_engine",
+            "hook_dispatch",
+            "hook_context"
           ],
           "exported": true,
-          "lineCount": 15
+          "lineCount": 17
         }
       ],
       "imports": [
@@ -8258,7 +8801,8 @@
           "specifiers": [
             "AsyncIterator",
             "Iterable",
-            "Iterator"
+            "Iterator",
+            "Mapping"
           ]
         },
         {
@@ -8275,6 +8819,15 @@
             "Callable",
             "Protocol",
             "runtime_checkable"
+          ]
+        },
+        {
+          "source": ".hook_types",
+          "specifiers": [
+            "HookContext",
+            "BeforeToolResolution",
+            "ResultText",
+            "ResultTextResolution"
           ]
         },
         {
@@ -8301,6 +8854,7 @@
         "MemoryPromotionPort",
         "SessionStorePort",
         "HookBusPort",
+        "HookDispatchPort",
         "ToolCatalogPort",
         "ToolExposureResultPort",
         "ToolExposurePort",
@@ -8309,7 +8863,7 @@
         "ToolEnginePort",
         "KernelServices"
       ],
-      "totalLines": 341,
+      "totalLines": 356,
       "hasStructuralAnalysis": true
     },
     "box_agent/kernel/state.py": {
@@ -12182,7 +12736,7 @@
     },
     "box_agent/plugins/__init__.py": {
       "filePath": "box_agent/plugins/__init__.py",
-      "contentHash": "2aa496bb39598e474cccaad6a3e828a1b96f9914f2b0c827abc22cd604e2a0a2",
+      "contentHash": "73df8015d93e4721d054d3337726b88383ab3d0d49a7a6ea21cb642ae6830283",
       "functions": [],
       "classes": [],
       "imports": [
@@ -12208,12 +12762,21 @@
           "source": ".host",
           "specifiers": [
             "PluginActivation",
+            "PluginContribution",
             "PluginCleanupError",
             "PluginDependencyCycleError",
             "PluginError",
             "PluginHost",
             "PluginScopeError",
             "PluginValidationError"
+          ]
+        },
+        {
+          "source": ".hooks",
+          "specifiers": [
+            "HookOwner",
+            "HookProviderPort",
+            "HookSpec"
           ]
         },
         {
@@ -12229,7 +12792,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 52,
+      "totalLines": 58,
       "hasStructuralAnalysis": true
     },
     "box_agent/plugins/builtins.py": {
@@ -12423,7 +12986,7 @@
     },
     "box_agent/plugins/defaults.py": {
       "filePath": "box_agent/plugins/defaults.py",
-      "contentHash": "5aa5f4405ccdcbc12f907939d927abb5fefab28d63a10d8212d780db442bf525",
+      "contentHash": "062b670e53eeda4d79c452098a449b5c13b41d8e75b31662551d68dff7202256",
       "functions": [
         {
           "name": "_captured_instance_descriptor",
@@ -12454,7 +13017,7 @@
           ],
           "returnType": "tuple[PluginDescriptor, ...]",
           "exported": true,
-          "lineCount": 51
+          "lineCount": 55
         },
         {
           "name": "create_default_plugin_host",
@@ -12470,11 +13033,12 @@
             "tool_catalog",
             "tool_exposure",
             "tool_result_store",
-            "tool_engine"
+            "tool_engine",
+            "plugins"
           ],
           "returnType": "PluginHost",
           "exported": true,
-          "lineCount": 34
+          "lineCount": 38
         },
         {
           "name": "kernel_services_from_registry",
@@ -12483,7 +13047,7 @@
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 17
+          "lineCount": 18
         },
         {
           "name": "compose_default_services",
@@ -12503,15 +13067,22 @@
           ],
           "returnType": "KernelServices",
           "exported": true,
-          "lineCount": 31
+          "lineCount": 32
         }
       ],
       "classes": [],
       "imports": [
         {
+          "source": "dataclasses",
+          "specifiers": [
+            "replace"
+          ]
+        },
+        {
           "source": "..kernel.ports",
           "specifiers": [
             "HookBusPort",
+            "HookDispatchPort",
             "KernelServices",
             "LLMPort",
             "MemoryExtractionPort",
@@ -12536,7 +13107,14 @@
         {
           "source": ".host",
           "specifiers": [
-            "PluginHost"
+            "PluginHost",
+            "PluginScopeError"
+          ]
+        },
+        {
+          "source": ".hooks",
+          "specifiers": [
+            "HookProviderPort"
           ]
         },
         {
@@ -12556,7 +13134,7 @@
         "kernel_services_from_registry",
         "compose_default_services"
       ],
-      "totalLines": 213,
+      "totalLines": 229,
       "hasStructuralAnalysis": true
     },
     "box_agent/plugins/descriptors.py": {
@@ -12642,9 +13220,85 @@
       "totalLines": 65,
       "hasStructuralAnalysis": true
     },
+    "box_agent/plugins/hooks.py": {
+      "filePath": "box_agent/plugins/hooks.py",
+      "contentHash": "6a8bffbbedc8ef1418c5a90be9d85b98c3981233cc7f04bf39d1e9b577bc81b8",
+      "functions": [],
+      "classes": [
+        {
+          "name": "HookSpec",
+          "methods": [
+            "__post_init__"
+          ],
+          "properties": [
+            "hook_id",
+            "events",
+            "kind",
+            "handler",
+            "priority",
+            "matcher",
+            "timeout_ms"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "HookOwner",
+          "methods": [],
+          "properties": [
+            "plugin_id",
+            "plugin_version",
+            "source",
+            "run_id",
+            "scope"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "HookProviderPort",
+          "methods": [
+            "get_hooks"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "imports": [
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Protocol",
+            "runtime_checkable"
+          ]
+        },
+        {
+          "source": "..kernel.hook_types",
+          "specifiers": [
+            "HookEventName",
+            "HookKind"
+          ]
+        }
+      ],
+      "exports": [
+        "HookSpec",
+        "HookOwner",
+        "HookProviderPort"
+      ],
+      "totalLines": 43,
+      "hasStructuralAnalysis": true
+    },
     "box_agent/plugins/host.py": {
       "filePath": "box_agent/plugins/host.py",
-      "contentHash": "645d686b239ec9a8b880f884885971059fcb233ad58c1b60b5f1b979fac13e4a",
+      "contentHash": "8dfd2ed516a93df4e0bc574149ab096f1b7f2cb29fc460c28255d088c8f45339",
       "functions": [
         {
           "name": "_is_valid_semver",
@@ -12725,16 +13379,27 @@
           "lineCount": 4
         },
         {
+          "name": "PluginContribution",
+          "methods": [],
+          "properties": [
+            "descriptor",
+            "instance"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
           "name": "PluginActivation",
           "methods": [
             "__init__",
+            "contributions",
             "dispose",
             "__aenter__",
             "__aexit__"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 26
+          "lineCount": 34
         },
         {
           "name": "PluginHost",
@@ -12745,6 +13410,7 @@
             "_release_operation",
             "_invoke_callback",
             "discover",
+            "has_live_instances",
             "validate",
             "_select_descriptors",
             "_validate_schema",
@@ -12766,7 +13432,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 686
+          "lineCount": 693
         }
       ],
       "imports": [
@@ -12816,8 +13482,10 @@
           "source": "typing",
           "specifiers": [
             "Any",
+            "Generic",
             "Hashable",
-            "Iterable"
+            "Iterable",
+            "cast"
           ]
         },
         {
@@ -12832,6 +13500,7 @@
           "source": ".registries",
           "specifiers": [
             "ActivatedRegistry",
+            "CapabilityT",
             "CapabilityBinding",
             "CapabilityPolicy",
             "CapabilitySchema",
@@ -12849,10 +13518,11 @@
         "PluginScopeError",
         "PluginCleanupError",
         "_InstanceRecord",
+        "PluginContribution",
         "PluginActivation",
         "PluginHost"
       ],
-      "totalLines": 835,
+      "totalLines": 859,
       "hasStructuralAnalysis": true
     },
     "box_agent/plugins/registries.py": {
@@ -22429,7 +23099,7 @@
     },
     "box_agent/tools/engine/call_contracts.py": {
       "filePath": "box_agent/tools/engine/call_contracts.py",
-      "contentHash": "68c35b6dfeda6536b7ccc20bc2e15dc8609e96a8d7825f61c2cbc5a14142c5e6",
+      "contentHash": "375e832a3d8850bea1457721da8cc9a4bee33be4eb3434ff4faff052aafabbc2",
       "functions": [],
       "classes": [
         {
@@ -22472,10 +23142,12 @@
             "permission_negotiator",
             "logger",
             "resource_ledger",
-            "activate_skill"
+            "activate_skill",
+            "hook_dispatch",
+            "hook_context"
           ],
           "exported": true,
-          "lineCount": 21
+          "lineCount": 23
         },
         {
           "name": "ToolStepControl",
@@ -22510,10 +23182,13 @@
             "before_files",
             "execution_result",
             "policy_decision",
-            "parallel"
+            "parallel",
+            "invoked",
+            "executed",
+            "hook_rejection"
           ],
           "exported": true,
-          "lineCount": 20
+          "lineCount": 23
         },
         {
           "name": "ToolStepSummary",
@@ -22580,7 +23255,7 @@
         "ToolCallRecord",
         "ToolStepSummary"
       ],
-      "totalLines": 107,
+      "totalLines": 113,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/engine/contracts.py": {
@@ -22701,7 +23376,7 @@
     },
     "box_agent/tools/engine/engine.py": {
       "filePath": "box_agent/tools/engine/engine.py",
-      "contentHash": "3e5499beddf8fbab27034badf702c4f2c636a753358f99e37de6018b701d4549",
+      "contentHash": "f9741dc7a780d437295e8d4ef01ef2999954b67058ffb36904f65d7ceeb336ba",
       "functions": [],
       "classes": [
         {
@@ -22716,6 +23391,7 @@
             "_prepare_paths",
             "_argument_error",
             "_start_call",
+            "_hook_context",
             "_request",
             "_log_result",
             "_finish_call",
@@ -22725,7 +23401,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 455
+          "lineCount": 519
         }
       ],
       "imports": [
@@ -22762,6 +23438,12 @@
           ]
         },
         {
+          "source": "dataclasses",
+          "specifiers": [
+            "replace"
+          ]
+        },
+        {
           "source": "time",
           "specifiers": [
             "perf_counter"
@@ -22780,6 +23462,14 @@
             "LLMActivityEvent",
             "ToolCallResult",
             "ToolCallStart"
+          ]
+        },
+        {
+          "source": "...kernel.hook_types",
+          "specifiers": [
+            "HookContext",
+            "ResultText",
+            "copy_data"
           ]
         },
         {
@@ -22922,7 +23612,7 @@
       "exports": [
         "DefaultToolEngine"
       ],
-      "totalLines": 513,
+      "totalLines": 579,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/engine/execution.py": {
@@ -23153,7 +23843,7 @@
     },
     "box_agent/tools/engine/results.py": {
       "filePath": "box_agent/tools/engine/results.py",
-      "contentHash": "6f53296177c5ff9e39244c7d0ea02628ec86065f5ad4c0312295ac0636ec96a8",
+      "contentHash": "1ba38f42c91c43d4885b04d210a6eb863841587804544589f9a5d55d44ba3142",
       "functions": [
         {
           "name": "process_tool_result",
@@ -23162,7 +23852,7 @@
           ],
           "returnType": "ToolResultPipelineOutcome",
           "exported": true,
-          "lineCount": 173
+          "lineCount": 176
         }
       ],
       "classes": [
@@ -23192,10 +23882,11 @@
             "step",
             "started_at",
             "parallel",
-            "commit_result"
+            "commit_result",
+            "hook_text_modified"
           ],
           "exported": true,
-          "lineCount": 26
+          "lineCount": 27
         },
         {
           "name": "ToolResultPipelineOutcome",
@@ -23315,12 +24006,12 @@
         "ToolResultPipelineOutcome",
         "process_tool_result"
       ],
-      "totalLines": 248,
+      "totalLines": 252,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/engine/scheduler.py": {
       "filePath": "box_agent/tools/engine/scheduler.py",
-      "contentHash": "cfcb09566469274f7954ee54daad81448343dd4103659e9bef4266eabc6e5154",
+      "contentHash": "5e425522e232133d1269594729f54bbc759a9cc5004689fa0c5f5c7087b608a2",
       "functions": [],
       "classes": [
         {
@@ -23343,10 +24034,11 @@
             "arguments",
             "immediate_result",
             "invocation_context",
-            "approved_permission_request"
+            "approved_permission_request",
+            "on_invoke"
           ],
           "exported": true,
-          "lineCount": 9
+          "lineCount": 10
         },
         {
           "name": "ToolEngineProgress",
@@ -23405,7 +24097,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 454
+          "lineCount": 457
         }
       ],
       "imports": [
@@ -23492,7 +24184,7 @@
         "ToolBatchCompleted",
         "ToolEngine"
       ],
-      "totalLines": 543,
+      "totalLines": 547,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/execution_result_tool.py": {
@@ -32478,12 +33170,12 @@
     },
     "docs/changes/README.md": {
       "filePath": "docs/changes/README.md",
-      "contentHash": "8a963de1e33bff949368ac3e45490303d68cbb62bf59ddd93ea7ad66d94d40dd",
+      "contentHash": "8dee2fb29dcc6e62cfd640f2be8dc768919c3c86b94e7a1eb4158291d73f8dc7",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 817,
+      "totalLines": 864,
       "hasStructuralAnalysis": true
     },
     "docs/CONNECTOR_RUNTIME_RESTORE.md": {
@@ -32518,12 +33210,12 @@
     },
     "docs/design/README.md": {
       "filePath": "docs/design/README.md",
-      "contentHash": "760f55ef7f602acd81cbebc6f5f1cad187ae0501245cb37ea0c4229c8b3c2cd1",
+      "contentHash": "35dcd418ac29d2886838cfa976281fd2246fd72ecf19771d55960608210b7b38",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 89,
+      "totalLines": 90,
       "hasStructuralAnalysis": true
     },
     "docs/design/tool-refactor/design.md": {
@@ -32624,6 +33316,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 247,
+      "hasStructuralAnalysis": true
+    },
+    "docs/HOOKBUS.md": {
+      "filePath": "docs/HOOKBUS.md",
+      "contentHash": "c47b4948d5b04db98fc4a5c585eef41fcf86fb275c42f2465e204fa18a4ea497",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 143,
       "hasStructuralAnalysis": true
     },
     "docs/INTEGRATION.md": {
@@ -32768,12 +33470,12 @@
     },
     "docs/README.md": {
       "filePath": "docs/README.md",
-      "contentHash": "6814a31ad62b18e5dbb5118d576b5796fa083c476e19ee79823db50a37d31d8a",
+      "contentHash": "884140d7318c03ceae3be2f3aa100daeb04643c22399558d70bcce81fbaa887c",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 67,
+      "totalLines": 68,
       "hasStructuralAnalysis": true
     },
     "docs/reasoning-configuration.md": {

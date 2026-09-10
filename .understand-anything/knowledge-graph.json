@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T18:06:25.517Z",
-    "gitCommitHash": "be3c151a0d056623795b6c799a298919e6ed6ae0"
+    "analyzedAt": "2026-09-10T18:48:16.163Z",
+    "gitCommitHash": "438a6b768b4af5158e2d36ef9f6fc50f89a691bd"
   },
   "nodes": [
     {
@@ -29335,7 +29335,7 @@
       "type": "file",
       "name": "agent.py",
       "filePath": "box_agent/agent.py",
-      "summary": "提供 Agent 公共 API、运行选项和目标状态，协调 SessionLog、Skill 状态与稳定循环。保持会话 cwd 路径合同，并把连接器许可回调交给 MCP 工具搜索和可见性管理。",
+      "summary": "提供 Agent 公共 API、运行选项与目标状态，协调 SessionLog、Skill 状态和稳定循环，并把可选 plugins 经运行选项转交装配入口。会话 cwd 与连接器许可回调继续约束工具路径、搜索和可见性。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29350,8 +29350,8 @@
       "name": "_clean_goal_text",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        124,
-        125
+        125,
+        126
       ],
       "summary": "清理目标文本两端空白并把缺失值转换为空字符串。",
       "tags": [
@@ -29368,8 +29368,8 @@
       "name": "_coerce_goal_items",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        128,
-        134
+        129,
+        135
       ],
       "summary": "把目标条目规范为非空字符串列表。",
       "tags": [
@@ -29386,8 +29386,8 @@
       "name": "_extend_goal_items",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        137,
-        140
+        138,
+        141
       ],
       "summary": "合并目标条目并保留已有顺序与唯一性。",
       "tags": [
@@ -29404,8 +29404,8 @@
       "name": "goal_payload",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        143,
-        155
+        144,
+        156
       ],
       "summary": "把 GoalState 转成可持久化和对外返回的字典。",
       "tags": [
@@ -29422,8 +29422,8 @@
       "name": "goal_state_from_payload",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        158,
-        178
+        159,
+        179
       ],
       "summary": "从日志或宿主目标载荷恢复 GoalState 并规范缺省字段。",
       "tags": [
@@ -29440,8 +29440,8 @@
       "name": "_goal_snapshot",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        181,
-        188
+        182,
+        189
       ],
       "summary": "为变更前后比较创建目标状态快照。",
       "tags": [
@@ -29458,8 +29458,8 @@
       "name": "should_continue_goal_autopilot",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        191,
-        196
+        192,
+        197
       ],
       "summary": "结合目标状态和运行停止原因判断是否允许自动继续目标。",
       "tags": [
@@ -29476,8 +29476,8 @@
       "name": "goal_autopilot_progress_signature",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        199,
-        210
+        200,
+        211
       ],
       "summary": "提取可比较的目标进度签名，用于检测连续轮次无进展。",
       "tags": [
@@ -29494,8 +29494,8 @@
       "name": "goal_autopilot_prompt",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        213,
-        238
+        214,
+        239
       ],
       "summary": "为尚未完成的目标构造下一轮继续执行提示。",
       "tags": [
@@ -29513,9 +29513,9 @@
       "filePath": "box_agent/agent.py",
       "lineRange": [
         71,
-        107
+        108
       ],
-      "summary": "定义本轮模型、取消、注入、记忆、审批与 KernelServices 选项；artifact_root_dir 仅为兼容接收而保留，不再影响运行根目录。",
+      "summary": "定义本轮模型、取消、注入、记忆、审批及 KernelServices 选项，增加 plugins 元组供外层运行装配使用；旧 artifact_root_dir 仍仅为兼容接收。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29530,8 +29530,8 @@
       "name": "GoalState",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        111,
-        121
+        112,
+        122
       ],
       "summary": "保存持久目标的内容、状态、创建和更新时间、证据、进度、阻塞原因及完成来源。",
       "tags": [
@@ -29548,8 +29548,8 @@
       "name": "_GoalReadTool",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        241,
-        277
+        242,
+        278
       ],
       "summary": "向模型暴露当前目标的只读状态与上下文压缩快照。",
       "tags": [
@@ -29566,8 +29566,8 @@
       "name": "_GoalWriteTool",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        280,
-        433
+        281,
+        434
       ],
       "summary": "校验并应用模型发起的目标创建、更新、完成和阻塞操作。",
       "tags": [
@@ -29584,10 +29584,10 @@
       "name": "Agent",
       "filePath": "box_agent/agent.py",
       "lineRange": [
-        436,
-        1295
+        437,
+        1300
       ],
-      "summary": "维护消息、目标与 Skill 公共接口，把有效能力传入稳定循环并管理模型可见工具。将宿主连接器许可回调传给 MCPToolExposureManager 和 ToolSearchTool，同时提示模型使用本轮最新连接器状态。",
+      "summary": "维护消息、目标与 Skill 公共接口，将构造时的 plugins 保存为默认运行选项并转交循环装配。连接器许可回调继续交给 MCPToolExposureManager 和 ToolSearchTool，受管运行继续使用传入的 KernelServices。",
       "tags": [
         "agent-runtime",
         "public-api",
@@ -29601,7 +29601,7 @@
       "type": "file",
       "name": "agent_runtime.py",
       "filePath": "box_agent/agent_runtime.py",
-      "summary": "集中构造 LLM、Agent、权限和记忆对象，保留可注入工厂与兼容参数转发；把连接器许可回调传入 Agent，使共享会话和宿主入口使用同一能力过滤入口。",
+      "summary": "集中构造 LLM、Agent、权限和记忆对象，保留可注入工厂与兼容参数转发；可选传递 plugins，并保留连接器许可回调及内置工具门控入口。",
       "tags": [
         "runtime",
         "依赖注入",
@@ -29634,9 +29634,9 @@
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
         73,
-        138
+        141
       ],
-      "summary": "通过可替换工厂构造 Agent，集中转发运行参数、SessionLog 和内置工具选项，并将宿主提供的连接器许可回调传给 Agent。",
+      "summary": "通过可替换工厂构造 Agent，集中转发运行参数、SessionLog、内置工具选项与连接器许可回调；仅显式提供 plugins 时向工厂加入该参数。",
       "tags": [
         "工具函数",
         "runtime",
@@ -29651,8 +29651,8 @@
       "name": "build_permission_engine",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        141,
-        155
+        144,
+        158
       ],
       "summary": "使用宿主解析的策略、工作目录和授权存储创建共享权限引擎。",
       "tags": [
@@ -29669,8 +29669,8 @@
       "name": "build_memory_manager",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        158,
-        169
+        161,
+        172
       ],
       "summary": "根据显式记忆配置创建共享 MemoryManager，保留可注入构造工厂。",
       "tags": [
@@ -29687,8 +29687,8 @@
       "name": "build_memory_extractor",
       "filePath": "box_agent/agent_runtime.py",
       "lineRange": [
-        172,
-        194
+        175,
+        197
       ],
       "summary": "为记忆管理器绑定 LLM、冷却时间与步骤间隔，创建共享提取器。",
       "tags": [
@@ -29704,7 +29704,7 @@
       "type": "file",
       "name": "agent_session.py",
       "filePath": "box_agent/agent_session.py",
-      "summary": "统一活跃会话状态和配置引用，通过 PluginRuntime 预备能力、为每轮绑定 KernelServices，并按所有权释放资源。显式接收连接器许可回调并经 Agent 工厂转发，继续使用会话 cwd。",
+      "summary": "统一活跃会话状态和配置引用，通过 PluginRuntime 预备能力、为每轮绑定 KernelServices，并按所有权释放资源。同步创建入口可转发非空 plugins，继续保留连接器许可回调、utility 工具门控及会话 cwd。",
       "tags": [
         "session-lifecycle",
         "plugin-runtime",
@@ -29719,9 +29719,9 @@
       "filePath": "box_agent/agent_session.py",
       "lineRange": [
         32,
-        406
+        408
       ],
-      "summary": "管理显式配置、运行选项和受管插件会话，协调取消、流关闭和按所有权释放资源。创建会话时将连接器许可回调传入 Agent 工厂，保留禁止并发轮次及外部覆盖受管服务的约束。",
+      "summary": "管理显式配置、运行选项和受管插件会话，协调取消、流关闭与资源释放。创建时将非空 plugins 和连接器许可回调交给 Agent 工厂，保留 utility 门控、禁止并发轮次及外部覆盖受管服务的约束。",
       "tags": [
         "数据模型",
         "会话",
@@ -31256,7 +31256,7 @@
       "type": "file",
       "name": "core.py",
       "filePath": "box_agent/core.py",
-      "summary": "保留历史核心循环的公开签名与兼容导出，将实际运行委托到稳定 kernel，并通过组合层注入服务和兼容计时默认值。",
+      "summary": "保留历史核心循环签名与兼容导出，将实际运行委托到稳定 kernel；新增 plugins 参数随其他能力输入交给组合层解析，并继续传递兼容计时默认值。",
       "tags": [
         "兼容层",
         "公共入口",
@@ -31305,9 +31305,9 @@
       "filePath": "box_agent/core.py",
       "lineRange": [
         296,
-        371
+        372
       ],
-      "summary": "保留原始调用参数和异步事件流接口，组合 kernel 服务后把执行交给稳定内核。",
+      "summary": "保留原始参数和异步事件流接口，把 plugins 等能力输入及兼容计时默认值交给组合层，再委托稳定内核执行。",
       "tags": [
         "兼容层",
         "公共入口",
@@ -31320,7 +31320,7 @@
       "type": "file",
       "name": "loop.py",
       "filePath": "box_agent/kernel/loop.py",
-      "summary": "驱动模型请求、上下文、计划与终止控制，通过工具引擎端口处理动作步骤，将调用记录和结果消息统一交给 kernel 提交。",
+      "summary": "驱动模型请求、上下文、计划和终止控制，经工具引擎端口执行动作步骤并统一提交调用与结果消息。将装配层给定的 Hook dispatch 和运行身份上下文传入借用的 ToolRunContext，工具参数与结果 Hook 由工具能力层处理。",
       "tags": [
         "kernel",
         "对话控制",
@@ -31573,9 +31573,9 @@
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
         601,
-        2478
+        2479
       ],
-      "summary": "驱动模型、上下文、计划和收口决策，通过服务端口执行工具步骤并维护日志恢复不变量；产物发现使用 workspace_dir，废弃 artifact_root_dir 仅触发会话级警告。",
+      "summary": "经服务端口驱动模型、上下文、计划和工具步骤并维护日志恢复不变量，把 Hook dispatch 与运行上下文交给工具引擎。产物发现继续使用 workspace_dir，废弃 artifact_root_dir 仅触发兼容警告。",
       "tags": [
         "kernel",
         "对话控制",
@@ -31589,8 +31589,8 @@
       "name": "run_agent_loop",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        2547,
-        2606
+        2549,
+        2608
       ],
       "summary": "通过已组装的 AgentLoopKernel 执行循环并保留公共异步迭代接口。",
       "tags": [
@@ -31640,10 +31640,10 @@
       "name": "AgentLoopKernel",
       "filePath": "box_agent/kernel/loop.py",
       "lineRange": [
-        2497,
-        2544
+        2499,
+        2546
       ],
-      "summary": "封装可注入依赖的稳定循环，使运行时组装与循环实现通过统一接口协作。",
+      "summary": "以外层装配的 KernelServices 配置稳定循环，拒绝在运行参数中重复传入 hooks、plugins 等能力实现；兼容旧服务束时补齐工具引擎，并在退出时关闭事件流及本轮工具引擎。",
       "tags": [
         "kernel",
         "对话控制",
@@ -32199,7 +32199,7 @@
       "type": "file",
       "name": "call_contracts.py",
       "filePath": "box_agent/tools/engine/call_contracts.py",
-      "summary": "定义工具运行选项、借用服务、kernel 控制回调、单次调用记录和模型步摘要，使执行输入、真实结果与对话控制显式分离。",
+      "summary": "定义工具运行选项、借用服务、kernel 提交回调、调用记录与步骤摘要；以 HookBus/dispatch 端口和运行身份连接 Hook，并显式区分调用尝试、实际执行和 Hook 拒绝信息。",
       "tags": [
         "数据契约",
         "工具引擎",
@@ -32213,8 +32213,8 @@
       "name": "ToolExecutionOptions",
       "filePath": "box_agent/tools/engine/call_contracts.py",
       "lineRange": [
-        22,
-        34
+        23,
+        35
       ],
       "summary": "不可变地传递工具配额、搜索并发、批次超时、活动轮询、取消宽限及产物检测选项。",
       "tags": [
@@ -32230,10 +32230,10 @@
       "name": "ToolRunContext",
       "filePath": "box_agent/tools/engine/call_contracts.py",
       "lineRange": [
-        38,
-        58
+        39,
+        61
       ],
-      "summary": "借用会话消息、Hook、结果存储和权限服务，通过窄回调让 kernel 提交日志与对话结果；workspace_dir 是发现根，artifact_root_dir 仅保留兼容字段。",
+      "summary": "借用会话消息、HookBus、结果存储与权限服务，接收装配层提供的 HookDispatchPort 和 HookContext；通过窄回调交由 kernel 提交调用日志和模型结果。",
       "tags": [
         "数据契约",
         "工具引擎",
@@ -32247,8 +32247,8 @@
       "name": "ToolStepControl",
       "filePath": "box_agent/tools/engine/call_contracts.py",
       "lineRange": [
-        62,
-        69
+        65,
+        72
       ],
       "summary": "承载 kernel 对单个模型步的工具允许集、阻断原因、结果变换和瞬态 token 配额，避免工具层自行作出对话决策。",
       "tags": [
@@ -32264,10 +32264,10 @@
       "name": "ToolCallRecord",
       "filePath": "box_agent/tools/engine/call_contracts.py",
       "lineRange": [
-        73,
-        92
+        76,
+        98
       ],
-      "summary": "保存调用请求、参数、权限、路径和真实执行结果；before_files 为 None 表示不存在完整的调用前产物快照。",
+      "summary": "保存参数、权限、路径和真实执行结果，分别记录是否进入调用、是否实际执行及结构化 Hook 拒绝原因；before_files 为空表示没有完整调用前产物快照。",
       "tags": [
         "数据契约",
         "工具引擎",
@@ -32281,8 +32281,8 @@
       "name": "ToolStepSummary",
       "filePath": "box_agent/tools/engine/call_contracts.py",
       "lineRange": [
-        96,
-        106
+        102,
+        112
       ],
       "summary": "汇总一个模型步的进展、可见调用、成功工具、结束轮次工具和后续上下文；该结构仅供内部循环使用。",
       "tags": [
@@ -32378,7 +32378,7 @@
       "type": "file",
       "name": "engine.py",
       "filePath": "box_agent/tools/engine/engine.py",
-      "summary": "以 DefaultToolEngine 编排请求内工具准备、预算、执行和结果收尾，借用调用方的工具、暴露目录及结果存储；运行结束仅关闭活动调用。",
+      "summary": "借用会话工具、暴露目录与结果存储，统一预算、调度和结果收尾，并在能力层接入 scoped Hook 的改参、拒绝、结果文本与完成观察。无 dispatch 时保留旧 Hook 回调，运行结束仅关闭活动调用。",
       "tags": [
         "工具引擎",
         "所有权",
@@ -32392,10 +32392,10 @@
       "name": "DefaultToolEngine",
       "filePath": "box_agent/tools/engine/engine.py",
       "lineRange": [
-        58,
-        512
+        60,
+        578
       ],
-      "summary": "借用会话拥有的工具和服务，统一预算、调度、审批与结果收尾；以 cwd 准备浏览器路径和有界产物快照，废弃产物根输入仅警告，关闭时仅释放本次活动调用。",
+      "summary": "借用会话服务统一工具预算与调度，Hook 可在执行前改参或拒绝，获准参数会再次经过准入、路径、权限与 schema 校验。结果 Hook 调整可见文本而保留真实执行结果，完成观察携带实际执行及拒绝或重复调用信息，退出时仅释放本轮活动调用。",
       "tags": [
         "工具引擎",
         "所有权",
@@ -32587,7 +32587,7 @@
       "type": "file",
       "name": "results.py",
       "filePath": "box_agent/tools/engine/results.py",
-      "summary": "把执行结果分别转换为模型消息、宿主事件及存储引用，调用所属能力适配器处理搜索、文件历史和资源回执后返回 kernel 统一提交。",
+      "summary": "把真实执行结果分别转换为模型消息、宿主事件和存储引用，调用能力适配器后交给 kernel 统一提交。Hook 改写后的可见文本优先进入历史，避免原始 model_context、资源回执或重复错误折叠覆盖修改。",
       "tags": [
         "结果管线",
         "模型历史",
@@ -32601,10 +32601,10 @@
       "name": "process_tool_result",
       "filePath": "box_agent/tools/engine/results.py",
       "lineRange": [
-        75,
-        247
+        76,
+        251
       ],
-      "summary": "处理真实工具结果、模型历史内容、存储引用和宿主事件，返回供 kernel 唯一提交的工具消息及计数变化。",
+      "summary": "适配真实工具结果、历史内容、存储引用和宿主事件，返回供 kernel 唯一提交的消息与计数变化。Hook 已修改文本时以处理后的可见内容构建模型历史，并跳过重复框架错误折叠。",
       "tags": [
         "结果管线",
         "模型历史",
@@ -32619,9 +32619,9 @@
       "filePath": "box_agent/tools/engine/results.py",
       "lineRange": [
         32,
-        57
+        58
       ],
-      "summary": "显式传递已完成调用的原始结果、可见内容、资源账本、结果存储与决策信息，供共享结果管线处理。",
+      "summary": "显式携带原始结果、可见内容、资源账本、存储及决策信息，并以 hook_text_modified 标记结果文本已被 Hook 修改。",
       "tags": [
         "结果管线",
         "模型历史",
@@ -32635,8 +32635,8 @@
       "name": "ToolResultPipelineOutcome",
       "filePath": "box_agent/tools/engine/results.py",
       "lineRange": [
-        61,
-        72
+        62,
+        73
       ],
       "summary": "返回适配后的事件、模型工具消息、存储内容及计数变化，保留执行结果与展示结果的区别。",
       "tags": [
@@ -32651,7 +32651,7 @@
       "type": "file",
       "name": "scheduler.py",
       "filePath": "box_agent/tools/engine/scheduler.py",
-      "summary": "调度串行或并行工具尝试，转发进度和活跃事件并控制超时、取消及迟到任务，保持批次结果与请求顺序一致。",
+      "summary": "调度串行或并行工具尝试，转发进度与活动事件并处理超时、取消及迟到任务。在真正进入 invoke_tool_once 前触发可选 on_invoke 回调，使排队取消和即时拒绝与调用尝试分开记录。",
       "tags": [
         "调度",
         "并行",
@@ -32683,9 +32683,9 @@
       "filePath": "box_agent/tools/engine/scheduler.py",
       "lineRange": [
         37,
-        45
+        46
       ],
-      "summary": "携带调用 ID、工具名、参数及可选即时结果和已批准请求，供调度器执行。",
+      "summary": "携带调用 ID、名称、参数、即时结果及已批准权限请求，并提供仅在进入调用时执行的 on_invoke 回调。",
       "tags": [
         "调度",
         "并行",
@@ -32699,8 +32699,8 @@
       "name": "ToolEngineProgress",
       "filePath": "box_agent/tools/engine/scheduler.py",
       "lineRange": [
-        49,
-        52
+        50,
+        53
       ],
       "summary": "包装事件型工具在执行过程中产生的实时进度事件。",
       "tags": [
@@ -32716,8 +32716,8 @@
       "name": "ToolEngineActivity",
       "filePath": "box_agent/tools/engine/scheduler.py",
       "lineRange": [
-        56,
-        59
+        57,
+        60
       ],
       "summary": "表示工具等待期间的存活心跳，由上层转换成通用活动事件。",
       "tags": [
@@ -32733,8 +32733,8 @@
       "name": "ToolInvocationCompleted",
       "filePath": "box_agent/tools/engine/scheduler.py",
       "lineRange": [
-        63,
-        68
+        64,
+        69
       ],
       "summary": "将工具调用结果和状态关联到原请求 ID 与索引，保持并行完成后的可追溯顺序。",
       "tags": [
@@ -32750,8 +32750,8 @@
       "name": "ToolBatchCompleted",
       "filePath": "box_agent/tools/engine/scheduler.py",
       "lineRange": [
-        72,
-        78
+        73,
+        79
       ],
       "summary": "汇总并行批次按原顺序排列的结果及按 ID 查找的视图。",
       "tags": [
@@ -32767,10 +32767,10 @@
       "name": "ToolEngine",
       "filePath": "box_agent/tools/engine/scheduler.py",
       "lineRange": [
-        89,
-        542
+        90,
+        546
       ],
-      "summary": "对已通过准入的工具进行串行或并行调度，实时转发异步进度并处理超时、取消、宽限退出和迟到任务。",
+      "summary": "对已通过准入的工具做串行或并行调度，转发异步进度并处理超时、取消及迟到任务；一次授权后紧接调用入口触发 on_invoke，排队取消和即时拒绝不会触发该标记。",
       "tags": [
         "调度",
         "并行",
@@ -34240,11 +34240,11 @@
       "type": "file",
       "name": "composition.py",
       "filePath": "box_agent/composition.py",
-      "summary": "在外层组合默认或已受管的 KernelServices，校验与有效运行能力一致后驱动稳定 Kernel，并保留执行与清理错误的因果关系。",
+      "summary": "在外层为每个 Run 注册、冻结和注入 HookBus；managed 路径只替换三个 Hook 引用并保持借用能力身份，有额外 Provider 时才创建独立 RUN 扩展宿主。关闭先排空总线再清理 Provider，managed Run 等待清理完成后才向 Session 传播结束或取消。",
       "tags": [
         "composition",
-        "kernel",
-        "生命周期"
+        "hooks",
+        "ownership"
       ],
       "complexity": "complex"
     },
@@ -34254,15 +34254,16 @@
       "name": "_default_capabilities",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        38,
-        58
+        41,
+        64
       ],
-      "summary": "实现 `default-capabilities` 对应的模块职责；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
+      "summary": "收集当前运行的模型、工具和其他能力，并创建带 Session 身份与取消查询的本 Run HookBus。",
       "tags": [
         "function",
         "composition",
         "default-capabilities",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34272,15 +34273,16 @@
       "name": "_kernel_run_arguments",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        61,
-        68
+        67,
+        74
       ],
-      "summary": "实现 `kernel-run-arguments` 对应的模块职责；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
+      "summary": "过滤已由 KernelServices 拥有的能力和 plugins 参数，只向纯内核转交运行控制参数。",
       "tags": [
         "function",
         "composition",
         "kernel-run-arguments",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34290,15 +34292,16 @@
       "name": "compose_default_kernel_services",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        71,
-        87
+        109,
+        131
       ],
-      "summary": "由默认能力构造不可变服务包，并绑定借用工具目录和暴露策略的默认 ToolEngine。",
+      "summary": "同步构造默认服务与本 Run HookBus，注册并冻结旧 Hook；拒绝需异步激活的静态插件，保留借用工具的默认执行器。",
       "tags": [
         "function",
         "composition",
         "compose-default-kernel-services",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34308,15 +34311,16 @@
       "name": "_validate_managed_services",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        90,
-        143
+        134,
+        187
       ],
       "summary": "按对象身份核对受管服务与有效运行能力及 Hook 列表，拒绝互相矛盾的旧参数覆盖。",
       "tags": [
         "工具函数",
         "composition",
         "kernel",
-        "生命周期"
+        "生命周期",
+        "hooks"
       ],
       "complexity": "moderate"
     },
@@ -34326,15 +34330,16 @@
       "name": "_add_cleanup_note",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        146,
-        155
+        190,
+        199
       ],
       "summary": "实现 `add-cleanup-note` 对应的模块职责；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
       "tags": [
         "function",
         "composition",
         "add-cleanup-note",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34344,15 +34349,16 @@
       "name": "_combined_cleanup_error",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        158,
-        190
+        202,
+        234
       ],
-      "summary": "实现 `combined-cleanup-error` 对应的模块职责；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
+      "summary": "展开插件清理失败并保留原始取消对象，把普通错误挂为原因或注释，兼容 Python 3.10。",
       "tags": [
         "function",
         "composition",
         "combined-cleanup-error",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34362,15 +34368,16 @@
       "name": "_cleanup_plugin_run",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        193,
-        211
+        237,
+        255
       ],
-      "summary": "规范化并校验输入；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
+      "summary": "依次尝试释放当前激活与关闭宿主，收集各阶段失败并保留取消的因果关系。",
       "tags": [
         "function",
         "composition",
         "cleanup-plugin-run",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34380,15 +34387,16 @@
       "name": "_attach_cleanup_error",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        214,
-        223
+        258,
+        267
       ],
       "summary": "实现 `attach-cleanup-error` 对应的模块职责；服务于组合默认插件、KernelServices 与 AgentLoopKernel，并统一处理插件清理失败。",
       "tags": [
         "function",
         "composition",
         "attach-cleanup-error",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34398,15 +34406,16 @@
       "name": "run_agent_loop_with_default_services",
       "filePath": "box_agent/composition.py",
       "lineRange": [
-        226,
-        297
+        332,
+        417
       ],
-      "summary": "优先校验并使用受管服务，否则临时激活默认插件；两条路径都关闭事件流，并由各自所有者释放资源。",
+      "summary": "先校验 managed 能力一致性，为本 Run 注册 Hook 并仅重绑 hook_bus、hook_dispatch、hook_context；额外插件使用独立 RUN 宿主且不能替换其他借用能力。关闭事件流后执行受保护的总线和 Provider 清理。",
       "tags": [
         "function",
         "composition",
         "run-agent-loop-with-default-services",
-        "business-logic"
+        "business-logic",
+        "hooks"
       ],
       "complexity": "moderate"
     },
@@ -34415,11 +34424,11 @@
       "type": "file",
       "name": "hooks.py",
       "filePath": "box_agent/hooks.py",
-      "summary": "定义生命周期 Hook 与调度器，隔离普通扩展异常；工具开始及结果回调中的 SessionLogDurabilityError 必须向上传播。",
+      "summary": "保留 BaseHook、HookManager 与类路径加载器的兼容语义，并统一导出新 HookBus、旧回调适配器、注册令牌和错误类型。",
       "tags": [
-        "hook",
-        "生命周期",
-        "持久化"
+        "hooks",
+        "compatibility",
+        "entry-point"
       ],
       "complexity": "complex"
     },
@@ -34437,7 +34446,8 @@
         "工具函数",
         "hook",
         "生命周期",
-        "扩展"
+        "扩展",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34455,7 +34465,8 @@
         "工具函数",
         "hook",
         "生命周期",
-        "扩展"
+        "扩展",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34473,7 +34484,8 @@
         "数据模型",
         "hook",
         "生命周期",
-        "扩展"
+        "扩展",
+        "hooks"
       ],
       "complexity": "moderate"
     },
@@ -34491,7 +34503,8 @@
         "数据模型",
         "hook",
         "生命周期",
-        "扩展"
+        "扩展",
+        "hooks"
       ],
       "complexity": "moderate"
     },
@@ -34500,11 +34513,11 @@
       "type": "file",
       "name": "ports.py",
       "filePath": "box_agent/kernel/ports.py",
-      "summary": "声明模型、权限、记忆、会话、Hook 和工具端口，并以 KernelServices 汇总每轮已解析能力，包含可选 ToolEngine。",
+      "summary": "声明内核依赖的模型、权限、记忆、会话与工具端口，新增结构化 HookDispatchPort，并在不可变 KernelServices 中借用 hook_dispatch 与本 Run 的 hook_context。",
       "tags": [
         "kernel",
         "protocol",
-        "接口"
+        "hooks"
       ],
       "complexity": "complex"
     },
@@ -34514,15 +34527,16 @@
       "name": "SummaryLLMPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        20,
-        33
+        21,
+        34
       ],
       "summary": "封装 `SummaryLLMPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "summaryllmport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34532,15 +34546,16 @@
       "name": "LLMPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        37,
-        56
+        38,
+        57
       ],
       "summary": "封装 `LLMPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "llmport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34550,15 +34565,16 @@
       "name": "PermissionGatewayPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        60,
-        63
+        61,
+        64
       ],
       "summary": "封装 `PermissionGatewayPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "permissiongatewayport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34568,15 +34584,16 @@
       "name": "MemoryLookupPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        67,
-        75
+        68,
+        76
       ],
       "summary": "封装 `MemoryLookupPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "memorylookupport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34586,15 +34603,16 @@
       "name": "MemoryExtractionPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        79,
-        88
+        80,
+        89
       ],
       "summary": "封装 `MemoryExtractionPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "memoryextractionport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34604,15 +34622,16 @@
       "name": "MemoryPromotionPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        92,
-        110
+        93,
+        111
       ],
       "summary": "封装 `MemoryPromotionPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "memorypromotionport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34622,15 +34641,16 @@
       "name": "SessionStorePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        114,
-        144
+        115,
+        145
       ],
       "summary": "封装 `SessionStorePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "sessionstoreport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34640,15 +34660,16 @@
       "name": "HookBusPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        148,
-        200
+        149,
+        201
       ],
-      "summary": "封装 `HookBusPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
+      "summary": "保留旧生命周期与工具 fire_* 调用签名，供兼容入口借用 Hook 能力。",
       "tags": [
         "class",
         "kernel",
         "hookbusport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "moderate"
     },
@@ -34658,15 +34679,16 @@
       "name": "ToolCatalogPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        204,
-        221
+        216,
+        233
       ],
       "summary": "封装 `ToolCatalogPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "toolcatalogport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34676,15 +34698,16 @@
       "name": "ToolExposureResultPort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        225,
-        229
+        237,
+        241
       ],
       "summary": "封装 `ToolExposureResultPort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "toolexposureresultport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34694,15 +34717,16 @@
       "name": "ToolExposurePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        233,
-        243
+        245,
+        255
       ],
       "summary": "封装 `ToolExposurePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "toolexposureport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34712,15 +34736,16 @@
       "name": "ToolResultStorePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        247,
-        272
+        259,
+        284
       ],
       "summary": "封装 `ToolResultStorePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "toolresultstoreport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34730,15 +34755,16 @@
       "name": "ToolResultBudgetOutcomePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        276,
-        282
+        288,
+        294
       ],
       "summary": "封装 `ToolResultBudgetOutcomePort` 契约与状态，用于声明内核依赖的 LLM、权限、记忆、会话、Hook、工具暴露与结果存储端口协议。",
       "tags": [
         "class",
         "kernel",
         "toolresultbudgetoutcomeport",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34748,15 +34774,16 @@
       "name": "ToolEnginePort",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        286,
-        303
+        298,
+        315
       ],
       "summary": "定义每轮工具准备、运行配置、预算指引、异步调用事件及关闭接口，执行器借用会话资源。",
       "tags": [
         "数据模型",
         "kernel",
         "protocol",
-        "接口"
+        "接口",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34766,15 +34793,16 @@
       "name": "KernelServices",
       "filePath": "box_agent/kernel/ports.py",
       "lineRange": [
-        307,
-        321
+        319,
+        335
       ],
-      "summary": "将模型、权限、记忆、会话日志、Hook、工具目录和可选执行器绑定为不可变的每轮能力包。",
+      "summary": "将每轮已解析能力绑定为不可变引用包，新增可选 HookDispatchPort 和本 Run HookContext；不转移所引用能力对象的资源所有权。",
       "tags": [
         "class",
         "kernel",
         "kernelservices",
-        "protocol"
+        "protocol",
+        "hooks"
       ],
       "complexity": "simple"
     },
@@ -34783,13 +34811,13 @@
       "type": "file",
       "name": "__init__.py",
       "filePath": "box_agent/plugins/__init__.py",
-      "summary": "重新导出插件描述、PluginFactoryContext、注册表、宿主及默认服务组装 API。",
+      "summary": "导出静态插件与默认组装 API，并增加 PluginContribution、HookSpec、HookOwner 和 HookProviderPort 的公开入口。",
       "tags": [
-        "plugin",
-        "barrel",
-        "公共接口"
+        "plugins",
+        "exports",
+        "hooks"
       ],
-      "complexity": "simple"
+      "complexity": "moderate"
     },
     {
       "id": "file:box_agent/plugins/builtins.py",
@@ -34971,13 +34999,13 @@
       "type": "file",
       "name": "defaults.py",
       "filePath": "box_agent/plugins/defaults.py",
-      "summary": "为旧入口提供默认插件描述和服务组装，按已提供能力实例构造注册表及 KernelServices，并支持可选 ToolEnginePort。",
+      "summary": "把调用方拥有的能力封装为不接管资源的默认描述符，注册可选 HookDispatchPort 和多 Provider 能力；额外插件限 RUN 作用域，并据注册表组装不可变内核引用。",
       "tags": [
-        "plugin",
-        "默认能力",
-        "注册表"
+        "plugins",
+        "composition",
+        "hooks"
       ],
-      "complexity": "moderate"
+      "complexity": "complex"
     },
     {
       "id": "function:box_agent/plugins/defaults.py:_captured_instance_descriptor",
@@ -34985,15 +35013,16 @@
       "name": "_captured_instance_descriptor",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        48,
-        62
+        54,
+        68
       ],
-      "summary": "实现 `captured-instance-descriptor` 对应的模块职责；服务于声明默认插件描述符，激活插件宿主并从注册表组装 KernelServices。",
+      "summary": "为调用方拥有的能力创建捕获同一实例的 RUN 描述符，disposer=None 保留原资源所有权。",
       "tags": [
         "function",
         "plugins",
         "captured-instance-descriptor",
-        "business-logic"
+        "business-logic",
+        "composition"
       ],
       "complexity": "simple"
     },
@@ -35003,15 +35032,16 @@
       "name": "default_plugin_descriptors",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        65,
-        115
+        71,
+        125
       ],
-      "summary": "为给定能力实例生成稳定顺序的默认插件描述，包含显式提供的可选工具执行器。",
+      "summary": "按固定顺序生成借用能力描述符，支持可选工具引擎；总线实现结构化协议时同时绑定旧 HookBusPort 与 HookDispatchPort。",
       "tags": [
         "function",
         "plugins",
         "default-plugin-descriptors",
-        "business-logic"
+        "business-logic",
+        "composition"
       ],
       "complexity": "moderate"
     },
@@ -35021,15 +35051,16 @@
       "name": "create_default_plugin_host",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        118,
-        151
+        128,
+        165
       ],
-      "summary": "构造运行时对象或结构；服务于声明默认插件描述符，激活插件宿主并从注册表组装 KernelServices。",
+      "summary": "将借用能力与额外静态插件组成当前 Run 私有宿主，拒绝非 RUN 作用域扩展。",
       "tags": [
         "function",
         "plugins",
         "create-default-plugin-host",
-        "business-logic"
+        "business-logic",
+        "composition"
       ],
       "complexity": "simple"
     },
@@ -35039,15 +35070,16 @@
       "name": "kernel_services_from_registry",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        154,
-        170
+        168,
+        185
       ],
-      "summary": "读取必需和可选端口，构造包含可选 ToolEngine 的不可变 KernelServices。",
+      "summary": "从冻结注册表读取必需和可选能力，包括可选 HookDispatchPort，形成不可变 KernelServices。",
       "tags": [
         "function",
         "plugins",
         "kernel-services-from-registry",
-        "business-logic"
+        "business-logic",
+        "composition"
       ],
       "complexity": "simple"
     },
@@ -35057,15 +35089,16 @@
       "name": "compose_default_services",
       "filePath": "box_agent/plugins/defaults.py",
       "lineRange": [
-        173,
-        203
+        188,
+        219
       ],
-      "summary": "构造运行时对象或结构；服务于声明默认插件描述符，激活插件宿主并从注册表组装 KernelServices。",
+      "summary": "直接组合现有能力引用；总线实现结构化协议时填充 hook_dispatch，保持其他对象身份。",
       "tags": [
         "function",
         "plugins",
         "compose-default-services",
-        "business-logic"
+        "business-logic",
+        "composition"
       ],
       "complexity": "simple"
     },
@@ -35141,11 +35174,11 @@
       "type": "file",
       "name": "host.py",
       "filePath": "box_agent/plugins/host.py",
-      "summary": "校验插件目录和依赖闭包，按 process/session/run 范围激活、缓存与清理实例。失败 Run 激活的中断回滚按 session_key 保留，覆盖运行时 Port 校验失败，并在同会话再次激活前要求完成清理。",
+      "summary": "按 process/session/run 作用域校验、激活和清理插件，保留失败 Run 回滚及原会话隔离语义。激活结果提供真实描述符与实例的 contribution 查询，has_live_instances 支持私有 Run 宿主持续重试未完成的 Provider 清理。",
       "tags": [
-        "plugin",
-        "依赖管理",
-        "生命周期"
+        "plugins",
+        "lifecycle",
+        "ownership"
       ],
       "complexity": "complex"
     },
@@ -35155,15 +35188,16 @@
       "name": "_is_valid_semver",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        36,
-        46
+        37,
+        47
       ],
       "summary": "校验插件版本字符串是否符合支持的语义化版本格式。",
       "tags": [
         "工具函数",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35173,15 +35207,16 @@
       "name": "_is_hashable",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        49,
-        54
+        50,
+        55
       ],
       "summary": "检查作用域标识能否用作插件实例缓存键。",
       "tags": [
         "工具函数",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35191,15 +35226,16 @@
       "name": "_supports_dynamic_protocol",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        57,
-        75
+        58,
+        76
       ],
       "summary": "验证动态对象是否提供协议要求的可调用成员。",
       "tags": [
         "工具函数",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35209,15 +35245,16 @@
       "name": "PluginError",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        78,
-        79
+        79,
+        80
       ],
       "summary": "表示插件宿主生命周期中的通用错误。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35227,15 +35264,16 @@
       "name": "PluginValidationError",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        82,
-        83
+        83,
+        84
       ],
       "summary": "表示插件描述、schema 或端口不满足合同。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35245,15 +35283,16 @@
       "name": "PluginDependencyCycleError",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        86,
-        87
+        87,
+        88
       ],
       "summary": "表示插件依赖图存在循环而无法确定激活顺序。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35263,15 +35302,16 @@
       "name": "PluginScopeError",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        90,
-        91
+        91,
+        92
       ],
       "summary": "表示插件作用域标识或实例使用不合法。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35281,15 +35321,16 @@
       "name": "PluginCleanupError",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        94,
-        100
+        95,
+        101
       ],
       "summary": "汇总插件清理阶段产生的一个或多个失败。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35299,15 +35340,16 @@
       "name": "_InstanceRecord",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        104,
-        107
+        105,
+        108
       ],
       "summary": "记录已创建插件实例及其描述、作用域和清理信息。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35317,15 +35359,16 @@
       "name": "PluginActivation",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        110,
-        135
+        119,
+        152
       ],
-      "summary": "表示一次插件激活结果，支持异步上下文管理和幂等释放。",
+      "summary": "保存冻结能力注册表及当前 Run 实例，按激活顺序查询指定 Port 的 contribution 与归属，并保留幂等异步释放。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "simple"
     },
@@ -35335,15 +35378,16 @@
       "name": "PluginHost",
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
-        138,
-        823
+        155,
+        847
       ],
-      "summary": "校验依赖闭包与能力基数，防止寿命倒置并管理作用域实例。按会话保留失败 Run 激活的未完成回滚，dispose_session 先重试 Run 清理再释放 Session 依赖；再次中断时保持可重试，其他会话与 Process 资源不受该会话关闭影响。",
+      "summary": "保持依赖和作用域校验、失败 Run 回滚与 Session 隔离语义；激活时记录描述符及实例 contribution，并暴露仍存活实例以支持私有 Run Provider 清理重试。",
       "tags": [
         "数据模型",
         "plugin",
         "生命周期",
-        "依赖管理"
+        "依赖管理",
+        "plugins"
       ],
       "complexity": "complex"
     },
@@ -37572,6 +37616,602 @@
         1470,
         1477
       ]
+    },
+    {
+      "id": "function:box_agent/composition.py:_register_legacy_hooks",
+      "type": "function",
+      "name": "_register_legacy_hooks",
+      "filePath": "box_agent/composition.py",
+      "lineRange": [
+        77,
+        84
+      ],
+      "summary": "按原列表顺序把旧 Hook 适配成声明，由装配层绑定 legacy 来源和当前 Run 归属。",
+      "complexity": "simple",
+      "tags": [
+        "composition",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "function:box_agent/composition.py:register_run_hooks",
+      "type": "function",
+      "name": "register_run_hooks",
+      "filePath": "box_agent/composition.py",
+      "lineRange": [
+        87,
+        106
+      ],
+      "summary": "先注册旧 Hook，再从 activation 的真实 contribution 取得 HookProvider 声明并绑定描述符归属，全部成功后冻结总线；失败先关闭总线。",
+      "complexity": "simple",
+      "tags": [
+        "composition",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "function:box_agent/composition.py:_cleanup_hook_run",
+      "type": "function",
+      "name": "_cleanup_hook_run",
+      "filePath": "box_agent/composition.py",
+      "lineRange": [
+        273,
+        299
+      ],
+      "summary": "先等待 HookBus 排空再释放 Provider；私有 Run 宿主清理再次取消时持续关闭剩余实例，最终以任务返回值传递原始异常对象。",
+      "complexity": "simple",
+      "tags": [
+        "composition",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "function:box_agent/composition.py:_wait_for_hook_cleanup",
+      "type": "function",
+      "name": "_wait_for_hook_cleanup",
+      "filePath": "box_agent/composition.py",
+      "lineRange": [
+        302,
+        323
+      ],
+      "summary": "通过 shield 等待受保护清理任务；managed 路径延后传播重复取消，确保 Hook 与 Provider 清理完成后 Session 才能释放依赖。",
+      "complexity": "simple",
+      "tags": [
+        "composition",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "function:box_agent/composition.py:_cleanup_task_finished",
+      "type": "function",
+      "name": "_cleanup_task_finished",
+      "filePath": "box_agent/composition.py",
+      "lineRange": [
+        326,
+        329
+      ],
+      "summary": "释放已完成清理任务的全局保留引用，并消费未取消任务异常。",
+      "complexity": "simple",
+      "tags": [
+        "composition",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "file:box_agent/hook_bus.py",
+      "type": "file",
+      "name": "hook_bus.py",
+      "filePath": "box_agent/hook_bus.py",
+      "summary": "实现每个 Run 独立的 Hook 注册、冻结索引和事件分发，按优先级执行 observer、参数决策与结果文本处理，并兼容旧回调。关闭停止分发、取消并等待在途任务，再逆序释放注册令牌。",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:HookConfigError",
+      "type": "class",
+      "name": "HookConfigError",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        32,
+        33
+      ],
+      "summary": "表示 Hook 声明、事件种类或注册归属不符合契约。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:HookStateError",
+      "type": "class",
+      "name": "HookStateError",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        36,
+        37
+      ],
+      "summary": "表示总线阶段、Run/Session 身份或操作时机不允许分发、注册或关闭。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:RegistrationEntry",
+      "type": "class",
+      "name": "RegistrationEntry",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        41,
+        45
+      ],
+      "summary": "以不可变记录关联注册 ID、稳定注册顺序、HookSpec 和真实 HookOwner。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:DispatchLease",
+      "type": "class",
+      "name": "DispatchLease",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        49,
+        50
+      ],
+      "summary": "标识一次在途分发，使总线关闭能追踪其持有任务。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:HookExecution",
+      "type": "class",
+      "name": "HookExecution",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        54,
+        57
+      ],
+      "summary": "保存单个 Hook 的完成、跳过或失败状态以及决策与错误名称。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:HookRegistration",
+      "type": "class",
+      "name": "HookRegistration",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        60,
+        71
+      ],
+      "summary": "持有单条注册的撤销令牌，幂等释放且不销毁 Provider 实例。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:LegacyHookAdapter",
+      "type": "class",
+      "name": "LegacyHookAdapter",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        74,
+        92
+      ],
+      "summary": "把旧生命周期和工具回调映射成 HookSpec，保留原始参数、调用范围、协程与异常语义。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/hook_bus.py:build_hook_context",
+      "type": "function",
+      "name": "build_hook_context",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        95,
+        97
+      ],
+      "summary": "保留 Run/Session 调用身份，以当前 payload 和截止时间重建只读 HookContext。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "function:box_agent/hook_bus.py:_snapshot_legacy",
+      "type": "function",
+      "name": "_snapshot_legacy",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        100,
+        115
+      ],
+      "summary": "把旧生命周期数据投影成新 Handler 可用的 JSON 快照，不向新上下文暴露工具或运行时服务对象。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "class:box_agent/hook_bus.py:HookBus",
+      "type": "class",
+      "name": "HookBus",
+      "filePath": "box_agent/hook_bus.py",
+      "lineRange": [
+        118,
+        512
+      ],
+      "summary": "在 Registering 阶段校验当前 Run 归属并按优先级冻结索引，逐次分发独立持有参数、文本和期限；前置失败拒绝、文本失败抑制，取消和日志耐久性失败向外传播。close 停止接收分发并等待所有任务结束后逆序撤销注册。",
+      "complexity": "complex",
+      "tags": [
+        "hooks",
+        "dispatch",
+        "lifecycle"
+      ]
+    },
+    {
+      "id": "file:box_agent/kernel/hook_types.py",
+      "type": "file",
+      "name": "hook_types.py",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "summary": "定义 Hook 事件名、处理种类、只读上下文、参数与结果文本决策和 Handler 协议；只承载内核消费的数据合同，不管理插件发现或 Provider 生命周期。",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:box_agent/kernel/hook_types.py:freeze_data",
+      "type": "function",
+      "name": "freeze_data",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        29,
+        41
+      ],
+      "summary": "递归复制并冻结 JSON 数据容器，拒绝运行时对象、非字符串键和非有限浮点值。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "function:box_agent/kernel/hook_types.py:copy_data",
+      "type": "function",
+      "name": "copy_data",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        44,
+        50
+      ],
+      "summary": "把只读 Mapping 和 tuple 快照复制为调用方可独立修改的 JSON 容器。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:HookContext",
+      "type": "class",
+      "name": "HookContext",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        54,
+        78
+      ],
+      "summary": "保存 Hook 事件、Run/Session 身份、工具调用和步骤、只读 payload、取消查询及截止时间；构造时验证身份和冻结数据。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:BeforeToolDecision",
+      "type": "class",
+      "name": "BeforeToolDecision",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        82,
+        113
+      ],
+      "summary": "表达 allow、完整参数替换 modify 或带原因代码的 deny，校验互斥字段并冻结替换参数。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:ResultText",
+      "type": "class",
+      "name": "ResultText",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        117,
+        125
+      ],
+      "summary": "保存可见 content/error 文本并校验字符串类型，不拥有工具 success 或原始结果。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:ResultTextDecision",
+      "type": "class",
+      "name": "ResultTextDecision",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        129,
+        155
+      ],
+      "summary": "表达 keep、replace 或 suppress 的文本处理决策，验证替换文本与抑制原因的互斥合同。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:BeforeToolResolution",
+      "type": "class",
+      "name": "BeforeToolResolution",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        159,
+        177
+      ],
+      "summary": "封装整条前置链最终参数或拒绝结论，包含拒绝 Hook 标识及来源。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:ResultTextResolution",
+      "type": "class",
+      "name": "ResultTextResolution",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        181,
+        189
+      ],
+      "summary": "保存最终可见文本、累计修改标记，以及抑制原因和来源归属。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:ObserverHandler",
+      "type": "class",
+      "name": "ObserverHandler",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        192,
+        193
+      ],
+      "summary": "定义异步 observer 的 handle(context) 协议，完成时不返回修改决策。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:BeforeToolHandler",
+      "type": "class",
+      "name": "BeforeToolHandler",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        196,
+        197
+      ],
+      "summary": "定义异步执行前处理接口，返回显式 BeforeToolDecision。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:ResultTextHandler",
+      "type": "class",
+      "name": "ResultTextHandler",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        200,
+        201
+      ],
+      "summary": "定义异步结果文本处理接口，返回显式 ResultTextDecision。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/hook_types.py:HookMatcher",
+      "type": "class",
+      "name": "HookMatcher",
+      "filePath": "box_agent/kernel/hook_types.py",
+      "lineRange": [
+        204,
+        205
+      ],
+      "summary": "定义基于当前只读 HookContext 返回布尔值的异步匹配协议。",
+      "complexity": "simple",
+      "tags": [
+        "hooks",
+        "data-contract",
+        "kernel"
+      ]
+    },
+    {
+      "id": "class:box_agent/kernel/ports.py:HookDispatchPort",
+      "type": "class",
+      "name": "HookDispatchPort",
+      "filePath": "box_agent/kernel/ports.py",
+      "lineRange": [
+        205,
+        212
+      ],
+      "summary": "向内核与工具引擎提供 observe、before_tool 和 after_tool 的结构化协议，返回只读决策结果并保留旧 HookBusPort。",
+      "complexity": "simple",
+      "tags": [
+        "kernel",
+        "protocol",
+        "hooks"
+      ]
+    },
+    {
+      "id": "file:box_agent/plugins/hooks.py",
+      "type": "file",
+      "name": "hooks.py",
+      "filePath": "box_agent/plugins/hooks.py",
+      "summary": "定义静态 HookProvider 的声明、处理契约引用与注册归属字段；Provider 提供 HookSpec，真实插件描述符和当前 Run 决定 HookOwner。",
+      "tags": [
+        "plugins",
+        "hooks",
+        "ownership"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:box_agent/plugins/hooks.py:HookSpec",
+      "type": "class",
+      "name": "HookSpec",
+      "filePath": "box_agent/plugins/hooks.py",
+      "lineRange": [
+        12,
+        24
+      ],
+      "summary": "声明 hook_id、事件集合、处理种类、handler、priority、matcher 和可选超时；构造时固定事件序列，由注册阶段完成验证。",
+      "complexity": "simple",
+      "tags": [
+        "plugins",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "class:box_agent/plugins/hooks.py:HookOwner",
+      "type": "class",
+      "name": "HookOwner",
+      "filePath": "box_agent/plugins/hooks.py",
+      "lineRange": [
+        28,
+        35
+      ],
+      "summary": "保存装配层从真实描述符和当前 Run 绑定的 plugin_id、plugin_version、source、run_id 与 scope，不由 Handler 自报资源归属。",
+      "complexity": "simple",
+      "tags": [
+        "plugins",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "class:box_agent/plugins/hooks.py:HookProviderPort",
+      "type": "class",
+      "name": "HookProviderPort",
+      "filePath": "box_agent/plugins/hooks.py",
+      "lineRange": [
+        39,
+        42
+      ],
+      "summary": "定义静态 Provider 的 get_hooks() 协议，以有序 HookSpec 序列向装配层提供声明，实例生命周期仍由 PluginHost 管理。",
+      "complexity": "simple",
+      "tags": [
+        "plugins",
+        "hooks",
+        "ownership"
+      ]
+    },
+    {
+      "id": "class:box_agent/plugins/host.py:PluginContribution",
+      "type": "class",
+      "name": "PluginContribution",
+      "filePath": "box_agent/plugins/host.py",
+      "lineRange": [
+        112,
+        116
+      ],
+      "summary": "以不可变记录关联已激活能力实例与真实 PluginDescriptor，供装配层查询可靠来源。",
+      "complexity": "simple",
+      "tags": [
+        "plugins",
+        "lifecycle",
+        "ownership"
+      ]
+    },
+    {
+      "id": "document:docs/HOOKBUS.md",
+      "type": "document",
+      "name": "HOOKBUS.md",
+      "filePath": "docs/HOOKBUS.md",
+      "summary": "说明静态 HookProvider 接入、Run 级总线、事件决策、只读上下文及期限规则，区分 kernel 数据合同与插件生命周期。明确 managed 能力身份保留，以及 Session 释放前的总线排空、Provider 清理和重复取消重试边界。",
+      "tags": [
+        "documentation",
+        "hooks",
+        "lifecycle"
+      ],
+      "complexity": "moderate"
     }
   ],
   "edges": [
@@ -59126,7 +59766,8 @@
       "target": "file:box_agent/composition.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/session_assembly.py",
@@ -60670,7 +61311,8 @@
       "target": "file:box_agent/agent.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/acp/__init__.py",
@@ -60684,14 +61326,16 @@
       "target": "file:box_agent/agent_runtime.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/acp/__init__.py",
       "target": "file:box_agent/agent_session.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/acp/__init__.py",
@@ -62009,16 +62653,14 @@
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/agent.py",
       "target": "file:box_agent/tools/mcp_tool_search.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/agent.py",
@@ -64733,14 +65375,16 @@
       "target": "file:box_agent/tools/engine/scheduler.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/kernel/tool_engine.py",
       "target": "file:box_agent/tools/engine/scheduler.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/kernel/tool_messages.py",
@@ -64911,7 +65555,8 @@
       "target": "file:box_agent/tools/engine/results.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/kernel/tool_result_pipeline.py",
@@ -65068,7 +65713,8 @@
       "target": "file:box_agent/tools/engine/scheduler.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/runtime.py",
@@ -65741,7 +66387,7 @@
       "target": "function:box_agent/tools/engine/results.py:process_tool_result",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/results.py",
@@ -65755,7 +66401,7 @@
       "target": "class:box_agent/tools/engine/results.py:ToolResultPipelineInput",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/results.py",
@@ -65769,7 +66415,7 @@
       "target": "class:box_agent/tools/engine/results.py:ToolResultPipelineOutcome",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/results.py",
@@ -65825,8 +66471,7 @@
       "target": "file:box_agent/tools/browser_result_adapter.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/engine/results.py",
@@ -65840,8 +66485,7 @@
       "target": "file:box_agent/tools/file_result_adapter.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/engine/results.py",
@@ -65967,7 +66611,7 @@
       "target": "class:box_agent/tools/engine/scheduler.py:ToolExecutionState",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -65981,7 +66625,7 @@
       "target": "class:box_agent/tools/engine/scheduler.py:ToolInvocationRequest",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -65995,7 +66639,7 @@
       "target": "class:box_agent/tools/engine/scheduler.py:ToolEngineProgress",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -66009,7 +66653,7 @@
       "target": "class:box_agent/tools/engine/scheduler.py:ToolEngineActivity",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -66023,7 +66667,7 @@
       "target": "class:box_agent/tools/engine/scheduler.py:ToolInvocationCompleted",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -66037,7 +66681,7 @@
       "target": "class:box_agent/tools/engine/scheduler.py:ToolBatchCompleted",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -66051,7 +66695,7 @@
       "target": "class:box_agent/tools/engine/scheduler.py:ToolEngine",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -66065,8 +66709,7 @@
       "target": "file:box_agent/session_log.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/tools/engine/scheduler.py",
@@ -67999,7 +68642,7 @@
       "target": "function:box_agent/composition.py:_default_capabilities",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68013,7 +68656,7 @@
       "target": "function:box_agent/composition.py:_kernel_run_arguments",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68027,7 +68670,7 @@
       "target": "function:box_agent/composition.py:compose_default_kernel_services",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68041,7 +68684,7 @@
       "target": "function:box_agent/composition.py:_validate_managed_services",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68055,7 +68698,7 @@
       "target": "function:box_agent/composition.py:_add_cleanup_note",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68069,7 +68712,7 @@
       "target": "function:box_agent/composition.py:_combined_cleanup_error",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68083,7 +68726,7 @@
       "target": "function:box_agent/composition.py:_cleanup_plugin_run",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68097,7 +68740,7 @@
       "target": "function:box_agent/composition.py:_attach_cleanup_error",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68111,7 +68754,7 @@
       "target": "function:box_agent/composition.py:run_agent_loop_with_default_services",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68139,8 +68782,7 @@
       "target": "file:box_agent/kernel/loop.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/composition.py",
@@ -68161,15 +68803,14 @@
       "target": "file:box_agent/plugins/host.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/hooks.py",
       "target": "function:box_agent/hooks.py:_ensure_hooks_dir_on_path",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/hooks.py",
@@ -68183,7 +68824,7 @@
       "target": "function:box_agent/hooks.py:load_hooks",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/hooks.py",
@@ -68197,7 +68838,7 @@
       "target": "class:box_agent/hooks.py:BaseHook",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/hooks.py",
@@ -68211,7 +68852,7 @@
       "target": "class:box_agent/hooks.py:HookManager",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/hooks.py",
@@ -68225,8 +68866,7 @@
       "target": "file:box_agent/session_log.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/hooks.py",
@@ -68240,7 +68880,7 @@
       "target": "class:box_agent/kernel/ports.py:SummaryLLMPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68254,7 +68894,7 @@
       "target": "class:box_agent/kernel/ports.py:LLMPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68268,7 +68908,7 @@
       "target": "class:box_agent/kernel/ports.py:PermissionGatewayPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68282,7 +68922,7 @@
       "target": "class:box_agent/kernel/ports.py:MemoryLookupPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68296,7 +68936,7 @@
       "target": "class:box_agent/kernel/ports.py:MemoryExtractionPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68310,7 +68950,7 @@
       "target": "class:box_agent/kernel/ports.py:MemoryPromotionPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68324,7 +68964,7 @@
       "target": "class:box_agent/kernel/ports.py:SessionStorePort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68338,7 +68978,7 @@
       "target": "class:box_agent/kernel/ports.py:HookBusPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68352,7 +68992,7 @@
       "target": "class:box_agent/kernel/ports.py:ToolCatalogPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68366,7 +69006,7 @@
       "target": "class:box_agent/kernel/ports.py:ToolExposureResultPort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68380,7 +69020,7 @@
       "target": "class:box_agent/kernel/ports.py:ToolExposurePort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68394,7 +69034,7 @@
       "target": "class:box_agent/kernel/ports.py:ToolResultStorePort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68408,7 +69048,7 @@
       "target": "class:box_agent/kernel/ports.py:ToolResultBudgetOutcomePort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68422,7 +69062,7 @@
       "target": "class:box_agent/kernel/ports.py:ToolEnginePort",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68436,7 +69076,7 @@
       "target": "class:box_agent/kernel/ports.py:KernelServices",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/kernel/ports.py",
@@ -68478,8 +69118,7 @@
       "target": "file:box_agent/plugins/host.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/plugins/__init__.py",
@@ -68619,14 +69258,16 @@
       "target": "file:box_agent/hooks.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/plugins/builtins.py",
       "target": "file:box_agent/kernel/ports.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/plugins/builtins.py",
@@ -68649,13 +69290,6 @@
       "direction": "forward",
       "weight": 0.7,
       "recoveredFromImportMap": true
-    },
-    {
-      "source": "function:box_agent/composition.py:_default_capabilities",
-      "target": "class:box_agent/hooks.py:HookManager",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
     },
     {
       "source": "function:box_agent/composition.py:compose_default_kernel_services",
@@ -68718,7 +69352,7 @@
       "target": "function:box_agent/plugins/defaults.py:_captured_instance_descriptor",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/defaults.py",
@@ -68732,7 +69366,7 @@
       "target": "function:box_agent/plugins/defaults.py:default_plugin_descriptors",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/defaults.py",
@@ -68746,7 +69380,7 @@
       "target": "function:box_agent/plugins/defaults.py:create_default_plugin_host",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/defaults.py",
@@ -68760,7 +69394,7 @@
       "target": "function:box_agent/plugins/defaults.py:kernel_services_from_registry",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/defaults.py",
@@ -68774,7 +69408,7 @@
       "target": "function:box_agent/plugins/defaults.py:compose_default_services",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/defaults.py",
@@ -68802,8 +69436,7 @@
       "target": "file:box_agent/plugins/host.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7,
-      "recoveredFromImportMap": true
+      "weight": 0.7
     },
     {
       "source": "file:box_agent/plugins/defaults.py",
@@ -69069,7 +69702,8 @@
       "target": "file:box_agent/composition.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/plugins/runtime.py",
@@ -72797,13 +73431,1133 @@
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/hook_bus.py:DispatchLease",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/hook_bus.py:HookConfigError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/hook_bus.py:HookExecution",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/hook_bus.py:HookRegistration",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/hook_bus.py:HookStateError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/hook_bus.py:RegistrationEntry",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolDecision",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolResolution",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/hook_types.py:HookContext",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/hook_types.py:ResultText",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextDecision",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextResolution",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "function:box_agent/hook_bus.py:_snapshot_legacy",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "function:box_agent/hook_bus.py:build_hook_context",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "function:box_agent/kernel/hook_types.py:copy_data",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "function:box_agent/kernel/hook_types.py:freeze_data",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/ports.py:HookBusPort",
+      "type": "implements",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:HookBus",
+      "target": "class:box_agent/kernel/ports.py:HookDispatchPort",
+      "type": "implements",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:box_agent/hook_bus.py:LegacyHookAdapter",
+      "target": "class:box_agent/plugins/hooks.py:HookSpec",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/kernel/hook_types.py:BeforeToolDecision",
+      "target": "function:box_agent/kernel/hook_types.py:freeze_data",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/kernel/hook_types.py:BeforeToolResolution",
+      "target": "function:box_agent/kernel/hook_types.py:freeze_data",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/kernel/hook_types.py:HookContext",
+      "target": "function:box_agent/kernel/hook_types.py:freeze_data",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/kernel/hook_types.py:ResultTextDecision",
+      "target": "class:box_agent/kernel/hook_types.py:ResultText",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:PluginActivation",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:PluginCleanupError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:PluginContribution",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:PluginDependencyCycleError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:PluginError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:PluginScopeError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:PluginValidationError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "class:box_agent/plugins/host.py:_InstanceRecord",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "function:box_agent/plugins/host.py:_is_hashable",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "function:box_agent/plugins/host.py:_is_valid_semver",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/plugins/host.py:PluginHost",
+      "target": "function:box_agent/plugins/host.py:_supports_dynamic_protocol",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/engine/engine.py:DefaultToolEngine",
+      "target": "class:box_agent/kernel/hook_types.py:ResultText",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:box_agent/tools/engine/engine.py:DefaultToolEngine",
+      "target": "function:box_agent/kernel/hook_types.py:copy_data",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/composition.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/hook_bus.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/hooks.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/kernel/hook_types.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/kernel/ports.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/plugins/hooks.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/plugins/host.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/tools/engine/engine.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/HOOKBUS.md",
+      "target": "file:box_agent/tools/engine/results.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/README.md",
+      "target": "document:docs/AGENT_SESSION.md",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/changes/README.md",
+      "target": "document:docs/HOOKBUS.md",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/changes/README.md",
+      "target": "file:box_agent/hook_bus.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/changes/README.md",
+      "target": "file:box_agent/kernel/hook_types.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/changes/README.md",
+      "target": "file:box_agent/plugins/hooks.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/design/README.md",
+      "target": "document:docs/HOOKBUS.md",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/design/README.md",
+      "target": "file:box_agent/hook_bus.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/design/README.md",
+      "target": "file:box_agent/kernel/hook_types.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/design/README.md",
+      "target": "file:box_agent/plugins/hooks.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_cleanup_hook_run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_cleanup_task_finished",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_register_legacy_hooks",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_wait_for_hook_cleanup",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:register_run_hooks",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_cleanup_hook_run",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_cleanup_task_finished",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_register_legacy_hooks",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:_wait_for_hook_cleanup",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "function:box_agent/composition.py:register_run_hooks",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/composition.py",
+      "target": "file:box_agent/plugins/hooks.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:DispatchLease",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookBus",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookConfigError",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookExecution",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookRegistration",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookStateError",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:LegacyHookAdapter",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:RegistrationEntry",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "function:box_agent/hook_bus.py:_snapshot_legacy",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "function:box_agent/hook_bus.py:build_hook_context",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:DispatchLease",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookBus",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookConfigError",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookExecution",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookRegistration",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:HookStateError",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:LegacyHookAdapter",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "class:box_agent/hook_bus.py:RegistrationEntry",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "function:box_agent/hook_bus.py:_snapshot_legacy",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "function:box_agent/hook_bus.py:build_hook_context",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "file:box_agent/kernel/hook_types.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "file:box_agent/plugins/hooks.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/hook_bus.py",
+      "target": "file:box_agent/session_log.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/hooks.py",
+      "target": "file:box_agent/hook_bus.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolDecision",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolHandler",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolResolution",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:HookContext",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:HookMatcher",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ObserverHandler",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultText",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextDecision",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextHandler",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextResolution",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "function:box_agent/kernel/hook_types.py:copy_data",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "function:box_agent/kernel/hook_types.py:freeze_data",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolDecision",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolHandler",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:BeforeToolResolution",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:HookContext",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:HookMatcher",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ObserverHandler",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultText",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextDecision",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextHandler",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "class:box_agent/kernel/hook_types.py:ResultTextResolution",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "function:box_agent/kernel/hook_types.py:copy_data",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/hook_types.py",
+      "target": "function:box_agent/kernel/hook_types.py:freeze_data",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/ports.py",
+      "target": "class:box_agent/kernel/ports.py:HookDispatchPort",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/kernel/ports.py",
+      "target": "class:box_agent/kernel/ports.py:HookDispatchPort",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/kernel/ports.py",
+      "target": "file:box_agent/kernel/hook_types.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/plugins/__init__.py",
+      "target": "file:box_agent/plugins/hooks.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/plugins/defaults.py",
+      "target": "file:box_agent/plugins/hooks.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/plugins/hooks.py",
+      "target": "class:box_agent/plugins/hooks.py:HookOwner",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/plugins/hooks.py",
+      "target": "class:box_agent/plugins/hooks.py:HookProviderPort",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/plugins/hooks.py",
+      "target": "class:box_agent/plugins/hooks.py:HookSpec",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/plugins/hooks.py",
+      "target": "class:box_agent/plugins/hooks.py:HookOwner",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/plugins/hooks.py",
+      "target": "class:box_agent/plugins/hooks.py:HookProviderPort",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/plugins/hooks.py",
+      "target": "class:box_agent/plugins/hooks.py:HookSpec",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/plugins/hooks.py",
+      "target": "file:box_agent/kernel/hook_types.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:box_agent/plugins/host.py",
+      "target": "class:box_agent/plugins/host.py:PluginContribution",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/plugins/host.py",
+      "target": "class:box_agent/plugins/host.py:PluginContribution",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/engine/engine.py",
+      "target": "file:box_agent/kernel/hook_types.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:box_agent/composition.py:_attach_cleanup_error",
+      "target": "function:box_agent/composition.py:_add_cleanup_note",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_cleanup_hook_run",
+      "target": "function:box_agent/composition.py:_attach_cleanup_error",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_cleanup_hook_run",
+      "target": "function:box_agent/composition.py:_cleanup_plugin_run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_cleanup_hook_run",
+      "target": "class:box_agent/hook_bus.py:HookBus",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:box_agent/composition.py:_cleanup_hook_run",
+      "target": "class:box_agent/plugins/host.py:PluginHost",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:box_agent/composition.py:_cleanup_plugin_run",
+      "target": "function:box_agent/composition.py:_combined_cleanup_error",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_combined_cleanup_error",
+      "target": "function:box_agent/composition.py:_add_cleanup_note",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_combined_cleanup_error",
+      "target": "function:box_agent/composition.py:_attach_cleanup_error",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_default_capabilities",
+      "target": "class:box_agent/hook_bus.py:HookBus",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_register_legacy_hooks",
+      "target": "class:box_agent/hook_bus.py:LegacyHookAdapter",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_register_legacy_hooks",
+      "target": "class:box_agent/plugins/hooks.py:HookOwner",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:_wait_for_hook_cleanup",
+      "target": "function:box_agent/composition.py:_combined_cleanup_error",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:compose_default_kernel_services",
+      "target": "class:box_agent/hook_bus.py:HookConfigError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:compose_default_kernel_services",
+      "target": "function:box_agent/composition.py:_default_capabilities",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:compose_default_kernel_services",
+      "target": "function:box_agent/composition.py:_register_legacy_hooks",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:register_run_hooks",
+      "target": "class:box_agent/plugins/hooks.py:HookOwner",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:register_run_hooks",
+      "target": "function:box_agent/composition.py:_register_legacy_hooks",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:register_run_hooks",
+      "target": "class:box_agent/hook_bus.py:HookBus",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:box_agent/composition.py:register_run_hooks",
+      "target": "class:box_agent/plugins/hooks.py:HookProviderPort",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_attach_cleanup_error",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_cleanup_hook_run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_combined_cleanup_error",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_default_capabilities",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_kernel_run_arguments",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_register_legacy_hooks",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_validate_managed_services",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:_wait_for_hook_cleanup",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/composition.py:run_agent_loop_with_default_services",
+      "target": "function:box_agent/composition.py:register_run_hooks",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/hooks.py:load_hooks",
+      "target": "function:box_agent/hooks.py:_ensure_hooks_dir_on_path",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/plugins/defaults.py:create_default_plugin_host",
+      "target": "class:box_agent/plugins/host.py:PluginScopeError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/plugins/defaults.py:create_default_plugin_host",
+      "target": "function:box_agent/plugins/defaults.py:default_plugin_descriptors",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/plugins/defaults.py:default_plugin_descriptors",
+      "target": "function:box_agent/plugins/defaults.py:_captured_instance_descriptor",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
     }
   ],
   "layers": [
     {
       "id": "layer:core-agent-runtime",
       "name": "核心 Agent 与 Kernel 运行层",
-      "description": "承载共享 AgentSession、会话上下文与能力装配、Agent 运行入口、稳定 Kernel 循环与端口、唯一工具消息提交、SessionLog 及事件契约，使 CLI 与 ACP 在稳定 cwd 下复用配置门控、日志恢复、取消、流恢复和会话生命周期。共享会话装配接入宿主提供的 Skill 访问与识别过滤回调。",
+      "description": "承载共享 AgentSession、会话上下文与能力装配、Agent 运行入口、稳定 Kernel 循环与端口、唯一工具消息提交、SessionLog 及事件契约，使 CLI 与 ACP 在稳定 cwd 下复用配置门控、日志恢复、取消、流恢复和会话生命周期。共享会话装配接入宿主提供的 Skill 访问与识别过滤回调。Composition 每 Run 创建并冻结 HookBus，将只读 HookContext 和分发接口绑定到服务包；managed 只重绑 Hook 字段，保留借用能力对象，关闭事件流后先排空总线再清理拥有的 Provider，之后 Session 才能释放资源。",
       "nodeIds": [
         "file:box_agent/__init__.py",
         "file:box_agent/agent.py",
@@ -72855,7 +74609,9 @@
         "file:box_agent/turn_runtime.py",
         "file:box_agent/session_assembly.py",
         "file:box_agent/kernel/tool_messages.py",
-        "file:box_agent/session_context.py"
+        "file:box_agent/session_context.py",
+        "file:box_agent/hook_bus.py",
+        "file:box_agent/kernel/hook_types.py"
       ]
     },
     {
@@ -72902,7 +74658,7 @@
     {
       "id": "layer:tools-sandbox",
       "name": "工具、MCP 与沙箱层",
-      "description": "提供工具、MCP 与沙箱能力，由 tools/engine 借用调用方能力统一冻结定义、权限继续、预算调度和结果适配，统一 cwd 相对路径、有界产物扫描及工具集独立 scratch，并结合文件与 Shell 安全、网页搜索和媒体处理执行实际动作。MCP 配置按 system、connector、user 来源隔离；运行时凭证扩展只维护进程内 headers 和版本，来源替换只更新内存快照。宿主注入的过滤器约束连接器能力，未提供过滤器时保持兼容行为。",
+      "description": "提供工具、MCP 与沙箱能力，由 tools/engine 借用调用方能力统一冻结定义、权限继续、预算调度和结果适配，统一 cwd 相对路径、有界产物扫描及工具集独立 scratch，并结合文件与 Shell 安全、网页搜索和媒体处理执行实际动作。MCP 配置按 system、connector、user 来源隔离；运行时凭证扩展只维护进程内 headers 和版本，来源替换只更新内存快照。宿主注入的过滤器约束连接器能力，未提供过滤器时保持兼容行为。工具引擎在前置 Hook 修改后重新校验最终参数与权限，并将结果 Hook 处理后的可见文本交给历史和宿主结果出口；成功状态、原始输出、独立持久化及产物引用仍由各自管线负责。",
       "nodeIds": [
         "file:box_agent/mcp_servers/__init__.py",
         "file:box_agent/mcp_servers/web_extract_server.py",
@@ -72982,7 +74738,7 @@
     {
       "id": "layer:skills-experts",
       "name": "Skills、插件与委派层",
-      "description": "统一插件描述符、依赖排序和能力注册表，由 PluginRuntime、PluginSession 与内置初始化器管理 process/session/run 资源所有权，并负责 Skills 发现安装、专家配置和受能力、cwd 相对写入范围及预算约束的委派。 失败 Run 激活的中断回滚归属于相应会话，关闭时先重试 Run 再释放 Session 依赖，并阻止未完成清理的会话再次激活。宿主可注入独立的 Skill 识别与访问过滤器，连接器 Skill 的会话授权和子 Agent 授权快照在能力入口生效。",
+      "description": "统一插件描述符、依赖排序和能力注册表，由 PluginRuntime、PluginSession 与内置初始化器管理 process/session/run 资源所有权，并负责 Skills 发现安装、专家配置和受能力、cwd 相对写入范围及预算约束的委派。 失败 Run 激活的中断回滚归属于相应会话，关闭时先重试 Run 再释放 Session 依赖，并阻止未完成清理的会话再次激活。宿主可注入独立的 Skill 识别与访问过滤器，连接器 Skill 的会话授权和子 Agent 授权快照在能力入口生效。HookProviderPort 是静态 MULTI 能力，HookSpec 按真实插件身份绑定 HookOwner；每 Run 的可选扩展宿主只拥有新增 Provider，借用能力不移交所有权，清理取消可在拥有者内重试。",
       "nodeIds": [
         "file:.gitmodules",
         "file:box_agent/experts.py",
@@ -73004,7 +74760,8 @@
         "file:box_agent/tools/sub_agent_tool.py",
         "file:scripts/generate_skills_manifest.py",
         "file:box_agent/plugins/builtins.py",
-        "file:box_agent/plugins/runtime.py"
+        "file:box_agent/plugins/runtime.py",
+        "file:box_agent/plugins/hooks.py"
       ]
     },
     {
@@ -73215,7 +74972,8 @@
         "document:docs/design/tool-refactor/testing.md",
         "document:docs/design/tool-refactor/verification.md",
         "document:docs/reasoning-configuration.md",
-        "document:docs/CONNECTOR_RUNTIME_RESTORE.md"
+        "document:docs/CONNECTOR_RUNTIME_RESTORE.md",
+        "document:docs/HOOKBUS.md"
       ]
     },
     {
@@ -73322,7 +75080,7 @@
     {
       "order": 4,
       "title": "共享运行入口",
-      "description": "两个宿主通过 AgentSession.open 进入受管会话，原有同步 create 与 AgentService 构造入口继续兼容。SessionContext 显式区分配置、选项、宿主借用能力与本轮输入，session_assembly 按插件顺序准备模型、记忆、工具、提示和 Hook，接入宿主的 Skill 访问与识别过滤回调，并统一 utility 配置门控、cwd 提示和会话恢复。AgentSession 为每轮绑定 KernelServices，经 Agent 与 composition 驱动稳定循环，退出时依次释放 run、session 和自身拥有的 runtime。",
+      "description": "两个宿主通过 AgentSession.open 进入受管会话，原有同步 create 与 AgentService 构造入口继续兼容。SessionContext 显式区分配置、选项、宿主借用能力与本轮输入，session_assembly 按插件顺序准备模型、记忆、工具、提示和 Hook，接入宿主的 Skill 访问与识别过滤回调，并统一 utility 配置门控、cwd 提示和会话恢复。AgentSession 为每轮绑定 KernelServices，经 Agent 与 composition 驱动稳定循环，退出时依次释放 run、session 和自身拥有的 runtime。Managed 路径只重新绑定本轮 Hook 接口和上下文，借用的模型、工具等能力对象保持身份；事件流关闭后需等待 HookBus 和拥有的 Provider 清理完成，才允许 Session 释放资源。",
       "nodeIds": [
         "file:box_agent/agent_session.py",
         "file:box_agent/session_context.py",
@@ -73334,7 +75092,7 @@
     {
       "order": 5,
       "title": "Kernel 执行内核",
-      "description": "Kernel 的 typed ports 声明模型、权限、记忆和工具依赖，唯一循环保留模型请求、上下文、轮次决策与终止语义，并通过 ToolEnginePort 委托工具执行。tool_messages 统一提交调用和最终回复到 SessionLog，修复中断后的不完整工具消息；旧 state 和 tool_engine 路径仅兼容导出 tools/engine 实现。stream_controller 提供心跳与静默超时，在步骤预算内每轮至多恢复一次连接中断，保留成功结果并要求重新生成尚未执行的完整调用。",
+      "description": "Kernel 的 typed ports 声明模型、权限、记忆和工具依赖，唯一循环保留模型请求、上下文、轮次决策与终止语义，并通过 ToolEnginePort 委托工具执行。tool_messages 统一提交调用和最终回复到 SessionLog，修复中断后的不完整工具消息；旧 state 和 tool_engine 路径仅兼容导出 tools/engine 实现。stream_controller 提供心跳与静默超时，在步骤预算内每轮至多恢复一次连接中断，保留成功结果并要求重新生成尚未执行的完整调用。HookDispatchPort 与 hook_types 定义只读调用数据和决策合同，匹配、顺序执行和决策归约由外层 HookBus 负责。",
       "nodeIds": [
         "file:box_agent/kernel/ports.py",
         "file:box_agent/kernel/loop.py",
@@ -73359,7 +75117,7 @@
     {
       "order": 7,
       "title": "插件能力所有权",
-      "description": "插件描述符定义作用域与依赖，PluginHost 负责发现、排序、激活、实例缓存和清理，类型化注册表冻结各轮 KernelServices。PluginRuntime 与 PluginSession 进一步管理 process/session/run 生命周期，在激活锁外完成会话能力预备，再为每轮绑定运行插件。内置初始化器按固定顺序调用共享装配能力，区分借用资源与自建资源，并在关闭时等待初始化后按所有权清理。 失败 Run 激活的中断回滚由 PluginHost 按 session_key 保留，涵盖运行时 Port 校验失败；会话关闭先重试 Run 再释放 Session 依赖，清理未完成时禁止该会话再次激活，其他会话和 Process 资源保持独立。",
+      "description": "插件描述符定义作用域与依赖，PluginHost 负责发现、排序、激活、实例缓存和清理，类型化注册表冻结各轮 KernelServices。PluginRuntime 与 PluginSession 管理 process/session/run 生命周期，在激活锁外准备会话能力，再为每轮绑定运行插件；内置初始化器按固定顺序调用共享装配能力，区分借用与自建资源，并在关闭时等待初始化后按所有权清理。失败 Run 激活的中断回滚由 PluginHost 按 session_key 保留，涵盖运行时 Port 校验失败；会话关闭先重试 Run 再释放 Session 依赖，清理未完成时禁止该会话再次激活，其他会话和 Process 资源保持独立。HookProviderPort 的有序 HookSpec 按插件身份登记到每 Run 的总线；额外 RUN 插件使用仅拥有新 Provider 的私有扩展宿主，先排空总线再清理 Provider，重复取消会触发清理重试，借用能力仍由既有所有者释放。",
       "nodeIds": [
         "file:box_agent/plugins/descriptors.py",
         "file:box_agent/plugins/host.py",
@@ -73371,7 +75129,7 @@
     {
       "order": 8,
       "title": "工具与安全契约",
-      "description": "工具基类和调用上下文定义所有动作的共同契约，权限与安全策略在执行前约束能力、路径和危险命令。DefaultToolEngine 借用调用方已有工具、暴露目录与结果存储，按请求冻结 schema、别名和原始执行目标，并在调用前校验可见性与 MCP generation。共享执行管线统一普通和事件型工具的权限继续、进度与取消，调度器控制串并行、预算和迟到任务；运行结束只关闭活动调用。浏览器保存路径和产物发现统一基于 cwd，递归扫描受文件数和时间限制，不完整快照不参与差异判断，显式产物路径仍可发现。",
+      "description": "工具基类和调用上下文定义所有动作的共同契约，权限与安全策略在执行前约束能力、路径和危险命令；共享管线统一普通和事件型工具的权限继续、进度与取消，调度器控制串并行、预算和迟到任务，运行结束只关闭活动调用。DefaultToolEngine 借用调用方已有工具、暴露目录与结果存储，按请求冻结 schema、别名和原始执行目标，并在调用前校验可见性与 MCP generation。前置 Hook 修改后的最终参数重新经过 Schema、路径与权限校验，权限重试不重复前置 Hook；结果 Hook 只处理可见文本和错误，成功状态、原始输出、独立持久化与产物引用继续走各自管线。浏览器保存路径和产物发现统一基于 cwd，递归扫描受文件数和时间限制，不完整快照不参与差异判断，显式产物路径仍可发现。",
       "nodeIds": [
         "file:box_agent/tools/base.py",
         "file:box_agent/tools/permissions.py",
