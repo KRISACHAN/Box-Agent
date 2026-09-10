@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
+from uuid import uuid4
 
 from .schema import Message
 
@@ -181,6 +182,10 @@ class SessionLog:
         self._lock_handle = lock_handle
         self._closed = False
         self._failed = False
+        self.recovery_source: Path | None = None
+        recovery_name = header.get("recoverySource")
+        if isinstance(recovery_name, str) and Path(recovery_name).name == recovery_name:
+            self.recovery_source = path.parent / recovery_name
 
     @property
     def events(self) -> tuple[dict[str, Any], ...]:
@@ -218,7 +223,7 @@ class SessionLog:
             raise ValueError("session_id must not be empty")
         root_path = Path(root)
         directory = _session_dir(root_path, session_id)
-        directory.mkdir(parents=True, exist_ok=False, mode=0o700)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = directory / "session.jsonl"
         lock_handle = _acquire_writer_lock(directory / ".writer.lock")
         header: dict[str, Any] = {
@@ -255,14 +260,18 @@ class SessionLog:
         *,
         session_id: str,
         cwd: str | Path,
+        recover: bool = False,
     ) -> "SessionLog":
+        """Open a session, optionally preserving incompatible logs for host recovery."""
         directory = _session_dir(Path(root), session_id)
         path = directory / "session.jsonl"
         lock_handle = _acquire_writer_lock(directory / ".writer.lock")
         try:
             handle = path.open("r+b")
+            workspace_verified = False
             try:
                 raw = handle.read()
+                original_raw = raw
                 header_end = raw.find(b"\n")
                 if header_end < 0:
                     raise SessionLogCorrupted(
@@ -276,8 +285,6 @@ class SessionLog:
                     ) from exc
                 if not isinstance(header, dict) or header.get("type") != "session":
                     raise SessionLogCorrupted("session log header is invalid")
-                if header.get("version") != SESSION_LOG_VERSION:
-                    raise ValueError("session log version is unsupported")
                 if header.get("id") != session_id:
                     raise ValueError("session log id does not match requested session")
                 stored_cwd = header.get("cwd")
@@ -289,11 +296,12 @@ class SessionLog:
                         "session cwd does not match the immutable workspace "
                         f"(stored={stored_cwd!r}, requested={requested_cwd!r})"
                     )
+                workspace_verified = True
+                if header.get("version") != SESSION_LOG_VERSION:
+                    raise SessionLogCorrupted("session log version is unsupported")
+                committed_end = None
                 if raw and not raw.endswith(b"\n"):
                     committed_end = raw.rfind(b"\n") + 1
-                    handle.truncate(committed_end)
-                    handle.flush()
-                    os.fsync(handle.fileno())
                     raw = raw[:committed_end]
                 raw_lines = raw.splitlines()
                 records: list[Any] = [header]
@@ -330,14 +338,70 @@ class SessionLog:
                         raise SessionLogCorrupted(
                             f"session log record {seq + 1} has invalid event data"
                         )
+                session = cls(path, header, events, handle, lock_handle)
+                if recover:
+                    session.replay()
+                if committed_end is not None:
+                    handle.truncate(committed_end)
+                    handle.flush()
+                    os.fsync(handle.fileno())
                 handle.seek(0, os.SEEK_END)
-            except BaseException:
+            except BaseException as exc:
                 handle.close()
+                if recover and workspace_verified and isinstance(exc, SessionLogCorrupted):
+                    return cls._recover_log(
+                        path, original_raw, session_id, cwd, lock_handle
+                    )
                 raise
         except BaseException:
             _release_writer_lock(lock_handle)
             raise
-        return cls(path, header, events, handle, lock_handle)
+        return session
+
+    @classmethod
+    def _recover_log(
+        cls,
+        path: Path,
+        raw: bytes,
+        session_id: str,
+        cwd: str | Path,
+        lock_handle: BinaryIO,
+    ) -> "SessionLog":
+        """Keep the original bytes before replacing an incompatible runtime log.
+
+        The caller holds the writer lock and has verified the session/workspace.
+        No historical tools are replayed; the host may supply semantic history.
+        """
+        suffix = uuid4().hex
+        archive = path.with_name(f"session.recovery-{suffix}.jsonl")
+        temporary = path.with_name(f".session-{suffix}.tmp")
+        header = {
+            "type": "session",
+            "version": SESSION_LOG_VERSION,
+            "id": session_id,
+            "createdAt": int(time.time() * 1000),
+            "cwd": _normalize_cwd(cwd),
+            "recoverySource": archive.name,
+        }
+        with archive.open("xb") as backup:
+            backup.write(raw)
+            backup.flush()
+            os.fsync(backup.fileno())
+        try:
+            with temporary.open("xb") as replacement:
+                replacement.write(_encode_record(header))
+                replacement.flush()
+                os.fsync(replacement.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        handle = path.open("r+b")
+        try:
+            handle.seek(0, os.SEEK_END)
+            return cls(path, header, [], handle, lock_handle)
+        except BaseException:
+            handle.close()
+            raise
 
     def append(
         self,
@@ -588,19 +652,11 @@ class SessionLog:
                 continue
             if event_type == "todo/write":
                 value = data.get("todos")
-                if not isinstance(value, list):
-                    raise SessionLogCorrupted(
-                        f"todo/write event {event['seq']} has invalid todos"
-                    )
-                todos = deepcopy(value)
+                todos = deepcopy(value) if isinstance(value, list) else []
                 continue
             if event_type == "skill/change":
                 value = data.get("skills")
-                if not isinstance(value, list):
-                    raise SessionLogCorrupted(
-                        f"skill/change event {event['seq']} has invalid skills"
-                    )
-                skills = deepcopy(value)
+                skills = deepcopy(value) if isinstance(value, list) else []
                 continue
             if event_type not in {
                 "user/message",

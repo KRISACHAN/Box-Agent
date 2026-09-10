@@ -48,7 +48,7 @@ from box_agent.llm import SessionBoundLLM
 from box_agent.kernel.ports import KernelServices
 from box_agent.runtime import invoke_tool_with_permissions
 from box_agent.schema import FunctionCall, LLMResponse, StreamEvent, TokenUsage, ToolCall
-from box_agent.session_log import SessionLogWorkspaceMismatch
+from box_agent.session_log import SessionLog, SessionLogWorkspaceMismatch
 from box_agent.tools.base import Tool, ToolResult
 from box_agent.tools.bash_tool import BackgroundShellManager
 from box_agent.tools.jupyter_tool import MAX_EXECUTE_CODE_CHARS
@@ -1230,6 +1230,166 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
         ("assistant", "done"),
     ]
     state.agent.session_log.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("availability", ["partial", "empty", "no-loader"])
+async def test_acp_resumes_and_answers_when_previous_skills_are_unavailable(
+    tmp_path, monkeypatch, availability
+):
+    monkeypatch.setattr(
+        acp_module, "state_path", lambda relative: tmp_path / "profile" / relative
+    )
+    skills_dir = tmp_path / "skills"
+    for name in ("missing-skill", "available-skill"):
+        directory = skills_dir / name
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Test instructions\n---\n"
+            f"Instructions for {name}.\n",
+            encoding="utf-8",
+        )
+    loader = SkillLoader(skills_dir)
+    loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False, enable_mcp=False),
+    )
+    request = SimpleNamespace(
+        cwd=str(tmp_path), field_meta={"session_id": "missing-skills-session"}
+    )
+    original = BoxACPAgent(
+        DummyConn(), config, DoneLLM(), [], "system", skill_loader=loader
+    )
+    session = await original.newSession(request)
+    original_state = original._sessions[session.sessionId]
+    try:
+        await original.prompt(
+            SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "remember me"}])
+        )
+        for name in ("missing-skill", "available-skill"):
+            original_state.agent.activate_skill_instructions(
+                name, loader.get_skill(name).to_prompt()
+            )
+    finally:
+        original_state.agent.session_log.close()
+
+    (skills_dir / "missing-skill" / "SKILL.md").unlink()
+    if availability == "empty":
+        (skills_dir / "available-skill" / "SKILL.md").unlink()
+    current_loader = None if availability == "no-loader" else SkillLoader(skills_dir)
+    if current_loader is not None:
+        current_loader.discover_skills()
+
+    # Retrying/restarting must remain usable without rewriting the old Skill list.
+    for _ in range(2):
+        llm = DoneLLM()
+        restarted = BoxACPAgent(
+            DummyConn(), config, llm, [], "system", skill_loader=current_loader
+        )
+        session = await restarted.newSession(request)
+        state = restarted._sessions[session.sessionId]
+        try:
+            expected_names = ("available-skill",) if availability == "partial" else ()
+            assert state.agent.active_skill_diagnostics()["names"] == expected_names
+            assert "Instructions for missing-skill." not in state.agent.system_prompt
+            assert "remember me" in [message.content for message in state.agent.messages]
+            response = await restarted.prompt(
+                SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "continue"}])
+            )
+            assert response.stopReason == "end_turn"
+            assert llm.calls == 1
+            assert state.agent.messages[-1].content == "done"
+        finally:
+            state.agent.session_log.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "damage", ["skill-fields", "skill-list", "todo-fields", "todo-list", "version", "event", "orphan"]
+)
+async def test_acp_recovers_optional_state_and_accepts_matching_host_history(
+    tmp_path, monkeypatch, damage
+):
+    profile = tmp_path / "profile"
+    monkeypatch.setattr(acp_module, "state_path", lambda relative: profile / relative)
+    loader_dir = tmp_path / "skills"
+    skill_dir = loader_dir / "available"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: available\ndescription: Example skill\n---\nCurrent instructions.\n"
+    )
+    loader = SkillLoader(loader_dir)
+    loader.discover_skills()
+    log = SessionLog.create(profile / "sessions", session_id="recovery", cwd=tmp_path)
+    optional_state = damage in {"skill-fields", "skill-list", "todo-fields", "todo-list"}
+    if optional_state:
+        log.append(
+            "user/message", {"role": "user", "content": "durable history"},
+            surface_op="append",
+        )
+    if damage == "skill-fields":
+        log.append("skill/change", {"skills": [None, {}, {"name": "available"}]})
+    elif damage == "skill-list":
+        log.append("skill/change", {"skills": {}})
+    elif damage == "todo-fields":
+        log.append("todo/write", {"todos": [{"id": "1", "task": "old", "status": "old-status"}]})
+    elif damage == "todo-list":
+        log.append("todo/write", {"todos": {}})
+    elif damage == "event":
+        log.append("future/event", {})
+    log.flush()
+    path = log.path
+    log.close()
+    if damage == "version":
+        header = json.loads(path.read_text())
+        header["version"] = 999
+        path.write_text(json.dumps(header) + "\n")
+    elif damage == "orphan":
+        path.unlink()
+    original = path.read_bytes() if path.exists() else None
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False, enable_mcp=False),
+    )
+    request = SimpleNamespace(cwd=str(tmp_path), field_meta={"session_id": "recovery"})
+    # A restart between creating the replacement log and sending must not lose
+    # the opportunity to seed trusted host history into the still-empty session.
+    for attempt in range(2):
+        llm = DoneLLM()
+        adapter = BoxACPAgent(DummyConn(), config, llm, [], "system", skill_loader=loader)
+        session = await adapter.newSession(request)
+        state = adapter._sessions[session.sessionId]
+        try:
+            assert state.continuation_applied == optional_state
+            if optional_state:
+                assert "durable history" in [m.content for m in state.agent.messages]
+            assert state.agent.tools["todo_read"]._store.list() == []
+            if damage == "skill-fields":
+                assert state.agent.active_skill_diagnostics()["names"] == ("available",)
+            if attempt == 1:
+                result = await adapter.prompt(SimpleNamespace(
+                    sessionId=session.sessionId, prompt=[{"text": "continue"}],
+                    field_meta={"session_continuation": {
+                        "schema_version": "officev3-session-continuation/v1",
+                        "product_session_id": "recovery",
+                        "messages": [{"role": "user", "content": "trusted host history"}],
+                    }},
+                ))
+                assert result.stopReason == "end_turn"
+                assert llm.calls == 1
+                expected_history = "durable history" if optional_state else "trusted host history"
+                assert expected_history in [m.content for m in state.agent.messages]
+        finally:
+            state.agent.session_log.close()
+    archives = list(path.parent.glob("session.recovery-*.jsonl"))
+    if damage in {"version", "event"}:
+        assert len(archives) == 1
+        assert archives[0].read_bytes() == original
+    else:
+        assert not archives
 
 
 @pytest.mark.asyncio

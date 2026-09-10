@@ -1925,6 +1925,7 @@ class BoxACPAgent:
                     session_root,
                     session_id=upstream_session_id,
                     cwd=workspace,
+                    recover=True,
                 )
             except FileNotFoundError:
                 session_log = SessionLog.create(
@@ -1933,8 +1934,22 @@ class BoxACPAgent:
                     cwd=workspace,
                 )
             else:
-                session_log.prepare_resume()
-                session_log_restored = True
+                try:
+                    session_log_restored = bool(session_log.replay().messages)
+                    session_log.prepare_resume()
+                except BaseException:
+                    session_log.close()
+                    raise
+                if session_log.recovery_source is not None:
+                    system_prompt += (
+                        "\n\nThe previous session runtime log could not be fully restored. "
+                        "Use supplied conversation history for context, but verify existing "
+                        "artifacts and outcomes before repeating earlier actions with side effects."
+                    )
+                    log.info(
+                        "session/recovered", session_id=session_id,
+                        source=str(session_log.recovery_source),
+                    )
 
         # Resolve the module-level factory at session creation time, matching
         # the historical direct ``Agent(...)`` call and its test hook.
@@ -1980,31 +1995,25 @@ class BoxACPAgent:
                 lambda: capability_snapshot(agent, session_skill_loader)
             )
 
-        if agent.restored_skills:
+        if agent.restored_skills and session_skill_loader is not None:
             try:
-                if session_skill_loader is None:
-                    raise ValueError(
-                        "persisted active Skills cannot be restored without a SkillLoader"
-                    )
                 restored_skill_prompts: list[tuple[str, str, str, int]] = []
-                for item in agent.restored_skills:
+                for order, item in enumerate(agent.restored_skills, start=1):
+                    if not isinstance(item, dict):
+                        continue
                     name = item.get("name")
-                    prompt_hash = item.get("sha256")
-                    load_order = item.get("loadOrder")
-                    if (
-                        not isinstance(name, str)
-                        or not isinstance(prompt_hash, str)
-                        or not isinstance(load_order, int)
-                    ):
-                        raise ValueError("persisted active Skill metadata is invalid")
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+                    prompt_hash = item.get("sha256", "")
+                    load_order = item.get("loadOrder", order)
+                    if not isinstance(load_order, int):
+                        load_order = order
                     skill = session_skill_loader.get_skill(
                         name,
                         include_disabled=expert_context is not None,
                     )
                     if skill is None:
-                        raise ValueError(
-                            f"persisted active Skill {name!r} is unavailable"
-                        )
+                        continue
                     restored_skill_prompts.append(
                         (name, skill.to_prompt(), prompt_hash, load_order)
                     )
