@@ -535,6 +535,8 @@ def test_download_is_contained_in_attempt(client, repo_root):
     response = client.get("/runs/eval-one/cases/Q1/download/workspace/demo.txt")
     assert response.status_code == 200
     assert response.text == "hello"
+    assert response.headers["content-security-policy"] == "sandbox allow-scripts"
+    assert response.headers["x-content-type-options"] == "nosniff"
     assert client.get("/runs/eval-one/cases/Q1/download/../../../../etc/passwd").status_code in {404, 422}
 
 
