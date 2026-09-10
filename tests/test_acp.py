@@ -1496,6 +1496,7 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
     monkeypatch,
 ):
     monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
     config = Config(
         llm=LLMConfig(api_key="test-key"),
         agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
@@ -2642,6 +2643,7 @@ async def test_acp_seeds_negotiated_session_continuation_once(
     monkeypatch,
 ):
     monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path / "profile"))
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
     agent, _ = acp_agent
     session = await agent.newSession(
         SimpleNamespace(
@@ -3857,7 +3859,8 @@ async def test_acp_turn_cleanup_preserves_running_session_scratch(
     class ConcurrentLLM(DoneLLM):
         async def generate_stream(self, messages, tools=None, **kwargs):
             if any(
-                message.role == "user" and message.content == "keep running"
+                message.role == "user"
+                and message.content == "keep running" + _EMPTY_CONNECTOR_CONTEXT
                 for message in messages
             ):
                 second_started.set()
