@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "ea99fc5ae17f19f2dd752b2264cd3134a36c07ae",
-  "generatedAt": "2026-09-10T16:15:04.013Z",
+  "gitCommitHash": "affe4e2b57c0de58db749543333eae4b2e27aab1",
+  "generatedAt": "2026-09-10T16:52:54.361Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -178,7 +178,7 @@
     },
     "box_agent/acp/__init__.py": {
       "filePath": "box_agent/acp/__init__.py",
-      "contentHash": "01bd6249275d3d47e615df6cbf396179da677d15265736fd4051578e435e766f",
+      "contentHash": "e61090db394fc554e20b45e6480b1783000da18c1a1e1d178ba5546dbbd55efc",
       "functions": [
         {
           "name": "_artifact_envelope",
@@ -419,6 +419,80 @@
           "lineCount": 31
         },
         {
+          "name": "_connector_ids_from_meta",
+          "params": [
+            "meta"
+          ],
+          "returnType": "set[str] | None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "_connector_statuses_from_meta",
+          "params": [
+            "meta"
+          ],
+          "returnType": "tuple[tuple[str, str, str], ...] | None",
+          "exported": true,
+          "lineCount": 41
+        },
+        {
+          "name": "_connector_status_unavailable_from_meta",
+          "params": [
+            "meta"
+          ],
+          "returnType": "bool | None",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_connector_server_statuses",
+          "params": [],
+          "returnType": "dict[str, list[tuple[str, str, str]]]",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "_connected_connector_ids",
+          "params": [
+            "selected_connector_ids"
+          ],
+          "returnType": "frozenset[str]",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "_connector_skill_is_available",
+          "params": [
+            "skill",
+            "selected_connector_ids"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_connector_skill_is_granted",
+          "params": [
+            "skill",
+            "connector_skill_grants"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_connector_status_context",
+          "params": [
+            "selected_connector_ids",
+            "connector_statuses",
+            "connector_status_unavailable"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 45
+        },
+        {
           "name": "_bind_user_source_text",
           "params": [
             "state",
@@ -481,6 +555,11 @@
             "session_mode",
             "llm_binding",
             "seen_injection_ids",
+            "connector_skill_grants",
+            "selected_connector_ids",
+            "connector_statuses",
+            "connector_status_unavailable",
+            "utility_session",
             "expert_context",
             "upstream_session_id",
             "current_task_id",
@@ -490,7 +569,7 @@
             "follow_up_suggestions_task"
           ],
           "exported": true,
-          "lineCount": 23
+          "lineCount": 28
         },
         {
           "name": "BoxACPAgent",
@@ -540,7 +619,7 @@
             "_SESSION_UPDATE_TIMEOUT_SECONDS"
           ],
           "exported": true,
-          "lineCount": 3651
+          "lineCount": 3802
         },
         {
           "name": "_PermissionNegotiator",
@@ -593,6 +672,12 @@
           "source": "platform",
           "specifiers": [
             "platform"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
           ]
         },
         {
@@ -1060,6 +1145,13 @@
           ]
         },
         {
+          "source": "box_agent.tools.mcp_loader",
+          "specifiers": [
+            "get_mcp_connector_server_names",
+            "get_mcp_status"
+          ]
+        },
+        {
           "source": "box_agent.tools.runtime",
           "specifiers": [
             "SkillRuntimeContext",
@@ -1128,6 +1220,14 @@
         "_goal_request_from_meta",
         "_tool_result_raw_output",
         "SessionState",
+        "_connector_ids_from_meta",
+        "_connector_statuses_from_meta",
+        "_connector_status_unavailable_from_meta",
+        "_connector_server_statuses",
+        "_connected_connector_ids",
+        "_connector_skill_is_available",
+        "_connector_skill_is_granted",
+        "_connector_status_context",
         "_bind_user_source_text",
         "BoxACPAgent",
         "_PermissionNegotiator",
@@ -1135,7 +1235,7 @@
         "run_acp_server",
         "main"
       ],
-      "totalLines": 5320,
+      "totalLines": 5655,
       "hasStructuralAnalysis": true
     },
     "box_agent/acp/action_hints.py": {
@@ -1823,7 +1923,7 @@
     },
     "box_agent/agent_runtime.py": {
       "filePath": "box_agent/agent_runtime.py",
-      "contentHash": "88a38f2da92dcd83461ceaf9e7c57580362762f3fd144852ae53f12d75dcb0d6",
+      "contentHash": "fcfa3dfecf886d98b11edaace60b0a00b9d5b4d968673316ec2521655cec2a49",
       "functions": [
         {
           "name": "build_llm_client",
@@ -1867,6 +1967,7 @@
             "max_truncated_tool_call_retries",
             "truncated_tool_call_boost_cap",
             "context_resource_dedup_enabled",
+            "allowed_connector_ids_provider",
             "deferred_mcp_loading_enabled",
             "session_log",
             "enable_builtin_tools",
@@ -1874,7 +1975,7 @@
           ],
           "returnType": "Agent",
           "exported": true,
-          "lineCount": 64
+          "lineCount": 66
         },
         {
           "name": "build_permission_engine",
@@ -1980,7 +2081,7 @@
         "build_memory_manager",
         "build_memory_extractor"
       ],
-      "totalLines": 208,
+      "totalLines": 210,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent_service.py": {
@@ -2028,7 +2129,7 @@
     },
     "box_agent/agent_session.py": {
       "filePath": "box_agent/agent_session.py",
-      "contentHash": "cd78b0fa9fb628a14d60f19758602272d7386229857b2faec8eb644e7c7a02fa",
+      "contentHash": "fa979b49bd0053474d0661c5e4286e5386b3c379399622b21da7dd96b71bdae1",
       "functions": [],
       "classes": [
         {
@@ -2082,7 +2183,7 @@
             "mcp_fallback_tools"
           ],
           "exported": true,
-          "lineCount": 373
+          "lineCount": 375
         }
       ],
       "imports": [
@@ -2168,12 +2269,12 @@
       "exports": [
         "AgentSession"
       ],
-      "totalLines": 408,
+      "totalLines": 410,
       "hasStructuralAnalysis": true
     },
     "box_agent/agent.py": {
       "filePath": "box_agent/agent.py",
-      "contentHash": "ee39a5c4f1397a4e77c4debd48a6d189f9e0a5f94ac949777abc3abe47fc0c4c",
+      "contentHash": "2a03a93bd04e9b23248c2d134784543d4a28557da3adb9f80437bd9c317ff029",
       "functions": [
         {
           "name": "_clean_goal_text",
@@ -2384,7 +2485,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 854
+          "lineCount": 860
         }
       ],
       "imports": [
@@ -2608,7 +2709,7 @@
         "_GoalWriteTool",
         "Agent"
       ],
-      "totalLines": 1290,
+      "totalLines": 1296,
       "hasStructuralAnalysis": true
     },
     "box_agent/artifacts.py": {
@@ -13713,7 +13814,7 @@
     },
     "box_agent/session_assembly.py": {
       "filePath": "box_agent/session_assembly.py",
-      "contentHash": "3711f543181eed03b820a21ac88d4d50de1905bc0a1fb12da7d909bbc905590b",
+      "contentHash": "0758bbacdd87f0c9706662cc82fcbf469580369648305ac8412e5a208c3033e2",
       "functions": [
         {
           "name": "_prepared",
@@ -13758,7 +13859,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 99
+          "lineCount": 101
         },
         {
           "name": "prepare_prompt",
@@ -13786,7 +13887,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 45
+          "lineCount": 49
         },
         {
           "name": "_workspace_layout_path",
@@ -13827,7 +13928,7 @@
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 18
+          "lineCount": 23
         },
         {
           "name": "build_acp_session_prompt",
@@ -13882,6 +13983,12 @@
           "source": "asyncio",
           "specifiers": [
             "asyncio"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
           ]
         },
         {
@@ -13989,12 +14096,12 @@
         "build_session_permission_policy",
         "close_owned_clients"
       ],
-      "totalLines": 644,
+      "totalLines": 656,
       "hasStructuralAnalysis": true
     },
     "box_agent/session_context.py": {
       "filePath": "box_agent/session_context.py",
-      "contentHash": "84e1d625e63ba1cd23f564b0cf63411e3f618c15a7404741132b36ffd9fcec09",
+      "contentHash": "afb5575b27e6f2f6adbd78846ffde7f75b5920b846bdb1d3bbcd0188684eeb37",
       "functions": [],
       "classes": [
         {
@@ -14040,12 +14147,14 @@
             "base_tools_factory",
             "workspace_tools_factory",
             "capability_state_provider",
+            "skill_access_filter",
+            "skill_catalog_filter",
             "extra_tools",
             "prompt_suffix",
             "diagnostics"
           ],
           "exported": true,
-          "lineCount": 27
+          "lineCount": 29
         },
         {
           "name": "SessionContext",
@@ -14116,7 +14225,7 @@
         "SessionContext",
         "RunContext"
       ],
-      "totalLines": 96,
+      "totalLines": 98,
       "hasStructuralAnalysis": true
     },
     "box_agent/session_continuation.py": {
@@ -25118,7 +25227,7 @@
     },
     "box_agent/tools/mcp_bootstrap.py": {
       "filePath": "box_agent/tools/mcp_bootstrap.py",
-      "contentHash": "cc8a3872a16e3185b8b789a4999926508de2a48b5cf3b5e1043b37bce62f4b2c",
+      "contentHash": "57ba3a52406b2aa768539538d23ad26110d3991893a6a67fa91c5845f7d079a4",
       "functions": [
         {
           "name": "_runtime_root",
@@ -25134,7 +25243,7 @@
           "params": [],
           "returnType": "Path",
           "exported": true,
-          "lineCount": 3
+          "lineCount": 6
         },
         {
           "name": "_normalize_hosted_search_url",
@@ -25323,12 +25432,12 @@
         "_atomic_write_json",
         "bootstrap_managed_mcp_config"
       ],
-      "totalLines": 316,
+      "totalLines": 319,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_config_tool.py": {
       "filePath": "box_agent/tools/mcp_config_tool.py",
-      "contentHash": "d6bf19be0102c4e717701daee677170f1c15b0992e049ef005d74a09285a9114",
+      "contentHash": "7523c297e838726ac0824b3e3bcdea6a6d33c39fb9b7e5253c2978ba55b36d20",
       "functions": [
         {
           "name": "_updated_server_config",
@@ -25354,7 +25463,7 @@
           "params": [],
           "returnType": "Path",
           "exported": true,
-          "lineCount": 33
+          "lineCount": 38
         }
       ],
       "classes": [
@@ -25376,6 +25485,12 @@
           "source": "json",
           "specifiers": [
             "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
           ]
         },
         {
@@ -25417,12 +25532,12 @@
         "_resolve_write_target",
         "McpConfigTool"
       ],
-      "totalLines": 371,
+      "totalLines": 377,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_loader.py": {
       "filePath": "box_agent/tools/mcp_loader.py",
-      "contentHash": "9eafb521ce652c40958af3db9b62dce3c7a8638e66215f3b8a8e4150a0a42e26",
+      "contentHash": "8a0e73057b1dd729683e9cb61d023b8f74a012fb85e763d3aea6e5b86acd9f1d",
       "functions": [
         {
           "name": "_warn",
@@ -25437,11 +25552,23 @@
           "name": "_public_mcp_tool_name",
           "params": [
             "server_name",
-            "remote_name"
+            "remote_name",
+            "connector_id"
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 15
+          "lineCount": 21
+        },
+        {
+          "name": "_mcp_tool_always_load",
+          "params": [
+            "server_name",
+            "tool",
+            "server_default"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 3
         },
         {
           "name": "_replace_server_catalog",
@@ -25565,6 +25692,13 @@
           "lineCount": 2
         },
         {
+          "name": "get_mcp_config_paths",
+          "params": [],
+          "returnType": "dict[str, str]",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
           "name": "get_mcp_tools_for_server",
           "params": [
             "name"
@@ -25598,18 +25732,19 @@
             "tool_count",
             "tools",
             "error",
-            "auth_status"
+            "auth_status",
+            "definition"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 19
+          "lineCount": 28
         },
         {
           "name": "get_mcp_status",
           "params": [],
           "returnType": "list[dict]",
           "exported": true,
-          "lineCount": 13
+          "lineCount": 18
         },
         {
           "name": "_determine_connection_type",
@@ -25619,6 +25754,68 @@
           "returnType": "ConnectionType",
           "exported": true,
           "lineCount": 9
+        },
+        {
+          "name": "set_mcp_runtime_credential",
+          "params": [
+            "credential_ref",
+            "headers"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "get_mcp_connector_server_names",
+          "params": [],
+          "returnType": "dict[str, frozenset[str]]",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "clear_mcp_runtime_credential",
+          "params": [
+            "credential_ref"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "_materialize_server_config",
+          "params": [
+            "definition"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_waiting_for_credential",
+          "params": [
+            "definition"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "_build_connection",
+          "params": [
+            "definition"
+          ],
+          "returnType": "\"MCPServerConnection\"",
+          "exported": true,
+          "lineCount": 37
+        },
+        {
+          "name": "_resolve_registered_sources",
+          "params": [
+            "config_path"
+          ],
+          "returnType": "dict[str, ResolvedMcpServer]",
+          "exported": true,
+          "lineCount": 36
         },
         {
           "name": "_resolve_mcp_config_path",
@@ -25638,13 +25835,13 @@
           ],
           "returnType": "list[Tool]",
           "exported": true,
-          "lineCount": 177
+          "lineCount": 155
         },
         {
           "name": "cleanup_mcp_connections",
           "params": [],
           "exported": true,
-          "lineCount": 8
+          "lineCount": 12
         },
         {
           "name": "reconnect_mcp_server",
@@ -25653,7 +25850,37 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 5
+          "lineCount": 17
+        },
+        {
+          "name": "reconcile_mcp_sources",
+          "params": [
+            "source"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "replace_mcp_source",
+          "params": [
+            "source",
+            "config",
+            "connector_ids"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 59
+        },
+        {
+          "name": "_reconcile_mcp_sources_locked",
+          "params": [
+            "source",
+            "connector_ids"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 72
         },
         {
           "name": "reconnect_auth_failed_mcp_servers_if_token_changed",
@@ -25669,7 +25896,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 111
+          "lineCount": 75
         }
       ],
       "classes": [
@@ -25704,6 +25931,8 @@
             "server_name",
             "remote_name",
             "mcp_tool_id",
+            "mcp_connector_id",
+            "mcp_connector_name",
             "mcp_generation",
             "mcp_always_load",
             "description",
@@ -25712,7 +25941,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 187
+          "lineCount": 199
         },
         {
           "name": "MCPServerConnection",
@@ -25731,7 +25960,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 403
+          "lineCount": 413
         },
         {
           "name": "McpServerStatus",
@@ -25739,6 +25968,11 @@
           "properties": [
             "name",
             "state",
+            "owner",
+            "config_id",
+            "connector_id",
+            "connector_name",
+            "source_path",
             "transport",
             "tool_count",
             "tools",
@@ -25746,7 +25980,7 @@
             "auth_status"
           ],
           "exported": true,
-          "lineCount": 8
+          "lineCount": 13
         }
       ],
       "imports": [
@@ -25901,6 +26135,15 @@
           ]
         },
         {
+          "source": ".mcp_sources",
+          "specifiers": [
+            "McpConfigSource",
+            "ResolvedMcpServer",
+            "configured_mcp_sources",
+            "resolve_mcp_sources"
+          ]
+        },
+        {
           "source": ".model_tool_context",
           "specifiers": [
             "current_model_tool_context"
@@ -25910,6 +26153,7 @@
       "exports": [
         "_warn",
         "_public_mcp_tool_name",
+        "_mcp_tool_always_load",
         "_replace_server_catalog",
         "_structured_mcp_error_message",
         "_walk_exception_tree",
@@ -25929,25 +26173,201 @@
         "_current_mcp_auth_fingerprint",
         "is_mcp_loading",
         "get_mcp_config_path",
+        "get_mcp_config_paths",
         "get_mcp_tools_for_server",
         "get_all_mcp_tools",
         "disconnect_mcp_server",
         "_record_status",
         "get_mcp_status",
         "_determine_connection_type",
+        "set_mcp_runtime_credential",
+        "get_mcp_connector_server_names",
+        "clear_mcp_runtime_credential",
+        "_materialize_server_config",
+        "_waiting_for_credential",
+        "_build_connection",
+        "_resolve_registered_sources",
         "_resolve_mcp_config_path",
         "load_mcp_tools_async",
         "cleanup_mcp_connections",
         "reconnect_mcp_server",
+        "reconcile_mcp_sources",
+        "replace_mcp_source",
+        "_reconcile_mcp_sources_locked",
         "reconnect_auth_failed_mcp_servers_if_token_changed",
         "_reconnect_mcp_server_locked"
       ],
-      "totalLines": 1396,
+      "totalLines": 1719,
+      "hasStructuralAnalysis": true
+    },
+    "box_agent/tools/mcp_sources.py": {
+      "filePath": "box_agent/tools/mcp_sources.py",
+      "contentHash": "9399974dc6214c0e453e843bd53561d6ac6914137dcf3a89aa60396f085306f4",
+      "functions": [
+        {
+          "name": "configured_mcp_sources",
+          "params": [
+            "primary_path"
+          ],
+          "returnType": "tuple[McpConfigSource, ...]",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "_read_servers",
+          "params": [
+            "source"
+          ],
+          "returnType": "dict[str, dict]",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_copy_servers",
+          "params": [
+            "raw_servers",
+            "source_label"
+          ],
+          "returnType": "dict[str, dict]",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_server_identity",
+          "params": [
+            "source",
+            "name",
+            "config"
+          ],
+          "returnType": "tuple[str, str | None, str | None]",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "_fingerprint",
+          "params": [
+            "source",
+            "config_id",
+            "config",
+            "credential_version"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "resolve_mcp_sources",
+          "params": [
+            "sources",
+            "credential_versions",
+            "reserved_names",
+            "source_server_overrides"
+          ],
+          "returnType": "ResolvedMcpSources",
+          "exported": true,
+          "lineCount": 47
+        }
+      ],
+      "classes": [
+        {
+          "name": "McpConfigSource",
+          "methods": [],
+          "properties": [
+            "owner",
+            "path"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "ResolvedMcpServer",
+          "methods": [],
+          "properties": [
+            "name",
+            "config",
+            "owner",
+            "config_id",
+            "connector_id",
+            "connector_name",
+            "source_path",
+            "fingerprint"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "ResolvedMcpSources",
+          "methods": [],
+          "properties": [
+            "sources",
+            "servers",
+            "conflicts"
+          ],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "imports": [
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Literal"
+          ]
+        }
+      ],
+      "exports": [
+        "McpConfigSource",
+        "ResolvedMcpServer",
+        "ResolvedMcpSources",
+        "configured_mcp_sources",
+        "_read_servers",
+        "_copy_servers",
+        "_server_identity",
+        "_fingerprint",
+        "resolve_mcp_sources"
+      ],
+      "totalLines": 190,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_tool_catalog.py": {
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
-      "contentHash": "fb93cdec2afa4034502d470fd1b360a7a40732bc360a13e34d32dc8eee9c26e7",
+      "contentHash": "4e072207821e0fba07405e7b3ed27f16f05ffa7ff6919b30c1c68222b3522981",
       "functions": [
         {
           "name": "_normalize",
@@ -26010,10 +26430,13 @@
             "tool",
             "generation",
             "always_load",
+            "connector_id",
+            "connector_name",
+            "remote_name",
             "name_conflict"
           ],
           "exported": true,
-          "lineCount": 9
+          "lineCount": 12
         },
         {
           "name": "MCPToolCatalog",
@@ -26033,6 +26456,8 @@
             "snapshot",
             "get",
             "get_by_model_name",
+            "resolve_connector_id",
+            "_visible",
             "search",
             "search_many",
             "lookup_exact",
@@ -26041,7 +26466,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 369
+          "lineCount": 495
         }
       ],
       "imports": [
@@ -26066,6 +26491,7 @@
         {
           "source": "collections.abc",
           "specifiers": [
+            "Callable",
             "Iterable"
           ]
         },
@@ -26097,12 +26523,12 @@
         "MCPToolCatalog",
         "get_mcp_tool_catalog"
       ],
-      "totalLines": 447,
+      "totalLines": 576,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_tool_search.py": {
       "filePath": "box_agent/tools/mcp_tool_search.py",
-      "contentHash": "c423a513b4ca072db2ee69e73ed5183ed63b6684c26aec966ecdf8c72240df9c",
+      "contentHash": "d41e09b4a0fc7b619a07ebb7eb62225b6f563523aefbfacb43216c3611485d90",
       "functions": [],
       "classes": [
         {
@@ -26131,6 +26557,7 @@
           "name": "ToolSearchTool",
           "methods": [
             "__init__",
+            "_entry_is_allowed",
             "name",
             "description",
             "parameters",
@@ -26138,19 +26565,20 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 352
+          "lineCount": 434
         },
         {
           "name": "MCPToolExposureManager",
           "methods": [
             "__init__",
+            "_entry_is_allowed",
             "prepare_tools",
             "inherited_tools",
             "validate_call"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 105
+          "lineCount": 118
         }
       ],
       "imports": [
@@ -26202,7 +26630,7 @@
         "ToolSearchTool",
         "MCPToolExposureManager"
       ],
-      "totalLines": 495,
+      "totalLines": 590,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/memory_tool.py": {
@@ -27626,7 +28054,7 @@
     },
     "box_agent/tools/safety.py": {
       "filePath": "box_agent/tools/safety.py",
-      "contentHash": "f044bce4a37ca03412aaa8118f79f75bab3231d02de6d6df277f1387f468ee9b",
+      "contentHash": "024a94a16780235daa1dbd9f7cda18ece9186551ff1f5d7f434c9a5ff8dd2cc0",
       "functions": [
         {
           "name": "trusted_runtime_executable_references",
@@ -27900,7 +28328,7 @@
         "backup_file",
         "extract_rm_targets"
       ],
-      "totalLines": 654,
+      "totalLines": 655,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/schedule_tool.py": {
@@ -28102,7 +28530,7 @@
     },
     "box_agent/tools/setup.py": {
       "filePath": "box_agent/tools/setup.py",
-      "contentHash": "aaf2a5a57e9702340d55a1fc0ae47a313bfe5d1dac0951665e60e97be1acb594",
+      "contentHash": "10ad880561253fbc8342ff175c1e61142dbf32967cd803b19f818beaef5f74f7",
       "functions": [
         {
           "name": "render_system_prompt_template",
@@ -28168,7 +28596,7 @@
             "mcp_start_gate"
           ],
           "exported": true,
-          "lineCount": 221
+          "lineCount": 255
         },
         {
           "name": "await_skill_discovery",
@@ -28245,12 +28673,13 @@
             "skill_runtime_context",
             "skill_loader",
             "capability_state_provider",
+            "skill_access_filter",
             "env_context",
             "process_owner_id",
             "bypass_dangerous_command_approval"
           ],
           "exported": true,
-          "lineCount": 243
+          "lineCount": 247
         }
       ],
       "classes": [
@@ -28267,6 +28696,12 @@
           "source": "asyncio",
           "specifiers": [
             "asyncio"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
           ]
         },
         {
@@ -28517,7 +28952,7 @@
         "sync_mcp_tool_list",
         "add_workspace_tools"
       ],
-      "totalLines": 796,
+      "totalLines": 835,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/shell_inspection.py": {
@@ -28977,7 +29412,7 @@
     },
     "box_agent/tools/skill_loader.py": {
       "filePath": "box_agent/tools/skill_loader.py",
-      "contentHash": "77a77b449282d5182808237df06c0cf54b05ae6c26723bdb18fa022642733d69",
+      "contentHash": "e412d36ac2fc6b046ae26ca95e7393cac0258372f6206aceb73151b12cf127d5",
       "functions": [
         {
           "name": "_warn",
@@ -29028,6 +29463,8 @@
             "description",
             "content",
             "source",
+            "owner_id",
+            "disabled",
             "license",
             "allowed_tools",
             "metadata",
@@ -29040,7 +29477,7 @@
             "broken_reason"
           ],
           "exported": true,
-          "lineCount": 81
+          "lineCount": 85
         },
         {
           "name": "_SourceEntry",
@@ -29087,7 +29524,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 797
+          "lineCount": 829
         },
         {
           "name": "SkillSelector",
@@ -29101,7 +29538,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 100
+          "lineCount": 116
         }
       ],
       "imports": [
@@ -29146,6 +29583,7 @@
           "source": "typing",
           "specifiers": [
             "Any",
+            "Callable",
             "Dict",
             "List",
             "Literal",
@@ -29177,7 +29615,7 @@
         "SkillLoader",
         "SkillSelector"
       ],
-      "totalLines": 1100,
+      "totalLines": 1152,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/skill_preload.py": {
@@ -29615,7 +30053,7 @@
     },
     "box_agent/tools/skill_tool.py": {
       "filePath": "box_agent/tools/skill_tool.py",
-      "contentHash": "189f26420e7382b0cc70ccd6886b830e3797219c0cc74014c5ed0a6b04683b5a",
+      "contentHash": "000f08838d1502cf3d954b8339c5ac7ccc77772cbad67e10fb72f9ee66b75c96",
       "functions": [
         {
           "name": "create_skill_tools",
@@ -29641,7 +30079,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 111
+          "lineCount": 123
         }
       ],
       "imports": [
@@ -29661,6 +30099,7 @@
           "source": "typing",
           "specifiers": [
             "Any",
+            "Callable",
             "Dict",
             "List",
             "Literal",
@@ -29688,7 +30127,7 @@
         "GetSkillTool",
         "create_skill_tools"
       ],
-      "totalLines": 164,
+      "totalLines": 176,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/skillhub_install_tool.py": {
@@ -30006,7 +30445,7 @@
     },
     "box_agent/tools/sub_agent_capabilities.py": {
       "filePath": "box_agent/tools/sub_agent_capabilities.py",
-      "contentHash": "aa69ce3573e04a00ebe68f61cb527d0b1ed7ad715ae6ad738817dc90d154a5f3",
+      "contentHash": "52073dead9cd85077527873f0ac2988357ba451f788a3ee7279de4b6b7b9ab46",
       "functions": [
         {
           "name": "_tool_capability_metadata",
@@ -30180,7 +30619,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 167
+          "lineCount": 179
         }
       ],
       "imports": [
@@ -30194,6 +30633,7 @@
           "source": "typing",
           "specifiers": [
             "Any",
+            "Callable",
             "Mapping"
           ]
         },
@@ -30225,12 +30665,12 @@
         "_tool_denial_reason",
         "CapabilityResolver"
       ],
-      "totalLines": 700,
+      "totalLines": 712,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/sub_agent_tool.py": {
       "filePath": "box_agent/tools/sub_agent_tool.py",
-      "contentHash": "4d6c2039097b8c15e9825a50cbf7d5df12ce004a9a3182ede9b96c9b8572a856",
+      "contentHash": "c927aaeecaf817925f016b3afaa4e4d2b919996a55ea0afe4c8a38b02641f89f",
       "functions": [
         {
           "name": "_child_safe_parent_prompt",
@@ -30282,6 +30722,7 @@
             "set_parent_system_prompt",
             "set_tool_provider",
             "set_skill_provider",
+            "set_skill_access_filter",
             "set_capability_state_provider",
             "set_permission_negotiator",
             "_resolve_child_tools",
@@ -30306,7 +30747,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 1166
+          "lineCount": 1172
         }
       ],
       "imports": [
@@ -30433,7 +30874,7 @@
         "_PermissionGatedBashTool",
         "SubAgentTool"
       ],
-      "totalLines": 1410,
+      "totalLines": 1416,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/todo_tool.py": {
@@ -32035,6 +32476,16 @@
       "totalLines": 817,
       "hasStructuralAnalysis": true
     },
+    "docs/CONNECTOR_RUNTIME_RESTORE.md": {
+      "filePath": "docs/CONNECTOR_RUNTIME_RESTORE.md",
+      "contentHash": "7b0cbfa223093043ec3ac1b8fa02a75ba2bdbbf8aa3b967418e59c5900f1ec14",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 28,
+      "hasStructuralAnalysis": true
+    },
     "docs/CONTEXT_COMPRESSION_CN.md": {
       "filePath": "docs/CONTEXT_COMPRESSION_CN.md",
       "contentHash": "1842dcff665dd1e2e67f8e125e5174eb424094429f7262cff7ce11c764825e36",
@@ -32607,7 +33058,7 @@
     },
     "scripts/build_runtime.py": {
       "filePath": "scripts/build_runtime.py",
-      "contentHash": "4ee723dfc9b53f6a1cd372255dd663ed6eda378f7ceead61534a5a31a658a945",
+      "contentHash": "e707c4bb54d6c172ac1513061641585aab5c236c06bc44749335ce194f8af45b",
       "functions": [
         {
           "name": "env_flag",
@@ -32715,7 +33166,7 @@
           ],
           "returnType": "dict[str, object]",
           "exported": true,
-          "lineCount": 28
+          "lineCount": 30
         },
         {
           "name": "resolve_officev3_dir",
@@ -32956,7 +33407,7 @@
         "_relativize_node_manifest",
         "main"
       ],
-      "totalLines": 1042,
+      "totalLines": 1044,
       "hasStructuralAnalysis": true
     },
     "scripts/build_win_runtime.py": {
