@@ -168,6 +168,8 @@ plans, todos, active Skills, compaction records, and turn boundaries.
 Active Skills are restored from the current SkillLoader content. A historical
 content hash mismatch does not block recovery. In-memory hashes reflect the
 current content, and restoration does not rewrite historical logs.
+Unavailable Skills are skipped while available Skills are restored. If no
+SkillLoader is available, the session resumes without restoring active Skills.
 
 A Session owns one normalized cwd for its entire lifetime. Opening the same
 Session with another workspace fails before the log is repaired or mutated.

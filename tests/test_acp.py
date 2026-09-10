@@ -1224,6 +1224,79 @@ async def test_acp_restarts_with_same_product_session_from_jsonl(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("availability", ["partial", "empty", "no-loader"])
+async def test_acp_resumes_and_answers_when_previous_skills_are_unavailable(
+    tmp_path, monkeypatch, availability
+):
+    monkeypatch.setattr(
+        acp_module, "state_path", lambda relative: tmp_path / "profile" / relative
+    )
+    skills_dir = tmp_path / "skills"
+    for name in ("missing-skill", "available-skill"):
+        directory = skills_dir / name
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Test instructions\n---\n"
+            f"Instructions for {name}.\n",
+            encoding="utf-8",
+        )
+    loader = SkillLoader(skills_dir)
+    loader.discover_skills()
+    config = Config(
+        llm=LLMConfig(api_key="test-key"),
+        agent=AgentConfig(max_steps=2, workspace_dir=str(tmp_path)),
+        tools=ToolsConfig(enable_sub_agent=False, enable_mcp=False),
+    )
+    request = SimpleNamespace(
+        cwd=str(tmp_path), field_meta={"session_id": "missing-skills-session"}
+    )
+    original = BoxACPAgent(
+        DummyConn(), config, DoneLLM(), [], "system", skill_loader=loader
+    )
+    session = await original.newSession(request)
+    original_state = original._sessions[session.sessionId]
+    try:
+        await original.prompt(
+            SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "remember me"}])
+        )
+        for name in ("missing-skill", "available-skill"):
+            original_state.agent.activate_skill_instructions(
+                name, loader.get_skill(name).to_prompt()
+            )
+    finally:
+        original_state.agent.session_log.close()
+
+    (skills_dir / "missing-skill" / "SKILL.md").unlink()
+    if availability == "empty":
+        (skills_dir / "available-skill" / "SKILL.md").unlink()
+    current_loader = None if availability == "no-loader" else SkillLoader(skills_dir)
+    if current_loader is not None:
+        current_loader.discover_skills()
+
+    # Retrying/restarting must remain usable without rewriting the old Skill list.
+    for _ in range(2):
+        llm = DoneLLM()
+        restarted = BoxACPAgent(
+            DummyConn(), config, llm, [], "system", skill_loader=current_loader
+        )
+        session = await restarted.newSession(request)
+        state = restarted._sessions[session.sessionId]
+        try:
+            expected_names = ("available-skill",) if availability == "partial" else ()
+            assert state.agent.active_skill_diagnostics()["names"] == expected_names
+            assert "Instructions for missing-skill." not in state.agent.system_prompt
+            assert "remember me" in [message.content for message in state.agent.messages]
+            response = await restarted.prompt(
+                SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "continue"}])
+            )
+            assert response.stopReason == "end_turn"
+            assert llm.calls == 1
+            assert state.agent.messages[-1].content == "done"
+        finally:
+            state.agent.session_log.close()
+
+
+@pytest.mark.asyncio
 async def test_acp_rejects_workspace_change_without_dropping_existing_session(
     tmp_path,
     monkeypatch,

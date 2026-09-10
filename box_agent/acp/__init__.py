@@ -2011,12 +2011,8 @@ class BoxACPAgent:
                 lambda: capability_snapshot(agent, session_skill_loader)
             )
 
-        if agent.restored_skills:
+        if agent.restored_skills and session_skill_loader is not None:
             try:
-                if session_skill_loader is None:
-                    raise ValueError(
-                        "persisted active Skills cannot be restored without a SkillLoader"
-                    )
                 restored_skill_prompts: list[tuple[str, str, str, int]] = []
                 for item in agent.restored_skills:
                     name = item.get("name")
@@ -2033,9 +2029,7 @@ class BoxACPAgent:
                         include_disabled=expert_context is not None,
                     )
                     if skill is None:
-                        raise ValueError(
-                            f"persisted active Skill {name!r} is unavailable"
-                        )
+                        continue
                     restored_skill_prompts.append(
                         (name, skill.to_prompt(), prompt_hash, load_order)
                     )
