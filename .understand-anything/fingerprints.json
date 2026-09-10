@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "9f1bb264f5b9356a5b9f4b5c49026612301cc03d",
-  "generatedAt": "2026-09-10T17:31:11.523Z",
+  "gitCommitHash": "be3c151a0d056623795b6c799a298919e6ed6ae0",
+  "generatedAt": "2026-09-10T18:08:25.102Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -178,7 +178,7 @@
     },
     "box_agent/acp/__init__.py": {
       "filePath": "box_agent/acp/__init__.py",
-      "contentHash": "1f094802023e674aa3daa5c394edaf3dac80cd19885dd9ab406ecdc910b9250a",
+      "contentHash": "4d128cbdfddc929232b56fbd526b57a46e9d7327a28f71b1478e440deb9a4bf6",
       "functions": [
         {
           "name": "_artifact_envelope",
@@ -450,7 +450,7 @@
           "params": [],
           "returnType": "dict[str, list[tuple[str, str, str]]]",
           "exported": true,
-          "lineCount": 19
+          "lineCount": 23
         },
         {
           "name": "_connected_connector_ids",
@@ -1235,7 +1235,7 @@
         "run_acp_server",
         "main"
       ],
-      "totalLines": 5645,
+      "totalLines": 5649,
       "hasStructuralAnalysis": true
     },
     "box_agent/acp/action_hints.py": {
@@ -25537,7 +25537,7 @@
     },
     "box_agent/tools/mcp_loader.py": {
       "filePath": "box_agent/tools/mcp_loader.py",
-      "contentHash": "2031e0b99d73ead3b6204d0173ebdb903b93bfa43a2154720f277ae0f39fd776",
+      "contentHash": "a96d76c583ebf364269e3323dc0f4a1367e657f5355cd552fdc5eb5b2b1548b9",
       "functions": [
         {
           "name": "_warn",
@@ -25853,13 +25853,20 @@
           "lineCount": 17
         },
         {
+          "name": "_mcp_startup_ready",
+          "params": [],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
           "name": "reconcile_mcp_sources",
           "params": [
             "source"
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 9
+          "lineCount": 7
         },
         {
           "name": "replace_mcp_source",
@@ -25870,7 +25877,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 64
+          "lineCount": 66
         },
         {
           "name": "_reconcile_mcp_sources_locked",
@@ -25880,7 +25887,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 80
+          "lineCount": 82
         },
         {
           "name": "reconnect_auth_failed_mcp_servers_if_token_changed",
@@ -26191,13 +26198,14 @@
         "load_mcp_tools_async",
         "cleanup_mcp_connections",
         "reconnect_mcp_server",
+        "_mcp_startup_ready",
         "reconcile_mcp_sources",
         "replace_mcp_source",
         "_reconcile_mcp_sources_locked",
         "reconnect_auth_failed_mcp_servers_if_token_changed",
         "_reconnect_mcp_server_locked"
       ],
-      "totalLines": 1734,
+      "totalLines": 1746,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_sources.py": {
@@ -26367,7 +26375,7 @@
     },
     "box_agent/tools/mcp_tool_catalog.py": {
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
-      "contentHash": "4e072207821e0fba07405e7b3ed27f16f05ffa7ff6919b30c1c68222b3522981",
+      "contentHash": "0e99be67adcb90777d3f613ace31dcf4e69518a1547cd416e9fabbacb6450e36",
       "functions": [
         {
           "name": "_normalize",
@@ -26448,6 +26456,7 @@
             "mark_ready",
             "mark_server_loading",
             "mark_server_ready",
+            "initial_loading",
             "loading",
             "wait_until_ready",
             "replace_server",
@@ -26466,7 +26475,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 495
+          "lineCount": 501
         }
       ],
       "imports": [
@@ -26523,7 +26532,7 @@
         "MCPToolCatalog",
         "get_mcp_tool_catalog"
       ],
-      "totalLines": 576,
+      "totalLines": 582,
       "hasStructuralAnalysis": true
     },
     "box_agent/tools/mcp_tool_search.py": {
@@ -32479,12 +32488,12 @@
     },
     "docs/CONNECTOR_RUNTIME_RESTORE.md": {
       "filePath": "docs/CONNECTOR_RUNTIME_RESTORE.md",
-      "contentHash": "7cba91561267f3e56006bc6d073496f431afef711021a51b33f53d8205b063a3",
+      "contentHash": "8b8a58d295d2c64bdc989e208b3cd64c7fe9a11b89530acea4fb7afc6a9ef465",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 38,
+      "totalLines": 47,
       "hasStructuralAnalysis": true
     },
     "docs/CONTEXT_COMPRESSION_CN.md": {

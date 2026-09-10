@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T17:29:11.102Z",
-    "gitCommitHash": "9f1bb264f5b9356a5b9f4b5c49026612301cc03d"
+    "analyzedAt": "2026-09-10T18:06:25.517Z",
+    "gitCommitHash": "be3c151a0d056623795b6c799a298919e6ed6ae0"
   },
   "nodes": [
     {
@@ -6230,7 +6230,7 @@
       "type": "file",
       "name": "mcp_loader.py",
       "filePath": "box_agent/tools/mcp_loader.py",
-      "summary": "从 system、connector、user 来源组装 MCP 注册表，管理仅供 connector 使用的进程内凭证、等待状态与逐服务重连。作用域更新保护其他连接器的同名服务；撤销旧 owner 时断开其连接，作用域外的同名后备来源须自行对账后激活。",
+      "summary": "从隔离来源管理 MCP 注册表、connector 专属进程内凭证与逐服务重连，来源更新持锁后先等待冷发现就绪，超时不修改配置。作用域撤销与热重连共享同名服务锁，独立服务并发启动，旧 owner 撤销后不会自动激活范围外同名来源。",
       "tags": [
         "mcp",
         "connectors",
@@ -6738,8 +6738,8 @@
       "name": "reconnect_auth_failed_mcp_servers_if_token_changed",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1629,
-        1656
+        1641,
+        1668
       ],
       "summary": "在产品登录指纹变化后重连认证失败的 MCP 服务，保留逐服务重连锁。",
       "tags": [
@@ -6757,8 +6757,8 @@
       "name": "_reconnect_mcp_server_locked",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1659,
-        1733
+        1671,
+        1745
       ],
       "summary": "从已解析注册表重建单个服务连接；缺宿主凭证时只返回等待状态，连接成功后更新工具目录及来源状态。",
       "tags": [
@@ -27852,7 +27852,7 @@
       "type": "file",
       "name": "mcp_tool_catalog.py",
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
-      "summary": "维护进程级 MCP 工具目录、发现就绪状态和名称冲突，保存 Connector 身份与远端原名，并为会话检索提供可过滤的精确匹配和 BM25 排序。",
+      "summary": "维护进程级 MCP 工具目录、发现就绪和名称冲突，保留 Connector 身份及远端原名以供过滤检索。只读 initial_loading 单独表示冷发现，与包含单服务热刷新的 loading 区分。",
       "tags": [
         "mcp",
         "工具目录",
@@ -27939,8 +27939,8 @@
       "name": "get_mcp_tool_catalog",
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
       "lineRange": [
-        574,
-        575
+        580,
+        581
       ],
       "summary": "返回进程内共享的 MCP 工具目录实例，供加载器和会话工具发现复用。",
       "tags": [
@@ -27978,9 +27978,9 @@
       "filePath": "box_agent/tools/mcp_tool_catalog.py",
       "lineRange": [
         74,
-        568
+        574
       ],
-      "summary": "维护工具注册快照与就绪状态，以调用方提供的过滤器限制 Connector 身份解析、精确查找和多查询排名；检索同时覆盖规范名、别名、远端原名及 Connector 元数据。",
+      "summary": "维护工具快照、名称匹配和过滤查询；只读 initial_loading 暴露冷发现状态，loading 仍覆盖冷发现与热刷新，来源更新据此避免被普通热重连全局阻塞。",
       "tags": [
         "class",
         "tools",
@@ -28876,8 +28876,8 @@
       "name": "_bind_user_source_text",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        1157,
-        1160
+        1161,
+        1164
       ],
       "summary": "委托共享 Skill 环境绑定器将用户原文写入会话工具执行上下文。",
       "tags": [
@@ -28894,8 +28894,8 @@
       "name": "run_acp_server",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        5374,
-        5637
+        5378,
+        5641
       ],
       "summary": "装配应用级 runtime 与 ACP 服务，运行 stdio 协议，并在退出时按所有权关闭会话和模型客户端。",
       "tags": [
@@ -28912,8 +28912,8 @@
       "name": "main",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        5640,
-        5641
+        5644,
+        5645
       ],
       "summary": "启动 ACP 异步服务的命令行入口。",
       "tags": [
@@ -28984,8 +28984,8 @@
       "name": "BoxACPAgent",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        1163,
-        4954
+        1167,
+        4958
       ],
       "summary": "处理 ACP 会话及协议扩展，把连接器选择、目录状态和内部 Skill 授权接入共享组装，并调用 MCP 凭证、来源替换与对账能力。MCP 工具注册表同步统一委托共享控制器，其会话注册表包含常规会话并排除 utility 会话，后台发现使用同一边界，活跃 utility 回合也不会接收 MCP 状态提示与 tool_search 指导。",
       "tags": [
@@ -29002,8 +29002,8 @@
       "name": "_PermissionNegotiator",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        4957,
-        5212
+        4961,
+        5216
       ],
       "summary": "串行化和去重宿主权限请求，把审批结果转换为工具授权与目录授权。",
       "tags": [
@@ -29020,8 +29020,8 @@
       "name": "_MemoryProposalNegotiator",
       "filePath": "box_agent/acp/__init__.py",
       "lineRange": [
-        5215,
-        5371
+        5219,
+        5375
       ],
       "summary": "向宿主发出记忆提升提案并将用户响应交回共享记忆流程。",
       "tags": [
@@ -37097,9 +37097,9 @@
       "complexity": "simple",
       "lineRange": [
         1060,
-        1078
+        1082
       ],
-      "summary": "从 MCP 运行时状态中筛选 connector 所有者的服务器，并按规范连接器 ID 汇总服务器名称、连接器名称和连接状态。"
+      "summary": "从 MCP 运行时状态中筛选 connector 所有者且仍在当前连接器配置内的服务器，按规范连接器 ID 汇总名称和状态，排除已移除服务器的历史状态；当前配置服务器缺少状态仍会阻止授权。"
     },
     {
       "id": "function:box_agent/acp/__init__.py:_connected_connector_ids",
@@ -37114,8 +37114,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        1081,
-        1091
+        1085,
+        1095
       ],
       "summary": "只返回会话已选择且预期服务器集合完整匹配、所有服务器均 connected 的连接器 ID。"
     },
@@ -37132,8 +37132,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        1094,
-        1100
+        1098,
+        1104
       ],
       "summary": "对连接器来源 Skill 的新识别要求所属连接器已选中且运行时完整连接，其他来源直接允许；不移除已经加载的指导。"
     },
@@ -37150,8 +37150,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        1103,
-        1107
+        1107,
+        1111
       ],
       "summary": "访问连接器 Skill 时要求其名称已获本会话内部选择器授权，其他来源 Skill 保持可用。"
     },
@@ -37168,8 +37168,8 @@
       ],
       "complexity": "simple",
       "lineRange": [
-        1110,
-        1154
+        1114,
+        1158
       ],
       "summary": "生成连接器级状态提示，优先使用宿主完整快照，缺失时聚合已选连接器的运行时状态；刷新失败时明确禁止沿用旧状态。"
     },
@@ -37332,10 +37332,10 @@
       "name": "reconcile_mcp_sources",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1470,
-        1478
+        1480,
+        1486
       ],
-      "summary": "等待首次加载就绪后取得来源更新锁，按可选来源作用域对账并调整连接。",
+      "summary": "先取得来源更新锁，再等待冷发现就绪；等待超时返回失败而不对账或修改配置，就绪后按来源范围执行连接调整。",
       "complexity": "simple",
       "tags": [
         "mcp",
@@ -37349,10 +37349,10 @@
       "name": "replace_mcp_source",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1481,
-        1544
+        1489,
+        1554
       ],
-      "summary": "在内存替换 connector 来源并按 connectorIds 限定更新及删除，拒绝占用过滤器范围外连接器已拥有的同名服务，再执行来源对账。",
+      "summary": "验证 connector 局部替换并持有来源锁，冷发现就绪前不修改覆盖配置；超时失败后可重试，仍拒绝跨 connectorIds 范围的同名覆盖。",
       "complexity": "moderate",
       "tags": [
         "mcp",
@@ -37366,10 +37366,10 @@
       "name": "_reconcile_mcp_sources_locked",
       "filePath": "box_agent/tools/mcp_loader.py",
       "lineRange": [
-        1547,
-        1626
+        1557,
+        1638
       ],
-      "summary": "分别核对变更前后定义是否属于指定来源与连接器范围，撤销离开范围的旧连接且不激活范围外同名后备来源；并发重连新增、变更或上次失败的范围内服务。",
+      "summary": "按来源范围生成移除、禁用和重连操作并通过 gather 并发启动。内嵌 retire 与 reconnect 共享逐服务锁，撤销等待同名连接完成发布后关闭，保持其他服务独立，且不激活范围外同名后备来源。",
       "complexity": "moderate",
       "tags": [
         "mcp",
@@ -37548,13 +37548,30 @@
       "type": "document",
       "name": "CONNECTOR_RUNTIME_RESTORE.md",
       "filePath": "docs/CONNECTOR_RUNTIME_RESTORE.md",
-      "summary": "规定连接器凭证恢复顺序、局部来源更新和凭证所有权，禁止跨连接器同名覆盖并要求撤销旧连接后由后备来源自行对账。补充 eager/deferred 授权、子会话继承、撤销后调用及 utility 目录隔离要求和宿主验证边界。",
+      "summary": "规定 connector 凭证恢复、局部更新、撤销和授权边界；来源更新须持锁等待冷发现，就绪超时保持配置不变，移除与禁用等待同名连接发布后撤销。连接器授权只计算当前配置服务，忽略历史 tombstone，但当前服务缺失状态仍阻断授权，并保留 eager/deferred、继承与 utility 隔离要求。",
       "tags": [
         "documentation",
         "connectors",
         "restoration"
       ],
       "complexity": "simple"
+    },
+    {
+      "id": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "function",
+      "name": "_mcp_startup_ready",
+      "filePath": "box_agent/tools/mcp_loader.py",
+      "summary": "在冷发现或首次加载尚未完成时有界等待目录就绪，覆盖 startup gate；仅有普通热重连时直接允许继续，由调用方持有来源锁并处理超时失败。",
+      "tags": [
+        "mcp",
+        "startup",
+        "lifecycle"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        1470,
+        1477
+      ]
     }
   ],
   "edges": [
@@ -59376,7 +59393,8 @@
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "function:box_agent/session_assembly.py:prepare_tools",
@@ -59930,7 +59948,8 @@
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/tools/setup.py",
@@ -61990,7 +62009,8 @@
       "target": "file:box_agent/tools/mcp_tool_catalog.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/agent.py",
@@ -72646,13 +72666,6 @@
       "weight": 0.8
     },
     {
-      "source": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
-      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_timeout_config",
-      "type": "calls",
-      "direction": "forward",
-      "weight": 0.8
-    },
-    {
       "source": "function:box_agent/tools/mcp_loader.py:reconnect_mcp_server",
       "target": "function:box_agent/tools/mcp_loader.py:_resolve_registered_sources",
       "type": "calls",
@@ -72732,6 +72745,55 @@
     {
       "source": "function:box_agent/tools/skill_tool.py:create_skill_tools",
       "target": "class:box_agent/tools/skill_loader.py:SkillLoader",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:box_agent/tools/mcp_loader.py",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/acp/__init__.py:_connector_server_statuses",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_connector_server_names",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "target": "function:box_agent/tools/mcp_loader.py:get_mcp_timeout_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "target": "function:box_agent/tools/mcp_tool_catalog.py:get_mcp_tool_catalog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:reconcile_mcp_sources",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:box_agent/tools/mcp_loader.py:replace_mcp_source",
+      "target": "function:box_agent/tools/mcp_loader.py:_mcp_startup_ready",
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
