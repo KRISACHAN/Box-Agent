@@ -23,7 +23,7 @@ flowchart TB
         CONTEXT["SessionContext<br/>same Config reference"]
         PREP["PluginRuntime.open_session<br/>activate Process / Session scopes, then prepare"]
         ASSEMBLY["Session plugins → session_assembly<br/>model → memory → tools/Skills/MCP → prompt → hooks"]
-        FACTORY["Internal create → AgentService<br/>construct Agent; finish_session restores/binds Skills"]
+        FACTORY["Internal create → AgentService<br/>construct Agent and restore Skill facts; finish_session binds catalog/grants"]
         SESSION["AgentSession<br/>Config, Agent, PluginSession, live state<br/>ACP subclass: SessionState; state view: AgentRunHandle"]
         INPUT --> OPEN --> CONTEXT --> PREP --> ASSEMBLY --> FACTORY --> SESSION
     end

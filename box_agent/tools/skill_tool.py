@@ -68,8 +68,8 @@ class GetSkillTool(Tool):
             "additionalProperties": False,
         }
 
-    def _read(self, skill_name: str, *, reader=None, **kwargs: Any) -> ToolResult:
-        from ..skill_runtime import SkillRuntime
+    def check_access(self, skill_name: str) -> ToolResult | None:
+        """Check this reader's current scope without reading or recording a body."""
         from ..skill_dependencies import resolve_required_skills, SkillDependencyError
 
         name = skill_name.strip()
@@ -93,6 +93,15 @@ class GetSkillTool(Tool):
                         f"Skill '{skill.name}' is not enabled for this conversation. "
                         "Connector Skills can only be enabled through the conversation connector picker."
                     ))
+        return None
+
+    def _read(self, skill_name: str, *, reader=None, **kwargs: Any) -> ToolResult:
+        from ..skill_runtime import SkillRuntime
+
+        denied = self.check_access(skill_name)
+        if denied is not None:
+            return denied
+        name = skill_name.strip()
         # Legacy preload hashes are not evidence that text survives in this
         # request. Only the session reader can issue a verified reuse receipt.
         read = reader or SkillRuntime(self.skill_loader).read

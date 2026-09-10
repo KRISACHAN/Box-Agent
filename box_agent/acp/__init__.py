@@ -1921,7 +1921,7 @@ class BoxACPAgent:
                     projection = session_log.replay()
                     restore_loader = (session_skill_loader if session_skill_loader is not None
                                       else AgentService.resolve_skill_loader(self._base_tools))
-                    SkillRuntime(restore_loader).restore_records(projection.skills)
+                    SkillRuntime(restore_loader, allow_partial_restore=True).restore_records(projection.skills)
                     session_log_restored = bool(projection.messages)
                     session_log.prepare_resume()
                 except BaseException:

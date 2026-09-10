@@ -106,7 +106,7 @@ Agent 持有一个 `SkillRuntime`，每次 run 借用同一服务。共享 Loade
 
 旧 `skill/change` 的 `name`、`sha256`、`loadOrder` 保持原含义，新来源、路径、原因、交付范围等字段只作增量扩展。Agent 在有 Loader 的构造恢复入口统一核对顺序、来源与版本，并采用**当前有效 Skill**。版本或来源与历史记录不同不阻断升级恢复，而是在普通资料中明确说明差异；新正文不得使用旧 hash 伪装成历史版本，原日志也不改写。只有当前来源缺失、禁用、损坏或 required 依赖校验失败才阻断恢复，失败不覆盖已有有效状态。恢复本身不制造新的工具加载事件。新日志继续使用旧读者认识的事件类型。
 
-若历史中有 Skill 记录而当前没有来源，Agent 构造时暂存待恢复记录，允许调用方随后通过旧 `restore_active_skill_instructions` tuple API 提供当前正文。若执行开始时仍无法恢复，`run_events` 在模型调用和本次日志写入之前阻断，不能丢弃历史 Skill 后继续。ACP 没有这一步后补 tuple 的入口，因此在 `SessionLog.prepare_resume` 修复日志之前先校验来源；未单独传入会话 Loader 时，回退到真实 Get/List 工具的 Loader，校验失败不改写原日志。
+若历史中有 Skill 记录而当前没有来源，Agent 构造时暂存待恢复记录，允许调用方随后通过旧 `restore_active_skill_instructions` tuple API 提供当前正文。若执行开始时仍无法恢复，`run_events` 在模型调用和本次日志写入之前阻断，不能丢弃历史 Skill 后继续。ACP 保留既有的可继续恢复策略：共享准备阶段为会话配置 `SkillRuntime(allow_partial_restore=True)`，在 `SessionLog.prepare_resume` 前及 Agent 构造时使用同一策略。当前不可用的来源或依赖、损坏的可选记录被跳过；仅有名称的旧记录可从当前有效来源恢复，但不证明历史正文或可见范围。未单独传入 Loader 时仍回退到真实 Get/List 工具，utility 不恢复可执行方法。恢复不追加 `skill/change`，原始日志和历史消息保留；直接调用者默认保持严格恢复，持久化和一般程序错误仍向上传递。
 
 恢复有效资料后，首轮普通参考资料或有界再读提示让模型重新找到当前方法；版本变化不会被当成损坏会话。对于旧 system 中的 active Skill 后缀，只在它与已核实旧记录正文构成的后缀逐字一致时，从**请求投影**中移除；不会按标题猜测和删除任意调用方 system 内容，原持久消息也不被重写。预算估算、摘要压缩、最终父请求和子 Agent 继承共用这个有效 system 边界，包括明确撤销 Skill 后的请求。Agent 记录构造时实际追加的 Workspace／Discoverable tools 尾部，纯投影只清理其前面的已验证旧正文并保留宿主规则；该投影通过已有 ContextEngine capability 注入，SkillRuntime 不负责解析宿主尾部。重复空恢复不遗忘已验证的后缀证据。这保留 `main` 在 `8702f84` 引入的升级恢复行为，不恢复“历史 hash 不同即拒绝会话”的旧策略。
 

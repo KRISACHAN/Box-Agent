@@ -743,6 +743,13 @@ class SubAgentTool(EventEmittingTool):
         if skill_tool is None:
             return None
         for skill in bundle.skills:
+            if skill_tool.skill_access_filter is not None and not skill_tool.skill_access_filter(skill):
+                return CapabilityFailure(
+                    code="SKILL_NOT_ENABLED_FOR_CONVERSATION",
+                    message=f"Skill '{skill.name}' is not enabled for this conversation.",
+                    retryable=False,
+                    details={"skill": skill.name},
+                )
             if skill_tool.allowed_skill_names is not None and skill.name not in skill_tool.allowed_skill_names:
                 return CapabilityFailure(
                     code="SKILL_OUTSIDE_ASSIGNED_SCOPE",

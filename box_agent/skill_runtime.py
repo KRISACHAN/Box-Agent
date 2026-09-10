@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from .skill_dependencies import SkillDependencyError, resolve_required_skills
 from .skill_state import SkillReferenceSnapshot, SkillRead, SkillSessionState
-from .skill_restore import invalid_restore, validate_restore_records
+from .skill_restore import invalid_restore, recover_available_records, validate_restore_records
 from .tools.base import ToolResult
 
 from box_agent.tools.skill_loader import SkillLoader
@@ -22,9 +22,11 @@ from box_agent.tools.skill_preload import (
 class SkillRuntime:
     """Borrow the loader; own source validity, selection and delivery facts."""
 
-    def __init__(self, loader: SkillLoader | None, *, session_log: Any = None):
+    def __init__(self, loader: SkillLoader | None, *, session_log: Any = None,
+                 allow_partial_restore: bool = False):
         self.loader = loader
         self.session_log = session_log
+        self._allow_partial_restore = allow_partial_restore
         self.state = SkillSessionState()
         self.turn_deliveries: dict[str, dict[str, Any]] = {}
         self._restore_pending: tuple[str, ...] = ()
@@ -118,12 +120,17 @@ class SkillRuntime:
         the effective source or body; that relationship is ordinary metadata,
         not a reason to prevent the session from continuing.
         """
+        recovered = False
+        if self._allow_partial_restore:
+            available = recover_available_records(records, self.loader)
+            recovered = available != records
+            records = available
         validate_restore_records(records)
         if self.loader is not None:
             self.loader.maybe_reload()
         restored: dict[str, SkillRead] = {}
         diagnostics: dict[str, str] = {}
-        historical_bodies_verified = True
+        historical_bodies_verified = not recovered
         for record in sorted(records, key=lambda row: row["loadOrder"]):
             name = record["name"]
             if self.loader is not None:

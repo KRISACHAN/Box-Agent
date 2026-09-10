@@ -250,3 +250,23 @@ def test_new_transient_from_current_batch_is_reserved_before_following_skill_rea
     messages.extend([Message(role="tool", name="get_skill", tool_call_id="read-1", content=result.model_context),
                      Message(role="user", content=blocks)])
     assert _fallback_context_estimate(messages, {tool.name: tool}) + 1024 <= 8000
+
+
+def test_paging_requires_reader_access_to_selected_skills(runtime):
+    runtime.loader.get_skill("demo").skill_path.write_text(
+        "---\nname: demo\ndescription: example\n---\n" + "METHOD_BODY\n" * 3000,
+    )
+    runtime.select(["demo"])
+    allowed = set()
+    tool = GetSkillTool(runtime.loader, skill_access_filter=lambda skill: skill.name in allowed)
+    engine = DefaultContextEngine()
+    engine.configure_run(skill_engine=runtime)
+    messages = [Message(role="user", content="use the selected method")]
+    denied = engine.prepare_request(messages, prepared_tools=prepare_tools([tool]), token_limit=5000)
+    assert denied.blocked_reason
+    assert runtime.read_facts == ()
+    allowed.add("demo")
+    permitted = engine.prepare_request(messages, prepared_tools=prepare_tools([tool]), token_limit=5000)
+    assert not permitted.blocked_reason
+    assert "get_skill" in str(permitted.messages)
+    assert runtime.read_facts == ()

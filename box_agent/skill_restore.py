@@ -1,8 +1,9 @@
 """Validate persisted Skill facts before resolving or replacing session state."""
 
+from hashlib import sha256
 from typing import Any
 
-from .skill_dependencies import SkillDependencyError
+from .skill_dependencies import SkillDependencyError, resolve_required_skills
 
 
 def invalid_restore(field: str) -> SkillDependencyError:
@@ -42,3 +43,42 @@ def validate_restore_records(records: list[dict[str, Any]]) -> None:
                     or any(type(value) is not int for value in pair)
                     or not 0 <= pair[0] < pair[1]):
                 raise invalid_restore("deliveredRanges must contain valid integer [start, end] pairs")
+
+
+def recover_available_records(records: Any, loader: Any) -> list[dict[str, Any]]:
+    """Project legacy optional state onto current sources without writing facts.
+
+    Missing legacy hashes remain explicitly unverified. Invalid modern coverage
+    metadata is skipped, so recovery never grants visibility from damaged data.
+    """
+    if not isinstance(records, list) or loader is None:
+        return []
+    loader.maybe_reload()
+    recovered: list[dict[str, Any]] = []
+    names: set[str] = set()
+    orders: set[int] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        name = record.get("name")
+        if not isinstance(name, str) or not name.strip() or name in names:
+            continue
+        try:
+            skill = resolve_required_skills(loader, [name])[-1]
+            candidate = dict(record)
+            candidate.setdefault("sha256", "unverified-legacy-reference")
+            candidate.setdefault("loadOrder", max(orders, default=0) + 1)
+            validate_restore_records([candidate])
+            if candidate["loadOrder"] in orders:
+                continue
+            prompt = skill.to_prompt()
+            if candidate["sha256"] == sha256(prompt.encode()).hexdigest() and any(
+                end > len(prompt.splitlines()) for _, end in candidate.get("deliveredRanges", ())
+            ):
+                continue
+        except SkillDependencyError:
+            continue
+        recovered.append(candidate)
+        names.add(name)
+        orders.add(candidate["loadOrder"])
+    return recovered

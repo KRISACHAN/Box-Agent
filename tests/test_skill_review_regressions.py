@@ -228,3 +228,44 @@ def test_repeated_restore_preserves_verified_suffix_evidence(second_restore):
     engine.configure_run(skill_engine=runtime)
     assert engine.project_history(history)[0].content == 'BASE'
     assert old_body in history[0].content
+
+
+@pytest.mark.parametrize("damage", ["missing-hash", "missing-order", "unavailable", "bad-coverage"])
+def test_partial_restore_preserves_facts_without_asserting_unverified_legacy_body(tmp_path, damage):
+    from copy import deepcopy
+
+    loader = loader_at(tmp_path / "skills")
+    body = loader.get_skill("demo").to_prompt()
+    valid = {"name": "demo", "sha256": sha256(body.encode()).hexdigest(), "loadOrder": 1}
+    records = [dict(valid)]
+    if damage == "missing-hash":
+        del records[0]["sha256"]
+    elif damage == "missing-order":
+        del records[0]["loadOrder"]
+    elif damage == "unavailable":
+        records.append({"name": "removed", "sha256": "old", "loadOrder": 2})
+    else:
+        records[0]["deliveredRanges"] = [[0, 9999]]
+    before = deepcopy(records)
+    store = Store()
+    runtime = SkillRuntime(loader, session_log=store, allow_partial_restore=True)
+    runtime.restore_records(records)
+    assert runtime.active_names == (() if damage == "bad-coverage" else ("demo",))
+    assert runtime.legacy_system_suffixes == ()
+    assert store.rows == []
+    assert records == before
+    with pytest.raises(SkillDependencyError):
+        SkillRuntime(loader).restore_records(records)
+
+
+@pytest.mark.asyncio
+async def test_delegation_honors_parent_skill_reader_access_filter(tmp_path):
+    loader = loader_at(tmp_path / "skills")
+    provider = CapturingProvider()
+    reader = GetSkillTool(loader, skill_access_filter=lambda skill: False)
+    child = SubAgentTool(llm=provider, parent_tools={"get_skill": reader}, workspace_dir=str(tmp_path))
+    child.set_skill_provider(lambda: loader)
+    result = await child.execute(task="Use the method", skills=["demo"], required_tools=[])
+    assert not result.success
+    assert "not enabled for this conversation" in result.error
+    assert provider.requests == []

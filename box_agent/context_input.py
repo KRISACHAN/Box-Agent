@@ -86,9 +86,7 @@ class DefaultContextEngine:
         for name, target in self.prepared_tools.targets.items():
             if not isinstance(target, GetSkillTool) or self.prepared_tools.validate_call(name) is not None:
                 continue
-            allowed = target.allowed_skill_names
-            blocked = target.blocked_skill_names - (target.explicitly_allowed_skill_names or set())
-            if (allowed is None or set(names) <= allowed) and not blocked.intersection(names):
+            if all(target.check_access(skill_name) is None for skill_name in names):
                 return True
         return False
 

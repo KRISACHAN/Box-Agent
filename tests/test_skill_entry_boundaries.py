@@ -106,7 +106,7 @@ async def test_agent_without_current_source_blocks_before_provider_and_log_write
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("skills_enabled", [False, True])
-async def test_acp_without_loader_rejects_historical_skill_without_rewriting_log(tmp_path, monkeypatch, skills_enabled):
+async def test_acp_without_loader_continues_without_rewriting_historical_skill_facts(tmp_path, monkeypatch, skills_enabled):
     import box_agent.acp as acp_module
     from box_agent.acp import BoxACPAgent
     from box_agent.config import AgentConfig, Config, LLMConfig, ToolsConfig
@@ -124,11 +124,23 @@ async def test_acp_without_loader_rejects_historical_skill_without_rewriting_log
                     tools=ToolsConfig(enable_skills=skills_enabled, enable_todo=False, enable_plan=False,
                                       enable_sub_agent=False, enable_mcp=False))
     adapter = BoxACPAgent(Conn(), config, provider, [], "BASE", skill_loader=None)
-    with pytest.raises(SkillDependencyError, match="No Skill source"):
-        await adapter.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={
-            "session_id": "restore-skill", "session_mode": "general"}))
-    assert provider.requests == []
-    assert path.read_bytes() == before
+    try:
+        for _ in range(2):
+            response = await adapter.newSession(SimpleNamespace(cwd=str(tmp_path), field_meta={
+                "session_id": "restore-skill", "session_mode": "general"}))
+            state = adapter._sessions[response.sessionId]
+            assert state.agent.skill_runtime.active_names == ()
+            await adapter.prompt(SimpleNamespace(
+                sessionId=response.sessionId, prompt=[{"text": "continue"}], field_meta={},
+            ))
+            assert provider.requests
+            assert "METHOD_BODY" not in str(provider.requests)
+            records = [event for event in state.agent.session_log.events if event["type"] == "skill/change"]
+            assert len(records) == 1
+            assert state.agent.session_log.replay().skills[0]["name"] == "demo"
+            assert path.read_bytes().startswith(before)
+    finally:
+        await adapter.aclose()
 
 
 @pytest.mark.asyncio

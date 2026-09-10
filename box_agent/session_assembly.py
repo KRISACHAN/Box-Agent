@@ -122,6 +122,21 @@ async def prepare_memory(resources: SessionResources) -> None:
         ))
 
 
+def _bind_skill_runtime(resources: SessionResources) -> None:
+    from .agent_service import AgentService
+    from .skill_runtime import SkillRuntime
+
+    options = resources.context.options
+    loader = None if options.utility else resources.skill_loader
+    if loader is None and not options.utility:
+        loader = AgentService.resolve_skill_loader(resources.tools)
+    if loader is not None or options.profile == "acp":
+        resources.state.setdefault("skill_runtime", SkillRuntime(
+            loader, session_log=resources.context.host.session_log,
+            allow_partial_restore=options.profile == "acp",
+        ))
+
+
 async def prepare_tools(resources: SessionResources) -> None:
     context = resources.context
     host, options, config = context.host, context.options, context.config
@@ -129,6 +144,7 @@ async def prepare_tools(resources: SessionResources) -> None:
     resources.mcp_task, resources.skill_task = host.mcp_task, host.skill_task
     if host.tools is not None:
         resources.tools = host.tools
+        _bind_skill_runtime(resources)
         return
     expert = resources.state.get("expert_context")
     if expert is not None and resources.skill_loader is not None:
@@ -143,6 +159,7 @@ async def prepare_tools(resources: SessionResources) -> None:
     )
     if options.utility:
         resources.tools = []
+        _bind_skill_runtime(resources)
         return
     from .tools.setup import add_workspace_tools, initialize_base_tools
     from .tools.permissions import CapabilityPolicy, GrantStore
@@ -225,12 +242,7 @@ async def prepare_tools(resources: SessionResources) -> None:
         skill_runtime_context=runtime_context, skill_loader=resources.skill_loader,
         skill_scratch_dir=scratch,
     )
-    if resources.skill_loader is not None:
-        from .skill_runtime import SkillRuntime
-
-        resources.state.setdefault("skill_runtime", SkillRuntime(
-            resources.skill_loader, session_log=host.session_log,
-        ))
+    _bind_skill_runtime(resources)
     if scratch is not None:
         from .tools.skill_scratch import cleanup_skill_scratch_dir
 

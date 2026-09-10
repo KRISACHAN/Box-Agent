@@ -2086,7 +2086,7 @@ async def test_acp_skill_selection_is_ordinary_reference_not_automatic_system_bo
         assert "Host-provided Skill reference" in str(supplied[0][1])
     state = adapter._sessions[session.sessionId]
     assert ("get_skill" in state.agent.tools) is with_skill_tool
-    assert [m.content for m in state.agent.messages if m.role == "user"] == [original]
+    assert [m.content for m in state.agent.messages if m.role == "user"] == [original + _EMPTY_CONNECTOR_CONTEXT]
     usage = [u.update.rawOutput for u in conn.updates
              if isinstance(getattr(u.update, "rawOutput", None), dict)
              and u.update.rawOutput.get("type") == "turn_usage"]
