@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T15:13:08.870Z",
-    "gitCommitHash": "1b1b341323bb670745d8a21b2e4657234ff8886e"
+    "analyzedAt": "2026-09-10T15:50:17.983Z",
+    "gitCommitHash": "ceb907506fbf99a1ea14a583958505687ec10c43"
   },
   "nodes": [
     {
@@ -35093,7 +35093,7 @@
       "type": "file",
       "name": "host.py",
       "filePath": "box_agent/plugins/host.py",
-      "summary": "校验静态插件目录与选定依赖闭包，按 process/session/run 范围激活和缓存实例，传入显式工厂上下文，并防止寿命倒置、重入和清理遗漏。",
+      "summary": "校验插件目录和依赖闭包，按 process/session/run 范围激活、缓存与清理实例。失败 Run 激活的中断回滚按 session_key 保留，覆盖运行时 Port 校验失败，并在同会话再次激活前要求完成清理。",
       "tags": [
         "plugin",
         "依赖管理",
@@ -35288,9 +35288,9 @@
       "filePath": "box_agent/plugins/host.py",
       "lineRange": [
         138,
-        777
+        819
       ],
-      "summary": "校验依赖闭包与能力基数，拒绝长寿命插件依赖短寿命插件；支持指定 scope 和上下文激活、复用缓存依赖及可靠释放。",
+      "summary": "校验依赖闭包与能力基数，防止寿命倒置并管理作用域实例。按会话保留失败 Run 激活的未完成回滚，dispose_session 先重试 Run 清理再释放 Session 依赖；再次中断时保持可重试，其他会话与 Process 资源不受该会话关闭影响。",
       "tags": [
         "数据模型",
         "plugin",
@@ -36626,7 +36626,7 @@
       "type": "document",
       "name": "AGENT_SESSION.md",
       "filePath": "docs/AGENT_SESSION.md",
-      "summary": "说明 AgentSession.open 的配置驱动组装、插件分层生命周期与宿主适配边界；SessionOptions 保持会话 cwd，配置按会话和 Run 作用域生效。",
+      "summary": "说明 AgentSession.open 的配置驱动组装、插件生命周期与宿主边界，明确会话 cwd 和配置生效时机。补充失败 Run 激活的中断回滚归属、同会话再激活限制，以及先清理 Run 再释放 Session 依赖的关闭顺序。",
       "tags": [
         "文档",
         "架构",
@@ -36756,7 +36756,7 @@
       "type": "document",
       "name": "README.md",
       "filePath": "docs/changes/README.md",
-      "summary": "按领域和时间索引重要变更与验证证据，记录托管会话和插件生命周期、稳定 cwd 与旧产物目录迁移，以及保留的 Session Log 和 Skill 恢复语义。",
+      "summary": "按领域和时间索引重要变更与验证证据，记录受管会话、稳定 cwd 及 Session Log/Skill 恢复语义。插件生命周期条目补充失败 Run 激活和 Port 校验失败后的回滚保留、关闭重试与再激活门控。",
       "tags": [
         "文档",
         "变更索引",
@@ -67594,7 +67594,8 @@
       "target": "file:box_agent/plugins/host.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/hooks.py",
@@ -67910,7 +67911,8 @@
       "target": "file:box_agent/plugins/host.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/plugins/__init__.py",
@@ -68233,7 +68235,8 @@
       "target": "file:box_agent/plugins/host.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/plugins/defaults.py",
@@ -68289,7 +68292,7 @@
       "target": "function:box_agent/plugins/host.py:_is_valid_semver",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68303,7 +68306,7 @@
       "target": "function:box_agent/plugins/host.py:_is_hashable",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68317,7 +68320,7 @@
       "target": "function:box_agent/plugins/host.py:_supports_dynamic_protocol",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68331,7 +68334,7 @@
       "target": "class:box_agent/plugins/host.py:PluginError",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68345,7 +68348,7 @@
       "target": "class:box_agent/plugins/host.py:PluginValidationError",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68359,7 +68362,7 @@
       "target": "class:box_agent/plugins/host.py:PluginDependencyCycleError",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68373,7 +68376,7 @@
       "target": "class:box_agent/plugins/host.py:PluginScopeError",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68387,7 +68390,7 @@
       "target": "class:box_agent/plugins/host.py:PluginCleanupError",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68401,7 +68404,7 @@
       "target": "class:box_agent/plugins/host.py:_InstanceRecord",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68415,7 +68418,7 @@
       "target": "class:box_agent/plugins/host.py:PluginActivation",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68429,7 +68432,7 @@
       "target": "class:box_agent/plugins/host.py:PluginHost",
       "type": "contains",
       "direction": "forward",
-      "weight": 1
+      "weight": 1.0
     },
     {
       "source": "file:box_agent/plugins/host.py",
@@ -68520,7 +68523,8 @@
       "target": "file:box_agent/plugins/host.py",
       "type": "imports",
       "direction": "forward",
-      "weight": 0.7
+      "weight": 0.7,
+      "recoveredFromImportMap": true
     },
     {
       "source": "file:box_agent/plugins/runtime.py",
@@ -71002,6 +71006,20 @@
       "type": "calls",
       "direction": "forward",
       "weight": 0.8
+    },
+    {
+      "source": "document:docs/AGENT_SESSION.md",
+      "target": "file:box_agent/plugins/host.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/changes/README.md",
+      "target": "file:box_agent/plugins/host.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
     }
   ],
   "layers": [
@@ -71186,7 +71204,7 @@
     {
       "id": "layer:skills-experts",
       "name": "Skills、插件与委派层",
-      "description": "统一插件描述符、依赖排序和能力注册表，由 PluginRuntime、PluginSession 与内置初始化器管理 process/session/run 资源所有权，并负责 Skills 发现安装、专家配置和受能力、cwd 相对写入范围及预算约束的委派。",
+      "description": "统一插件描述符、依赖排序和能力注册表，由 PluginRuntime、PluginSession 与内置初始化器管理 process/session/run 资源所有权，并负责 Skills 发现安装、专家配置和受能力、cwd 相对写入范围及预算约束的委派。 失败 Run 激活的中断回滚归属于相应会话，关闭时先重试 Run 再释放 Session 依赖，并阻止未完成清理的会话再次激活。",
       "nodeIds": [
         "file:.gitmodules",
         "file:box_agent/experts.py",
@@ -71562,7 +71580,7 @@
     {
       "order": 7,
       "title": "插件能力所有权",
-      "description": "插件描述符定义作用域与依赖，PluginHost 负责发现、排序、激活、实例缓存和清理，类型化注册表冻结各轮 KernelServices。PluginRuntime 与 PluginSession 进一步管理 process/session/run 生命周期，在激活锁外完成会话能力预备，再为每轮绑定运行插件。内置初始化器按固定顺序调用共享装配能力，区分借用资源与自建资源，并在关闭时等待初始化后按所有权清理。",
+      "description": "插件描述符定义作用域与依赖，PluginHost 负责发现、排序、激活、实例缓存和清理，类型化注册表冻结各轮 KernelServices。PluginRuntime 与 PluginSession 进一步管理 process/session/run 生命周期，在激活锁外完成会话能力预备，再为每轮绑定运行插件。内置初始化器按固定顺序调用共享装配能力，区分借用资源与自建资源，并在关闭时等待初始化后按所有权清理。 失败 Run 激活的中断回滚由 PluginHost 按 session_key 保留，涵盖运行时 Port 校验失败；会话关闭先重试 Run 再释放 Session 依赖，清理未完成时禁止该会话再次激活，其他会话和 Process 资源保持独立。",
       "nodeIds": [
         "file:box_agent/plugins/descriptors.py",
         "file:box_agent/plugins/host.py",

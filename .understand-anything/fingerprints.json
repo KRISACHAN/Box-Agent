@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "1b1b341323bb670745d8a21b2e4657234ff8886e",
-  "generatedAt": "2026-09-10T15:13:56.362Z",
+  "gitCommitHash": "ceb907506fbf99a1ea14a583958505687ec10c43",
+  "generatedAt": "2026-09-10T15:51:12.845Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -12543,7 +12543,7 @@
     },
     "box_agent/plugins/host.py": {
       "filePath": "box_agent/plugins/host.py",
-      "contentHash": "7e4eba064472847d3bf91d35928ef6f09f4c1d4800027c4d676ac13c282bd424",
+      "contentHash": "eb29c208feac19a879c24e334058dbf02db3ffc02de16d77643918978e0e4bba",
       "functions": [
         {
           "name": "_is_valid_semver",
@@ -12655,6 +12655,7 @@
             "_raise_activation_failure",
             "_remove_cached_records",
             "_dispose_activation",
+            "_retain_run_rollback",
             "dispose_session",
             "close",
             "_dispose_records",
@@ -12664,7 +12665,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 640
+          "lineCount": 682
         }
       ],
       "imports": [
@@ -12750,7 +12751,7 @@
         "PluginActivation",
         "PluginHost"
       ],
-      "totalLines": 789,
+      "totalLines": 831,
       "hasStructuralAnalysis": true
     },
     "box_agent/plugins/registries.py": {
@@ -31976,12 +31977,12 @@
     },
     "docs/AGENT_SESSION.md": {
       "filePath": "docs/AGENT_SESSION.md",
-      "contentHash": "d84a0f5d7982f529a71b1cf9849b048564fee976d23c6987eca1e54d414c057d",
+      "contentHash": "30f50f0739824b6481645b5040159d08aa4725c6b54ae0cba5e9b070e6e94f4a",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 178,
+      "totalLines": 185,
       "hasStructuralAnalysis": true
     },
     "docs/ARCHITECTURE_CN.md": {
@@ -32026,12 +32027,12 @@
     },
     "docs/changes/README.md": {
       "filePath": "docs/changes/README.md",
-      "contentHash": "a987de39a5ee4867b5e8b86c53073bb301fd0a1b0483d019a4ec2486f83777c6",
+      "contentHash": "8a963de1e33bff949368ac3e45490303d68cbb62bf59ddd93ea7ad66d94d40dd",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 813,
+      "totalLines": 817,
       "hasStructuralAnalysis": true
     },
     "docs/CONTEXT_COMPRESSION_CN.md": {
