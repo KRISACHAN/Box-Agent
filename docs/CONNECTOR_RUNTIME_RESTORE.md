@@ -22,7 +22,16 @@ before creating a transport. Resolving or reconnecting one server must not
 advance another server's credential/configuration fingerprint: a later
 credential update must still cause that other server to reconnect.
 Independent servers start concurrently, with their existing per-server timeout
-and reconnect lock. Source-level updates remain serialized.
+and reconnect lock. Removal and disable operations share that server's reconnect
+lock and return only after its pending connection is revoked; they do not hold
+up independent servers in the update. Source-level updates remain serialized.
+Connector readiness counts only servers in the current configuration, so a
+removed server's historical status does not block the remaining healthy servers.
+Missing status for a currently configured server still prevents authorization.
+Source updates wait for initial discovery, including its startup gate, before
+mutating configuration. A readiness timeout returns failure with state unchanged;
+the host can retry after startup completes. Ordinary hot reconnects do not impose
+this startup barrier on other servers.
 
 Reapplying unchanged configuration retries servers whose last connection failed,
 without restarting healthy or still-loading servers. The returned success value

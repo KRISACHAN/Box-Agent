@@ -510,3 +510,200 @@ async def test_scoped_connector_update_cannot_take_another_connectors_server_nam
     assert mcp_loader._mcp_connections == [connection]
     connection.disconnect.assert_not_awaited()
     reconnect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disable", [False, True], ids=["remove", "disable"])
+async def test_source_revocation_waits_for_reconnect_without_blocking_other_servers(
+    monkeypatch, isolated_connector_runtime, disable,
+):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from box_agent.acp import _connected_connector_ids
+    from box_agent.tools.mcp_tool_catalog import MCPToolCatalog
+    from tests.test_mcp_tool_search import FakeMCPTool
+
+    server = {"url": "https://law.example.test/mcp", "_connectorId": "law"}
+    mcp_loader._mcp_source_overrides["connector"] = {"law": server}
+    mcp_loader._mcp_server_definitions = mcp_loader._resolve_registered_sources(mcp_loader._mcp_config_path)
+    catalog = MCPToolCatalog()
+    monkeypatch.setattr(mcp_loader, "get_mcp_tool_catalog", lambda: catalog)
+    started, finish, other_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def connect():
+        started.set()
+        await finish.wait()
+        return True
+
+    async def connect_other():
+        other_started.set()
+        return True
+
+    connection = SimpleNamespace(name="law", connect=connect, disconnect=AsyncMock(), tools=[
+        FakeMCPTool("legal_lookup", "law", connector_id="law"),
+    ])
+    other = SimpleNamespace(name="other", connect=connect_other, disconnect=AsyncMock(), tools=[])
+    monkeypatch.setattr(mcp_loader, "_build_connection", lambda definition: connection if definition.name == "law" else other)
+    reconnect = asyncio.create_task(mcp_loader.reconnect_mcp_server("law"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    replacement = {"other": {"url": "https://other.example.test/mcp", "_connectorId": "other"}}
+    if disable:
+        replacement["law"] = {**server, "disabled": True}
+    revoke = asyncio.create_task(mcp_loader.replace_mcp_source("connector", {"mcpServers": replacement}))
+    try:
+        await asyncio.wait_for(other_started.wait(), timeout=1)
+        assert not revoke.done()
+    finally:
+        finish.set()
+        update, _ = await asyncio.wait_for(asyncio.gather(revoke, reconnect), timeout=5)
+    assert update["success"] is True
+    assert mcp_loader._mcp_connections == [other]
+    assert catalog.snapshot() == ()
+    connection.disconnect.assert_awaited_once()
+    other.disconnect.assert_not_awaited()
+    assert mcp_loader._mcp_status["law"].state == "disabled"
+    assert _connected_connector_ids({"law", "other"}) == frozenset({"other"})
+    if disable:
+        assert mcp_loader._mcp_server_definitions["law"].config["disabled"] is True
+    else:
+        assert "law" not in mcp_loader._mcp_server_definitions
+
+
+@pytest.mark.asyncio
+async def test_partial_connector_removal_keeps_remaining_healthy_server_available(
+    monkeypatch, isolated_connector_runtime,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from box_agent.acp import _connected_connector_ids, _connector_status_context
+
+    servers = {name: {"url": f"https://{name}.example.test/mcp", "_connectorId": "law"}
+               for name in ("removed", "kept")}
+    mcp_loader._mcp_source_overrides["connector"] = servers
+    mcp_loader._mcp_server_definitions = mcp_loader._resolve_registered_sources(mcp_loader._mcp_config_path)
+    connections = [SimpleNamespace(name=name, tools=[], disconnect=AsyncMock()) for name in servers]
+    mcp_loader._mcp_connections = list(connections)
+    for name in servers:
+        mcp_loader._record_status(name, "connected")
+    result = await mcp_loader.replace_mcp_source("connector", {"mcpServers": {"kept": servers["kept"]}}, ["law"])
+    assert result["success"] is True
+    assert mcp_loader._mcp_status["removed"].state == "disabled"
+    assert mcp_loader._mcp_connections == [connections[1]]
+    assert _connected_connector_ids({"law"}) == frozenset({"law"})
+    assert _connector_status_context({"law"}) == "<connector-status>\nlaw law: connected\n</connector-status>"
+    del mcp_loader._mcp_status["kept"]
+    assert _connected_connector_ids({"law"}) == frozenset()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["replace", "reconcile"])
+@pytest.mark.parametrize("loader_entered", [False, True], ids=["pre-gate", "cold-connect"])
+async def test_source_update_does_not_mutate_state_when_startup_readiness_times_out(
+    monkeypatch, isolated_connector_runtime, operation, loader_entered,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(mcp_loader, "_mcp_loading", loader_entered)
+    wait = AsyncMock(return_value=False)
+    monkeypatch.setattr(mcp_loader, "get_mcp_tool_catalog", lambda: SimpleNamespace(initial_loading=True, wait_until_ready=wait))
+    if operation == "replace":
+        result = await mcp_loader.replace_mcp_source("connector", isolated_connector_runtime)
+    else:
+        result = await mcp_loader.reconcile_mcp_sources("connector")
+    assert result["success"] is False
+    assert "startup is still loading" in result["error"]
+    wait.assert_awaited_once()
+    assert mcp_loader._mcp_source_overrides == {}
+    assert mcp_loader._mcp_server_definitions == {}
+    assert mcp_loader._mcp_connections == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["remove", "disable", "replace"])
+async def test_source_update_waits_for_cold_discovery_before_replacing_its_connections(
+    monkeypatch, isolated_connector_runtime, operation,
+):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from box_agent.tools.mcp_tool_catalog import MCPToolCatalog
+    from tests.test_mcp_tool_search import FakeMCPTool
+
+    server = {"url": "https://old.example.test/mcp", "_connectorId": "law"}
+    mcp_loader._mcp_source_overrides["connector"] = {"law": server}
+    monkeypatch.setattr(mcp_loader, "_mcp_sources", ())
+    catalog = MCPToolCatalog()
+    monkeypatch.setattr(mcp_loader, "get_mcp_tool_catalog", lambda: catalog)
+    started, finish, waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    wait_until_ready = catalog.wait_until_ready
+
+    async def wait(**kwargs):
+        waiting.set()
+        return await wait_until_ready(**kwargs)
+
+    monkeypatch.setattr(catalog, "wait_until_ready", wait)
+
+    async def connect_old():
+        started.set()
+        await finish.wait()
+        return True
+
+    old = SimpleNamespace(name="law", url=server["url"], command=None, connect=connect_old,
+                          disconnect=AsyncMock(), tools=[FakeMCPTool("old_lookup", "law", connector_id="law")])
+    new = SimpleNamespace(name="law", url="https://new.example.test/mcp", command=None,
+                          connect=AsyncMock(return_value=True), disconnect=AsyncMock(),
+                          tools=[FakeMCPTool("new_lookup", "law", connector_id="law")])
+    monkeypatch.setattr(mcp_loader, "_build_connection", lambda definition: old if definition.config["url"] == old.url else new)
+    cold = asyncio.create_task(mcp_loader.load_mcp_tools_async(mcp_loader._mcp_config_path))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    replacement = {} if operation == "remove" else {"law": {
+        **server, **({"disabled": True} if operation == "disable" else {"url": new.url}),
+    }}
+    update = asyncio.create_task(mcp_loader.replace_mcp_source("connector", {"mcpServers": replacement}, ["law"]))
+    try:
+        await asyncio.wait_for(waiting.wait(), timeout=1)
+        assert not update.done()
+        assert mcp_loader._mcp_source_overrides["connector"] == {"law": server}
+    finally:
+        finish.set()
+        _, result = await asyncio.wait_for(asyncio.gather(cold, update), timeout=5)
+    assert result["success"] is True
+    old.disconnect.assert_awaited_once()
+    if operation == "replace":
+        assert mcp_loader._mcp_connections == [new]
+        assert [entry.model_name for entry in catalog.snapshot()] == ["new_lookup"]
+    else:
+        assert mcp_loader._mcp_connections == []
+        assert catalog.snapshot() == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["replace", "reconcile"])
+async def test_source_update_checks_startup_after_acquiring_the_source_lock(
+    monkeypatch, isolated_connector_runtime, operation,
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from box_agent.tools.mcp_tool_catalog import MCPToolCatalog
+
+    catalog = MCPToolCatalog()
+    wait = AsyncMock(return_value=False)
+    monkeypatch.setattr(catalog, "wait_until_ready", wait)
+    monkeypatch.setattr(mcp_loader, "get_mcp_tool_catalog", lambda: catalog)
+    lock = mcp_loader._mcp_source_reconcile_lock
+    await lock.acquire()
+    call = (mcp_loader.replace_mcp_source("connector", isolated_connector_runtime)
+            if operation == "replace" else mcp_loader.reconcile_mcp_sources("connector"))
+    update = asyncio.create_task(call)
+    try:
+        await asyncio.sleep(0)
+        catalog.mark_loading()
+    finally:
+        lock.release()
+    result = await asyncio.wait_for(update, timeout=1)
+    assert not result["success"]
+    wait.assert_awaited_once()
+    assert mcp_loader._mcp_source_overrides == {}
+    assert mcp_loader._mcp_server_definitions == {}

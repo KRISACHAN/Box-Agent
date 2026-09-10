@@ -130,6 +130,12 @@ class MCPToolCatalog:
             ready_event.set()
 
     @property
+    def initial_loading(self) -> bool:
+        """Distinguish cold discovery from independent server refreshes."""
+        with self._lock:
+            return self._loading
+
+    @property
     def loading(self) -> bool:
         with self._lock:
             return self._has_pending_discovery()

@@ -1060,11 +1060,15 @@ def _connector_status_unavailable_from_meta(meta: Any) -> bool | None:
 def _connector_server_statuses() -> dict[str, list[tuple[str, str, str]]]:
     """Return the current connector runtime state keyed by canonical connector ID."""
     statuses_by_connector: dict[str, list[tuple[str, str, str]]] = {}
+    expected_by_connector = get_mcp_connector_server_names()
     for status in get_mcp_status():
         if status.get("owner") != "connector":
             continue
         connector_id = status.get("connectorId")
         if isinstance(connector_id, str) and connector_id:
+            server_name = str(status.get("name") or connector_id)
+            if server_name not in expected_by_connector.get(connector_id, ()):
+                continue
             connector_name = status.get("connectorName")
             statuses_by_connector.setdefault(connector_id, []).append(
                 (

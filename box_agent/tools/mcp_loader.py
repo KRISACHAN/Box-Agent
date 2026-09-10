@@ -1467,14 +1467,22 @@ async def reconnect_mcp_server(name: str) -> dict:
         return await _reconnect_mcp_server_locked(name)
 
 
+async def _mcp_startup_ready() -> bool:
+    """Keep source updates behind the cold-discovery publication boundary."""
+    catalog = get_mcp_tool_catalog()
+    if _mcp_loading or catalog.initial_loading:
+        return await catalog.wait_until_ready(
+            timeout=max(5.0, get_mcp_timeout_config().connect_timeout)
+        )
+    return True
+
+
 async def reconcile_mcp_sources(source: str | None = None) -> dict:
     """Apply source-file changes without restarting unrelated MCP servers."""
 
-    if _mcp_loading:
-        await get_mcp_tool_catalog().wait_until_ready(
-            timeout=max(5.0, get_mcp_timeout_config().connect_timeout)
-        )
     async with _mcp_source_reconcile_lock:
+        if not await _mcp_startup_ready():
+            return {"success": False, "error": "MCP startup is still loading; retry the source update after readiness."}
         return await _reconcile_mcp_sources_locked(source)
 
 
@@ -1503,6 +1511,8 @@ async def replace_mcp_source(
         return {"success": False, "error": "connectorIds must be a non-empty list for the connector source"}
 
     async with _mcp_source_reconcile_lock:
+        if not await _mcp_startup_ready():
+            return {"success": False, "error": "MCP startup is still loading; retry the source update after readiness."}
         previous = _mcp_source_overrides.get(source)
         if connector_ids is not None:
             targets = {item.strip().lower() for item in connector_ids}
@@ -1559,8 +1569,31 @@ async def _reconcile_mcp_sources_locked(
     except Exception as error:
         return {"success": False, "error": str(error)}
 
-    results: list[dict] = []
-    reconnects: list[tuple[str, str]] = []
+    async def retire(name: str, before: ResolvedMcpServer | None,
+                     after: ResolvedMcpServer | None) -> dict | None:
+        # An in-flight reconnect must finish publishing before revocation can
+        # close it. Return only after that same server's critical section ends.
+        lock = _mcp_reconnect_locks.setdefault(name, asyncio.Lock())
+        async with lock:
+            if after is None:
+                result = await disconnect_mcp_server(name)
+                if before is not None:
+                    _record_status(name, "disabled", definition=before)
+                _mcp_server_definitions.pop(name, None)
+                return {"name": name, "action": "removed", **result}
+            _mcp_server_definitions[name] = after
+            if before is None or not before.config.get("disabled", False) or any(
+                connection.name == name for connection in _mcp_connections
+            ):
+                result = await disconnect_mcp_server(name)
+                _record_status(name, "disabled", definition=after)
+                return {"name": name, "action": "disabled", **result}
+            _record_status(name, "disabled", definition=after)
+            return None
+
+    async def reconnect(name: str, action: str) -> dict:
+        result = await reconnect_mcp_server(name)
+        return {"name": name, "action": action, **result}
 
     def in_scope(definition: ResolvedMcpServer | None) -> bool:
         return definition is not None and (
@@ -1569,6 +1602,7 @@ async def _reconcile_mcp_sources_locked(
             connector_ids is None or definition.connector_id in connector_ids
         )
 
+    operations = []
     all_names = sorted(set(previous) | set(current))
     for name in all_names:
         before = previous.get(name)
@@ -1579,44 +1613,22 @@ async def _reconcile_mcp_sources_locked(
         if not after_in_scope:
             # Revoke the old owner without applying a newly revealed source
             # outside this update. Its own reconciliation may activate it later.
-            result = await disconnect_mcp_server(name)
-            if before is not None:
-                _record_status(name, "disabled", definition=before)
-            _mcp_server_definitions.pop(name, None)
-            results.append({"name": name, "action": "removed", **result})
+            operations.append(retire(name, before, None))
             continue
-
         if after.config.get("disabled", False):
-            _mcp_server_definitions[name] = after
-            if before is None or not before.config.get("disabled", False) or any(
-                connection.name == name for connection in _mcp_connections
-            ):
-                result = await disconnect_mcp_server(name)
-                _record_status(name, "disabled", definition=after)
-                results.append({"name": name, "action": "disabled", **result})
-            else:
-                _record_status(name, "disabled", definition=after)
+            operations.append(retire(name, before, after))
             continue
-
         if before is not None and before.fingerprint == after.fingerprint:
             status = _mcp_status.get(name)
             # An unchanged configuration is not proof of a successful connection.
             # Retry failures, but leave healthy or still-loading servers alone.
             if status is None or status.state != "failed":
                 continue
+        operations.append(reconnect(name, "added" if before is None else "modified"))
 
-        action = "added" if before is None else "modified"
-        reconnects.append((name, action))
-
-    async def reconnect(name: str, action: str) -> dict:
-        result = await reconnect_mcp_server(name)
-        return {"name": name, "action": action, **result}
-
-    # Each server has its own lock and timeout. A slow provider must not delay
-    # starting independent connectors whose credentials are already available.
-    results.extend(await asyncio.gather(
-        *(reconnect(name, action) for name, action in reconnects)
-    ))
+    # Reconnects and revocations share per-server locks, while unrelated names
+    # start independently even if one removal waits for a slow connection.
+    results = [result for result in await asyncio.gather(*operations) if result is not None]
 
     return {
         "success": all(result.get("success", False) for result in results),
