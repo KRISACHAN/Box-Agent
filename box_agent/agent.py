@@ -458,6 +458,7 @@ class Agent:
         tool_limits: ToolLimitsConfig | None = None,
         deferred_mcp_loading_enabled: bool = True,
         session_log: SessionLog | None = None,
+        enable_goal_tools: bool = True,
     ):
         self.llm = llm_client
         self.tools = {
@@ -563,8 +564,9 @@ class Agent:
         self._streaming_active: bool = False  # Track if streaming output needs trailing newline
         self.last_stop_reason: str | None = None
         self.goal: GoalState | None = None
-        self.tools["goal_read"] = _GoalReadTool(self)
-        self.tools["goal_write"] = _GoalWriteTool(self)
+        if enable_goal_tools:
+            self.tools["goal_read"] = _GoalReadTool(self)
+            self.tools["goal_write"] = _GoalWriteTool(self)
         self.session_log = session_log
         if self.session_log is not None:
             projection = self.session_log.replay()

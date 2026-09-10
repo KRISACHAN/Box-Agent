@@ -88,6 +88,7 @@ def build_agent(
     context_resource_dedup_enabled: bool = True,
     deferred_mcp_loading_enabled: bool = True,
     session_log: Any = _UNSET,
+    enable_goal_tools: bool | object = _UNSET,
     agent_factory: AgentFactory = Agent,
 ) -> Agent:
     """Construct an Agent while keeping adapter-specific state outside it.
@@ -124,6 +125,8 @@ def build_agent(
         kwargs["hooks"] = hooks
     if session_log is not _UNSET:
         kwargs["session_log"] = session_log
+    if enable_goal_tools is not _UNSET:
+        kwargs["enable_goal_tools"] = enable_goal_tools
     return agent_factory(**kwargs)
 
 

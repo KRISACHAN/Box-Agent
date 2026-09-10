@@ -2003,6 +2003,7 @@ class BoxACPAgent:
                 and self._config.tools.mcp.deferred_loading_enabled
             ),
             session_log=session_log,
+            **({"enable_goal_tools": False} if utility else {}),
         )
 
         if skillhub_search_tool is not None:
