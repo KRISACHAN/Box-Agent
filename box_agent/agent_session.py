@@ -140,6 +140,7 @@ class AgentSession:
                 and config.tools.mcp.deferred_loading_enabled
             ),
             session_log=session_log,
+            **({"enable_builtin_tools": False} if utility else {}),
         )
         return cls(agent=agent, config=config, **state)
 

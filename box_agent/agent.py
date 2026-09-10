@@ -458,6 +458,7 @@ class Agent:
         tool_limits: ToolLimitsConfig | None = None,
         deferred_mcp_loading_enabled: bool = True,
         session_log: SessionLog | None = None,
+        enable_builtin_tools: bool = True,
     ):
         self.llm = llm_client
         self.tools = {
@@ -484,28 +485,30 @@ class Agent:
             goal_provider=lambda: getattr(self, "goal", None),
             active_skills_provider=lambda: getattr(self, "_active_skill_prompts", {}),
         )
-        # Eager MCP remains eager. Its local discovery uses an isolated empty
-        # catalog so a process-global deferred server cannot leak into this mode.
-        catalog = get_mcp_tool_catalog() if deferred_mcp_loading_enabled else MCPToolCatalog()
-        self.mcp_tool_exposure: MCPToolExposureManager | None = MCPToolExposureManager(
-            catalog,
-            self.activated_mcp_tools,
-            activated_local_tools=self.activated_local_tools,
-            deferred_local_names_provider=self.local_tool_exposure.deferred_names,
-            deferred_mcp=deferred_mcp_loading_enabled,
-        )
-        self.tools["tool_search"] = ToolSearchTool(
-            catalog,
-            self.activated_mcp_tools,
-            protected_names_provider=lambda: frozenset(
-                build_tool_name_index(
-                    tool for tool in self.tools.values()
-                    if getattr(tool, "mcp_tool_id", None) is None
-                )
-            ),
-            local_tools_provider=self.local_tool_exposure.candidate_tools,
-            activated_local_tools=self.activated_local_tools,
-        )
+        self.mcp_tool_exposure: MCPToolExposureManager | None = None
+        if enable_builtin_tools:
+            # Eager MCP remains eager. Its local discovery uses an isolated empty
+            # catalog so a process-global deferred server cannot leak into this mode.
+            catalog = get_mcp_tool_catalog() if deferred_mcp_loading_enabled else MCPToolCatalog()
+            self.mcp_tool_exposure = MCPToolExposureManager(
+                catalog,
+                self.activated_mcp_tools,
+                activated_local_tools=self.activated_local_tools,
+                deferred_local_names_provider=self.local_tool_exposure.deferred_names,
+                deferred_mcp=deferred_mcp_loading_enabled,
+            )
+            self.tools["tool_search"] = ToolSearchTool(
+                catalog,
+                self.activated_mcp_tools,
+                protected_names_provider=lambda: frozenset(
+                    build_tool_name_index(
+                        tool for tool in self.tools.values()
+                        if getattr(tool, "mcp_tool_id", None) is None
+                    )
+                ),
+                local_tools_provider=self.local_tool_exposure.candidate_tools,
+                activated_local_tools=self.activated_local_tools,
+            )
         self.tool_result_storage = ToolResultStorage(
             state_path('sessions')
         )
@@ -580,8 +583,9 @@ class Agent:
         self._streaming_active: bool = False  # Track if streaming output needs trailing newline
         self.last_stop_reason: str | None = None
         self.goal: GoalState | None = None
-        self.tools["goal_read"] = _GoalReadTool(self)
-        self.tools["goal_write"] = _GoalWriteTool(self)
+        if enable_builtin_tools:
+            self.tools["goal_read"] = _GoalReadTool(self)
+            self.tools["goal_write"] = _GoalWriteTool(self)
         self.session_log = session_log
         if self.session_log is not None:
             projection = self.session_log.replay()
