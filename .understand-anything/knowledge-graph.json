@@ -25,8 +25,8 @@
       "GitHub Actions"
     ],
     "description": "一个具备 Jupyter 沙箱、数据分析、MCP 工具、ACP 协议、多模型提供商支持和独立运行时打包能力的 AI Agent 框架。注意：该项目包含超过 100 个源文件；如需更快的分析，可考虑将范围限定到某个子目录。",
-    "analyzedAt": "2026-09-10T21:15:38.894Z",
-    "gitCommitHash": "d715ff42905edaa44541efcfc4797564bcb56024"
+    "analyzedAt": "2026-09-10T21:44:12.391Z",
+    "gitCommitHash": "f501eebf61a6934c1fceee713f207db39b73354c"
   },
   "nodes": [
     {
@@ -30761,9 +30761,9 @@
       "filePath": "box_agent/cli.py",
       "lineRange": [
         1810,
-        2681
+        2683
       ],
-      "summary": "创建或恢复逻辑 SessionLog，以同一 ID 启动 AgentSession、运行选项和 trace；共享预备先严格验证 Skill 再修复中断调用。命名目标只使用本日志，新建未命名会话保留旧目标文件镜像，所有退出与启动失败路径都关闭 CLI 拥有的日志和客户端。",
+      "summary": "创建或恢复逻辑 SessionLog，以同一 ID 启动 AgentSession、运行选项和 trace；共享预备先严格验证 Skill 再修复中断调用。命名目标只使用本日志，新建未命名会话保留旧目标文件镜像，所有退出与启动失败路径都关闭 CLI 拥有的日志和客户端。新增 session_id 只能按关键字传入，原有全部位置参数顺序保持不变。",
       "tags": [
         "cli",
         "entry-point",
@@ -30778,8 +30778,8 @@
       "name": "main",
       "filePath": "box_agent/cli.py",
       "lineRange": [
-        2684,
-        2789
+        2686,
+        2791
       ],
       "summary": "分派 CLI 管理子命令，解析工作区与代码会话模式后启动 Agent，不再预创建隐式 output 目录。",
       "tags": [
@@ -35416,7 +35416,7 @@
         17,
         35
       ],
-      "summary": "保存 profile、cwd、utility、权限、布局和标准化构造选项；resume_session_log 开启先验证 Skill 后修复日志的共享恢复顺序，不引入另一套会话存储。",
+      "summary": "保存 profile、cwd、utility、权限、布局和标准化构造选项；resume_session_log 开启先验证 Skill 后修复日志的共享恢复顺序，不引入另一套会话存储。resume_session_log 是 keyword-only 字段，原 profile 及后续位置参数顺序保持不变。",
       "tags": [
         "data-model",
         "host-bindings",

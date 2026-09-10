@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "d715ff42905edaa44541efcfc4797564bcb56024",
-  "generatedAt": "2026-09-10T21:15:39.701Z",
+  "gitCommitHash": "f501eebf61a6934c1fceee713f207db39b73354c",
+  "generatedAt": "2026-09-10T21:45:40.960Z",
   "files": {
     ".dockerignore": {
       "filePath": ".dockerignore",
@@ -3515,7 +3515,7 @@
     },
     "box_agent/cli.py": {
       "filePath": "box_agent/cli.py",
-      "contentHash": "20a7780244fd734281568041a1d068bab6749f22e4668ea9ef985cc1df399847",
+      "contentHash": "70b625e2905a2720560a0c01cb61638b5e338b6e1f63a26dac9de52ef6004489",
       "functions": [
         {
           "name": "run_setup_wizard",
@@ -4023,17 +4023,17 @@
             "workspace_dir",
             "task",
             "initial_goal",
-            "session_id",
             "sandbox_mode",
             "verify_api",
             "json_summary",
             "deep_think",
             "force_plan_start",
-            "goal_autopilot_enabled"
+            "goal_autopilot_enabled",
+            "session_id"
           ],
           "returnType": "int",
           "exported": true,
-          "lineCount": 872
+          "lineCount": 874
         },
         {
           "name": "main",
@@ -4444,7 +4444,7 @@
         "run_agent",
         "main"
       ],
-      "totalLines": 2794,
+      "totalLines": 2796,
       "hasStructuralAnalysis": true
     },
     "box_agent/client_info.py": {
@@ -15179,7 +15179,7 @@
     },
     "box_agent/session_context.py": {
       "filePath": "box_agent/session_context.py",
-      "contentHash": "8fe6ddf1788070a018af9b714a329ed5213337dce7316f6ea19a2a70309d9ae6",
+      "contentHash": "91fae103270b05c620ea5f0c8c00278d4e953a497a278e02e9aef236c083de46",
       "functions": [],
       "classes": [
         {
