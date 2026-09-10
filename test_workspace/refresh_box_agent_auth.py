@@ -230,10 +230,12 @@ def ensure_fresh_auth(
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     configured_auth_file = os.environ.get("BOX_AGENT_EVAL_AUTH_FILE", "").strip()
+    profile = os.environ.get("BOX_AGENT_HOME", "").strip()
+    default_auth_file = Path(profile) / "config" / "auth.json" if profile else DEFAULT_AUTH_FILE
     resolved_auth_file = (
         auth_file
         if auth_file is not None
-        else Path(configured_auth_file) if configured_auth_file else DEFAULT_AUTH_FILE
+        else Path(configured_auth_file) if configured_auth_file else default_auth_file
     ).expanduser()
     configured_refresh_url = (
         refresh_url

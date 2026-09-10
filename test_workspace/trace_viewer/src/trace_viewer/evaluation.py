@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
@@ -11,7 +10,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,21 +25,6 @@ class EvaluationLaunchError(RuntimeError):
 _AUTH_REFRESH_LOCK = threading.Lock()
 
 
-def _access_token_expiry(token: str) -> int | None:
-    parts = token.strip().split(".")
-    if len(parts) < 2:
-        return None
-    try:
-        payload = parts[1] + "=" * (-len(parts[1]) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
-        expiry = claims["exp"]
-        if isinstance(expiry, bool):
-            return None
-        return int(expiry)
-    except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
-        return None
-
-
 def _ensure_fresh_builtin_auth(
     repo_root: Path,
     model_binding: Mapping[str, Any] | None,
@@ -50,38 +33,13 @@ def _ensure_fresh_builtin_auth(
     if not isinstance(model_binding, Mapping) or model_binding.get("source") != "builtin":
         return
 
-    configured_path = os.environ.get("BOX_AGENT_EVAL_AUTH_FILE", "").strip()
-    auth_path = (
-        Path(configured_path).expanduser()
-        if configured_path
-        else Path.home() / ".box-agent" / "config" / "auth.json"
-    )
     with _AUTH_REFRESH_LOCK:
-        try:
-            document = json.loads(auth_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise EvaluationLaunchError(
-                "办公小浣熊登录状态不可用，请打开桌面应用重新登录后再执行评测"
-            ) from error
-        token = document.get("access_token") if isinstance(document, Mapping) else None
-        expiry = (
-            _access_token_expiry(token)
-            if isinstance(token, str) and token.strip()
-            else None
-        )
-        if isinstance(token, str) and token.strip() and (
-            expiry is None or expiry > int(time.time()) + 300
-        ):
-            return
-
         refresh_tool = repo_root / "test_workspace" / "refresh_box_agent_auth.py"
         if not refresh_tool.is_file():
             raise EvaluationLaunchError("评测登录刷新工具不存在，无法继续启动评测")
         command = [
             sys.executable,
             str(refresh_tool),
-            "--auth-file",
-            str(auth_path),
             "--refresh-window-seconds",
             "300",
         ]
@@ -106,20 +64,6 @@ def _ensure_fresh_builtin_auth(
             raise EvaluationLaunchError(
                 "办公小浣熊登录自动刷新失败，请打开桌面应用重新登录后再执行评测"
             )
-
-        try:
-            refreshed_document = json.loads(auth_path.read_text(encoding="utf-8"))
-            refreshed_token = refreshed_document["access_token"]
-            refreshed_expiry = _access_token_expiry(refreshed_token)
-        except (OSError, KeyError, TypeError, UnicodeError, json.JSONDecodeError) as error:
-            raise EvaluationLaunchError("自动刷新后无法重新读取办公小浣熊登录状态") from error
-        if (
-            not isinstance(refreshed_token, str)
-            or not refreshed_token.strip()
-            or refreshed_expiry is None
-            or refreshed_expiry <= int(time.time()) + 60
-        ):
-            raise EvaluationLaunchError("自动刷新后的办公小浣熊登录状态仍不可用")
 
 
 def _item_task_types(item: Mapping[str, Any]) -> list[str]:
@@ -407,6 +351,7 @@ class EvaluationRunner:
         query_set: Mapping[str, Any],
         root: Path,
         task_type: str | None = None,
+        *, approved_data_disclosure: bool = False,
     ) -> tuple[Path, int]:
         items = query_set.get("items")
         if not isinstance(items, list) or not items:
@@ -446,6 +391,8 @@ class EvaluationRunner:
             attachments = raw_item.get("attachments", [])
             if not isinstance(attachments, list):
                 raise EvaluationLaunchError(f"Ops 任务 {case_id} 附件结构无效")
+            if attachments and not approved_data_disclosure:
+                raise EvaluationLaunchError("实际数据集包含附件，请刷新选项并明确确认数据披露")
             input_files: list[str] = []
             destination_names: set[str] = set()
             for raw_attachment in attachments:
@@ -521,6 +468,7 @@ class EvaluationRunner:
         model_binding: Mapping[str, Any] | None = None,
         task_type: str | None = None,
         execution_count: int | None = None,
+        approved_data_disclosure: bool = False,
     ) -> dict[str, Any]:
         _ensure_fresh_builtin_auth(self.repo_root, model_binding)
         query_set = self.ops.get_query_set(dataset_id)
@@ -529,6 +477,7 @@ class EvaluationRunner:
                 query_set,
                 Path(temp_dir),
                 task_type,
+                approved_data_disclosure=approved_data_disclosure,
             )
             count = execution_count if execution_count is not None else available_count
             if count < 1 or count > available_count:

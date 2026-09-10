@@ -296,6 +296,7 @@ def test_runner_materializes_ops_dataset_and_invokes_existing_acp_entry(
         model="sn-deepseek-v4-pro",
         model_max_tokens=100000,
         launch_id="launch-123456789abc",
+        approved_data_disclosure=True,
     )
 
     command = captured["command"]
@@ -380,7 +381,47 @@ def test_runner_rejects_an_ops_attachment_without_a_local_path(tmp_path: Path):
     with pytest.raises(EvaluationLaunchError, match="同机可读路径"):
         runner.run(
             dataset_id="qs-one",
+            approved_data_disclosure=True,
             model="model-one",
             model_max_tokens=None,
             launch_id="launch-missing-path",
         )
+
+
+def test_runner_rechecks_actual_attachment_disclosure_before_copy_or_execution(tmp_path, monkeypatch):
+    attachment = tmp_path / "private.txt"
+    attachment.write_text("private input")
+    runner = EvaluationRunner(tmp_path, ops=QuerySetOps({
+        "query_set_id": "qs-one", "items": [{"query_id": "Q1", "query": "new data", "attachments": [{
+            "name": "private.txt", "path": str(attachment),
+        }]}],
+    }))
+    def forbidden(*args, **kwargs):
+        pytest.fail("unapproved attachment copied or evaluation executed")
+    monkeypatch.setattr("trace_viewer.evaluation.shutil.copy2", forbidden)
+    monkeypatch.setattr("trace_viewer.evaluation.subprocess.run", forbidden)
+    with pytest.raises(EvaluationLaunchError, match="明确确认数据披露"):
+        runner.run(dataset_id="qs-one", model="model", model_max_tokens=None,
+                   launch_id="unapproved", approved_data_disclosure=False)
+
+
+@pytest.mark.parametrize("damage", ["symlink", "oversize"])
+def test_fresh_builtin_auth_uses_the_same_file_validation_as_refresh(tmp_path, monkeypatch, damage):
+    import shutil
+    from trace_viewer.evaluation import _ensure_fresh_builtin_auth
+
+    repo = tmp_path / "repo"
+    helper = repo / "test_workspace" / "refresh_box_agent_auth.py"
+    helper.parent.mkdir(parents=True)
+    shutil.copy2(Path(__file__).resolve().parents[2] / "refresh_box_agent_auth.py", helper)
+    target = tmp_path / "target.json"
+    target.write_text(json.dumps({"access_token": _unsigned_jwt(int(time.time()) + 3600),
+                                  "padding": "x" * (70000 if damage == "oversize" else 0)}))
+    auth = tmp_path / "auth.json"
+    if damage == "symlink":
+        auth.symlink_to(target)
+    else:
+        auth = target
+    monkeypatch.setenv("BOX_AGENT_EVAL_AUTH_FILE", str(auth))
+    with pytest.raises(EvaluationLaunchError, match="自动刷新失败"):
+        _ensure_fresh_builtin_auth(repo, {"source": "builtin"})

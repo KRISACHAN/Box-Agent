@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from trace_viewer.app import create_app
@@ -165,7 +166,7 @@ def test_run_and_case_pages_show_effect_metric_summaries(client):
 
 def test_evaluation_options_are_loaded_from_the_runner(repo_root):
     runner = FakeEvaluationRunner()
-    client = TestClient(create_app(repo_root, evaluation_runner=runner))
+    client = TestClient(create_app(repo_root, evaluation_runner=runner), base_url="http://localhost", client=("127.0.0.1", 50000))
 
     response = client.get("/api/evaluation-options")
 
@@ -176,7 +177,7 @@ def test_evaluation_options_are_loaded_from_the_runner(repo_root):
 
 def test_evaluation_launch_runs_in_background_and_exposes_status(repo_root):
     runner = FakeEvaluationRunner()
-    client = TestClient(create_app(repo_root, evaluation_runner=runner))
+    client = TestClient(create_app(repo_root, evaluation_runner=runner), base_url="http://localhost", client=("127.0.0.1", 50000))
 
     launch = client.post(
         "/api/evaluation-runs",
@@ -208,13 +209,14 @@ def test_evaluation_launch_runs_in_background_and_exposes_status(repo_root):
             },
             "task_type": "text",
             "execution_count": 2,
+            "approved_data_disclosure": False,
         }
     ]
 
 
 def test_attachment_dataset_requires_explicit_disclosure(repo_root):
     runner = FakeEvaluationRunner(attachment_count=1)
-    client = TestClient(create_app(repo_root, evaluation_runner=runner))
+    client = TestClient(create_app(repo_root, evaluation_runner=runner), base_url="http://localhost", client=("127.0.0.1", 50000))
 
     response = client.post(
         "/api/evaluation-runs",
@@ -234,7 +236,7 @@ def test_attachment_dataset_requires_explicit_disclosure(repo_root):
 
 def test_evaluation_launch_rejects_task_type_and_count_outside_dataset(repo_root):
     runner = FakeEvaluationRunner()
-    client = TestClient(create_app(repo_root, evaluation_runner=runner))
+    client = TestClient(create_app(repo_root, evaluation_runner=runner), base_url="http://localhost", client=("127.0.0.1", 50000))
 
     missing_type = client.post(
         "/api/evaluation-runs",
@@ -340,7 +342,8 @@ def test_diagnosis_page_renders_arbitrary_case_level_markdown(client, repo_root)
     assert "<code>stderr</code>" in response.text
     assert "<table>" in response.text
     assert "<td>正常</td>" in response.text
-    assert '<aside data-note="kept">任意 HTML</aside>' in response.text
+    assert '<aside data-note="kept">任意 HTML</aside>' not in response.text
+    assert "&lt;aside" in response.text
     assert "查看原始 Markdown" in response.text
     assert "下载 Markdown" in response.text
 
@@ -533,3 +536,43 @@ def test_download_is_contained_in_attempt(client, repo_root):
     assert response.status_code == 200
     assert response.text == "hello"
     assert client.get("/runs/eval-one/cases/Q1/download/../../../../etc/passwd").status_code in {404, 422}
+
+
+@pytest.mark.parametrize("address,base_url,origin", [
+    ("192.0.2.10", "http://localhost", None),
+    ("127.0.0.1", "http://untrusted.example", "http://untrusted.example"),
+    ("127.0.0.1", "http://localhost", "https://untrusted.example"),
+    ("127.0.0.1", "http://localhost", "null"),
+])
+def test_evaluation_launch_rejects_remote_and_cross_origin_requests(repo_root, address, base_url, origin):
+    runner = FakeEvaluationRunner()
+    client = TestClient(create_app(repo_root, evaluation_runner=runner),
+                        base_url=base_url, client=(address, 50000))
+    response = client.post("/api/evaluation-runs", headers={"Origin": origin} if origin else {}, json={
+        "dataset_id": "qs-smoke", "model_id": "sn-deepseek-v4-pro", "execution_count": 1,
+        "approved_data_disclosure": True,
+    })
+    assert response.status_code == 403
+    assert runner.calls == []
+
+
+def test_remote_execution_requires_server_opt_in_and_preserves_disclosure_approval(repo_root):
+    runner = FakeEvaluationRunner(attachment_count=1)
+    client = TestClient(create_app(repo_root, evaluation_runner=runner, allow_remote_evaluations=True),
+                        base_url="http://eval.internal", client=("192.0.2.10", 50000))
+    response = client.post("/api/evaluation-runs", headers={"Origin": "http://eval.internal"}, json={
+        "dataset_id": "qs-smoke", "model_id": "sn-deepseek-v4-pro", "execution_count": 1,
+        "approved_data_disclosure": True,
+    })
+    assert response.status_code == 202
+    assert runner.calls[0]["approved_data_disclosure"] is True
+
+
+def test_model_markdown_cannot_add_scripts_to_the_launch_origin(client, repo_root):
+    diagnosis = repo_root / "test_workspace/outputs/eval-one/cases/Q1/diagnosis.md"
+    diagnosis.write_text('<script>fetch("/api/evaluation-runs")</script>\n<img src=x onerror="alert(1)">')
+    response = client.get("/runs/eval-one/cases/Q1/diagnosis")
+    assert response.status_code == 200
+    assert '<script>fetch(' not in response.text
+    assert '<img src=x onerror=' not in response.text
+    assert '&lt;script&gt;' in response.text

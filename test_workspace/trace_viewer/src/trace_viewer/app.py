@@ -1,6 +1,7 @@
 """FastAPI application factory."""
 
 from datetime import datetime, timezone
+from ipaddress import ip_address
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -34,13 +35,14 @@ class EvaluationLaunchRequest(BaseModel):
 def create_app(
     repo_root: Path,
     evaluation_runner: EvaluationRunner | None = None,
+    *, allow_remote_evaluations: bool = False,
 ) -> FastAPI:
     app = FastAPI(title="ACP 离线评测查看器", docs_url=None, redoc_url=None)
     repository = EvaluationRepository(repo_root)
     runner = evaluation_runner or EvaluationRunner(repo_root)
     launches: dict[str, dict[str, Any]] = {}
     launches_lock = Lock()
-    markdown = MarkdownIt("commonmark", {"html": True}).enable(["table", "strikethrough"])
+    markdown = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
     templates = Jinja2Templates(directory=PROJECT_DIR / "templates")
     app.mount("/static", StaticFiles(directory=PROJECT_DIR / "static"), name="static")
 
@@ -61,6 +63,7 @@ def create_app(
         model: dict[str, Any],
         task_type: str | None,
         execution_count: int,
+        approved_data_disclosure: bool,
     ) -> None:
         with launches_lock:
             launches[launch_id]["status"] = "running"
@@ -73,6 +76,7 @@ def create_app(
                 model_binding=model.get("binding"),
                 task_type=task_type,
                 execution_count=execution_count,
+                approved_data_disclosure=approved_data_disclosure,
             )
         except Exception as error:  # noqa: BLE001 - preserve launch failure for UI polling
             detail = str(error) if isinstance(error, EvaluationLaunchError) else f"{type(error).__name__}: {error}"
@@ -104,7 +108,19 @@ def create_app(
     def launch_evaluation(
         request: EvaluationLaunchRequest,
         background_tasks: BackgroundTasks,
+        http_request: Request,
     ) -> dict[str, Any]:
+        try:
+            local_client = http_request.client is not None and ip_address(http_request.client.host).is_loopback
+        except ValueError:
+            local_client = False
+        if not allow_remote_evaluations and (
+            not local_client or http_request.url.hostname not in {"localhost", "127.0.0.1", "::1"}
+        ):
+            raise HTTPException(403, "启动评测默认仅限本机；远程启动须由服务端显式开启")
+        origin = http_request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(http_request.base_url).rstrip("/"):
+            raise HTTPException(403, "不接受跨来源的评测启动请求")
         try:
             options = runner.list_options()
         except EvaluationLaunchError as error:
@@ -168,6 +184,7 @@ def create_app(
             "model": model.get("id"),
             "task_type": request.task_type,
             "execution_count": request.execution_count,
+            "approved_data_disclosure": request.approved_data_disclosure,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
             "run_name": None,
@@ -183,6 +200,7 @@ def create_app(
             model,
             request.task_type,
             request.execution_count,
+            request.approved_data_disclosure,
         )
         return dict(document)
 
@@ -372,6 +390,9 @@ def create_app(
             path = repository.resolve_case_path(run_name, case_id, relative_path)
         except NotFoundError as error:
             raise HTTPException(404, "文件不存在") from error
-        return FileResponse(path, filename=path.name)
+        return FileResponse(path, filename=path.name, headers={
+            "Content-Security-Policy": "sandbox allow-scripts",
+            "X-Content-Type-Options": "nosniff",
+        })
 
     return app

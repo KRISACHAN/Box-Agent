@@ -110,12 +110,12 @@ uv sync --project test_workspace/trace_viewer
 ```bash
 uv run --project test_workspace/trace_viewer trace-viewer \
   --repo-root "$PWD" \
-  --host 0.0.0.0 \
+  --host 127.0.0.1 \
   --port 8000
 ```
 
-本机访问 `http://127.0.0.1:8000/`，局域网同事使用 `http://<本机 IP>:8000/`。
-Viewer 为只读工具，不包含认证或脱敏能力，只应在可信网络中使用。
+本机访问 `http://127.0.0.1:8000/`。网页可启动限定数据集和模型的 ACP 评测，实际附件复制前必须确认披露。
+显式绑定 `--host 0.0.0.0` 可供可信内网查看；远程启动还需 `--allow-remote-evaluations`，并由部署方配置访问控制。Viewer 不提供登录认证，不应公开到不受信任网络。
 打开 Case 后的“效果指标”标签可查看评分与关键证据、性能耗时、成本，以及当前数据无法评估的指标。
 
 详细规范见 [AGENTS.md](AGENTS.md)，组件说明见 [acp_eval/README.md](acp_eval/README.md) 和 [trace_viewer/README.md](trace_viewer/README.md)。

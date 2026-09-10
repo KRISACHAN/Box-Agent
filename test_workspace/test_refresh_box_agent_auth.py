@@ -207,3 +207,17 @@ def test_rejects_refresh_response_with_an_expired_access_token(tmp_path: Path):
         )
 
     assert auth_file.read_text(encoding="utf-8") == original
+
+
+def test_default_auth_file_respects_active_box_agent_profile(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    auth = profile / "config" / "auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text(json.dumps({"access_token": _unsigned_jwt(2000000)}))
+    monkeypatch.setenv("BOX_AGENT_HOME", str(profile))
+    monkeypatch.delenv("BOX_AGENT_EVAL_AUTH_FILE", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "unrelated-home"))
+    def unexpected_refresh(*args, **kwargs):
+        pytest.fail("a fresh profile token must not use a network refresh")
+    result = ensure_fresh_auth(now=1000000, urlopen=unexpected_refresh)
+    assert result.refreshed is False

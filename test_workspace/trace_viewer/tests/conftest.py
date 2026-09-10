@@ -169,4 +169,4 @@ def repo_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def client(repo_root: Path) -> TestClient:
-    return TestClient(create_app(repo_root))
+    return TestClient(create_app(repo_root), base_url="http://localhost", client=("127.0.0.1", 50000))
