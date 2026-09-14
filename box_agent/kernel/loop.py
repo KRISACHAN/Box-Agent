@@ -2378,6 +2378,8 @@ async def _run_agent_loop_impl(
                 content=response.content,
                 finish_reason=response.finish_reason,
                 tools_available=bool(tool_list),
+                thinking_enabled=thinking_enabled,
+                decision_tool_available="request_user_decision" in offered_tools_by_name,
                 step=step,
                 max_steps=max_steps,
                 cancelled=cancelled(),
