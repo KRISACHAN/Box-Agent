@@ -261,7 +261,7 @@
       "source_sha256": "fa1306bcf83baf9f6f8c06e20c8019896c60925b44e7f4e12ec8fb4b2df3165b"
     },
     "skills/sn-ppt-doctor/SKILL.md": {
-      "sha256": "4fe9ef51f8aaca08e1f74e3f19768a86e07bf011db241f8083b8ccddfd151404",
+      "sha256": "1c57dd75f37317a4f8e4909a702d7bc8817ddcb6885360171df34fd21f9219a7",
       "source_path": "skills/sn-ppt-doctor/SKILL.md",
       "source_sha256": "bc2ba1b05b87aa0064e82a70359568368f5a00376c27759554e355039bb39caf"
     },
@@ -276,7 +276,7 @@
       "source_sha256": "81c8cbb6cb3914342f0e09a47001a1522492c3b94cbd82774b2c803d762c8a1c"
     },
     "skills/sn-ppt-entry/SKILL.md": {
-      "sha256": "7236268cff31ba05221205add3678b67776efb016abef3569bc5c4d2ea6c041d",
+      "sha256": "75b0520f5e77d2860133de2a78efca6bba2eef1079544723bf9cd4c507fe7d8d",
       "source_path": "skills/sn-ppt-entry/SKILL.md",
       "source_sha256": "4de3bbe6127e2e30c8068400159c141059f27a6d1e57fee7aae29b8e6e9b21d6"
     },
@@ -296,7 +296,7 @@
       "source_sha256": "a29eba114f6916a15edd8c855ccc8c19150d117505ab37a442d33216ed1c9dc3"
     },
     "skills/sn-ppt-standard/SKILL.md": {
-      "sha256": "0c70f56d4a32724ec4b221a72a4a6f6e6e0440424adc7b45c5a77a17d11fec57",
+      "sha256": "60b9fecd2b3e1f5181af97de1174f2b03360467f0acadab7f76144b12e312ac1",
       "source_path": "skills/sn-ppt-standard/SKILL.md",
       "source_sha256": "2e435e30d8d1ae6f5c47154f8ade51944064576d4d4b14a2867dd849122cb97e"
     },
@@ -610,7 +610,8 @@
     "remove-image-only-output-policy",
     "legacy-static-task-resume",
     "dazzle-box-native-tools",
-    "bundle-third-party-notices"
+    "bundle-third-party-notices",
+    "static-player-delivery-gate"
   ],
   "repository": "https://gitlab.sh.sensetime.com/stc-fvg/sensenova-presentation-int.git",
   "revision": "e187295633eb4cb201e6a2a5a206a419eb79990a",

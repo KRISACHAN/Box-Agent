@@ -10,6 +10,15 @@ metadata:
 
 把本文件当作**路线图**，不要当作需要一次背完的规范全集。只读取已准备任务的 Entry/Story 交接、该路径要求的 reference 和职责卡。
 
+## 整册 HTML 完成条件
+
+`<DECK_DIR>/present.html` 是静态整册的必交付入口，包括全生图、只要 PPTX、只要 HTML
+和续改任务。逐页 HTML/PNG、子代理完成或 PPTX 导出成功，都不等于整册完成。
+父级必须执行下方的 `deck.py build` 与 `deck.py audit`，确认播放器覆盖全部页且可打开；
+再完成最终像素检查及所需 PPTX 导出。只缺播放器时复用已有页面补齐收尾，不重新制作整册。
+最终回复必须给出真实 `present.html` 的可点击链接，并保留其依赖的 slides、样式与资源；
+未生成或核验失败则保存现有产物、登记 `partial` 和错误，不得声称完成或伪造链接。
+
 ## Box-Agent 兼容入口
 
 当当前 harness 暴露 `sub_agent`、`inspect_images`、`generate_image`、`bash` 等 Box-Agent 原生工具时，开始任何制作动作前必须完整读取 `references/box-agent-tool-contract.md`。该契约只覆盖工具名称、参数、脚本路径、委派方式和权限边界；本文件及各职责卡的事实、设计、质量和交付标准仍然有效。委派任何角色时，都要在 `task` 中显式要求其先读取同一契约与自己的 `subagents/<role>.md`。
@@ -244,9 +253,10 @@ Review 不只查“有没有溢出”，还要比较全册设计兑现：封面�
 
 ```bash
 python "$SKILL_ROOT/scripts/deck.py" build "$DECK_DIR" --expected <总页数>
+python "$SKILL_ROOT/scripts/deck.py" audit "$DECK_DIR" --expected <总页数>
 ```
 
-`deck.py build` 生成并校验 `present.html`（缺失即报错，deck.py:1294-1295）。`present.html` 是必交付产物：不得省略 build、不得拿其他文件代替它交付。
+`deck.py build` 生成 `present.html`；随后单独执行 `deck.py audit`，检查文件存在、全部页引用、本地资源与播放器运行情况。两条命令都必须成功，不用后续命令掩盖退出码。`present.html` 不得省略，也不能用 PPTX 或其他文件替代；通过后登记绝对路径到 `state.artifacts.present_html` 并在最终回复提供链接。
 只有 Review ready 且用户要求的全部产物验证通过时，交付状态才为 `ready`；必需 PPTX 缺失时保持 `partial`。Review 最终仍有硬伤但全部页面、渲染、讲稿与 `present.html` 可用时，以 `needs_improvement` 交付并展示问题账本；不得因为 advisory、子 Agent 文本收尾或 Review 合同不完美丢弃可用成稿。
 
 ## 3. 编辑 PPT

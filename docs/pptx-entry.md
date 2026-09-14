@@ -14,6 +14,12 @@ Workbench 或 Edit；Standard 自带静态页面与 PPTX exporter，保留源代
 同时交付，仅用户明确只要 HTML 时省略 PPTX。旧静态任务恢复时由 Entry 迁移对应字段，
 保留绝对任务目录、原材料、大纲、页面及后处理选择。
 
+静态整册入口固定为同一任务目录的 `present.html`。父级先执行 Standard 的 `deck.py build`
+与 `deck.py audit`，核对页面覆盖、资源和播放器，再完成最终像素检查及所需 PPTX 导出；
+登记 `state.artifacts.present_html` 并在最终回复提供真实 HTML 链接。仅逐页文件或 PPTX
+成功不足以宣告完成；播放器缺失时复用已有页面补齐，失败保留产物并记录 `partial`。
+动态出口继续使用 `deck.html`。这是 Skill 收尾要求，未增加内核强制门或另一套汇总脚本。
+
 ## 选择与续跑
 
 OfficeV3 直接发送用户需求，不做 PPT 正则分类或发送前的模式拦截。Box-Agent 原有通用

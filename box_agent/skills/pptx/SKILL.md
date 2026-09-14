@@ -66,6 +66,11 @@ Dazzle 时交接 `choices.output="dynamic_html"`、`ppt_mode="dazzle"`，交付�
 先说明此出口的能力并确认可接受的交付格式。静态/动态需求仅用于选择创意模式内部的
 出口，不能用来跳过上方的制作模式选择；已明确的内部出口不再重复询问。
 
+创意静态任务始终交付同一 `deck_dir` 下的整册 `present.html`：父级按 Standard 执行
+`deck.py build` 与 `deck.py audit`，确认全部页面可播放后，在最终回复给出真实 HTML 链接。
+逐页 HTML/PNG、全生图页面或 PPTX 导出成功都不能代替该入口；缺失时补齐收尾，失败则
+保留产物并说明未完成，不伪造链接。动态任务沿用完整的 `deck.html` 及其本地资源。
+
 恢复已有创意任务时复用 `task_pack.json` 的绝对 `deck_dir`、模式和出口，不用上述默认值
 覆盖已有选择。旧静态任务的 `web_html` / `web` 字段由 Entry 按恢复规则迁到 Standard，
 保留原有材料、大纲、页面、产物和用户的后处理选择。不要调用未打包的 `sn-ppt-web`、`sn-ppt-creative`、`sn-ppt-workbench`

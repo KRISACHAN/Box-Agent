@@ -50,7 +50,7 @@ Draft / Standard / Deep。用户可以覆盖；用户未覆盖时采用推荐，
 
 本套件是公共 `pptx` 入口下的创意模式，保留两个表达出口：
 
-- `static_html` -> `sn-ppt-standard`：静态 PPT 页面，默认交付 `present.html` 和可编辑 `.pptx`。
+- `static_html` -> `sn-ppt-standard`：静态 PPT 页面，始终交付整册 `present.html`，默认另交付可编辑 `.pptx`。
 - `dynamic_html` -> `sn-ppt-dazzle`：带动效和翻页交互的 `deck.html`；不承诺保留动画的 PPTX。
 
 用户未明确要求动态时采用 `static_html`；只要 HTML 时关闭对应 PPTX 后处理。
@@ -275,12 +275,18 @@ Hermes/OpenClaw 实际读取的用户级 `.env`、缺失项和配置模板。
 11. **出口分发**：Story 已完成且当前磁盘 `outline.md` 已按本档位确认后，
     `static_html` 调用 `sn-ppt-standard`，`dynamic_html` 调用 `sn-ppt-dazzle`；始终传入相同绝对
     `deck_dir`。不得绕过 Story；出口不再研究、重排页面或重写大纲。
-12. **后处理和收尾**：静态页面完成后按 `static_postprocess` 使用 Standard 自有 exporter
-    `scripts/export_pptx/html_to_pptx.mjs` 导出 PPTX。`present.html` 必须存在；默认同时
-    交付可编辑 PPTX，只有用户明确只要 HTML 时才可省略 PPTX。必需产物缺失或转换失败时
-    保留现有产物，状态写 `partial` 并记录错误；不得用宿主工具、python-pptx 或自写脚本
-    替换该 exporter，不伪造文件路径。动态出口交付
-    `deck.html` 及其实际使用的本地资源。只登记真实存在的产物到 `task_pack.state.artifacts`。
+12. **后处理和收尾**：静态页面完成后，父级先按 Standard 的命令执行
+    `deck.py build` 与 `deck.py audit`，核对 `<deck_dir>/present.html` 存在、覆盖全部页面且
+    播放器可打开，再完成最终像素检查。逐页 HTML/PNG 或 PPTX 已存在都不能跳过这一步。
+    随后按 `static_postprocess` 使用 Standard 自有 exporter
+    `scripts/export_pptx/html_to_pptx.mjs` 导出 PPTX，默认同时交付；只有用户明确只要 HTML
+    时才可省略 PPTX，任何静态任务都不能因此省略 `present.html`。
+    只缺播放器时复用已有页面补齐收尾，不重做 Research、Story 或整册页面。
+    把已验证的绝对路径登记到 `task_pack.state.artifacts.present_html`，最终回复必须给出
+    `present.html` 的可点击链接，保留它引用的 slides、样式与资源，不能只给文件夹或 PPTX。
+    必需产物缺失或转换失败时保留现有产物、状态写 `partial` 并记录错误；不得用宿主工具、
+    python-pptx 或自写脚本替换 exporter，不伪造文件路径。动态出口交付 `deck.html` 及其
+    实际使用的本地资源，并提供真实 HTML 链接。只登记真实存在的产物到 `task_pack.state.artifacts`。
 
 ## 恢复规则
 

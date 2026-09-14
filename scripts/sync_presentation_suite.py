@@ -26,7 +26,8 @@ MODULES = ("dazzle", "doctor", "entry", "standard", "story", "tools")
 OVERLAYS = ["metadata.user_visible=false", "metadata.allow_override=false",
             "entry-two-outputs", "story-two-outputs", "doctor-shipped-backends",
             "remove-image-only-output-policy", "legacy-static-task-resume",
-            "dazzle-box-native-tools", "bundle-third-party-notices"]
+            "dazzle-box-native-tools", "bundle-third-party-notices",
+            "static-player-delivery-gate"]
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "box_agent/skills/presentation-suite"
 LICENSE_INPUT_PATH = "scripts/presentation_suite_licenses/echarts-5.5.0"
 LICENSE_INPUT_DIR = Path(__file__).resolve().parents[1] / LICENSE_INPUT_PATH
@@ -115,6 +116,26 @@ def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
             "`bundled/static-ppt-skill-suite/skills/sn-ppt-web/assets/licenses/OFL-1.1.txt`",
             "`skills/sn-ppt-standard/assets/licenses/OFL-1.1.txt`")
         return text.encode("utf-8")
+    if relative == "skills/sn-ppt-standard/SKILL.md":
+        text = _replace_once(data.decode("utf-8"), "## Box-Agent 兼容入口\n", """## 整册 HTML 完成条件
+
+`<DECK_DIR>/present.html` 是静态整册的必交付入口，包括全生图、只要 PPTX、只要 HTML
+和续改任务。逐页 HTML/PNG、子代理完成或 PPTX 导出成功，都不等于整册完成。
+父级必须执行下方的 `deck.py build` 与 `deck.py audit`，确认播放器覆盖全部页且可打开；
+再完成最终像素检查及所需 PPTX 导出。只缺播放器时复用已有页面补齐收尾，不重新制作整册。
+最终回复必须给出真实 `present.html` 的可点击链接，并保留其依赖的 slides、样式与资源；
+未生成或核验失败则保存现有产物、登记 `partial` 和错误，不得声称完成或伪造链接。
+
+## Box-Agent 兼容入口
+""")
+        text = _replace_once(text,
+            'python "$SKILL_ROOT/scripts/deck.py" build "$DECK_DIR" --expected <总页数>\n```',
+            'python "$SKILL_ROOT/scripts/deck.py" build "$DECK_DIR" --expected <总页数>\n'
+            'python "$SKILL_ROOT/scripts/deck.py" audit "$DECK_DIR" --expected <总页数>\n```')
+        text = _replace_once(text,
+            '`deck.py build` 生成并校验 `present.html`（缺失即报错，deck.py:1294-1295）。`present.html` 是必交付产物：不得省略 build、不得拿其他文件代替它交付。',
+            '`deck.py build` 生成 `present.html`；随后单独执行 `deck.py audit`，检查文件存在、全部页引用、本地资源与播放器运行情况。两条命令都必须成功，不用后续命令掩盖退出码。`present.html` 不得省略，也不能用 PPTX 或其他文件替代；通过后登记绝对路径到 `state.artifacts.present_html` 并在最终回复提供链接。')
+        return text.encode("utf-8")
     if relative == "skills/sn-ppt-entry/SKILL.md":
         text = data.decode("utf-8")
         text = _replace_once(text,
@@ -124,7 +145,7 @@ def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
 
 本套件是公共 `pptx` 入口下的创意模式，保留两个表达出口：
 
-- `static_html` -> `sn-ppt-standard`：静态 PPT 页面，默认交付 `present.html` 和可编辑 `.pptx`。
+- `static_html` -> `sn-ppt-standard`：静态 PPT 页面，始终交付整册 `present.html`，默认另交付可编辑 `.pptx`。
 - `dynamic_html` -> `sn-ppt-dazzle`：带动效和翻页交互的 `deck.html`；不承诺保留动画的 PPTX。
 
 用户未明确要求动态时采用 `static_html`；只要 HTML 时关闭对应 PPTX 后处理。
@@ -161,12 +182,18 @@ def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
         text = _replace_section(text, '12. **出口分发**：', '## 恢复规则\n', """12. **出口分发**：Story 已完成且当前磁盘 `outline.md` 已按本档位确认后，
     `static_html` 调用 `sn-ppt-standard`，`dynamic_html` 调用 `sn-ppt-dazzle`；始终传入相同绝对
     `deck_dir`。不得绕过 Story；出口不再研究、重排页面或重写大纲。
-13. **后处理和收尾**：静态页面完成后按 `static_postprocess` 使用 Standard 自有 exporter
-    `scripts/export_pptx/html_to_pptx.mjs` 导出 PPTX。`present.html` 必须存在；默认同时
-    交付可编辑 PPTX，只有用户明确只要 HTML 时才可省略 PPTX。必需产物缺失或转换失败时
-    保留现有产物，状态写 `partial` 并记录错误；不得用宿主工具、python-pptx 或自写脚本
-    替换该 exporter，不伪造文件路径。动态出口交付
-    `deck.html` 及其实际使用的本地资源。只登记真实存在的产物到 `task_pack.state.artifacts`。
+13. **后处理和收尾**：静态页面完成后，父级先按 Standard 的命令执行
+    `deck.py build` 与 `deck.py audit`，核对 `<deck_dir>/present.html` 存在、覆盖全部页面且
+    播放器可打开，再完成最终像素检查。逐页 HTML/PNG 或 PPTX 已存在都不能跳过这一步。
+    随后按 `static_postprocess` 使用 Standard 自有 exporter
+    `scripts/export_pptx/html_to_pptx.mjs` 导出 PPTX，默认同时交付；只有用户明确只要 HTML
+    时才可省略 PPTX，任何静态任务都不能因此省略 `present.html`。
+    只缺播放器时复用已有页面补齐收尾，不重做 Research、Story 或整册页面。
+    把已验证的绝对路径登记到 `task_pack.state.artifacts.present_html`，最终回复必须给出
+    `present.html` 的可点击链接，保留它引用的 slides、样式与资源，不能只给文件夹或 PPTX。
+    必需产物缺失或转换失败时保留现有产物、状态写 `partial` 并记录错误；不得用宿主工具、
+    python-pptx 或自写脚本替换 exporter，不伪造文件路径。动态出口交付 `deck.html` 及其
+    实际使用的本地资源，并提供真实 HTML 链接。只登记真实存在的产物到 `task_pack.state.artifacts`。
 
 """)
         # Remove the omitted workbench step while keeping the remaining workflow ordered.
@@ -207,6 +234,8 @@ def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
         text = _replace_once(data.decode("utf-8"), 'HTML-to-PPTX export, Workbench startup, or',
             'HTML-to-PPTX export, dynamic HTML rendering, or')
         for old, new in [
+            ('缺少某个可选依赖只影响对应能力，不应阻止其他出口。例如没有 Node 时仍可使用宿主原生\nPPTX 能力；HTML -> PPTX 失败时仍保留 HTML。',
+             '缺少某个可选依赖只影响对应能力，不应阻止其他出口。Standard 缺少 Node 或 HTML -> PPTX 失败时保留 HTML；需要 PPTX 则登记 partial 和错误，不改用宿主原生 PPTX 工具。静态 present.html 仍须完成并核验，动态出口保留 deck.html。'),
             ('Node.js 是否可用于 Workbench 和 Static 默认 HTML -> PPTX 兼容版导出；',
              'Node.js 是否可用于 Standard HTML -> PPTX 导出；'),
             ('Standard 渲染脚本、PPTX exporter 和 Workbench runtime 是否存在；',

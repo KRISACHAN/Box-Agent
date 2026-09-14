@@ -89,8 +89,7 @@ SN_PPT_IMAGE_GEN_MODEL="<image-generation-model>"
 - 否则已配置或已探测成功的 Bundled；
 - 两者都不可确认时为 None。
 
-缺少某个可选依赖只影响对应能力，不应阻止其他出口。例如没有 Node 时仍可使用宿主原生
-PPTX 能力；HTML -> PPTX 失败时仍保留 HTML。
+缺少某个可选依赖只影响对应能力，不应阻止其他出口。Standard 缺少 Node 或 HTML -> PPTX 失败时保留 HTML；需要 PPTX 则登记 partial 和错误，不改用宿主原生 PPTX 工具。静态 present.html 仍须完成并核验，动态出口保留 deck.html。
 
 ## 调用
 
