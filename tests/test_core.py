@@ -7044,6 +7044,17 @@ def test_latest_user_text_ignores_post_compaction_runtime_state():
     assert _latest_user_text(messages) == "继续"
 
 
+def test_latest_user_text_ignores_runtime_user_messages():
+    from box_agent.core import _latest_user_text
+
+    messages = [
+        Message(role="user", content="真实请求", source="user"),
+        Message(role="user", content="内部恢复提示", source="runtime"),
+    ]
+
+    assert _latest_user_text(messages) == "真实请求"
+
+
 def test_goal_read_exposes_side_effect_free_compaction_state(tmp_path):
     from box_agent.agent import Agent
 

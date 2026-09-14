@@ -154,7 +154,7 @@ async def _create_summary(
     if not messages:
         return ""
     response: LLMResponse = await llm.generate(
-        messages=[*messages, Message(role="user", content=_SUMMARY_REQUEST)],
+        messages=[*messages, Message(role="user", source="runtime", content=_SUMMARY_REQUEST)],
         tools=None,
         thinking_enabled=False,
         session_id=session_id,
@@ -610,6 +610,7 @@ async def _restore_runtime_state(
         return None
     return Message(
         role="user",
+        source="runtime",
         content=f"{_RUNTIME_STATE_MARKER}\n\n" + "\n\n".join(sections),
     )
 
@@ -711,7 +712,7 @@ async def _maybe_summarize(
             raise RuntimeError("LLM summary disabled")
         if (summary_input_token_limit is not None
                 and _fallback_context_estimate(
-                    [*messages, Message(role="user", content=_SUMMARY_REQUEST)], None,
+                    [*messages, Message(role="user", source="runtime", content=_SUMMARY_REQUEST)], None,
                 ) > summary_input_token_limit):
             raise RuntimeError("Summary request exceeds the safe input budget")
         summary_calls = 1
@@ -747,6 +748,7 @@ async def _maybe_summarize(
             messages[0],
             Message(
                 role="user",
+                source="runtime",
                 content=(f"{_SUMMARY_MESSAGE_PREFIX}{summary_text}{_SUMMARY_MESSAGE_SUFFIX}"),
             ),
             *retained_messages,

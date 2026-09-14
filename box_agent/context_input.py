@@ -101,7 +101,7 @@ class DefaultContextEngine:
         envelopes = [Message(role="tool", name=call.function.name, tool_call_id=call.id, content="")
                      for call in calls if call.id not in committed]
         definitions = self.prepared_tools.definitions if self.prepared_tools is not None else ()
-        pending = ([Message(role="user", content=list(self._pending_followup_blocks))]
+        pending = ([Message(role="user", source="runtime", content=list(self._pending_followup_blocks))]
                    if self._pending_followup_blocks else [])
         available = skill_reference_budget_chars(
             self.project_history([*self._history, *envelopes, *self._extra_messages, *pending]), definitions,
