@@ -235,6 +235,7 @@ async def test_custom_session_store_persists_inline_snapshot_before_provider(run
 
 def test_new_transient_from_current_batch_is_reserved_before_following_skill_read(runtime):
     from box_agent.kernel.context_engine import _fallback_context_estimate
+    from box_agent.schema import FunctionCall, ToolCall
 
     runtime.loader.get_skill("demo").skill_path.write_text(
         '---\nname: demo\ndescription: example\n---\n' + ("METHOD " * 20 + "\n") * 200)
@@ -243,6 +244,10 @@ def test_new_transient_from_current_batch_is_reserved_before_following_skill_rea
     engine.configure_run(skill_engine=runtime)
     messages = [Message(role="user", content="task")]
     engine.prepare_request(messages, prepared_tools=prepare_tools([tool]), token_limit=8000)
+    # The kernel commits tool calls before execution, letting the reader reserve
+    # the pending tool-result envelope as well as the request-only followup.
+    messages.append(Message(role="assistant", content="", tool_calls=[ToolCall(id="read-1", type="function",
+        function=FunctionCall(name="get_skill", arguments={"skill_name": "demo"}))]))
     blocks = [{"type": "text", "text": "x" * 6000}]
     engine.reserve_followup(blocks)
     result = engine.tool_reader("demo")
