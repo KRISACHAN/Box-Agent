@@ -509,22 +509,25 @@ def _estimate_context_from_latest_response(
             usage.context_tokens - messages[index].request_only_input_tokens,
         )
         usage_estimate = durable_usage_tokens + added_tokens
-        # Deferred MCP activation can change the next request's tool schemas
-        # after the provider usage boundary. Compare with the complete current
-        # request estimate so newly exposed schemas are never omitted.
-        return max(usage_estimate, _fallback_context_estimate(messages, tools)), "usage"
+        # The provider usage is the authoritative count for the complete
+        # request that was sent (including its tool schemas). Only content
+        # appended after that request needs a local incremental estimate.
+        # Do not compare against a full fallback estimate here: it can count
+        # the same history/tool schemas again and trigger compaction early.
+        return usage_estimate, "usage"
 
     # Backward-compatible low-level callers may still provide a usage total
-    # without response metadata attached to a Message. There is no safe delta
-    # boundary in that case, so compare it with the full char/4 estimate.
+    # without response metadata attached to a Message. Treat that supplied
+    # provider count as authoritative; there is no incremental boundary to
+    # add in this form. Fall back only when no provider usage exists at all.
     provided_usage = (
         api_prompt_tokens
         if api_prompt_tokens is not None and api_prompt_tokens > 0
         else api_total_tokens
     )
-    fallback = _fallback_context_estimate(messages, tools)
     if provided_usage > 0:
-        return max(provided_usage, fallback), "usage"
+        return provided_usage, "usage"
+    fallback = _fallback_context_estimate(messages, tools)
     return fallback, "fallback"
 
 

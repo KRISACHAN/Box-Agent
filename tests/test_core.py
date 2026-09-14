@@ -6869,7 +6869,7 @@ def test_context_pressure_subtracts_consumed_request_only_image_estimate():
     assert estimated == 1_100
 
 
-def test_context_pressure_includes_tools_activated_after_latest_usage():
+def test_context_pressure_does_not_replace_api_usage_with_full_fallback():
     from box_agent.core import _estimate_context_from_latest_response
 
     class _LargeActivatedTool:
@@ -6888,7 +6888,9 @@ def test_context_pressure_includes_tools_activated_after_latest_usage():
     )
 
     assert source == "usage"
-    assert estimated > 10_000
+    # API usage is authoritative when present; a large local tool-schema
+    # fallback must not cause early compaction.
+    assert estimated == 110
 
 
 def test_context_pressure_without_usage_falls_back_to_characters_over_four():
