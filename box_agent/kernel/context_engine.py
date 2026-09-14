@@ -9,7 +9,7 @@ import re
 from typing import Any, Callable, Final
 
 from ..llm.capabilities import image_input_support
-from ..schema import LLMResponse, Message
+from ..schema import Message
 from ..session_log import SessionLog
 from ..tools.base import Tool, ToolResult
 from .context_types import CompactionOutcome
@@ -153,7 +153,12 @@ async def _create_summary(
 
     if not messages:
         return ""
-    response: LLMResponse = await llm.generate(
+    # Stream the summary so the provider can make progress while the
+    # potentially large history is being summarized.  We still collect the
+    # complete text before validating the required summary envelope: a partial
+    # summary must never be committed as compacted history.
+    summary_parts: list[str] = []
+    async for event in llm.generate_stream(
         messages=[*messages, Message(role="user", source="runtime", content=_SUMMARY_REQUEST)],
         tools=None,
         thinking_enabled=False,
@@ -161,10 +166,13 @@ async def _create_summary(
         turn_id=turn_id,
         title=title,
         call_kind="context_summary",
-    )
+    ):
+        if event.type == "text" and event.delta:
+            summary_parts.append(event.delta)
+    response_content = "".join(summary_parts)
     match = re.fullmatch(
         r"\s*<summary>\s*(.*?)\s*</summary>\s*",
-        response.content,
+        response_content,
         flags=re.DOTALL,
     )
     if match is None:
