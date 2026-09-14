@@ -1,0 +1,319 @@
+"""Vendor a pinned SN revision without copying its working tree or local state.
+
+Run with --source-checkout /path/to/sensenova-presentation-int. To update the
+bundle, pass the reviewed full --revision, then regenerate the skills manifest.
+Maintain SN methods upstream; this copy selects six modules and applies explicit
+host integration overlays. Every overlay checks its expected source text.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+import tempfile
+
+import yaml
+
+
+PINNED_REVISION = "e187295633eb4cb201e6a2a5a206a419eb79990a"
+SOURCE_URL = "https://gitlab.sh.sensetime.com/stc-fvg/sensenova-presentation-int.git"
+BUNDLE_NAME = "sensenova-presentation-suite"
+MODULES = ("dazzle", "doctor", "entry", "standard", "story", "tools")
+OVERLAYS = ["metadata.user_visible=false", "metadata.allow_override=false",
+            "entry-two-outputs", "story-two-outputs", "doctor-shipped-backends",
+            "remove-image-only-output-policy", "legacy-static-task-resume",
+            "dazzle-box-native-tools", "bundle-third-party-notices"]
+OUTPUT_DIR = Path(__file__).resolve().parents[1] / "box_agent/skills/presentation-suite"
+LICENSE_INPUT_PATH = "scripts/presentation_suite_licenses/echarts-5.5.0"
+LICENSE_INPUT_DIR = Path(__file__).resolve().parents[1] / LICENSE_INPUT_PATH
+LICENSE_OUTPUT_PATH = "skills/sn-ppt-standard/assets/licenses/echarts-5.5.0"
+LICENSE_SOURCE_URL = "https://raw.githubusercontent.com/apache/echarts/5.5.0"
+# Verbatim files from the static runtime's tag, independent of exporter npm dependencies.
+LICENSE_INPUT_HASHES = {
+    "LICENSE": "634293835b43a6dd2094fa39182a3d9a6b9ca43b7fdb9ac354e8037af2a3093a",
+    "NOTICE": "fa99ac3af859d0e13166906dc53a73ad34a08898da7e8ae83407275496e9e30c",
+    "licenses/LICENSE-d3": "e1211892da0b0e0585b7aebe8f98c1274fba15bafe47fa1f4ee8a7a502c06304",
+}
+
+
+def _apply_host_metadata(data: bytes) -> bytes:
+    text = data.decode("utf-8")
+    match = re.match(r"\A---\n(.*?)\n---\n", text, re.DOTALL)
+    if not match:
+        raise ValueError("SN Skill is missing YAML frontmatter")
+    frontmatter = match.group(1)
+    parsed = yaml.safe_load(frontmatter)
+    if not isinstance(parsed, dict):
+        raise ValueError("SN Skill frontmatter must be a mapping")
+    metadata = parsed.get("metadata")
+    if metadata is None:
+        frontmatter += "\nmetadata:"
+        metadata = {}
+    if not isinstance(metadata, dict):
+        raise ValueError("SN Skill metadata must be a mapping")
+    for key in ("user_visible", "allow_override"):
+        if key in metadata:
+            frontmatter = re.sub(rf"(?m)^  {key}:.*$", f"  {key}: false", frontmatter)
+        else:
+            frontmatter = re.sub(r"(?m)^metadata:\s*$", f"metadata:\n  {key}: false", frontmatter)
+        if yaml.safe_load(frontmatter)["metadata"].get(key) is not False:
+            raise ValueError("Unsupported SN Skill metadata layout; update the host overlay")
+    return ("---\n" + frontmatter + "\n---\n" + text[match.end():]).encode("utf-8")
+
+
+def _replace_once(text: str, old: str, new: str) -> str:
+    if text.count(old) != 1:
+        raise ValueError(f"SN integration overlay needs review: expected one occurrence of {old[:90]!r}")
+    return text.replace(old, new, 1)
+
+
+def _replace_section(text: str, start: str, end: str, replacement: str) -> str:
+    if text.count(start) != 1 or text.count(end) != 1:
+        raise ValueError(f"SN integration section needs review: {start!r}")
+    before, remaining = text.split(start, 1)
+    _, after = remaining.split(end, 1)
+    return before + replacement + end + after
+
+
+def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
+    """Keep upstream production methods, adapting only the shipped route closure."""
+    if relative == "skills/sn-ppt-standard/assets/vendor/echarts.min.js":
+        if not re.search(rb'\.version=["\']5\.5\.0["\']', data):
+            raise ValueError("ECharts runtime version needs review against pinned license inputs")
+        return data
+    if relative == "THIRD_PARTY_NOTICES.md":
+        text = _replace_once(data.decode("utf-8"),
+            "This package installs Python dependencies declared in `studio/pyproject.toml` and\n"
+            "`inference/pyproject.toml`. Their license texts and metadata are available from the\n"
+            "corresponding upstream projects and from the installed environment.",
+            "This notice covers the third-party assets included in this bundle; it does not grant a license to SN-owned code.\n\n"
+            "Python runtime dependencies are declared in `skills/sn-ppt-standard/requirements.txt`.\n"
+            "Node.js exporter dependencies are declared in\n"
+            "`skills/sn-ppt-standard/scripts/export_pptx/package.json` and its\n"
+            "`skills/sn-ppt-standard/scripts/export_pptx/package-lock.json`. These dependencies\n"
+            "are installed separately; their license texts and metadata are available from the\n"
+            "corresponding upstream projects and installed environments.")
+        text = _replace_once(text, "The bundled sn-ppt-web includes:",
+                             "The bundled sn-ppt-standard includes:")
+        text = _replace_once(text,
+            "- Apache ECharts runtime assets, distributed under the Apache License 2.0.",
+            "- Apache ECharts 5.5.0 static runtime at\n"
+            "  `skills/sn-ppt-standard/assets/vendor/echarts.min.js`, distributed under the\n"
+            "  Apache License 2.0. Verbatim upstream license and attribution files are retained at\n"
+            f"  `{LICENSE_OUTPUT_PATH}/LICENSE`,\n"
+            f"  `{LICENSE_OUTPUT_PATH}/NOTICE`, and\n"
+            f"  `{LICENSE_OUTPUT_PATH}/licenses/LICENSE-d3` (BSD 3-Clause subcomponent notice).\n"
+            "  Their upstream URLs and SHA256 hashes are recorded in `source.json`. These files\n"
+            "  cover the bundled static runtime, independently of the exporter npm version.")
+        text = _replace_once(text, "`bundled/fonts/`", "`fonts/`")
+        text = _replace_once(text, "`bundled/fonts/OFL-1.1.txt`", "`fonts/OFL-1.1.txt`")
+        text = _replace_once(text,
+            "`bundled/static-ppt-skill-suite/skills/sn-ppt-web/assets/licenses/OFL-1.1.txt`",
+            "`skills/sn-ppt-standard/assets/licenses/OFL-1.1.txt`")
+        return text.encode("utf-8")
+    if relative == "skills/sn-ppt-entry/SKILL.md":
+        text = data.decode("utf-8")
+        text = _replace_once(text,
+            "`sn-ppt-standard`、`sn-ppt-dazzle` 或 `sn-ppt-creative`。",
+            "`sn-ppt-standard` 或 `sn-ppt-dazzle`。")
+        text = _replace_section(text, "### 输出格式\n", "### 设计丰富度\n", """### 输出格式
+
+本套件是公共 `pptx` 入口下的创意模式，保留两个表达出口：
+
+- `static_html` -> `sn-ppt-standard`：静态 PPT 页面，默认交付 `present.html` 和可编辑 `.pptx`。
+- `dynamic_html` -> `sn-ppt-dazzle`：带动效和翻页交互的 `deck.html`；不承诺保留动画的 PPTX。
+
+用户未明确要求动态时采用 `static_html`；只要 HTML 时关闭对应 PPTX 后处理。
+已有 PPTX 的原位编辑、模板填充与已选创意模式冲突时，保留原始需求、附件和交付格式，
+先向用户澄清是否改用快速模式；只有用户明确同意后才加载 `ppt-fast`，不得自动切换。
+已有 SN HTML 任务继续使用其任务目录与输出选择。
+恢复旧静态任务的 `web_html` / `web` 字段时，先读取原任务包，保留相同绝对 `deck_dir`、
+材料、大纲、页面和已交付产物，仅将 `choices.output` 改为 `static_html`、`ppt_mode` 改为
+`standard`，把原 `web_postprocess`（包括用户明确的 `[]`）迁到 `static_postprocess`，
+再移除旧字段；两种后处理字段已有冲突时先澄清，不覆盖已有选择。该迁移不改变用户已选的
+创意模式；字段迁移本身不重做 Research 或 Story，本轮标题等内容修改按下方恢复规则
+局部更新 Story。旧 `creative` 图片整页出口未提供，保留产物并说明。
+
+""")
+        text = _replace_section(text, '当 `choices.output` 是 `static_html` 时，',
+            '阶段更新只修改相关字段', """当 `choices.output` 是 `static_html` 时，`ppt_mode` 必须是 `standard`，
+`static_postprocess` 默认是 `["pptx"]`；只有用户明确只要 HTML 时写 `[]`。
+当 `choices.output` 是 `dynamic_html` 时，`ppt_mode` 必须是 `dazzle`，不触发 PPTX 后处理。
+动态任务的 `static_postprocess` 为 `[]`。
+
+| `choices.output` | `ppt_mode` |
+|---|---|
+| `static_html` | `standard` |
+| `dynamic_html` | `dazzle` |
+
+""")
+        text = _replace_once(text,
+            "媒体能力都不是 Entry 的强制前置。缺失时按 policy 继续；只有 Creative 已被明确选择且\n原生、内置生图都不可用时，暂停 Creative 出口并保留全部前置产物，不自动切换出口。",
+            "媒体能力都不是 Entry 的强制前置。缺失时按 policy 继续，用可交付的无图版式表达内容。")
+        text = _replace_once(text,
+            '2. **路由已有 PPTX**：若任务是编辑、优化、续写或模板填充，交给 `sn-ppt-edit`。若是从零生成，继续本流程。',
+            '2. **路由已有 PPTX**：若原位编辑或模板填充与已选创意模式冲突，先澄清是否切换快速模式，用户明确同意后才交给 `ppt-fast`；已有 SN HTML 任务按恢复规则继续。从零生成继续本流程。')
+        text = _replace_section(text, '7. **启动生成进度工作台**：', '8. **决定外部证据路径**：', '')
+        text = _replace_section(text, '12. **出口分发**：', '## 恢复规则\n', """12. **出口分发**：Story 已完成且当前磁盘 `outline.md` 已按本档位确认后，
+    `static_html` 调用 `sn-ppt-standard`，`dynamic_html` 调用 `sn-ppt-dazzle`；始终传入相同绝对
+    `deck_dir`。不得绕过 Story；出口不再研究、重排页面或重写大纲。
+13. **后处理和收尾**：静态页面完成后按 `static_postprocess` 使用 Standard 自有 exporter
+    `scripts/export_pptx/html_to_pptx.mjs` 导出 PPTX。`present.html` 必须存在；默认同时
+    交付可编辑 PPTX，只有用户明确只要 HTML 时才可省略 PPTX。必需产物缺失或转换失败时
+    保留现有产物，状态写 `partial` 并记录错误；不得用宿主工具、python-pptx 或自写脚本
+    替换该 exporter，不伪造文件路径。动态出口交付
+    `deck.html` 及其实际使用的本地资源。只登记真实存在的产物到 `task_pack.state.artifacts`。
+
+""")
+        # Remove the omitted workbench step while keeping the remaining workflow ordered.
+        for number in range(8, 14):
+            text = _replace_once(text, f"\n{number}. **", f"\n{number - 1}. **")
+        text = _replace_once(text,
+            '- 生成进度工作台已启动并提供 `/progress`，或说明非阻塞的跳过原因；\n', '')
+        text = _replace_once(text,
+            '9. Workbench 启动是生成流程的最佳努力辅助能力；失败不得改变输出选择或中止生成。\n', '')
+        text = _replace_once(text,
+            '- `deep`：先完成 `sn-deep-research`，再生成正式 `outline.md`；生成前让用户确认。',
+            '- `deep`：先确认外部 `sn-deep-research` 可用，再完成研究和正式 `outline.md`；生成前让用户确认。该外部 Skill 未随本套件提供，不可用时说明并让用户选择 Draft 或 Standard，保留已有产物。')
+        return text.encode("utf-8")
+    if relative == "skills/sn-ppt-dazzle/SKILL.md":
+        text = data.decode("utf-8")
+        if text.count("`vision_analyze`") != 5:
+            raise ValueError("Dazzle visual-tool overlay needs review")
+        text = text.replace("`vision_analyze`", "`inspect_images`")
+        text = _replace_once(text, "## 6. 配图与生图（image_generate 可用时）",
+            "## 6. 配图与生图（可选能力可用时）")
+        text = _replace_once(text,
+            "（若工具列表里没有 image_generate，跳过本节，一切视觉均代码绘制。）",
+            "Box-Agent 优先使用原生 `generate_image`，视觉核对使用 `inspect_images`。开始需要媒体时读取同级 `sn-ppt-tools/references/capability-policy.md`，按原生、内置、无工具顺序处理；两层都不可用时跳过本节，用代码绘制可交付版式，不伪造图片或持续重试。")
+        return text.encode("utf-8")
+    if relative == "skills/sn-ppt-story/SKILL.md":
+        return _replace_once(data.decode("utf-8"),
+            '出口（standard / dazzle / creative）', '出口（standard / dazzle）').encode("utf-8")
+    if relative == "skills/sn-ppt-tools/references/capability-policy.md":
+        return _replace_once(data.decode("utf-8"),
+            '- Creative 的原生与内置图片生成都不可用：只停止 Creative 出口，保留\n  `task_pack.json`、`info_pack.json`、`outline.md`、visual plan 和现有页面；状态写\n  `partial`，不得自动切换出口。\n', '').encode("utf-8")
+    if relative == "skills/sn-ppt-doctor/ppt_doctor/check_environment.py":
+        text = data.decode("utf-8")
+        text = _replace_once(text, '        "python_pptx": module_available("pptx"),\n', '')
+        text = _replace_section(text, '        "workbench_runtime": (', '        "native_media": {',
+            '        "dynamic_renderer": (skills_dir / "sn-ppt-dazzle/scripts/render_deck.py").is_file(),\n')
+        return text.encode("utf-8")
+    if relative == "skills/sn-ppt-doctor/SKILL.md":
+        text = _replace_once(data.decode("utf-8"), 'HTML-to-PPTX export, Workbench startup, or',
+            'HTML-to-PPTX export, dynamic HTML rendering, or')
+        for old, new in [
+            ('Node.js 是否可用于 Workbench 和 Static 默认 HTML -> PPTX 兼容版导出；',
+             'Node.js 是否可用于 Standard HTML -> PPTX 导出；'),
+            ('Standard 渲染脚本、PPTX exporter 和 Workbench runtime 是否存在；',
+             'Standard 与动态 HTML 渲染脚本、Standard PPTX exporter 是否存在；'),
+            ('- `python-pptx` 是否可用于 Creative 整页图片打包。\n', ''),
+        ]:
+            text = _replace_once(text, old, new)
+        return text.encode("utf-8")
+    return data
+
+
+def sync_suite(source_checkout: Path, revision: str, output_dir: Path = OUTPUT_DIR) -> dict:
+    """Replace only a marked generated bundle after staging a complete revision."""
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("revision must be a full 40-character commit hash")
+    output_dir = Path(output_dir).absolute()
+    if output_dir.is_symlink():
+        raise ValueError("Refusing to replace a symlink as a managed bundle")
+    if output_dir.exists():
+        marker = output_dir / "source.json"
+        if not marker.is_file() or json.loads(marker.read_text()).get("name") != BUNDLE_NAME:
+            raise ValueError("Refusing to replace a directory that is not a managed SN bundle")
+    git = ["git", "-C", str(source_checkout)]
+    commit = subprocess.check_output([*git, "rev-parse", "--verify", f"{revision}^{{commit}}"], text=True).strip()
+    roots = [f"skills/sn-ppt-{module}" for module in MODULES]
+    roots += ["webui/bundled/fonts", "webui/THIRD_PARTY_NOTICES.md"]
+    records = subprocess.check_output([*git, "ls-tree", "-rz", commit, "--", *roots]).split(b"\0")
+    provenance = {"schema_version": 1, "name": BUNDLE_NAME, "repository": SOURCE_URL,
+                  "revision": commit,
+                  "modules": sorted(f"sn-ppt-{module}" for module in MODULES),
+                  "overlays": OVERLAYS, "files": {}}
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".sn-suite-sync-", dir=output_dir.parent) as temporary:
+        staged = Path(temporary) / "bundle"
+        staged.mkdir()
+        for record in records:
+            if not record:
+                continue
+            header, raw_path = record.split(b"\t", 1)
+            mode, kind, blob = header.decode().split()
+            source_path = PurePosixPath(raw_path.decode())
+            if kind != "blob" or mode not in {"100644", "100755"} or ".." in source_path.parts:
+                raise ValueError(f"Unsupported bundled source entry: {source_path}")
+            if source_path.parts[:3] == ("webui", "bundled", "fonts"):
+                relative = PurePosixPath("fonts", *source_path.parts[3:])
+            elif str(source_path) == "webui/THIRD_PARTY_NOTICES.md":
+                relative = PurePosixPath("THIRD_PARTY_NOTICES.md")
+            else:
+                relative = source_path
+            data = subprocess.check_output([*git, "cat-file", "blob", blob])
+            source_sha256 = hashlib.sha256(data).hexdigest()
+            data = _apply_integration_overlay(str(relative), data)
+            if relative.name == "SKILL.md":
+                data = _apply_host_metadata(data)
+            target = staged / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(int(mode[-3:], 8))
+            provenance["files"][str(relative)] = {
+                "source_path": str(source_path), "source_sha256": source_sha256,
+                "sha256": hashlib.sha256(data).hexdigest()
+            }
+        for relative, expected_sha256 in LICENSE_INPUT_HASHES.items():
+            data = (LICENSE_INPUT_DIR / relative).read_bytes()
+            if hashlib.sha256(data).hexdigest() != expected_sha256:
+                raise ValueError(f"ECharts license input needs review: {relative}")
+            bundled_path = f"{LICENSE_OUTPUT_PATH}/{relative}"
+            target = staged / bundled_path
+            if target.exists():
+                raise ValueError(f"ECharts license input needs review: upstream already supplies {bundled_path}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(0o644)
+            provenance["files"][bundled_path] = {
+                "source_url": f"{LICENSE_SOURCE_URL}/{relative}",
+                "input_path": f"{LICENSE_INPUT_PATH}/{relative}",
+                "source_path": relative, "source_sha256": expected_sha256,
+                "sha256": expected_sha256,
+            }
+        required = [f"skills/sn-ppt-{module}/SKILL.md" for module in MODULES]
+        required += ["fonts/OFL-1.1.txt", "THIRD_PARTY_NOTICES.md",
+                     "skills/sn-ppt-standard/requirements.txt"]
+        if any(not (staged / path).is_file() for path in required):
+            raise ValueError("Pinned revision is missing required SN modules or font notices")
+        (staged / "source.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        previous = Path(temporary) / "previous"
+        if output_dir.exists():
+            output_dir.rename(previous)
+        try:
+            staged.rename(output_dir)
+        except OSError:
+            if previous.exists():
+                previous.rename(output_dir)
+            raise
+    return provenance
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-checkout", type=Path, required=True)
+    parser.add_argument("--revision", default=PINNED_REVISION)
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
+    args = parser.parse_args()
+    result = sync_suite(args.source_checkout, args.revision, args.output_dir)
+    print(f"Synced {len(result['files'])} files from {result['revision']} and pinned license inputs")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

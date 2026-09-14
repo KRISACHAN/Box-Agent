@@ -1,12 +1,16 @@
 ---
-name: pptx
+name: ppt-fast
+displayName: 快速模式
 description: Create, inspect, edit, validate, render, and QA presentation decks. Use when the user mentions PowerPoint, PPT, PPTX, HTML deck, slide deck, presentation, template slides, speaker notes, slide images, or asks to read, generate, create, make, design, or modify a presentation artifact. New decks default to controlled, editable HTML delivery; PPTX is an explicit optional export.
 keywords: [ppt, pptx, slide, slides, deck, presentation, powerpoint, pitch deck, speaker notes, ppt制作, 做ppt, 可编辑ppt, 幻灯片, 演示文稿, 投影片, 演示, 宣讲, 汇报材料, 路演, 路演材料, 融资路演, 商业计划书, BP, 提案, 讲稿, 模板页, 路演ppt]
 capabilities: [presentation.authoring]
 related_skills: [html-templates]
+metadata:
+  user_visible: false
+  allow_override: false
 ---
 
-# PPTX Skill
+# PPT Fast Skill
 
 ## Optional bundled Archify diagrams
 
@@ -683,7 +687,7 @@ shell expands `$PPTX_SKILL_DIR` before that inline assignment takes effect.
 
 ### 3.0 Before selecting a controlled theme (mandatory)
 
-The `pptx` skill is self-contained. Its versioned `themes/*.json` catalog is
+The `ppt-fast` skill is self-contained. Its versioned `themes/*.json` catalog is
 always authoritative and is exposed by `scripts/inspect_deck_contract.js` and
 `layouts/manifest.json`. Select from those registered ids only. Each theme
 includes selection signals, palette, typography, shape tokens, and finite

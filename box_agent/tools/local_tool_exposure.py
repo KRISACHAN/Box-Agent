@@ -24,7 +24,7 @@ SKILL_TOOL_HINTS: Mapping[str, frozenset[str]] = {
     "browser-use": frozenset({"mcp_config"}),
     "mcp-config": frozenset({"mcp_config"}),
     "memory-guide": frozenset({"memory_read", "memory_search", "memory_write"}),
-    "pptx": frozenset({"append_file", "query_jsonl", "report_execution_result"}),
+    "ppt-fast": frozenset({"append_file", "query_jsonl", "report_execution_result"}),
     "docx": frozenset({"append_file", "report_execution_result"}),
     "pdf": frozenset({"append_file", "report_execution_result"}),
     "xlsx": frozenset({"query_jsonl", "report_execution_result"}),
