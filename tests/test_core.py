@@ -6246,7 +6246,17 @@ class _FakeSummaryLLM:
         return LLMResponse(content=self._response, thinking=None, tool_calls=None, finish_reason="stop")
 
     async def generate_stream(self, messages, tools=None, **_):
-        raise NotImplementedError
+        self.calls.append({
+            "n_messages": len(messages),
+            "messages": messages,
+            "tools": tools,
+            "thinking_enabled": _.get("thinking_enabled", False),
+            "session_id": _.get("session_id", ""),
+        })
+        if self._raise is not None:
+            raise self._raise
+        yield StreamEvent(type="text", delta=self._response)
+        yield StreamEvent(type="finish", finish_reason="stop")
 
 
 @pytest.mark.asyncio

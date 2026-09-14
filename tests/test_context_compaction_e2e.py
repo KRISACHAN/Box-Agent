@@ -39,6 +39,19 @@ class CompactionE2ELLM:
         )
 
     async def generate_stream(self, messages, tools=None, **_kwargs):
+        if _kwargs.get("call_kind") == "context_summary":
+            self.summary_messages = list(messages)
+            yield StreamEvent(
+                type="text",
+                delta=(
+                    "<summary>1. Primary Request and Intent:\n"
+                    "Continue the compaction E2E.\n\n"
+                    "6. All User Messages:\n- old user request\n- latest user request\n\n"
+                    "8. Current Work:\nContext compaction is being verified.</summary>"
+                ),
+            )
+            yield StreamEvent(type="finish", finish_reason="stop")
+            return
         self.normal_messages = list(messages)
         yield StreamEvent(type="text", delta="E2E resumed answer")
         yield StreamEvent(type="finish", finish_reason="stop")

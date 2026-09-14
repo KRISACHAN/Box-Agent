@@ -28,6 +28,10 @@ class ReferenceCapturingLLM:
         self.requests = []
 
     async def generate_stream(self, *, messages, **kwargs):
+        if kwargs.get("call_kind") == "context_summary":
+            yield StreamEvent(type="text", delta="<summary>bounded history</summary>")
+            yield StreamEvent(type="finish", finish_reason="stop")
+            return
         self.requests.append([message.model_copy(deep=True) for message in messages])
         yield StreamEvent(type="text", delta="done")
         yield StreamEvent(type="finish", finish_reason="stop")

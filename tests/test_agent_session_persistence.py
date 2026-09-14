@@ -293,6 +293,15 @@ class _SummaryCheckpointLLM:
             finish_reason="stop",
         )
 
+    async def generate_stream(self, **_kwargs):
+        self.saw_start = (
+            _read_durable_events(self.path)[-1]["type"] == "compaction/start"
+        )
+        yield StreamEvent(
+            type="text", delta="<summary>durable compacted history</summary>"
+        )
+        yield StreamEvent(type="finish", finish_reason="stop")
+
 
 class _PostCompactionLLM:
     model = "test-model"
