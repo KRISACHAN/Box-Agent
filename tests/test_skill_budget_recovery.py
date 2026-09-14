@@ -391,6 +391,8 @@ async def test_loop_unrecoverable_selection_compacts_at_most_once_and_never_deli
     assert provider.requests == []
     assert len([event for event in events if isinstance(event, SummarizationEvent)]) == 0
     assert provider.summary_calls == 0 and hook.steps == [1]
+    errors = [event for event in events if isinstance(event, ErrorEvent)]
+    assert len(errors) == 1 and errors[0].error_code == "SKILL_READER_REQUIRED"
     assert any(isinstance(event, DoneEvent) and event.stop_reason == StopReason.ERROR for event in events)
     assert runtime.turn_deliveries == {} and runtime.read_facts == ()
 
