@@ -84,6 +84,16 @@ provider 参数映射；单独配置的视觉 client 保留自身 provider 和�
 
 ## 更新设计模块
 
+上传字体的 `User::<id>` 只作内部注册标识，`Deck-*` 继续用于 HTML 字体子集；PPTX 从原始
+字体文件的 name table 读取真实字体族名（优先 name 16，再取 name 1），不使用配置显示名
+或文件名。字体许可确认、路径边界和原文件 hash 校验保持原有要求。PPTX 保留字体名，
+不因此嵌入字体或保证其他电脑已安装该字体。
+
+旧任务若在字体 manifest 中写入了 `User::`、`Deck-*` 或无效的 `source_family`，需从
+原字体重新运行 `font_bundle.py` 的 bundle 流程再导出；不靠改写 HTML 别名修复。
+缺失映射、已存在但损坏的 manifest 同样给出重建错误，普通无字体 bundle 的导出仍可用。
+合法名称里的逗号、引号、反斜杠和 `&` 会被正确解析并编码为 XML，不改写浏览器 IR。
+
 Standard 的单页、批量截图和播放器审计共用同步 Playwright 生命周期。每次调用由独立
 监督进程管理总期限和并发槽，worker 持有 driver 和 browser，每页使用独立 context；
 批量任务内复用 browser。Chromium 启动守卫在启动浏览器前登记专属进程组，父进程消失

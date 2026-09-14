@@ -432,12 +432,12 @@
       "source_sha256": "1945ca3bedc1355760f11a73d05767f6f261ff3056249c62a81a5cf2c08bddfd"
     },
     "skills/sn-ppt-standard/scripts/export_pptx/lib/pptx_builder.mjs": {
-      "sha256": "0323483cc487a9327573faa164b5d88a7d93ff15d30bf7dc4b39d63456681d73",
+      "sha256": "d479692d768638934a26430cd5f6db044109443b0fb677f2db655f5f1a12dfbd",
       "source_path": "skills/sn-ppt-standard/scripts/export_pptx/lib/pptx_builder.mjs",
       "source_sha256": "0323483cc487a9327573faa164b5d88a7d93ff15d30bf7dc4b39d63456681d73"
     },
     "skills/sn-ppt-standard/scripts/export_pptx/lib/style_parser.mjs": {
-      "sha256": "fdadb16a451673b968a03ab25980ea507bd50195639e2a6b8ed83dcc6f1c3057",
+      "sha256": "62f06b58ece189ea4c523e24e5e1f648a09aac622d2d9aada717af78fb532cae",
       "source_path": "skills/sn-ppt-standard/scripts/export_pptx/lib/style_parser.mjs",
       "source_sha256": "fdadb16a451673b968a03ab25980ea507bd50195639e2a6b8ed83dcc6f1c3057"
     },
@@ -507,7 +507,7 @@
       "source_sha256": "72864f88a9776b7eb732228e810e8626ee98da00306ea2506efdb6feb61b3b48"
     },
     "skills/sn-ppt-standard/scripts/font_bundle.py": {
-      "sha256": "a206af6d2c90f0802e349c9116543250d1e38ecd53e5dfa5355c3003e709fe6f",
+      "sha256": "7869aa40580504b7afde5c24aa337309beda04be380a8ab56c5499dd2fb70488",
       "source_path": "skills/sn-ppt-standard/scripts/font_bundle.py",
       "source_sha256": "8e33b716a5430a7b209a6a504e24878bdb739f03755dc5976e76ad0108de2595"
     },
@@ -619,7 +619,8 @@
     "bundle-third-party-notices",
     "static-player-delivery-gate",
     "design-mode-delivery-wording",
-    "owned-renderer-lifecycle"
+    "owned-renderer-lifecycle",
+    "original-uploaded-font-family"
   ],
   "repository": "https://gitlab.sh.sensetime.com/stc-fvg/sensenova-presentation-int.git",
   "revision": "e187295633eb4cb201e6a2a5a206a419eb79990a",

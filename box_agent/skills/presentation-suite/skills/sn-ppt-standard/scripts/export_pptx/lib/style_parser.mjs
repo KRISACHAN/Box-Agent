@@ -482,8 +482,17 @@ export function parseFontFamily(cssValue) {
     return WEBFONT_KEYWORDS.some(h => n.includes(h));
   }
 
-  // 按逗号分割，去掉引号，trim
-  const families = cssValue.split(',').map(f => f.trim().replace(/^['"]|['"]$/g, ''));
+  // Commas inside quoted font names are not fallback separators.
+  const tokens = cssValue.match(/(?:[^,'"\\]|\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')+/g) || [];
+  const families = tokens.map(token => {
+    let name = token.trim();
+    if ((name[0] === '"' || name[0] === "'") && name.endsWith(name[0])) name = name.slice(1, -1);
+    return name.replace(/\\([0-9a-f]{1,6})\s?|\\(.)/gi, (_, hex, char) => {
+      if (!hex) return char;
+      const code = parseInt(hex, 16);
+      return String.fromCodePoint(code && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? code : 0xfffd);
+    });
+  });
 
   // "装饰性字体" 判定：当 family 列表里出现 cursive/fantasy 通用名时，
   // 它前面所有 specific 字体都被视为装饰字体（如 "ZCOOL KuaiLe", cursive

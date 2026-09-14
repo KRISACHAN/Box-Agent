@@ -25,15 +25,15 @@ Files: `scripts/sync_presentation_suite.py`, explicit inputs under `scripts/pres
 
 Files: checked overlay inputs for Standard `font_bundle.py` and `export_pptx/lib/pptx_builder.mjs`, generated counterparts, regression tests, source/Skill manifests and font documentation.
 
-- [ ] Add a red test using a real uploaded font whose ID differs from its family. Assert original name-table family in manifest and actual PPTX XML, while `User::<id>` and `Deck-*` stay internal/HTML identities.
-- [ ] Read family metadata from original font bytes before subsetting/renaming; preserve built-in font behavior, licensing, source path and SHA checks.
-- [ ] Reject missing/invalid/internal source names in custom font validation and exporter mapping. Existing broken manifests receive an actionable rebuild error; valid old manifests remain compatible.
-- [ ] Cover multiple weights, untrusted configured display names, missing metadata, legacy bad manifests and unchanged input IR. Run real font subsetting and Node exporter checks with the locked dependency versions.
-- [ ] Regenerate through the same owned sync/manifest tools, review spec and quality, rerun focused tests and commit only this issue with `fix(pptx): preserve uploaded font family in exports`.
+- [x] Add a red test using a real uploaded font whose ID differs from its family. Assert original name-table family in manifest and actual PPTX XML, while `User::<id>` and `Deck-*` stay internal/HTML identities.
+- [x] Read family metadata from original font bytes before subsetting/renaming; preserve built-in font behavior, licensing, source path and SHA checks.
+- [x] Reject missing/invalid/internal source names in custom font validation and exporter mapping. Existing broken manifests receive an actionable rebuild error; valid old manifests remain compatible.
+- [x] Cover multiple weights, untrusted configured display names, missing metadata, legacy bad manifests and unchanged input IR. Run real font subsetting and Node exporter checks with the locked dependency versions.
+- [x] Regenerate through the same owned sync/manifest tools, review spec and quality, rerun focused tests and commit only this issue with `fix(pptx): preserve uploaded font family in exports`.
 
 ## Delivery and evidence
 
-- [ ] Run `general_review/ci/preflight.sh` on the final source (locked install, compile, full pytest, sdist/wheel). Preserve failures rather than replacing them with focused passes.
-- [ ] Inspect built artifacts for helper inclusion and content identity; run targeted rendering/export probes from shipped sources. Do not claim a client E2E test or installed runtime update.
+- [x] Run `general_review/ci/preflight.sh` on the final source (locked install, compile, full pytest, sdist/wheel). Preserve failures rather than replacing them with focused passes.
+- [x] Inspect built artifacts for helper inclusion and content identity; run targeted rendering/export probes from shipped sources. Do not claim a client E2E test or installed runtime update.
 - [ ] Fetch the latest upstream main, rebase if needed, rerun affected verification after changes; push the two verified commits to `origin/dev/wangbo4/pptx-entry`.
 - [ ] Update PR129 TPR with final behavior, exact SHAs/checks and remaining runtime boundaries; verify remote Head and new checks. No merge.

@@ -904,7 +904,7 @@ export function buildTextElement(node) {
     w: shortTextW || textW,
     h: pxToInch(b.h),
     fontSize: pxToPt(parseFloat(s.fontSize) || 16),
-    fontFace: parseFontFamily(s.fontFamily),
+    fontFace: pptxFontFace(s.fontFamily),
     color: getTextColor(s).color,
     bold: parseInt(s.fontWeight) >= 700,
     italic: s.fontStyle === 'italic',
@@ -990,7 +990,7 @@ export function buildTextElement(node) {
       }
       const runOpts = {
           fontSize: pxToPt(run.fontSize || 16),
-          fontFace: parseFontFamily(run.fontFamily),
+          fontFace: pptxFontFace(run.fontFamily),
           color: runColor,
           bold: run.bold,
           italic: run.italic,
@@ -1413,7 +1413,7 @@ export function buildListElement(node) {
       text: item.text,
       options: {
         fontSize: pxToPt(parseFloat(item.styles?.fontSize) || 16),
-        fontFace: parseFontFamily(item.styles?.fontFamily),
+        fontFace: pptxFontFace(item.styles?.fontFamily),
         color: cssColorToHex(item.styles?.color) || '000000',
         bold: parseInt(item.styles?.fontWeight) >= 700,
         // I-ii: list item 自身对齐（不被父容器 textAlign 误覆盖）
@@ -2052,19 +2052,49 @@ export function buildSlideFromIR(pptx, ir, deckDir) {
   return slide;
 }
 
+// PptxGenJS 3.12 interpolates fontFace directly into XML attributes.
+function pptxFontFace(cssValue) {
+  const family = parseFontFamily(cssValue);
+  return family == null ? family : family.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&apos;');
+}
+
+function sourceFontFamily(cssValue, mapping) {
+  // Browser subset aliases are generated identifiers, without quotes/commas.
+  const primary = cssValue.split(',')[0].trim().replace(/^['"]|['"]$/g, '');
+  if (mapping.has(primary)) return JSON.stringify(mapping.get(primary));
+  if (/^(?:User::|Deck-)/i.test(primary)) {
+    throw new Error('Missing source font mapping; rebuild the font bundle before exporting PPTX.');
+  }
+  return cssValue;
+}
+
 function readSourceFontFamilies(deckDir) {
   const mapping = new Map();
   const path = resolve(deckDir, 'assets/fonts/manifest.json');
   if (!existsSync(path)) return mapping;
+  let manifest;
   try {
-    const manifest = JSON.parse(readFileSync(path, 'utf-8'));
-    for (const face of manifest.faces || []) {
-      if (typeof face.delivery_family === 'string' && typeof face.source_family === 'string') {
-        mapping.set(face.delivery_family, face.source_family);
-      }
-    }
+    manifest = JSON.parse(readFileSync(path, 'utf-8'));
   } catch (error) {
     console.error(`[WARN] 无法读取 PPTX 字体映射: ${error.message}`);
+    throw new Error('Cannot read source font manifest; rebuild the font bundle: ' + error.message);
+  }
+  if (!manifest || !Array.isArray(manifest.faces)) {
+    throw new Error('Invalid source font manifest; rebuild the font bundle before exporting PPTX.');
+  }
+  for (const face of manifest.faces || []) {
+    if (!face || typeof face.delivery_family !== 'string' || !face.delivery_family.trim()) {
+      throw new Error('Invalid delivery font family; rebuild the font bundle before exporting PPTX.');
+    }
+    const family = typeof face.source_family === 'string' ? face.source_family.trim() : '';
+    if (!family || /^(?:User::|Deck-)/i.test(family)
+        || /[\u0000-\u001f\u007f-\u009f\ufffd]/.test(family)
+        || !/[\p{L}\p{N}]/u.test(family)) {
+      throw new Error('Invalid source font family in assets/fonts/manifest.json; '
+        + 'rebuild the font bundle from the original uploaded fonts before exporting PPTX.');
+    }
+    mapping.set(face.delivery_family, family);
   }
   return mapping;
 }
@@ -2072,13 +2102,13 @@ function readSourceFontFamilies(deckDir) {
 // Browser subsets use private family names. Restore source families in a copy
 // of the export IR; the browser CSS and subset names must retain their aliases.
 function withSourceFontFamilies(value, mapping) {
-  if (!mapping.size || !value || typeof value !== 'object') return value;
+  if (!value || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(item => withSourceFontFamilies(item, mapping));
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
     key === 'fontFamily' && typeof item === 'string'
       // A known primary family is authoritative, including handwriting fonts;
       // keeping a trailing cursive/fantasy would trigger generic substitution.
-      ? JSON.stringify(mapping.get(item.split(',')[0].trim().replace(/^['"]|['"]$/g, ''))) || item
+      ? sourceFontFamily(item, mapping)
       : withSourceFontFamilies(item, mapping),
   ]));
 }
@@ -2092,6 +2122,8 @@ function withSourceFontFamilies(value, mapping) {
 export async function buildPptx(pages, deckDir, outputPath) {
   const pptx = new PptxGenJS();
   const sourceFontFamilies = readSourceFontFamilies(deckDir);
+  const exportPages = pages.map(page => page.ir
+    ? { ...page, ir: withSourceFontFamilies(page.ir, sourceFontFamilies) } : page);
 
   // 设置 16:9 画布（10" × 5.625"）
   pptx.defineLayout({ name: 'HTML_SLIDE', width: 10, height: 5.625 });
@@ -2117,7 +2149,7 @@ export async function buildPptx(pages, deckDir, outputPath) {
     try {
       const styleSpec = JSON.parse(readFileSync(styleSpecPath, 'utf-8'));
       if (styleSpec.typography?.font_family) {
-        defaultFont = parseFontFamily(styleSpec.typography.font_family);
+        defaultFont = pptxFontFace(styleSpec.typography.font_family);
       }
     } catch { /* 非必需 */ }
   }
@@ -2126,12 +2158,12 @@ export async function buildPptx(pages, deckDir, outputPath) {
   let failCount = 0;
   const failures = [];
 
-  for (const page of pages) {
+  for (const page of exportPages) {
     if (page.ir) {
       try {
         // 每页根据 HTML 实际画布宽度设置坐标换算比例
         setCanvasWidth(page.ir.canvasWidth || 1280);
-        buildSlideFromIR(pptx, withSourceFontFamilies(page.ir, sourceFontFamilies), deckDir);
+        buildSlideFromIR(pptx, page.ir, deckDir);
         successCount++;
       } catch (err) {
         console.error(`[WARN] 构建 slide 失败: ${page.path} - ${err.message}`);

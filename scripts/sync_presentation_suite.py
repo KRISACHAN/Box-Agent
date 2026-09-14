@@ -29,7 +29,7 @@ OVERLAYS = ["metadata.user_visible=false", "metadata.allow_override=false",
             "remove-image-only-output-policy", "legacy-static-task-resume",
             "dazzle-box-native-tools", "bundle-third-party-notices",
             "static-player-delivery-gate", "design-mode-delivery-wording",
-            "owned-renderer-lifecycle"]
+            "owned-renderer-lifecycle", "original-uploaded-font-family"]
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "box_agent/skills/presentation-suite"
 LICENSE_INPUT_PATH = "scripts/presentation_suite_licenses/echarts-5.5.0"
 LICENSE_INPUT_DIR = Path(__file__).resolve().parents[1] / LICENSE_INPUT_PATH
@@ -43,6 +43,7 @@ LICENSE_INPUT_HASHES = {
 }
 RUNTIME_INPUT_DIR = Path(__file__).resolve().parent / "presentation_suite_overlays"
 _render_lifecycle_overlay = runpy.run_path(str(RUNTIME_INPUT_DIR / "render_lifecycle.py"))["apply"]
+_font_source_overlay = runpy.run_path(str(RUNTIME_INPUT_DIR / "font_source.py"))["apply"]
 
 
 def _apply_host_metadata(data: bytes) -> bytes:
@@ -87,6 +88,7 @@ def _replace_section(text: str, start: str, end: str, replacement: str) -> str:
 def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
     """Keep upstream production methods, adapting only the shipped route closure."""
     data = _render_lifecycle_overlay(relative, data)
+    data = _font_source_overlay(relative, data)
     if relative == "skills/sn-ppt-standard/assets/vendor/echarts.min.js":
         if not re.search(rb'\.version=["\']5\.5\.0["\']', data):
             raise ValueError("ECharts runtime version needs review against pinned license inputs")

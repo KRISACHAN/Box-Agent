@@ -329,15 +329,50 @@ def _font_source_readable(path: str) -> bool:
         return False
 
 
-@lru_cache(maxsize=None)
+def _valid_source_family(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    family = value.strip()
+    return bool(family and any(char.isalnum() for char in family)
+        and not family.lower().startswith(("user::", "deck-"))
+        and not any(ord(char) < 32 or 127 <= ord(char) <= 159
+                    or char == "\ufffd" for char in family))
+
+
+def _original_font_family(names) -> str:
+    """Prefer typographic family (16), then legacy family (1), across locales."""
+    for name_id in (16, 1):
+        records = [record for record in names.names if record.nameID == name_id]
+        # Prefer an English name when available, then other Unicode/local names.
+        # Font IDs, configured display labels and filenames are not family names.
+        records.sort(key=lambda record: (
+            not ((record.platformID == 3 and record.langID & 0x3FF == 9)
+                 or (record.platformID == 1 and record.langID == 0)),
+            not record.isUnicode(), record.platformID, record.platEncID, record.langID,
+        ))
+        for record in records:
+            try:
+                family = record.toUnicode(errors="strict").strip()
+            except (UnicodeError, LookupError):
+                continue
+            if _valid_source_family(family):
+                return family
+    raise ValueError("source font has no usable family in its original name table")
+
+
 def _font_source_metadata(path: str) -> dict[str, str]:
-    """Read human-facing copyright/license fields retained in the source font."""
+    """Read original family and license metadata before the subset is renamed."""
     from fontTools.ttLib import TTFont
 
     font = TTFont(path, lazy=False)
     try:
-        names = font["name"]
+        try:
+            names = font["name"]
+            family = _original_font_family(names)
+        except Exception as exc:
+            raise ValueError("source font has no usable family in its original name table") from exc
         return {
+            "source_family": family,
             "copyright": names.getDebugName(0) or "",
             "license_description": names.getDebugName(13) or "",
             "license_url": names.getDebugName(14) or "",
@@ -379,6 +414,7 @@ def _load_custom_config(root: Path) -> tuple[dict[str, dict], dict[str, str]]:
         registry[family_key] = {
             **item,
             "source": source,
+            "source_family": _font_source_metadata(str(source))["source_family"],
             "weight": str(int(item.get("weight") or 400)),
             "style": "italic" if "italic" in subfamily else "oblique" if "oblique" in subfamily else "normal",
         }
@@ -666,7 +702,7 @@ def bundle_fonts(
                 _atomic_write(target, data)
                 records.append(
                     {
-                        "source_family": family,
+                        "source_family": custom["source_family"] if custom else family,
                         "delivery_family": delivery,
                         "weight": face.weight,
                         "style": face.style,
@@ -790,6 +826,8 @@ def validate_font_bundle(root: Path) -> list[str]:
         if not path.is_file() or not path.stat().st_size:
             errors.append(f"bundled font license notice is missing or empty: {relative}")
     for record in manifest.get("faces", []):
+        if not _valid_source_family(record.get("source_family")):
+            errors.append("invalid source font family; rebuild the font bundle from the original fonts")
         relative = str(record.get("path", ""))
         path = root / relative
         if not relative.startswith("assets/fonts/") or not path.is_file() or not path.stat().st_size:
