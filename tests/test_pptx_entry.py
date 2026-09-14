@@ -37,7 +37,9 @@ async def test_entry_choice_payload_preserves_both_descriptions_and_waits_for_us
     result = await RequestUserDecisionTool().invoke(arguments)
     assert result.success, result.error
     assert result.raw_output["options"] == arguments["options"]
-    assert {option["id"] for option in result.raw_output["options"]} == {"fast", "creative"}
+    assert {option["id"]: option["label"] for option in result.raw_output["options"]} == {
+        "fast": "快速模式", "design": "设计模式",
+    }
     assert all(option["description"].strip() for option in result.raw_output["options"])
     assert result.raw_output["autoSubmit"]["allowed"] is False
     assert "defaultOptionId" not in result.raw_output

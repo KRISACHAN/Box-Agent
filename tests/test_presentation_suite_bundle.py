@@ -1,4 +1,4 @@
-"""The creative presentation route ships exactly its working SN dependency closure."""
+"""The design presentation route ships exactly its working SN dependency closure."""
 
 import hashlib
 import json

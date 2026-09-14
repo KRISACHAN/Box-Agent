@@ -5,11 +5,12 @@
 | 用户模式 | 内部 Skill | 默认交付 |
 |---|---|---|
 | 快速模式 | `ppt-fast` | 沿用原主题、版式和编辑流程；请求 PPTX 时导出文件 |
-| 创意模式：静态 | `sn-ppt-entry` → `sn-ppt-story` → `sn-ppt-standard` | 静态 HTML 和可编辑 PPTX |
-| 创意模式：动态 | `sn-ppt-entry` → `sn-ppt-story` → `sn-ppt-dazzle` | 带动效的 HTML，不是原生 PowerPoint 动画 |
+| 设计模式：静态 | `sn-ppt-entry` → `sn-ppt-story` → `sn-ppt-standard` | 静态 HTML 和 PPTX |
+| 设计模式：动态 | `sn-ppt-entry` → `sn-ppt-story` → `sn-ppt-dazzle` | 带动效的 HTML，不是原生 PowerPoint 动画 |
 
-Tools 和 Doctor 为创意模式提供共用工具和检查。未集成旧 Web、Creative 图片整页、
+Tools 和 Doctor 为设计模式提供共用工具和检查。未集成旧 Web、Creative 图片整页、
 Workbench 或 Edit；Standard 自带静态页面与 PPTX exporter，保留源代码模块结构及字体许可。
+设计模式的 PPTX 是文件导出，不宣传或承诺编辑能力。`sn-ppt-edit` 未打包，也不是此导出器的依赖。
 静态字段为 `static_html` / `standard` / `static_postprocess`；默认要求 HTML 和 PPTX
 同时交付，仅用户明确只要 HTML 时省略 PPTX。旧静态任务恢复时由 Entry 迁移对应字段，
 保留绝对任务目录、原材料、大纲、页面及后处理选择。
@@ -25,13 +26,15 @@ Workbench 或 Edit；Standard 自带静态页面与 PPTX exporter，保留源代
 OfficeV3 直接发送用户需求，不做 PPT 正则分类或发送前的模式拦截。Box-Agent 原有通用
 Skill 发现将匹配的入口放入目录，模型需调用 `get_skill` 读取完整指引；显式选择则由宿主
 直接提供 Skill reference。当前 ACP 不按 PPT 关键词自动预载正文。用户在 prompt 中明确选择
-“快速模式”或“创意模式”，或同一任务已有用户亲自作出的模式选择时，直接路由。
-明确要求制作动态 PPT、动态演示或带动效幻灯片时，也直接进入创意模式，设置
+“快速模式”或“设计模式”作为制作方式，或同一任务已有用户亲自作出的模式选择时，直接路由。
+“帮我设计一下 PPT”或“介绍软件设计模式的 PPT”不构成选择；对模式的提问、比较、引用和
+否定同样不算。明确要求制作动态 PPT、动态演示或带动效幻灯片时，也直接进入设计模式，设置
 `dynamic_html` / `dazzle`，仍通过 Entry → Story → Dazzle，不再弹模式选择卡。
 动态必须描述要制作的呈现形式；否定、引用、比较、提问或“行业动态”等内容主题不算。
 本轮明确改做动态演示优先于历史模式；本轮同时指定快速模式与动态演示时先澄清冲突。其余
-请求均调用 `request_user_decision`，使用 `presentation_mode` 分类和 `fast`/`creative`
+请求均调用 `request_user_decision`，使用 `presentation_mode` 分类和 `fast`/`design`
 选项。套模板、自由设计、静态、文件格式或模型已写入的默认模式不能代替用户选择。
+模式名称含糊或要求冲突时同样通过选择卡澄清，说明待确认的点，选项只包含当前可执行路线。
 这仍是 Skill 的执行指引，不增加前端正则判断。
 
 system 的通用 Skill 指引要求匹配任务先读取 Skill，且 Skill 要求人工选择时必须调用
@@ -52,6 +55,10 @@ system 的通用 Skill 指引要求匹配任务先读取 Skill，且 Skill 要�
 
 ## 名称和资源兼容
 
+- 设计模式的选项 ID 为 `design`。旧会话在 `decision_kind="presentation_mode"` 下返回的
+  `selected_option_id="creative"`，以及历史中已明确选择的旧外层“创意模式”，兼容为
+  `design`；SN 内部的 `ppt_mode="creative"` / `choices.output="creative"` 不参与这个映射。
+  新请求只说“创意模式”且无法区分旧入口与整页生图时先澄清，不据此调用未打包的出口。
 - 原 `pptx` 注册名改为 `ppt-fast`；物理目录 `document-skills/pptx/` 保留，避免移动原有
   导出器、受信同步脚本和打包资源路径。新入口位于 `skills/pptx/SKILL.md`。
 - 公共入口与后端设置 `metadata.allow_override=false`，避免旧用户安装覆盖该套件。
@@ -68,7 +75,7 @@ provider 参数映射；单独配置的视觉 client 保留自身 provider 和�
 原生图片路径继续直接随主请求发送。主会话本身关闭思考时的服务兼容配置仍由 provider
 负责，此改动不把所有模型的 `none` 全局替换为 `low`。
 
-## 更新创意模块
+## 更新设计模块
 
 源库保持独立开发。`scripts/sync_presentation_suite.py` 从指定 Git 提交读取六模块及所需
 资源，用可检查的替换适配两个出口和 Box-Agent 工具名称。源文本变化不满足适配条件时

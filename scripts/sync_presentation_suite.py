@@ -27,7 +27,7 @@ OVERLAYS = ["metadata.user_visible=false", "metadata.allow_override=false",
             "entry-two-outputs", "story-two-outputs", "doctor-shipped-backends",
             "remove-image-only-output-policy", "legacy-static-task-resume",
             "dazzle-box-native-tools", "bundle-third-party-notices",
-            "static-player-delivery-gate"]
+            "static-player-delivery-gate", "design-mode-delivery-wording"]
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "box_agent/skills/presentation-suite"
 LICENSE_INPUT_PATH = "scripts/presentation_suite_licenses/echarts-5.5.0"
 LICENSE_INPUT_DIR = Path(__file__).resolve().parents[1] / LICENSE_INPUT_PATH
@@ -143,20 +143,21 @@ def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
             "`sn-ppt-standard` 或 `sn-ppt-dazzle`。")
         text = _replace_section(text, "### 输出格式\n", "### 设计丰富度\n", """### 输出格式
 
-本套件是公共 `pptx` 入口下的创意模式，保留两个表达出口：
+本套件是公共 `pptx` 入口下的设计模式，保留两个表达出口：
 
-- `static_html` -> `sn-ppt-standard`：静态 PPT 页面，始终交付整册 `present.html`，默认另交付可编辑 `.pptx`。
+- `static_html` -> `sn-ppt-standard`：静态 PPT 页面，始终交付整册 `present.html`，默认另交付 `.pptx`。
 - `dynamic_html` -> `sn-ppt-dazzle`：带动效和翻页交互的 `deck.html`；不承诺保留动画的 PPTX。
 
+对外描述 PPTX 文件交付，不宣传或承诺可编辑、原位编辑能力。
 用户未明确要求动态时采用 `static_html`；只要 HTML 时关闭对应 PPTX 后处理。
-已有 PPTX 的原位编辑、模板填充与已选创意模式冲突时，保留原始需求、附件和交付格式，
+已有 PPTX 的原位编辑、模板填充与已选设计模式冲突时，保留原始需求、附件和交付格式，
 先向用户澄清是否改用快速模式；只有用户明确同意后才加载 `ppt-fast`，不得自动切换。
 已有 SN HTML 任务继续使用其任务目录与输出选择。
 恢复旧静态任务的 `web_html` / `web` 字段时，先读取原任务包，保留相同绝对 `deck_dir`、
 材料、大纲、页面和已交付产物，仅将 `choices.output` 改为 `static_html`、`ppt_mode` 改为
 `standard`，把原 `web_postprocess`（包括用户明确的 `[]`）迁到 `static_postprocess`，
 再移除旧字段；两种后处理字段已有冲突时先澄清，不覆盖已有选择。该迁移不改变用户已选的
-创意模式；字段迁移本身不重做 Research 或 Story，本轮标题等内容修改按下方恢复规则
+设计模式；字段迁移本身不重做 Research 或 Story，本轮标题等内容修改按下方恢复规则
 局部更新 Story。旧 `creative` 图片整页出口未提供，保留产物并说明。
 
 """)
@@ -177,7 +178,7 @@ def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
             "媒体能力都不是 Entry 的强制前置。缺失时按 policy 继续，用可交付的无图版式表达内容。")
         text = _replace_once(text,
             '2. **路由已有 PPTX**：若任务是编辑、优化、续写或模板填充，交给 `sn-ppt-edit`。若是从零生成，继续本流程。',
-            '2. **路由已有 PPTX**：若原位编辑或模板填充与已选创意模式冲突，先澄清是否切换快速模式，用户明确同意后才交给 `ppt-fast`；已有 SN HTML 任务按恢复规则继续。从零生成继续本流程。')
+            '2. **路由已有 PPTX**：若原位编辑或模板填充与已选设计模式冲突，先澄清是否切换快速模式，用户明确同意后才交给 `ppt-fast`；已有 SN HTML 任务按恢复规则继续。从零生成继续本流程。')
         text = _replace_section(text, '7. **启动生成进度工作台**：', '8. **决定外部证据路径**：', '')
         text = _replace_section(text, '12. **出口分发**：', '## 恢复规则\n', """12. **出口分发**：Story 已完成且当前磁盘 `outline.md` 已按本档位确认后，
     `static_html` 调用 `sn-ppt-standard`，`dynamic_html` 调用 `sn-ppt-dazzle`；始终传入相同绝对

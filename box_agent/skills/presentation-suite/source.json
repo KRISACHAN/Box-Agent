@@ -276,7 +276,7 @@
       "source_sha256": "81c8cbb6cb3914342f0e09a47001a1522492c3b94cbd82774b2c803d762c8a1c"
     },
     "skills/sn-ppt-entry/SKILL.md": {
-      "sha256": "75b0520f5e77d2860133de2a78efca6bba2eef1079544723bf9cd4c507fe7d8d",
+      "sha256": "dd86e8cc279512640d7f9545be3015b5170d1a84aef47ba574847ce4eb4cbfdf",
       "source_path": "skills/sn-ppt-entry/SKILL.md",
       "source_sha256": "4de3bbe6127e2e30c8068400159c141059f27a6d1e57fee7aae29b8e6e9b21d6"
     },
@@ -611,7 +611,8 @@
     "legacy-static-task-resume",
     "dazzle-box-native-tools",
     "bundle-third-party-notices",
-    "static-player-delivery-gate"
+    "static-player-delivery-gate",
+    "design-mode-delivery-wording"
   ],
   "repository": "https://gitlab.sh.sensetime.com/stc-fvg/sensenova-presentation-int.git",
   "revision": "e187295633eb4cb201e6a2a5a206a419eb79990a",
