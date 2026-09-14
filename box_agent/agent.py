@@ -764,11 +764,29 @@ class Agent:
                 "estimated_tokens": estimated, "token_budget": _ACTIVE_SKILL_TOKEN_BUDGET,
                 "budget_exceeded": estimated > _ACTIVE_SKILL_TOKEN_BUDGET}
 
-    def add_user_message(self, content: str):
-        """Add a user message to history."""
+    def add_user_message(self, content: str) -> None:
+        """Add a user message and materialize selected Skills beside it."""
         if self.goal is not None and self.goal.status == "active":
             content = self._apply_goal_context(content)
+        # Explicit slash/host selection is resolved at the message boundary.
+        # The resulting runtime message becomes ordinary durable history, so
+        # ContextEngine does not need to rediscover Skill bodies per request.
+        materialize = getattr(self.skill_runtime, "materialize_selected_messages", None)
+        materialized = materialize(self.messages) if callable(materialize) else ()
         self.messages.append(Message(role="user", content=content))
+        if materialized:
+            skill_messages = []
+            for _name, skill_content in materialized:
+                skill_messages.append(Message(role="user", source="runtime", content=skill_content))
+            self.messages.extend(skill_messages)
+            if self.session_log is not None:
+                self._persist_unlogged_messages(
+                    turn=self._next_session_turn(), step=None,
+                )
+                self.session_log.flush()
+            defer_ack = getattr(self.skill_runtime, "defer_materialized_acknowledgement", None)
+            if callable(defer_ack):
+                defer_ack(skill_messages)
 
     def seed_continuation_messages(
         self, messages: tuple[ContinuationMessage, ...]
@@ -1166,6 +1184,16 @@ class Agent:
                             self.session_log.flush()
                             session_step_open = False
                     elif isinstance(event, DoneEvent):
+                        if event.stop_reason is StopReason.END_TURN:
+                            acknowledge = getattr(
+                                self.skill_runtime,
+                                "acknowledge_pending_materialized",
+                                None,
+                            )
+                            if callable(acknowledge):
+                                acknowledge()
+                            if self.session_log is not None:
+                                self._persist_active_skills()
                         self._persist_unlogged_messages(
                             turn=session_turn,
                             step=session_step,

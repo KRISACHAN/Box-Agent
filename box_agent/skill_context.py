@@ -74,16 +74,20 @@ def read_reference(content: str) -> tuple[dict[str, Any], str] | None:
 
 def visible_ranges(messages: Iterable[Message], *, name: str, revision: str,
                    lines: list[str], source: str | None = None, path: str | None = None) -> set[int]:
-    """Only actual complete tool text counts; summaries/acks cannot pin content."""
+    """Only verified tool text or durable runtime Skill text counts as visible."""
     covered: set[int] = set()
     for message in messages:
-        if (message.role != "tool" or message.name not in {"get_skill", "skill_view"}
-                or not message.tool_call_id or not isinstance(message.content, str)):
+        tool_text = (message.role == "tool" and message.name in {"get_skill", "skill_view"}
+                     and bool(message.tool_call_id))
+        runtime_text = message.role == "user" and message.source == "runtime"
+        if not (tool_text or runtime_text) or not isinstance(message.content, str):
             continue
         parsed = read_reference(message.content)
         if parsed is None:
             continue
         meta, body = parsed
+        if runtime_text and meta.get("kind") != "runtime_skill_instructions":
+            continue
         if meta.get("name") != name or meta.get("revision") != revision:
             continue
         if ((source is not None and meta.get("source") != source)
@@ -125,6 +129,7 @@ class ReferenceProjection:
     on_committed: Callable[[], None] | None = None
     budget_blocked: bool = False
     on_response: Callable[[], None] | None = None
+    reader_required: bool = False
 
 
 class SkillReferenceContext:
@@ -156,13 +161,17 @@ class SkillReferenceContext:
     def observe_history(self, messages: list[Message]) -> None:
         """Recover read facts from source-verified real tool text before compaction."""
         for message in messages:
-            if (message.role != "tool" or message.name not in {"get_skill", "skill_view"}
-                    or not message.tool_call_id or not isinstance(message.content, str)):
+            tool_text = (message.role == "tool" and message.name in {"get_skill", "skill_view"}
+                         and bool(message.tool_call_id))
+            runtime_text = message.role == "user" and message.source == "runtime"
+            if not (tool_text or runtime_text) or not isinstance(message.content, str):
                 continue
             parsed = read_reference(message.content)
             if parsed is None:
                 continue
             metadata, _ = parsed
+            if runtime_text and metadata.get("kind") != "runtime_skill_instructions":
+                continue
             name = metadata.get("name")
             if not isinstance(name, str):
                 continue
@@ -318,7 +327,7 @@ class SkillReferenceContext:
                     return ReferenceProjection(list(messages), blocked_reason=(
                         "Selected Skill material exceeds the context budget and no available paging reader "
                         "was offered for this selection. Reduce the selection or provide an allowed Skill reader."
-                    ), budget_blocked=True)
+                    ), budget_blocked=True, reader_required=True)
                 required_notice = ("Selected Skills need paged reading: " + json.dumps(selected, ensure_ascii=False)
                                    + ". Call get_skill by name; follow next_offset with the returned revision.")
                 diagnostics.insert(0, required_notice)
@@ -327,6 +336,29 @@ class SkillReferenceContext:
                 reason = "explicit" if name in self.runtime.selected_names else "restored"
                 target = projected[user_index]
                 cost = lambda content: projection_cost(target, prefix + content)
+                # Explicit Skills materialized at the user-message boundary
+                # are already durable request text. Keep them as-is instead
+                # of appending a synthetic reuse receipt on every request.
+                # A durable runtime snapshot is already the complete body for
+                # this request. Avoid resolving the live source again here;
+                # an explicitly disabled/changed Skill must not invalidate
+                # historical conversation text.
+                snapshot_found = False
+                for historical in self._messages:
+                    if historical.role != "user" or historical.source != "runtime" or not isinstance(historical.content, str):
+                        continue
+                    parsed = read_reference(historical.content)
+                    if parsed is None:
+                        continue
+                    metadata, body = parsed
+                    if metadata.get("kind") != "runtime_skill_instructions" or metadata.get("name") != name:
+                        continue
+                    if sha256(body.encode()).hexdigest() == metadata.get("revision"):
+                        self._host_visible[name] = str(metadata["revision"])
+                        snapshot_found = True
+                        break
+                if snapshot_found:
+                    continue
                 result = self.read(name, reason=reason, allow_partial=False, _cost=cost,
                                    _delivery=stage_delivery)
                 info = (result.raw_output or {}).get("skill_reference", {})

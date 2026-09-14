@@ -56,6 +56,7 @@ from ..events import (
 from .context_engine import (
     REQUEST_INPUT_HEADROOM_TOKENS,
     _fallback_context_estimate,
+    _estimate_context_from_latest_response,
     _is_compaction_metadata,
     _validate_transient_followup_result,
 )
@@ -1028,7 +1029,7 @@ async def _run_agent_loop_impl(
 
     async def compact_context(history_token_limit, *, force=False, estimate_tools=None):
         """Apply one compaction through the same durable surface/event path."""
-        nonlocal summary_failure_cooldown_steps
+        nonlocal api_total_tokens, api_prompt_tokens, summary_failure_cooldown_steps
         # Context may project effective rules before estimation and summary.
         # Older custom contexts retain the identity projection.
         project_history = getattr(context_engine, "project_history", None)
@@ -1137,6 +1138,11 @@ async def _run_agent_loop_impl(
                 error_type=result.error_type,
                 trigger_source=result.trigger_source,
             )
+            # The usage counters belong to the pre-compaction request.  The
+            # rebuilt surface has been re-based by the compact engine; until a
+            # new provider response arrives, estimate it from that surface.
+            api_total_tokens = 0
+            api_prompt_tokens = 0
         return result, event
 
     for step in range(max_steps):
@@ -1260,7 +1266,12 @@ async def _run_agent_loop_impl(
                 budget_outcome.remaining_chars,
                 result_storage.aggregate_budget,
             )
-        # ── Usage-driven context summarization (Layer 2) ───
+        # ── Context preparation and usage-driven summarization (Layer 2) ───
+        # The Context Engine owns the complete request projection (history,
+        # schemas, references, overlays, and transient input). Prepare that
+        # projection first so the compaction decision is based on the same
+        # request that would otherwise reach the provider. If compaction
+        # changes durable history, prepare the request again before sending it.
         prepared_tools = _services.tool_engine.prepare_tools(
             is_tool_visible=browser_intent_policy.is_tool_visible,
         )
@@ -1293,38 +1304,7 @@ async def _run_agent_loop_impl(
         if cancelled():
             yield await cancellation_done_event()
             return
-        result, summarization_event = await compact_context(
-            history_token_limit, estimate_tools=budget_tools_by_name,
-        )
-        context_compacted = result.messages is not None
-        if summarization_event is not None:
-            yield summarization_event
-        if cancelled():
-            yield await cancellation_done_event()
-            return
-        if result.blocked:
-            budget_details = {
-                "stage": "history_compaction", "totalLimitTokens": token_limit,
-                "historyLimitTokens": history_token_limit,
-                "estimatedHistoryTokens": result.estimated_after,
-                "extraInputTokens": extra_tokens, "transientInputTokens": transient_tokens,
-                "skillReferenceTokens": 0,
-            }
-            msg = (
-                "Context remains above the safe input limit after bounded compaction "
-                f"({result.estimated_after} estimated history tokens; history limit {history_token_limit}; "
-                f"total input limit {token_limit}; extra input {extra_tokens}; transient input {transient_tokens}; "
-                "Skill references not yet projected). "
-                "Start a new session or reduce active instructions/tool output before retrying."
-            )
-            if hook_mgr.hooks:
-                await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
-                await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
-            yield ErrorEvent(message=msg, is_fatal=True,
-                             error_code="CONTEXT_INPUT_BUDGET_EXCEEDED", error_category="context_length",
-                             error_details=budget_details)
-            yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
-            return
+        context_compacted = False
 
         # ── Near-limit wrap-up nudge (one-shot) ─────────────
         # Reserve the final few steps for synthesis: stop further
@@ -1384,22 +1364,77 @@ async def _run_agent_loop_impl(
                 transient_message=transient_message,
                 transient_tokens=pending_transient_followup_tokens,
             )
-            recovery_blocked = False
-            if (projection.blocked_reason and getattr(projection, "budget_blocked", False)
-                    and not context_compacted):
-                # The final request includes schemas, overlays and guidance
-                # added after the regular history check. Retry this projection
-                # once, without replaying step hooks, tools or delivery commits.
-                result, summarization_event = await compact_context(
-                    max(1, token_limit - extra_tokens - transient_tokens - REQUEST_INPUT_HEADROOM_TOKENS),
-                    force=True, estimate_tools=budget_tools_by_name,
+            # A blocked projection means the complete request is over budget.
+            # Compact at a slightly tighter history limit to leave room for
+            # provider-side framing, then always rebind/reproject the live
+            # history before deciding whether to call the provider.
+            projection_budget_blocked = bool(
+                projection.blocked_reason
+                and getattr(projection, "budget_blocked", False)
+            )
+            # A selected Skill that cannot fit and has no offered get_skill
+            # reader is an admission failure, not a history-compaction case.
+            # Stop before compact_context can call the summary provider.
+            if getattr(projection, "reader_required", False):
+                msg = projection.blocked_reason or (
+                    "Selected Skill material exceeds the context budget and requires an allowed Skill reader."
                 )
-                if summarization_event is not None:
-                    yield summarization_event
-                if cancelled():
-                    yield await cancellation_done_event()
-                    return
-                recovery_blocked = result.blocked
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                    await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+                yield ErrorEvent(message=msg, is_fatal=True)
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
+            estimated_history, _ = _estimate_context_from_latest_response(
+                messages,
+                budget_tools_by_name,
+                api_total_tokens=api_total_tokens,
+                api_prompt_tokens=api_prompt_tokens,
+            )
+            # Invoke the replaceable compaction policy only after the complete
+            # request has been prepared. It performs the cheap no-op decision
+            # when under budget; a projection-only overflow forces one bounded
+            # recovery pass so the request can then be prepared again.
+            force_compaction = projection_budget_blocked and estimated_history < history_token_limit
+            compaction_limit = (
+                max(1, history_token_limit - REQUEST_INPUT_HEADROOM_TOKENS)
+                if force_compaction else history_token_limit
+            )
+            result, summarization_event = await compact_context(
+                compaction_limit,
+                force=force_compaction,
+                estimate_tools=budget_tools_by_name,
+            )
+            context_compacted = result.messages is not None
+            if summarization_event is not None:
+                yield summarization_event
+            if cancelled():
+                yield await cancellation_done_event()
+                return
+            if result is not None and result.blocked:
+                budget_details = {
+                    "stage": "history_compaction", "totalLimitTokens": token_limit,
+                    "historyLimitTokens": compaction_limit,
+                    "estimatedHistoryTokens": result.estimated_after,
+                    "extraInputTokens": extra_tokens, "transientInputTokens": transient_tokens,
+                    "skillReferenceTokens": 0,
+                }
+                msg = (
+                    "Context remains above the safe context budget after bounded compaction "
+                    f"({result.estimated_after} estimated history tokens; history limit {compaction_limit}; "
+                    f"total input limit {token_limit}; extra input {extra_tokens}; transient input {transient_tokens}; "
+                    "Skill references not yet projected). "
+                    "Start a new session or reduce active instructions/tool output before retrying."
+                )
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                    await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+                yield ErrorEvent(message=msg, is_fatal=True,
+                                 error_code="CONTEXT_INPUT_BUDGET_EXCEEDED", error_category="context_length",
+                                 error_details=budget_details)
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
+            if context_compacted:
                 # Rebinding is mandatory: persistent read facts do not prove
                 # the corresponding tool text survived compaction.
                 projection = context_engine.prepare_request(
@@ -1409,7 +1444,7 @@ async def _run_agent_loop_impl(
                     transient_message=transient_message,
                     transient_tokens=pending_transient_followup_tokens,
                 )
-            if projection.blocked_reason or recovery_blocked:
+            if projection.blocked_reason:
                 msg = projection.blocked_reason or "Context remains above the safe input limit after bounded compaction."
                 if hook_mgr.hooks:
                     await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
@@ -1425,6 +1460,20 @@ async def _run_agent_loop_impl(
             on_response_received = getattr(projection, "on_response", None)
         else:
             # Legacy manually constructed service bundles may omit Context.
+            # Keep the historical estimate-driven compaction path for those
+            # bundles; the canonical path above is prepare-first.
+            result, summarization_event = await compact_context(
+                history_token_limit, estimate_tools=budget_tools_by_name,
+            )
+            context_compacted = result.messages is not None
+            if summarization_event is not None:
+                yield summarization_event
+            if result.blocked:
+                msg = "Context remains above the safe context budget after bounded compaction."
+                yield ErrorEvent(message=msg, is_fatal=True,
+                                 error_code="CONTEXT_INPUT_BUDGET_EXCEEDED", error_category="context_length")
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
             request_messages = [*messages, *request_context_messages]
             provider_request_messages = ([*request_messages, transient_message]
                                          if transient_message is not None else request_messages)
