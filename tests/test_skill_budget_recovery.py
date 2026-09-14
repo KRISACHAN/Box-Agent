@@ -389,8 +389,8 @@ async def test_loop_unrecoverable_selection_compacts_at_most_once_and_never_deli
         messages=[Message(role="system", content="BASE"), Message(role="user", content="task")],
         tools={}, skill_engine=runtime, token_limit=4000, max_steps=1, hooks=[hook])]
     assert provider.requests == []
-    assert len([event for event in events if isinstance(event, SummarizationEvent)]) == 1
-    assert provider.summary_calls <= 1 and hook.steps == [1]
+    assert len([event for event in events if isinstance(event, SummarizationEvent)]) == 0
+    assert provider.summary_calls == 0 and hook.steps == [1]
     assert any(isinstance(event, DoneEvent) and event.stop_reason == StopReason.ERROR for event in events)
     assert runtime.turn_deliveries == {} and runtime.read_facts == ()
 

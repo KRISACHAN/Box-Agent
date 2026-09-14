@@ -30,6 +30,7 @@ class PreparedContext:
     on_committed: Callable[[], None] | None = None
     budget_blocked: bool = False
     on_response: Callable[[], None] | None = None
+    reader_required: bool = False
 
 
 class DefaultContextEngine:
@@ -133,6 +134,7 @@ class DefaultContextEngine:
         self._request_reference_tokens = 0
         blocked_reason = None
         budget_blocked = False
+        reader_required = False
         on_committed = None
         on_response = None
         full_request = ([*context_messages, transient_message]
@@ -152,6 +154,7 @@ class DefaultContextEngine:
             context_messages, references = projection.messages, projection.references
             blocked_reason = projection.blocked_reason
             budget_blocked = projection.budget_blocked
+            reader_required = projection.reader_required
             on_committed = projection.on_committed
             on_response = projection.on_response
             self._request_reference_tokens = projection.input_tokens
@@ -162,7 +165,10 @@ class DefaultContextEngine:
             on_response = None
         provider_messages = ([*context_messages, transient_message]
                              if transient_message is not None else context_messages)
-        return PreparedContext(provider_messages, context_messages, references,
-                               self._request_reference_tokens,
-                               self._request_reference_tokens + self._transient_tokens, blocked_reason,
-                               on_committed, budget_blocked, on_response)
+        return PreparedContext(
+            provider_messages, context_messages, references,
+            self._request_reference_tokens,
+            self._request_reference_tokens + self._transient_tokens,
+            blocked_reason, on_committed, budget_blocked, on_response,
+            reader_required,
+        )

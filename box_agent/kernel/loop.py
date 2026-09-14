@@ -1382,7 +1382,12 @@ async def _run_agent_loop_impl(
                 if hook_mgr.hooks:
                     await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
                     await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
-                yield ErrorEvent(message=msg, is_fatal=True)
+                yield ErrorEvent(
+                    message=msg,
+                    is_fatal=True,
+                    error_code="SKILL_READER_REQUIRED",
+                    error_category="skill_context",
+                )
                 yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
                 return
             estimated_history, _ = _estimate_context_from_latest_response(
