@@ -634,6 +634,20 @@ class Agent:
             self.restored_skills = []
         self._sync_child_system_prompt()
 
+    @property
+    def thinking_enabled(self) -> bool:
+        return self._thinking_enabled
+
+    @thinking_enabled.setter
+    def thinking_enabled(self, enabled: bool) -> None:
+        self._thinking_enabled = enabled
+        # ACP can inspect attachments before run_events starts. Keep the proxy
+        # aligned when the session is created or its thinking choice changes.
+        image_tool = self.tools.get("inspect_images")
+        set_thinking = getattr(image_tool, "set_thinking_enabled", None)
+        if callable(set_thinking):
+            set_thinking(enabled)
+
     def _persist_goal(self) -> None:
         if self.session_log is None:
             return
