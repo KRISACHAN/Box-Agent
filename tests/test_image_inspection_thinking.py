@@ -22,6 +22,9 @@ async def test_proxy_inherits_current_parent_thinking_before_loop_and_across_tur
     tmp_path, monkeypatch, binding, disabled_effort, initial,
 ):
     monkeypatch.setenv("BOX_AGENT_HOME", str(tmp_path / "state"))
+    # The temporary profile must not inherit host resource directory overrides.
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("BOX_AGENT_SKILL_TOOLS_ROOT", raising=False)
     (tmp_path / "slide.png").write_bytes(_ONE_PIXEL_PNG)
     requests = []
 
