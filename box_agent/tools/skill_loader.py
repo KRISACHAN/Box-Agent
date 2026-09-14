@@ -28,9 +28,15 @@ from box_agent.user_paths import state_path
 SkillSource = Literal["builtin", "connector", "user"]
 
 SKILL_USAGE_GUIDANCE = (
+    "When the user names a Skill or the task clearly matches an available Skill, read its "
+    "full instructions with get_skill before planning, delegating, or authoring. A complete "
+    "Skill reference already supplied in context counts as read; catalog metadata alone does not. "
     "When using a Skill, follow its applicable workflow, required reference files and verification, "
     "consistent with the user request and permissions. If a required step is blocked, use an "
-    "available permitted recovery or report it as incomplete; do not treat required steps as optional."
+    "available permitted recovery or report it as incomplete; do not treat required steps as optional. "
+    "If a Skill requires a manual user choice, call request_user_decision and wait for the response "
+    "before executing a branch. Do not substitute prose or a JSON code block for the tool call, "
+    "or infer a default or timeout from general progress guidance."
 )
 
 MANIFEST_FILENAME = "_manifest.json"
@@ -202,6 +208,16 @@ class Skill:
     broken_reason: Optional[str] = None
     instruction_digest: Optional[str] = None
 
+    @property
+    def user_visible(self) -> bool:
+        """Internal methods remain enabled and readable by their registered name."""
+        return (self.metadata or {}).get("user_visible") is not False
+
+    @property
+    def allow_override(self) -> bool:
+        """Builtins may pin a suite's methods while retaining normal user overrides."""
+        return (self.metadata or {}).get("allow_override") is not False
+
     def to_prompt(self) -> str:
         """Convert skill to prompt format.
 
@@ -247,6 +263,8 @@ All files and references in this skill are relative to this directory.
             "source": self.source,
             "ownerId": self.owner_id,
             "disabled": self.disabled,
+            "user_visible": self.user_visible,
+            "allow_override": self.allow_override,
             "path": str(self.skill_path) if self.skill_path else None,
             "allowed_tools": self.allowed_tools or [],
             "required_skills": self.required_skills or [],
@@ -652,9 +670,15 @@ class SkillLoader:
                     orphan_count += 1
                     continue
 
+                current = self._all_skills.get(skill.name)
                 if (
-                    entry.source == "user"
-                    and skill.name in RESERVED_BUILTIN_SKILL_NAMES
+                    (entry.source == "user" and skill.name in RESERVED_BUILTIN_SKILL_NAMES)
+                    or (
+                        entry.source != "builtin"
+                        and current is not None
+                        and current.source == "builtin"
+                        and not current.allow_override
+                    )
                 ):
                     # These skills own host-negotiated runtime contracts.  A
                     # user prompt skill may extend the workflow under another
@@ -701,8 +725,8 @@ class SkillLoader:
             )
         if reserved_override_count:
             _warn(
-                f"⚠️  Ignored {reserved_override_count} user skill override(s) for "
-                "reserved builtin runtime names. Rename the user skill to extend it."
+                f"⚠️  Ignored {reserved_override_count} skill override(s) for "
+                "canonical builtin names. Use a different name to extend the method."
             )
 
         return discovered
@@ -1014,14 +1038,16 @@ class SkillLoader:
         include_disabled: bool = False,
         skill_filter: Callable[[Skill], bool] | None = None,
     ) -> List[Skill]:
-        """Return skills relevant to ``query`` plus the always_on set.
+        """Return public skills relevant to ``query`` plus the always_on set.
 
         Matching strategy: tokenize query and each skill's (name, keywords,
         description) via :func:`_tokenize`. Score = name_overlap*5 +
         keywords_overlap*3 + description_overlap*1. Top ``max_skills`` by
         score (score > 0) are returned, then each matched skill's
-        required_skills and related_skills are added one hop when available,
-        followed by always_on skills.
+        public required_skills and related_skills are added one hop when
+        available, followed by explicitly named always_on skills. Internal
+        dependencies remain resolvable and readable by name without generic
+        recommendation.
 
         Empty / whitespace-only / no-overlap query → only always_on skills.
         This is intentional: greetings like "hi" / "你好" should NOT trigger
@@ -1030,7 +1056,8 @@ class SkillLoader:
         skill_pool = {
             name: skill
             for name, skill in self._skill_pool(include_disabled=include_disabled).items()
-            if skill_filter is None or skill_filter(skill)
+            if (skill.user_visible or name in always_on)
+            and (skill_filter is None or skill_filter(skill))
         }
         always_skills = [s for s in skill_pool.values() if s.name in always_on]
 
@@ -1074,7 +1101,7 @@ class SkillLoader:
         include_disabled: bool = False,
         skill_filter: Callable[[Skill], bool] | None = None,
     ) -> str:
-        """Render a bounded metadata preview; full discovery uses list_skills.
+        """Render a bounded public metadata preview; discovery uses list_skills.
 
         Query matching is unchanged. Only this system-prompt projection is
         quoted and bounded; source metadata and Skill bodies remain intact.
@@ -1082,7 +1109,7 @@ class SkillLoader:
         skill_pool = {
             name: skill
             for name, skill in self._skill_pool(include_disabled=include_disabled).items()
-            if skill_filter is None or skill_filter(skill)
+            if skill.user_visible and (skill_filter is None or skill_filter(skill))
         }
         if not skill_pool:
             return ""
