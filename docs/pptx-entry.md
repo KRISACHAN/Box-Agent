@@ -84,9 +84,28 @@ provider 参数映射；单独配置的视觉 client 保留自身 provider 和�
 
 ## 更新设计模块
 
+Standard 的单页、批量截图和播放器审计共用同步 Playwright 生命周期。每次调用由独立
+监督进程管理总期限和并发槽，worker 持有 driver 和 browser，每页使用独立 context；
+批量任务内复用 browser。Chromium 启动守卫在启动浏览器前登记专属进程组，父进程消失
+时自行终止该组；守卫提前退出时，监督进程按已登记组及进程身份清理后代。不会按进程
+名称、年龄或孤儿状态清理其他任务。导入模块和 `--help` 不启动或清理浏览器。
+
+`RENDER_JOB_TIMEOUT` 默认 600 秒，包含排队、启动、页面处理及预留的关闭/强制清理时间。
+`deck.py audit` 的调用预算为 180 秒；字体处理后的整册重渲染为 600 秒。各页另有有限
+阶段期限，播放器逐页更新阶段期限但不延长任务总预算。超时或取消后先完成本任务清理，
+再释放槽位；主错误和清理错误均保留。只有明确的 `TargetClosedError` 可在确认清理后
+重试（单页最多三次、批量最多两次、审计不重试），内容、环境和清理错误不因此重试。
+
+`RENDER_GLOBAL_LIMIT=0` 默认不设全局槽限制；配置正整数后，同一 `RENDER_LOCK_DIR`
+内共用该上限。排队受 `RENDER_SLOT_TIMEOUT`（默认 900 秒）和任务剩余预算共同约束，
+超时失败，不绕过上限。该实现针对 macOS/Linux POSIX，依赖 Playwright 和 `psutil>=5.9`；
+Skill 安装脚本和 requirements 同步声明依赖。Windows 需要单独的进程所有权实现。
+
 源库保持独立开发。`scripts/sync_presentation_suite.py` 从指定 Git 提交读取六模块及所需
 资源，用可检查的替换适配两个出口和 Box-Agent 工具名称。源文本变化不满足适配条件时
-同步失败，要求维护者重新检查，不静默套用旧修改。`source.json` 记录来源和集成后文件哈希。
+同步失败，要求维护者重新检查，不静默套用旧修改。生命周期适配输入位于
+`scripts/presentation_suite_overlays/`，不要直接修改打包副本。`source.json` 记录来源、
+本地 helper 输入与集成后文件哈希。
 
 ```bash
 uv run python scripts/sync_presentation_suite.py --source-checkout /path/to/sensenova-presentation-int

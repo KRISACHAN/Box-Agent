@@ -186,7 +186,7 @@ install_chromium(){
   log "6) Playwright Chromium → $PLAYWRIGHT_BROWSERS_PATH"
   local PW="$NORMALIZE_VENV/bin/python"
   [ -x "$PW" ] || PW="$PYBIN"
-  "$PYBIN" -m pip install -q playwright 2>/dev/null || true
+  "$PYBIN" -m pip install -q playwright "psutil>=5.9" 2>/dev/null || true
   "$PYBIN" -m playwright install chromium 2>/dev/null && log "  Chromium OK" \
     || log "  ⚠️ playwright install chromium 失败;若宿主已有 chromium 设 PLAYWRIGHT_BROWSERS_PATH 复用。"
 }

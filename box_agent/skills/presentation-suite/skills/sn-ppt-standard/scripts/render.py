@@ -27,7 +27,6 @@ import sys
 import time
 import importlib
 import importlib.util as _iutil
-import signal
 import re
 import glob
 import platform
@@ -64,52 +63,8 @@ LAUNCH_ARGS = ["--no-sandbox", "--disable-gpu",
 if _should_disable_devshm():
     LAUNCH_ARGS.insert(1, "--disable-dev-shm-usage")
 
-# —— 全局并发 chromium 上限(跨进程 flock 槽)——
-# render.py 在各 worker 子进程里独立跑;整机同时渲染数 = Σ 各 deck 各 slide。RENDER_GLOBAL_LIMIT 卡住它。
-# RAM-shm 治本后此上限降级为「防跑飞」软保险(设=WK)。=0(默认)关闭。flock:进程崩/被杀 OS 自动放锁不泄漏。
 import fcntl as _fcntl
-import atexit as _atexit
-import random as _random
-def _acquire_render_slot():
-    limit = int(os.environ.get("RENDER_GLOBAL_LIMIT", "0") or "0")
-    if limit <= 0:
-        return None
-    lock_dir = os.environ.get("RENDER_LOCK_DIR", "/tmp/ppt_render_slots")
-    try:
-        os.makedirs(lock_dir, exist_ok=True)
-    except Exception:
-        return None
-    slots = list(range(limit)); _random.shuffle(slots)
-    deadline = time.time() + int(os.environ.get("RENDER_SLOT_TIMEOUT", "900") or "900")
-    waited = False
-    while True:
-        for i in slots:
-            try:
-                fd = os.open(os.path.join(lock_dir, "slot_%d.lock" % i), os.O_CREAT | os.O_RDWR, 0o666)
-            except Exception:
-                continue
-            try:
-                _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
-                return fd
-            except OSError:
-                os.close(fd)
-        if time.time() > deadline:
-            print("警告: 等 render 全局槽超时,直接渲染...", file=sys.stderr)
-            return None
-        if not waited:
-            print("· render 全局并发已满(%d),排队等槽…" % limit, file=sys.stderr); waited = True
-        time.sleep(0.3 + _random.random() * 0.5)
-def _release_render_slot(fd):
-    if fd is None:
-        return
-    try:
-        _fcntl.flock(fd, _fcntl.LOCK_UN)
-    except Exception:
-        pass
-    try:
-        os.close(fd)
-    except Exception:
-        pass
+from render_runtime import RenderSession, run_renderer, supervise
 
 
 class BrowserUnavailable(RuntimeError):
@@ -186,96 +141,6 @@ def _sync_playwright():
         _load_bundled_playwright()
         from playwright.sync_api import sync_playwright
         return sync_playwright
-
-
-@contextmanager
-def _alarm_timeout(seconds, label):
-    """Raise TimeoutError if a Playwright start/stop call hangs."""
-    if not hasattr(signal, "SIGALRM") or seconds <= 0:
-        yield
-        return
-
-    def _handler(_signum, _frame):
-        raise TimeoutError(f"{label} timed out after {seconds}s")
-
-    old = signal.getsignal(signal.SIGALRM)
-    signal.signal(signal.SIGALRM, _handler)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
-    try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old)
-
-
-def _call_with_timeout(fn, seconds, label):
-    with _alarm_timeout(seconds, label):
-        return fn()
-
-
-def _stop_playwright(p):
-    try:
-        _call_with_timeout(p.stop, 5, "Playwright stop")   # 1s→5s:高并发下 1s 常超时→chromium 没关干净泄漏
-    except Exception as e:
-        print(f"警告: Playwright 清理失败或超时({e});即将继续/退出。", file=sys.stderr)
-
-
-def _reap_leaked_chromium():
-    """★收割泄漏的 chromium(2026-07-18 内存泄漏事故)★:b.close()/p.stop 高并发下常超时→chromium(含
-    renderer/gpu/zygote 子进程)没被杀干净、500+ deck 累积几千僵尸吃几百 G。此函数杀掉:
-      ① 本 render.py 进程的 chromium 子进程(ppid==自己,close 没杀掉的)
-      ② 孤儿 chromium(ppid==1,其父 render.py 已死=确定泄漏)
-    **不碰 ppid 指向其他活着 render.py 的 chromium**(它们是别的在跑渲染),故安全、只清泄漏。
-    每次 render.py 退出都跑一遍 → 累积的孤儿僵尸也被陆续收割,内存不重启即回落。"""
-    import signal as _sig
-    mypid = os.getpid()
-    killed = 0
-    try:
-        _hz = os.sysconf("SC_CLK_TCK") or 100
-    except Exception:
-        _hz = 100
-    try:
-        with open("/proc/uptime") as f:
-            _uptime = float(f.read().split()[0])
-    except Exception:
-        _uptime = None
-    try:
-        for pid in os.listdir("/proc"):
-            if not pid.isdigit():
-                continue
-            try:
-                with open("/proc/%s/stat" % pid, "rb") as f:
-                    parts = f.read().split()
-                comm = parts[1].lower()          # (comm) 含括号,截断到15字符
-                ppid = int(parts[3])
-            except Exception:
-                continue
-            if b"chrom" not in comm and b"headless" not in comm and b"nacl" not in comm:
-                continue
-            # 判定泄漏(三选一): ①自己的子进程 ②孤儿(父已死→ppid=1) ③存活>300s(单次渲染<60s,超5min 必泄漏,
-            # 不管 reparent 到谁都杀 —— 兜住孤儿被 subreaper 收养、ppid≠1 的情况)
-            leaked = ppid == mypid or ppid == 1
-            if not leaked and _uptime is not None:
-                try:
-                    age = _uptime - int(parts[21]) / _hz    # field22=starttime(clock ticks since boot)
-                    if age > 300:
-                        leaked = True
-                except Exception:
-                    pass
-            if leaked:
-                try:
-                    os.kill(int(pid), _sig.SIGKILL)
-                    killed += 1
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    if killed:
-        print("[render] reaped %d leaked chromium (own-children + orphans)" % killed, file=sys.stderr)
-
-
-import atexit as _atexit_reap
-_atexit_reap.register(_reap_leaked_chromium)   # render.py 每次退出都收割一次泄漏 chromium
 
 
 def _ensure_browser_available(p):
@@ -448,13 +313,16 @@ def _short_browser_error(msg):
 
 def _is_fatal_browser_error(msg):
     """Classify stable host/runtime launch failures that retries cannot repair."""
-    lower = msg.lower()
+    lower = "\n".join(line for line in msg.lower().splitlines() if "<launching>" not in line)
     fatal_bits = (
         "executable doesn't exist",
         "looks like playwright was just installed or updated",
         "error while loading shared libraries",
         "host system is missing dependencies",
         "operation not permitted",
+        "permission denied",
+        "exec format error",
+        "bad interpreter",
         "no usable sandbox",
         "sigtrap",
         "crashpad",
@@ -1106,207 +974,184 @@ def _setup_libs():
             break
 
 
-def _render_once(p, html, out, w, h, browser_exe=None, browser=None):
-    """渲染一次；可传共享 browser 供 batch 调用。返回版式诊断字典。"""
+def _render_once(session, html, out, w, h):
+    """Render one page in an explicitly owned, isolated browser context."""
     rep = {"broken": [], "overflow": [], "overlap": [], "crowded": [], "vbalance": None,
            "cjkTypography": [],
            "layout": {}, "runtime": {"script_failed": [], "page_errors": [], "charts_missing": []}}
-    owns_browser = browser is None
-    if owns_browser:
-        try:
-            b = p.chromium.launch(executable_path=browser_exe, args=LAUNCH_ARGS)
-        except Exception as e:
-            msg = str(e)
-            if _is_fatal_browser_error(msg):
-                raise BrowserUnavailable(_short_browser_error(msg))
-            raise
-        print(f"[render] launched browser {b}", file=sys.stderr)
-    else:
-        b = browser
-    try:
-        pg = b.new_page(viewport={"width": w, "height": h}, device_scale_factor=2)
-        print(f"[render] page created", file=sys.stderr)
-        try:
-            runtime = rep["runtime"]
+    with session.page(w, h, scale=2) as pg:
+        runtime = rep["runtime"]
 
-            def _page_error(error):
-                message = str(error).strip()
-                if message and message not in runtime["page_errors"]:
-                    runtime["page_errors"].append(message[:500])
+        def _page_error(error):
+            message = str(error).strip()
+            if message and message not in runtime["page_errors"]:
+                runtime["page_errors"].append(message[:500])
 
-            def _request_failed(request):
-                try:
-                    if request.resource_type == "script":
-                        failure = request.failure
-                        detail = failure if isinstance(failure, str) else str(failure or "request failed")
-                        runtime["script_failed"].append({"url": request.url, "error": detail[:240]})
-                except Exception:
-                    pass
-
-            pg.on("pageerror", _page_error)
-            pg.on("requestfailed", _request_failed)
-            # 字体:CDN + 本地缓存兜底(方案 B,实测可行)。允许 HTML 用 CDN 字体:
-            # 先查本地缓存命中即离线复用(高并发不打爆 CDN),未命中抓 CDN 并落盘缓存,
-            # CDN 挂/超时则放行(route.continue_)最终落 --sans/--sans-zh 系统字体栈,不吊死。
-            import hashlib as _hl
-            _font_cache = os.environ.get("FONT_CACHE", os.path.expanduser("~/.cache/ppt-fonts"))
+        def _request_failed(request):
             try:
-                os.makedirs(_font_cache, exist_ok=True)
+                if request.resource_type == "script":
+                    failure = request.failure
+                    detail = failure if isinstance(failure, str) else str(failure or "request failed")
+                    runtime["script_failed"].append({"url": request.url, "error": detail[:240]})
             except Exception:
                 pass
 
-            def _font_route(route, *a):
-                url = route.request.url
-                # ECharts 走它自己的本地 vendor 路由(下方注册、优先级更高);字体路由防御性跳过。
-                if "echarts" in url:
-                    try:
-                        route.fallback()
-                    except Exception:
-                        try:
-                            route.continue_()
-                        except Exception:
-                            pass
-                    return
+        pg.on("pageerror", _page_error)
+        pg.on("requestfailed", _request_failed)
+        # 字体:CDN + 本地缓存兜底(方案 B,实测可行)。允许 HTML 用 CDN 字体:
+        # 先查本地缓存命中即离线复用(高并发不打爆 CDN),未命中抓 CDN 并落盘缓存,
+        # CDN 挂/超时则放行(route.continue_)最终落 --sans/--sans-zh 系统字体栈,不吊死。
+        import hashlib as _hl
+        _font_cache = os.environ.get("FONT_CACHE", os.path.expanduser("~/.cache/ppt-fonts"))
+        try:
+            os.makedirs(_font_cache, exist_ok=True)
+        except Exception:
+            pass
+
+        def _font_route(route, *a):
+            url = route.request.url
+            # ECharts 走它自己的本地 vendor 路由(下方注册、优先级更高);字体路由防御性跳过。
+            if "echarts" in url:
                 try:
-                    # content-type 按扩展名判:CSS / JS 库(Three.js·GSAP·D3 从 jsdelivr)/ 字体。
-                    # JS 若误当 font/woff2 供给,浏览器不执行 → r5 fancy 动效/背景全废;故单列 .js/.mjs。
-                    _path_only = url.split("?", 1)[0]
-                    if ".css" in url or "css2" in url:
-                        ct, _ext = "text/css", ".css"
-                    elif _path_only.endswith((".js", ".mjs")):
-                        ct, _ext = "application/javascript", ".js"
-                    else:
-                        ct, _ext = "font/woff2", ".woff2"
-                    cpath = os.path.join(_font_cache, _hl.sha1(url.encode()).hexdigest() + _ext)
-                    if os.path.isfile(cpath):
-                        route.fulfill(body=open(cpath, "rb").read(), content_type=ct)
-                        return
-                    resp = route.fetch(timeout=15000)
-                    body = resp.body()
-                    try:
-                        with open(cpath, "wb") as _f:
-                            _f.write(body)
-                    except Exception:
-                        pass
-                    route.fulfill(response=resp, body=body)
+                    route.fallback()
                 except Exception:
                     try:
                         route.continue_()
                     except Exception:
-                        try:
-                            route.abort()
-                        except Exception:
-                            pass
-            for _h in ("fonts.googleapis.com", "fonts.gstatic.com", "fonts.bunny.net", "cdn.jsdelivr.net"):
+                        pass
+                return
+            try:
+                # content-type 按扩展名判:CSS / JS 库(Three.js·GSAP·D3 从 jsdelivr)/ 字体。
+                # JS 若误当 font/woff2 供给,浏览器不执行 → r5 fancy 动效/背景全废;故单列 .js/.mjs。
+                _path_only = url.split("?", 1)[0]
+                if ".css" in url or "css2" in url:
+                    ct, _ext = "text/css", ".css"
+                elif _path_only.endswith((".js", ".mjs")):
+                    ct, _ext = "application/javascript", ".js"
+                else:
+                    ct, _ext = "font/woff2", ".woff2"
+                cpath = os.path.join(_font_cache, _hl.sha1(url.encode()).hexdigest() + _ext)
+                if os.path.isfile(cpath):
+                    route.fulfill(body=open(cpath, "rb").read(), content_type=ct)
+                    return
+                resp = route.fetch(timeout=15000)
+                body = resp.body()
                 try:
-                    pg.route(f"**{_h}**", _font_route)
+                    with open(cpath, "wb") as _f:
+                        _f.write(body)
                 except Exception:
                     pass
-            # CDN ECharts 可用 Deck 自带副本离线替换；本地相对路径必须自行真实存在。
-            # 禁止从 Skill 目录兜底，否则服务端 PNG 会掩盖最终 present.html 的依赖缺失。
+                route.fulfill(response=resp, body=body)
+            except Exception:
+                try:
+                    route.continue_()
+                except Exception:
+                    try:
+                        route.abort()
+                    except Exception:
+                        pass
+        for _h in ("fonts.googleapis.com", "fonts.gstatic.com", "fonts.bunny.net", "cdn.jsdelivr.net"):
             try:
-                _ech = os.path.abspath(
-                    os.path.join(os.path.dirname(html), "..", "assets", "vendor", "echarts.min.js")
-                )
-                _ech = _ech if os.path.isfile(_ech) else None
-                if _ech:
-                    _ech_body = open(_ech, "rb").read()
+                pg.route(f"**{_h}**", _font_route)
+            except Exception:
+                pass
+        # CDN ECharts 可用 Deck 自带副本离线替换；本地相对路径必须自行真实存在。
+        # 禁止从 Skill 目录兜底，否则服务端 PNG 会掩盖最终 present.html 的依赖缺失。
+        try:
+            _ech = os.path.abspath(
+                os.path.join(os.path.dirname(html), "..", "assets", "vendor", "echarts.min.js")
+            )
+            _ech = _ech if os.path.isfile(_ech) else None
+            if _ech:
+                _ech_body = open(_ech, "rb").read()
 
-                    def _echarts_route(route, *args, _body=_ech_body):
-                        if route.request.url.startswith(("http://", "https://")):
-                            route.fulfill(body=_body, content_type="application/javascript")
-                        else:
-                            route.continue_()
+                def _echarts_route(route, *args, _body=_ech_body):
+                    if route.request.url.startswith(("http://", "https://")):
+                        route.fulfill(body=_body, content_type="application/javascript")
+                    else:
+                        route.continue_()
 
-                    pg.route("**echarts**", _echarts_route)
-            except Exception:
-                pass
-            try:
-                # 用 "load" 而非 "networkidle":本地 file:// 页若引用外部 CDN,
-                # networkidle 可能永远不达成、白等满 timeout;load 只等本地资源就绪。
-                pg.goto("file://" + html, wait_until="load", timeout=30000)
-            except Exception as e:
-                # 不静默吞:goto 异常打到 stderr,免得"截到半截却当成功"。
-                print(f"警告: goto 未正常完成({e}),仍尝试截图", file=sys.stderr)
-            try:
-                pg.evaluate("document.fonts && document.fonts.ready")
-            except Exception:
-                pass
-            pg.wait_for_timeout(900)   # 给 ECharts / 渐变 / 布局定帧
-            try:
-                with open(html, encoding="utf-8", errors="ignore") as _stream:
-                    _html_source = _stream.read()
-                _chart_ids = sorted(set(re.findall(
-                    r"echarts\.init\(\s*document\.getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)",
-                    _html_source,
-                )))
-                _chart_init_count = len(re.findall(r"\becharts\.init\s*\(", _html_source))
-                if _chart_init_count:
-                    _chart_audit = pg.evaluate(
-                        """payload => {
-                          const missing=payload.ids.filter(id => {
-                            const el=document.getElementById(id);
-                            if(!el || !window.echarts) return true;
-                            const graphic=el.querySelector('canvas,svg');
-                            if(!graphic) return true;
-                            const r=graphic.getBoundingClientRect();
-                            return r.width < 2 || r.height < 2;
-                          });
-                          const rendered=[...document.querySelectorAll('[_echarts_instance_]')].filter(el => {
-                            const graphic=el.querySelector('canvas,svg');
-                            if(!graphic) return false;
-                            const r=graphic.getBoundingClientRect();
-                            return r.width >= 2 && r.height >= 2;
-                          }).length;
-                          return {missing, rendered};
-                        }""",
-                        {"ids": _chart_ids, "expected": _chart_init_count},
-                    ) or {}
-                    runtime["charts_missing"] = list(_chart_audit.get("missing") or [])
-                    if int(_chart_audit.get("rendered") or 0) < _chart_init_count:
-                        runtime["charts_missing"].append(
-                            f"rendered={int(_chart_audit.get('rendered') or 0)}/expected={_chart_init_count}"
-                        )
-            except Exception as exc:
-                runtime["page_errors"].append(f"ECharts runtime audit failed: {exc}"[:500])
-            try:
-                rep["broken"] = pg.evaluate(_BROKEN_IMAGE_JS) or []
-            except Exception:
-                rep["broken"] = []
-            try:
-                rep["overflow"] = pg.evaluate(_OVERFLOW_JS) or []
-            except Exception:
-                rep["overflow"] = []    # 检测失败绝不影响出图
-            try:
-                _c = pg.evaluate(_COLLISION_JS) or {}
-                rep["overlap"] = _c.get("overlap", []) or []
-                rep["crowded"] = _c.get("crowded", []) or []
-                rep["boxoverflow"] = _c.get("boxoverflow", []) or []
-                rep["innergap"] = _c.get("innergap", []) or []
-            except Exception:
-                pass
-            try:
-                rep["layout"] = pg.evaluate(_LAYOUT_GUARD_JS) or {}
-            except Exception:
-                pass
-            try:
-                rep["vbalance"] = pg.evaluate(_VBALANCE_JS)
-            except Exception:
-                pass
-            try:
-                rep["contrast"] = pg.evaluate(_CONTRAST_JS)
-            except Exception:
-                pass
-            try:
-                rep["cjkTypography"] = pg.evaluate(_CJK_TYPOGRAPHY_JS) or []
-            except Exception:
-                rep["cjkTypography"] = []
-            pg.screenshot(path=out)
-        finally:
-            pg.close()
-    finally:
-        if owns_browser:
-            b.close()
+                pg.route("**echarts**", _echarts_route)
+        except Exception:
+            pass
+        try:
+            # 用 "load" 而非 "networkidle":本地 file:// 页若引用外部 CDN,
+            # networkidle 可能永远不达成、白等满 timeout;load 只等本地资源就绪。
+            pg.goto("file://" + html, wait_until="load", timeout=30000)
+        except Exception as e:
+            # 不静默吞:goto 异常打到 stderr,免得"截到半截却当成功"。
+            print(f"警告: goto 未正常完成({e}),仍尝试截图", file=sys.stderr)
+        pg.wait_for_function("() => !document.fonts || document.fonts.status === 'loaded'", timeout=15000)
+        pg.wait_for_timeout(900)   # 给 ECharts / 渐变 / 布局定帧
+        try:
+            with open(html, encoding="utf-8", errors="ignore") as _stream:
+                _html_source = _stream.read()
+            _chart_ids = sorted(set(re.findall(
+                r"echarts\.init\(\s*document\.getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)",
+                _html_source,
+            )))
+            _chart_init_count = len(re.findall(r"\becharts\.init\s*\(", _html_source))
+            if _chart_init_count:
+                _chart_audit = pg.evaluate(
+                    """payload => {
+                      const missing=payload.ids.filter(id => {
+                        const el=document.getElementById(id);
+                        if(!el || !window.echarts) return true;
+                        const graphic=el.querySelector('canvas,svg');
+                        if(!graphic) return true;
+                        const r=graphic.getBoundingClientRect();
+                        return r.width < 2 || r.height < 2;
+                      });
+                      const rendered=[...document.querySelectorAll('[_echarts_instance_]')].filter(el => {
+                        const graphic=el.querySelector('canvas,svg');
+                        if(!graphic) return false;
+                        const r=graphic.getBoundingClientRect();
+                        return r.width >= 2 && r.height >= 2;
+                      }).length;
+                      return {missing, rendered};
+                    }""",
+                    {"ids": _chart_ids, "expected": _chart_init_count},
+                ) or {}
+                runtime["charts_missing"] = list(_chart_audit.get("missing") or [])
+                if int(_chart_audit.get("rendered") or 0) < _chart_init_count:
+                    runtime["charts_missing"].append(
+                        f"rendered={int(_chart_audit.get('rendered') or 0)}/expected={_chart_init_count}"
+                    )
+        except Exception as exc:
+            runtime["page_errors"].append(f"ECharts runtime audit failed: {exc}"[:500])
+        try:
+            rep["broken"] = pg.evaluate(_BROKEN_IMAGE_JS) or []
+        except Exception:
+            rep["broken"] = []
+        try:
+            rep["overflow"] = pg.evaluate(_OVERFLOW_JS) or []
+        except Exception:
+            rep["overflow"] = []    # 检测失败绝不影响出图
+        try:
+            _c = pg.evaluate(_COLLISION_JS) or {}
+            rep["overlap"] = _c.get("overlap", []) or []
+            rep["crowded"] = _c.get("crowded", []) or []
+            rep["boxoverflow"] = _c.get("boxoverflow", []) or []
+            rep["innergap"] = _c.get("innergap", []) or []
+        except Exception:
+            pass
+        try:
+            rep["layout"] = pg.evaluate(_LAYOUT_GUARD_JS) or {}
+        except Exception:
+            pass
+        try:
+            rep["vbalance"] = pg.evaluate(_VBALANCE_JS)
+        except Exception:
+            pass
+        try:
+            rep["contrast"] = pg.evaluate(_CONTRAST_JS)
+        except Exception:
+            pass
+        try:
+            rep["cjkTypography"] = pg.evaluate(_CJK_TYPOGRAPHY_JS) or []
+        except Exception:
+            rep["cjkTypography"] = []
+        pg.screenshot(path=out)
     return rep
 
 
@@ -1463,20 +1308,12 @@ def render_batch(root, pages=None, width=1600, height=900):
         raise FileNotFoundError("no matching slides found")
     os.makedirs(os.path.join(root, "renders"), exist_ok=True)
     _setup_libs()
-    sync_playwright = _sync_playwright()
-    slot = _acquire_render_slot()
-    playwright = None
-    browser = None
     hard_pages = []
-    try:
-        playwright = _call_with_timeout(sync_playwright().start, 60, "Playwright start")
-        browser_exe = _ensure_browser_available(playwright)
-        browser = playwright.chromium.launch(executable_path=browser_exe, args=LAUNCH_ARGS)
+    with RenderSession(_sync_playwright(), _ensure_browser_available, LAUNCH_ARGS, is_fatal=_is_fatal_browser_error) as session:
         for number, slide in slides:
             target = os.path.join(root, "renders", f"slide_{number:02d}.png")
             report = _render_once(
-                playwright, os.path.abspath(slide), target, width, height,
-                browser_exe=browser_exe, browser=browser,
+                session, os.path.abspath(slide), target, width, height,
             )
             if not os.path.isfile(target) or not os.path.getsize(target):
                 raise RuntimeError(f"render produced no PNG for {os.path.basename(slide)}")
@@ -1496,13 +1333,6 @@ def render_batch(root, pages=None, width=1600, height=900):
                 + ",".join(f"{page:02d}" for page in hard_pages)
                 + "; see _trace/render-issues.json"
             )
-    finally:
-        if browser is not None:
-            browser.close()
-        if playwright is not None:
-            _stop_playwright(playwright)
-        if slot is not None:
-            _release_render_slot(slot)
 
 
 def _player_chart_targets(root):
@@ -1536,81 +1366,68 @@ def audit_player(root):
         print("player-runtime-audit:PASS charts=0")
         return
     _setup_libs()
-    sync_playwright = _sync_playwright()
-    slot = _acquire_render_slot()
-    playwright = None
-    browser = None
-    try:
-        playwright = _call_with_timeout(sync_playwright().start, 60, "Playwright start")
-        browser_exe = _ensure_browser_available(playwright)
-        browser = playwright.chromium.launch(executable_path=browser_exe, args=LAUNCH_ARGS)
-        page = browser.new_page(viewport={"width": 1600, "height": 900})
-        page_errors = []
-        script_failures = []
-        page.on("pageerror", lambda error: page_errors.append(str(error)[:500]))
+    with RenderSession(_sync_playwright(), _ensure_browser_available, LAUNCH_ARGS, is_fatal=_is_fatal_browser_error) as session:
+        with session.page(1600, 900, scale=1) as page:
+            page_errors = []
+            script_failures = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)[:500]))
 
-        def failed(request):
-            try:
-                if request.resource_type == "script":
-                    script_failures.append(request.url)
-            except Exception:
-                pass
+            def failed(request):
+                try:
+                    if request.resource_type == "script":
+                        script_failures.append(request.url)
+                except Exception:
+                    pass
 
-        page.on("requestfailed", failed)
-        page.goto("file://" + present, wait_until="load", timeout=30000)
-        failures = []
-        for number, ids, expected in targets:
-            page.evaluate("n => window.cleanDeck.go(n)", number)
-            page.wait_for_function(
-                "n => { const f=document.querySelector(`iframe[data-slide=\"${n}\"]`); "
-                "return f && f.dataset.ok === '1'; }",
-                arg=number,
-                timeout=10000,
-            )
-            handle = page.query_selector(f'iframe[data-slide="{number}"]')
-            frame = handle.content_frame() if handle else None
-            if frame is None:
-                failures.append(f"slide_{number:02d}: iframe unavailable")
-                continue
-            result = frame.evaluate(
-                """payload => {
-                  const missing=payload.ids.filter(id => {
-                    const el=document.getElementById(id);
-                    if(!el || !window.echarts) return true;
-                    const graphic=el.querySelector('canvas,svg');
-                    if(!graphic) return true;
-                    const r=graphic.getBoundingClientRect();
-                    return r.width < 2 || r.height < 2;
-                  });
-                  const rendered=[...document.querySelectorAll('[_echarts_instance_]')].filter(el => {
-                    const graphic=el.querySelector('canvas,svg');
-                    if(!graphic) return false;
-                    const r=graphic.getBoundingClientRect();
-                    return r.width >= 2 && r.height >= 2;
-                  }).length;
-                  return {missing,rendered};
-                }""",
-                {"ids": ids, "expected": expected},
-            ) or {}
-            if result.get("missing") or int(result.get("rendered") or 0) < expected:
-                failures.append(
-                    f"slide_{number:02d}: missing={result.get('missing') or []} "
-                    f"rendered={int(result.get('rendered') or 0)}/expected={expected}"
+            page.on("requestfailed", failed)
+            page.goto("file://" + present, wait_until="load", timeout=30000)
+            failures = []
+            for number, ids, expected in targets:
+                session.renew_page_deadline()
+                page.evaluate("n => window.cleanDeck.go(n)", number)
+                page.wait_for_function(
+                    "n => { const f=document.querySelector(`iframe[data-slide=\"${n}\"]`); "
+                    "return f && f.dataset.ok === '1'; }",
+                    arg=number,
+                    timeout=10000,
                 )
-        if script_failures:
-            failures.append("failed scripts: " + ", ".join(sorted(set(script_failures))[:8]))
-        if page_errors:
-            failures.append("page errors: " + " | ".join(page_errors[:8]))
-        if failures:
-            raise RuntimeError("canonical player runtime audit failed: " + "; ".join(failures))
-        print(f"player-runtime-audit:PASS charts={sum(expected for _, _, expected in targets)}")
-    finally:
-        if browser is not None:
-            browser.close()
-        if playwright is not None:
-            _stop_playwright(playwright)
-        if slot is not None:
-            _release_render_slot(slot)
+                handle = page.query_selector(f'iframe[data-slide="{number}"]')
+                frame = handle.content_frame() if handle else None
+                if frame is None:
+                    failures.append(f"slide_{number:02d}: iframe unavailable")
+                    continue
+                result = frame.evaluate(
+                    """payload => {
+                      const missing=payload.ids.filter(id => {
+                        const el=document.getElementById(id);
+                        if(!el || !window.echarts) return true;
+                        const graphic=el.querySelector('canvas,svg');
+                        if(!graphic) return true;
+                        const r=graphic.getBoundingClientRect();
+                        return r.width < 2 || r.height < 2;
+                      });
+                      const rendered=[...document.querySelectorAll('[_echarts_instance_]')].filter(el => {
+                        const graphic=el.querySelector('canvas,svg');
+                        if(!graphic) return false;
+                        const r=graphic.getBoundingClientRect();
+                        return r.width >= 2 && r.height >= 2;
+                      }).length;
+                      return {missing,rendered};
+                    }""",
+                    {"ids": ids, "expected": expected},
+                ) or {}
+                if result.get("missing") or int(result.get("rendered") or 0) < expected:
+                    failures.append(
+                        f"slide_{number:02d}: missing={result.get('missing') or []} "
+                        f"rendered={int(result.get('rendered') or 0)}/expected={expected}"
+                    )
+            if script_failures:
+                failures.append("failed scripts: " + ", ".join(sorted(set(script_failures))[:8]))
+            if page_errors:
+                failures.append("page errors: " + " | ".join(page_errors[:8]))
+            if failures:
+                raise RuntimeError("canonical player runtime audit failed: " + "; ".join(failures))
+            print(f"player-runtime-audit:PASS charts={sum(expected for _, _, expected in targets)}")
 
 
 def _batch_cli(argv):
@@ -1620,20 +1437,12 @@ def _batch_cli(argv):
     parser.add_argument("--width", type=int, default=1600)
     parser.add_argument("--height", type=int, default=900)
     args = parser.parse_args(argv)
-    last_error = None
-    for attempt in range(2):
-        try:
-            render_batch(args.root, args.pages, args.width, args.height)
-            return 0
-        except (BrowserUnavailable, RenderQualityError) as exc:
-            print(f"batch render failed: {exc}", file=sys.stderr)
-            return 1
-        except Exception as exc:
-            last_error = exc
-            if attempt == 0:
-                time.sleep(1.5)
-    print(f"batch render failed after retry: {last_error}", file=sys.stderr)
-    return 1
+    try:
+        render_batch(args.root, args.pages, args.width, args.height)
+    except (BrowserUnavailable, RenderQualityError) as exc:
+        print(f"batch render failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main():
@@ -1643,9 +1452,8 @@ def main():
             raise SystemExit(2)
         try:
             audit_player(sys.argv[2])
-        except Exception as exc:
-            print(f"player runtime audit failed: {exc}", file=sys.stderr)
-            raise SystemExit(1)
+        except Exception:
+            raise
         return
     if len(sys.argv) >= 2 and sys.argv[1] == "--batch":
         raise SystemExit(_batch_cli(sys.argv[2:]))
@@ -1677,23 +1485,15 @@ def main():
 
     _setup_libs()
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    sync_playwright = _sync_playwright()
-    last_err = None
-    # 全局并发 chromium 上限:整个渲染(含 3 次重试)期间持一个 flock 槽;进程任何方式退出都释放。
-    _slot_fd = _acquire_render_slot()
-    if _slot_fd is not None:
-        _atexit.register(_release_render_slot, _slot_fd)
-    for attempt in range(3):                 # 高并发下 chromium 偶发崩(TargetClosed),重试 + 退避
-        p = None
+    # A complete attempt is supervised externally; retries require verified cleanup.
+    for attempt in range(1):
         try:
             rep = {"broken": [], "overflow": [], "overlap": [], "crowded": [], "boxoverflow": [], "innergap": [], "vbalance": None, "layout": {}}
-            p = _call_with_timeout(sync_playwright().start, 60, "Playwright start")
-            browser_exe = _ensure_browser_available(p)
-            rep = _render_once(p, html, out, w, h, browser_exe)
+            with RenderSession(_sync_playwright(), _ensure_browser_available, LAUNCH_ARGS, is_fatal=_is_fatal_browser_error) as session:
+                rep = _render_once(session, html, out, w, h)
             if os.path.exists(out) and os.path.getsize(out) > 0:
                 print(out)
-                print("✓ RENDER_OK: PNG 已生成。若上面有 greenlet/字体/CDN 等 stderr 警告,均为无害噪声——"
-                      "环境已就绪,**切勿 pip install / 重装或调试 playwright/chromium**;有问题只改 HTML。")
+                print("✓ RENDER_OK: PNG 已生成；质量结论以本次诊断报告和退出码为准。")
                 broken = rep.get("broken") or []
                 if broken:
                     print("⚠ BROKEN-IMAGE: %d 个 img 未加载或自然尺寸为 0——修正本地路径/文件后重渲:" % len(broken))
@@ -1894,15 +1694,14 @@ def main():
         except BrowserUnavailable as e:
             print(f"渲染失败:{e}", file=sys.stderr)
             sys.exit(1)
-        except Exception as e:
-            last_err = e
-        finally:
-            if p is not None:
-                _stop_playwright(p)
-        time.sleep(1.5 * (attempt + 1))      # 退避,顺带错峰,缓解 sibling 同时起 chromium
-    print(f"渲染失败(重试 3 次): {last_err}", file=sys.stderr)
+        except Exception:
+            raise
+    print("渲染失败: 未生成有效 PNG", file=sys.stderr)
     sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
+        main()
+    else:
+        raise SystemExit(supervise(__file__, sys.argv[1:]))

@@ -470,14 +470,9 @@ def _validate_runtime_dependencies(root: Path, expected: int | None = None) -> N
 
 def _validate_player_runtime(root: Path) -> None:
     render = Path(__file__).resolve().parent / "render.py"
-    proc = subprocess.run(
-        [sys.executable, str(render), "--audit-player", str(root)],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        timeout=180,
-        check=False,
-    )
+    from render_runtime import run_renderer
+
+    proc = run_renderer(render, ["--audit-player", str(root)], timeout=180)
     if proc.returncode:
         detail = (proc.stderr or proc.stdout or f"exit={proc.returncode}").strip()
         raise ValueError(detail[-1600:])

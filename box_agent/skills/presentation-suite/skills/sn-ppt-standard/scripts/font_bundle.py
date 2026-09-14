@@ -841,14 +841,9 @@ def render_all(root: Path) -> None:
     """Re-render every slide with one shared Chromium process."""
     root = root.resolve()
     renderer = Path(__file__).resolve().with_name("render.py")
-    result = subprocess.run(
-        [sys.executable, str(renderer), "--batch", str(root)],
-        cwd=root,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=600,
-    )
+    from render_runtime import run_renderer
+
+    result = run_renderer(renderer, ["--batch", str(root)], timeout=600)
     if result.returncode:
         detail = (result.stderr or result.stdout or "batch render failed")[-1600:]
         raise RuntimeError(f"portable-font batch render failed: {detail}")

@@ -13,6 +13,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+import runpy
 import subprocess
 import tempfile
 
@@ -27,7 +28,8 @@ OVERLAYS = ["metadata.user_visible=false", "metadata.allow_override=false",
             "entry-two-outputs", "story-two-outputs", "doctor-shipped-backends",
             "remove-image-only-output-policy", "legacy-static-task-resume",
             "dazzle-box-native-tools", "bundle-third-party-notices",
-            "static-player-delivery-gate", "design-mode-delivery-wording"]
+            "static-player-delivery-gate", "design-mode-delivery-wording",
+            "owned-renderer-lifecycle"]
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "box_agent/skills/presentation-suite"
 LICENSE_INPUT_PATH = "scripts/presentation_suite_licenses/echarts-5.5.0"
 LICENSE_INPUT_DIR = Path(__file__).resolve().parents[1] / LICENSE_INPUT_PATH
@@ -39,6 +41,8 @@ LICENSE_INPUT_HASHES = {
     "NOTICE": "fa99ac3af859d0e13166906dc53a73ad34a08898da7e8ae83407275496e9e30c",
     "licenses/LICENSE-d3": "e1211892da0b0e0585b7aebe8f98c1274fba15bafe47fa1f4ee8a7a502c06304",
 }
+RUNTIME_INPUT_DIR = Path(__file__).resolve().parent / "presentation_suite_overlays"
+_render_lifecycle_overlay = runpy.run_path(str(RUNTIME_INPUT_DIR / "render_lifecycle.py"))["apply"]
 
 
 def _apply_host_metadata(data: bytes) -> bytes:
@@ -82,6 +86,7 @@ def _replace_section(text: str, start: str, end: str, replacement: str) -> str:
 
 def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
     """Keep upstream production methods, adapting only the shipped route closure."""
+    data = _render_lifecycle_overlay(relative, data)
     if relative == "skills/sn-ppt-standard/assets/vendor/echarts.min.js":
         if not re.search(rb'\.version=["\']5\.5\.0["\']', data):
             raise ValueError("ECharts runtime version needs review against pinned license inputs")
@@ -316,6 +321,20 @@ def sync_suite(source_checkout: Path, revision: str, output_dir: Path = OUTPUT_D
                 "source_path": relative, "source_sha256": expected_sha256,
                 "sha256": expected_sha256,
             }
+        runtime_relative = "skills/sn-ppt-standard/scripts/render_runtime.py"
+        runtime_data = (RUNTIME_INPUT_DIR / "render_runtime.py").read_bytes()
+        runtime_target = staged / runtime_relative
+        if runtime_target.exists():
+            raise ValueError("render lifecycle input needs review: upstream supplies runtime helper")
+        runtime_target.parent.mkdir(parents=True, exist_ok=True)
+        runtime_target.write_bytes(runtime_data)
+        runtime_target.chmod(0o644)
+        runtime_hash = hashlib.sha256(runtime_data).hexdigest()
+        provenance["files"][runtime_relative] = {
+            "input_path": "scripts/presentation_suite_overlays/render_runtime.py",
+            "source_path": runtime_relative, "source_sha256": runtime_hash,
+            "sha256": runtime_hash,
+        }
         required = [f"skills/sn-ppt-{module}/SKILL.md" for module in MODULES]
         required += ["fonts/OFL-1.1.txt", "THIRD_PARTY_NOTICES.md",
                      "skills/sn-ppt-standard/requirements.txt"]

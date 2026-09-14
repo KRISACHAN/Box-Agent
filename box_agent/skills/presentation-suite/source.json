@@ -382,12 +382,12 @@
       "source_sha256": "d24462835e40f75495833c69331f2675cff697f1fb161fdf52d1a658a197a12b"
     },
     "skills/sn-ppt-standard/requirements.txt": {
-      "sha256": "37892c704c3043c862673255a10ce6584e7a8378d2c7fcb28d6a206bdf393085",
+      "sha256": "e99da4477edfa9ac32905f515ebd468c3308d07ebe31eb2c74d7d54120c6a7b7",
       "source_path": "skills/sn-ppt-standard/requirements.txt",
       "source_sha256": "37892c704c3043c862673255a10ce6584e7a8378d2c7fcb28d6a206bdf393085"
     },
     "skills/sn-ppt-standard/scripts/deck.py": {
-      "sha256": "016cbafe55c5430c3723e25f9de34a8d13a1f3072a9cf010362d9beaf6be9dbf",
+      "sha256": "42f71d0ca543bdc25d4786abba7997361a10be6ee724edc13a8b1251e59a8234",
       "source_path": "skills/sn-ppt-standard/scripts/deck.py",
       "source_sha256": "016cbafe55c5430c3723e25f9de34a8d13a1f3072a9cf010362d9beaf6be9dbf"
     },
@@ -507,7 +507,7 @@
       "source_sha256": "72864f88a9776b7eb732228e810e8626ee98da00306ea2506efdb6feb61b3b48"
     },
     "skills/sn-ppt-standard/scripts/font_bundle.py": {
-      "sha256": "8e33b716a5430a7b209a6a504e24878bdb739f03755dc5976e76ad0108de2595",
+      "sha256": "a206af6d2c90f0802e349c9116543250d1e38ecd53e5dfa5355c3003e709fe6f",
       "source_path": "skills/sn-ppt-standard/scripts/font_bundle.py",
       "source_sha256": "8e33b716a5430a7b209a6a504e24878bdb739f03755dc5976e76ad0108de2595"
     },
@@ -517,14 +517,20 @@
       "source_sha256": "cf15ab8ee7cad3fc8202ee125dc893555d60aa9f048405241851f0282c811fa6"
     },
     "skills/sn-ppt-standard/scripts/install.sh": {
-      "sha256": "0841090b40eab67ee3c6084f83f933554838b952ed9c1d5ed800806e2ac25db9",
+      "sha256": "544c05f991795e45a40cb3ae8f32e19da176386504db65cf5efd453eb26a46d1",
       "source_path": "skills/sn-ppt-standard/scripts/install.sh",
       "source_sha256": "0841090b40eab67ee3c6084f83f933554838b952ed9c1d5ed800806e2ac25db9"
     },
     "skills/sn-ppt-standard/scripts/render.py": {
-      "sha256": "ef67a08f244cc2ac507bb4ebd5ebcd4dc1a09ef0538d70bc39f8aa1de4dc9069",
+      "sha256": "27e357740670f01035e565682bc35c929f49e375629a9422baa04ea2ccfc9661",
       "source_path": "skills/sn-ppt-standard/scripts/render.py",
       "source_sha256": "ef67a08f244cc2ac507bb4ebd5ebcd4dc1a09ef0538d70bc39f8aa1de4dc9069"
+    },
+    "skills/sn-ppt-standard/scripts/render_runtime.py": {
+      "input_path": "scripts/presentation_suite_overlays/render_runtime.py",
+      "sha256": "8a14b6f96e8affbaa099e6cc686b81dd7396a0cf02449afa2e8eaeb8530c1d24",
+      "source_path": "skills/sn-ppt-standard/scripts/render_runtime.py",
+      "source_sha256": "8a14b6f96e8affbaa099e6cc686b81dd7396a0cf02449afa2e8eaeb8530c1d24"
     },
     "skills/sn-ppt-standard/scripts/serper_images.py": {
       "sha256": "c9c6e1b0864b628cc09fd5a36d7b28e4765b9ee2a1fe2501c2a927e9bc114a55",
@@ -612,7 +618,8 @@
     "dazzle-box-native-tools",
     "bundle-third-party-notices",
     "static-player-delivery-gate",
-    "design-mode-delivery-wording"
+    "design-mode-delivery-wording",
+    "owned-renderer-lifecycle"
   ],
   "repository": "https://gitlab.sh.sensetime.com/stc-fvg/sensenova-presentation-int.git",
   "revision": "e187295633eb4cb201e6a2a5a206a419eb79990a",
