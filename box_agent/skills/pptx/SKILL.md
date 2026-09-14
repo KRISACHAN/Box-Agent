@@ -1,7 +1,7 @@
 ---
 name: pptx
 displayName: PPT 制作
-description: Use when creating, editing, or resuming PPT/PPTX presentations or static/animated HTML slide decks. 适用于制作、修改、续做 PPT、幻灯片、汇报、路演和演示文稿，包括模板套用、自由设计和全生图页面。
+description: Use when creating, editing, or resuming PPT/PPTX presentations or static/animated HTML slide decks. PPT 制作统一入口；适用于制作、修改、续做 PPT、幻灯片、汇报、路演和演示文稿，包括模板套用、自由设计和全生图页面。
 keywords: [ppt, pptx, slides, deck, presentation, powerpoint, 做ppt, 幻灯片, 演示文稿, 汇报, 路演, 快速模式, 创意模式, 静态ppt, 动态ppt]
 capabilities: [presentation.authoring]
 metadata:

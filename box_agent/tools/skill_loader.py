@@ -31,6 +31,8 @@ SKILL_USAGE_GUIDANCE = (
     "When the user names a Skill or the task clearly matches an available Skill, read its "
     "full instructions with get_skill before planning, delegating, or authoring. A complete "
     "Skill reference already supplied in context counts as read; catalog metadata alone does not. "
+    "When several Skills cover a task and the user has not selected one, read the workflow "
+    "entry before its backend methods and let it route the task. "
     "When using a Skill, follow its applicable workflow, required reference files and verification, "
     "consistent with the user request and permissions. If a required step is blocked, use an "
     "available permitted recovery or report it as incomplete; do not treat required steps as optional. "
