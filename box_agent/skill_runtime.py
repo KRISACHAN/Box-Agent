@@ -108,6 +108,13 @@ class SkillRuntime:
             name = metadata.get("name")
             if not isinstance(name, str) or metadata.get("kind") != "runtime_skill_instructions":
                 continue
+            # ``reason`` is billing/provenance metadata and is intentionally
+            # omitted from the model-visible reference header.  Recover it
+            # from the current explicit selection when acknowledging the
+            # durable runtime message.
+            if name in self.state.selected:
+                metadata = dict(metadata)
+                metadata["reason"] = "explicit"
             snapshot = SkillReferenceSnapshot(
                 name=name,
                 source=str(metadata.get("source", "unknown")),

@@ -158,6 +158,25 @@ class DefaultContextEngine:
             on_committed = projection.on_committed
             on_response = projection.on_response
             self._request_reference_tokens = projection.input_tokens
+            # Materialized Skill messages are durable history, but their
+            # delivery facts must not be acknowledged until the kernel has
+            # committed the request/context record.  This keeps ACP usage
+            # attribution correct while leaving cancelled or blocked requests
+            # unacknowledged.
+            acknowledge = getattr(
+                self.references.runtime,
+                "acknowledge_pending_materialized",
+                None,
+            )
+            if callable(acknowledge):
+                previous_on_committed = on_committed
+
+                def commit_materialized() -> None:
+                    if previous_on_committed is not None:
+                        previous_on_committed()
+                    acknowledge()
+
+                on_committed = commit_materialized
         if (not blocked_reason and base_input_tokens + self._request_reference_tokens > token_limit):
             blocked_reason = "Model input exceeds the safe context budget. Compact context before retrying."
             budget_blocked = True

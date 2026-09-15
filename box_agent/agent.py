@@ -26,6 +26,7 @@ from .events import (
     DoneEvent,
     ErrorEvent,
     InjectedMessageEvent,
+    LLMOutputEvent,
     LogFileEvent,
     MemoryProposalEvent,
     PermissionRequestEvent,
@@ -1176,6 +1177,20 @@ class Agent:
         events = run_agent_loop(**run_arguments)
         try:
             async for event in events:
+                # LLMOutputEvent is emitted only after the kernel has flushed
+                # request/context and invoked the projection commit callback.
+                # Acknowledge materialized Skill messages at this boundary so
+                # ACP can attribute preloaded usage before it handles the
+                # response, while cancelled or blocked requests remain
+                # unacknowledged.
+                if isinstance(event, LLMOutputEvent):
+                    acknowledge = getattr(
+                        self.skill_runtime,
+                        "acknowledge_pending_materialized",
+                        None,
+                    )
+                    if callable(acknowledge):
+                        acknowledge()
                 if self.session_log is not None and session_turn is not None:
                     if isinstance(event, (ContentEvent, ThinkingEvent)):
                         self.session_log.append(
