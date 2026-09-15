@@ -1,13 +1,14 @@
 """C1 characterization of the pre-Engine setup and Agent tool contract.
 
 The fixed C1/C5 fixtures remain intact. Enumerated C5 changes, session-cwd
-description changes and the connector search extension are applied before exact comparisons.
+descriptions, PPT entry contracts and connector search apply before exact comparisons.
 Network/runtime discovery is isolated; setup, tools, stores and Agent are real.
 """
 
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -77,6 +78,9 @@ _C5_SCHEMA_CHANGES = json.loads(
 )
 _CWD_SCHEMA_CHANGES = json.loads(
     (Path(__file__).parent / "fixtures/tool_engine/session_cwd_schema_changes.json").read_text()
+)
+_PPTX_ENTRY_SCHEMA_CHANGES = json.loads(
+    (Path(__file__).parent / "fixtures/tool_engine/pptx_entry_schema_changes.json").read_text()
 )
 _CONNECTOR_SEARCH_SCHEMA = json.loads(
     (Path(__file__).parent / "fixtures/tool_engine/connector_search_schema.json").read_text(
@@ -236,7 +240,7 @@ def _normalized_schema(schema, profile):
 def _assert_schema_contract(tools, profile, *, child_read_tools=()):
     expected = json.loads(_SCHEMA_FIXTURE.read_text(encoding="utf-8"))["tools"]
     # Preserve the old fixture and enumerate the Skill Engine's public additions.
-    expected["list_skills"] = _LIST_SKILLS_SCHEMA
+    expected["list_skills"] = deepcopy(_LIST_SKILLS_SCHEMA)
     expected["get_skill"]["schema"]["description"] = (
         "Read a Skill's method and resource paths. Follow next_offset with the returned revision "
         "when paged. Read required_skills before their steps; related_skills are optional. "
@@ -264,7 +268,10 @@ def _assert_schema_contract(tools, profile, *, child_read_tools=()):
             entry["aliases"] = _C5_SCHEMA_CHANGES["aliases"][tool.name]
         if tool.name in _C5_SCHEMA_CHANGES["descriptions"]:
             entry["schema"]["description"] = _C5_SCHEMA_CHANGES["descriptions"][tool.name]
-        for change in _CWD_SCHEMA_CHANGES.get(tool.name, ()):
+        for change in (
+            *_CWD_SCHEMA_CHANGES.get(tool.name, ()),
+            *_PPTX_ENTRY_SCHEMA_CHANGES.get(tool.name, ()),
+        ):
             target = entry["schema"]
             *parents, field = change["path"]
             for key in parents:

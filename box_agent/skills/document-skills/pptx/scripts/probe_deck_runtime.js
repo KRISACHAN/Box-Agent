@@ -409,6 +409,10 @@ async function probeToolbarMenuTrajectory(page, menuName) {
   await page.mouse.move(8, 8);
   await page.waitForTimeout(220);
   await trigger.hover();
+  // Sample the resting menu bounds, not its animated opening position.
+  await menu.evaluate(async element => {
+    await Promise.all(element.getAnimations().map(animation => animation.finished));
+  });
   const triggerBox = await trigger.boundingBox();
   const menuBox = await menu.boundingBox();
   if (!triggerBox || !menuBox) {

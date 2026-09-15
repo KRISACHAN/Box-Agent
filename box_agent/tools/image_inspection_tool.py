@@ -67,7 +67,12 @@ class ImageInspectionTool(Tool):
         self._perm = permission_engine
         self.native_supported = native_supported
         self._native_capability_llm = native_capability_llm
+        self._thinking_enabled = False
         self._unsupported_error: str | None = None
+
+    def set_thinking_enabled(self, enabled: bool) -> None:
+        """Use the parent session's thinking choice for proxy requests."""
+        self._thinking_enabled = enabled
 
     @property
     def name(self) -> str:
@@ -205,7 +210,12 @@ class ImageInspectionTool(Tool):
         ]
         try:
             response = await asyncio.wait_for(
-                self.llm.generate(messages=messages, tools=None, call_kind="utility"),
+                self.llm.generate(
+                    messages=messages,
+                    tools=None,
+                    thinking_enabled=self._thinking_enabled,
+                    call_kind="utility",
+                ),
                 timeout=_IMAGE_INSPECTION_TIMEOUT,
             )
         except asyncio.TimeoutError:
