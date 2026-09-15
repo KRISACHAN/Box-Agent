@@ -2216,6 +2216,12 @@ async def test_acp_explicit_missing_required_diagnostic_does_not_report_successf
     session = await adapter.newSession(SimpleNamespace(cwd=None, field_meta={"session_mode": "general"}))
     await adapter.prompt(SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "/parent proceed"}]))
     assert llm.calls and all("NEVER_DELIVER_PARENT_BODY" not in str(c) for _, c in llm.calls[0])
+    diagnostic_contents = [
+        str(content)
+        for role, content in llm.calls[0]
+        if role == "user" and "runtime_skill_diagnostic" in str(content)
+    ]
+    assert diagnostic_contents and '"code": "SKILL_NOT_FOUND"' in diagnostic_contents[0]
     payloads = [u.update.rawOutput for u in conn.updates if isinstance(getattr(u.update, "rawOutput", None), dict)]
     assert not any(p.get("type") == "skills_usage" for p in payloads)
     assert all(p.get("skillInvocations", []) == [] for p in payloads if p.get("type") == "turn_usage")
