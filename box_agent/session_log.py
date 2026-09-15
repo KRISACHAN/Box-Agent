@@ -653,6 +653,7 @@ class SessionLog:
             live_payloads[len(persisted_payloads) :],
         ):
             if message.role == "user":
+                payload["source"] = message.source
                 appended.append(
                     self.append(
                         "user/message",
@@ -727,6 +728,7 @@ class SessionLog:
     ) -> dict[str, Any]:
         payload = message.model_dump(mode="json", exclude_none=True)
         if message.role == "user":
+            payload["source"] = message.source
             return self.append(
                 "user/message",
                 payload,

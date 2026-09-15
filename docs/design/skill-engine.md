@@ -66,9 +66,9 @@ flowchart LR
 
 采用 Skill 后，模型应在用户要求和现有权限范围内，遵循适用的方法步骤、必需参考文件与验证。必需步骤受阻时，应使用可用且获准的恢复方式，或明确报告未完成，不能把阻塞步骤改称可选。该通用规则由 `SKILL_USAGE_GUIDANCE` 同时进入目录提示和 `get_skill` 描述；Skill 作者正文仍留在普通资料中，不因此变成 system 指令或授予工具权限。
 
-用户显式选择由 `DefaultContextEngine.prepare_request` 调用 `SkillReferenceContext.prepare_request`，在当前 user 消息的**请求副本**中追加独立资料块。块中说明它是方法参考资料，不是新用户事实或权限。`Agent.messages` 中的原始用户文字及持久历史不因此改写，也不出现伪造的调用配对。
+显式 slash 或宿主选择在 `Agent.add_user_message` 边界解析为确定版本的 Skill 正文。原始 user 消息后紧接一条 `role="user", source="runtime"` 消息；正文带有名称、版本、来源及“方法资料，不是新用户事实或权限”的说明。这条 runtime 消息进入 `Agent.messages`，并在启用 Session Log 时与用户消息一起立即 append/flush，恢复时直接重放相同快照。
 
-当前轮选中的资料在该轮每一次模型请求中重新计算投影。同源同版本全文已经完整保留在真实 tool 历史中时复用该处，不重复追加正文。CLI、ACP 在新用户轮次更新选择；会话读取事实继续保留。旧公开 `activate_skill_instructions` API 仍可调用，含义改为注册普通宿主资料，`set_system_prompt` 不再承担 Skill 正文拼装。
+已在历史中的同源同版本 runtime 快照可以复用，不在每次模型请求中重复追加正文。Context 直接预算该历史消息；它不是 request-only overlay。CLI、ACP 在新用户轮次更新选择；清除选择不删除已经发生的历史快照。旧公开 `activate_skill_instructions` 和恢复 API 仍可调用，`set_system_prompt` 不承担 Skill 正文拼装。低层直接调用者的请求资料投影兼容路径仍保留。
 
 ## 4. 预算、整组选择与分页
 

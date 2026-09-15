@@ -56,6 +56,7 @@ from ..events import (
 from .context_engine import (
     REQUEST_INPUT_HEADROOM_TOKENS,
     _fallback_context_estimate,
+    _estimate_context_from_latest_response,
     _is_compaction_metadata,
     _validate_transient_followup_result,
 )
@@ -291,7 +292,11 @@ def _message_text(content: str | list[dict[str, Any]]) -> str:
 
 def _latest_user_text(messages: list[Message]) -> str:
     for msg in reversed(messages):
-        if msg.role == "user" and not _is_compaction_metadata(msg):
+        if (
+            msg.role == "user"
+            and msg.source == "user"
+            and not _is_compaction_metadata(msg)
+        ):
             return _message_text(msg.content)
     return ""
 
@@ -456,6 +461,7 @@ async def _auto_match_memory_for_latest_prompt(
     memory_lines = "\n".join(item["text"] for item in matches)
     memory_context = Message(
         role="user",
+        source="runtime",
         content=format_runtime_context_update(
             "## Possibly relevant memory\n"
             "The following memories were automatically matched from prior context. "
@@ -1023,7 +1029,7 @@ async def _run_agent_loop_impl(
 
     async def compact_context(history_token_limit, *, force=False, estimate_tools=None):
         """Apply one compaction through the same durable surface/event path."""
-        nonlocal summary_failure_cooldown_steps
+        nonlocal api_total_tokens, api_prompt_tokens, summary_failure_cooldown_steps
         # Context may project effective rules before estimation and summary.
         # Older custom contexts retain the identity projection.
         project_history = getattr(context_engine, "project_history", None)
@@ -1132,6 +1138,11 @@ async def _run_agent_loop_impl(
                 error_type=result.error_type,
                 trigger_source=result.trigger_source,
             )
+            # The usage counters belong to the pre-compaction request.  The
+            # rebuilt surface has been re-based by the compact engine; until a
+            # new provider response arrives, estimate it from that surface.
+            api_total_tokens = 0
+            api_prompt_tokens = 0
         return result, event
 
     for step in range(max_steps):
@@ -1184,7 +1195,7 @@ async def _run_agent_loop_impl(
                     else format_injected_message(injected_text)
                 )
                 messages.append(
-                    Message(role="user", content=formatted_injection)
+                    Message(role="user", source=injection_source, content=formatted_injection)
                 )
                 yield InjectedMessageEvent(
                     content=injected_text,
@@ -1210,7 +1221,7 @@ async def _run_agent_loop_impl(
                 else _FORCED_PLAN_GUIDANCE
             )
             messages.append(
-                Message(role="user", content=format_injected_message(guidance))
+                Message(role="user", source="runtime", content=format_injected_message(guidance))
             )
             yield InjectedMessageEvent(
                 content=guidance,
@@ -1235,7 +1246,7 @@ async def _run_agent_loop_impl(
             yield PlanSnapshotEvent(payload=_plan_start_payload(approval))
 
         for guidance in tool_engine.budget_guidance():
-            messages.append(Message(role="user", content=format_injected_message(guidance)))
+            messages.append(Message(role="user", source="runtime", content=format_injected_message(guidance)))
             yield InjectedMessageEvent(content=guidance, injection_id=None, user_visible=False)
 
         # ── Fresh tool-result aggregate budget (Layer 1) ───
@@ -1255,7 +1266,12 @@ async def _run_agent_loop_impl(
                 budget_outcome.remaining_chars,
                 result_storage.aggregate_budget,
             )
-        # ── Usage-driven context summarization (Layer 2) ───
+        # ── Context preparation and usage-driven summarization (Layer 2) ───
+        # The Context Engine owns the complete request projection (history,
+        # schemas, references, overlays, and transient input). Prepare that
+        # projection first so the compaction decision is based on the same
+        # request that would otherwise reach the provider. If compaction
+        # changes durable history, prepare the request again before sending it.
         prepared_tools = _services.tool_engine.prepare_tools(
             is_tool_visible=browser_intent_policy.is_tool_visible,
         )
@@ -1270,6 +1286,7 @@ async def _run_agent_loop_impl(
         transient_message = (
             Message(
                 role="user",
+                source="runtime",
                 content=list(pending_transient_followup_blocks),
                 trace_redact_content=True,
             )
@@ -1287,38 +1304,7 @@ async def _run_agent_loop_impl(
         if cancelled():
             yield await cancellation_done_event()
             return
-        result, summarization_event = await compact_context(
-            history_token_limit, estimate_tools=budget_tools_by_name,
-        )
-        context_compacted = result.messages is not None
-        if summarization_event is not None:
-            yield summarization_event
-        if cancelled():
-            yield await cancellation_done_event()
-            return
-        if result.blocked:
-            budget_details = {
-                "stage": "history_compaction", "totalLimitTokens": token_limit,
-                "historyLimitTokens": history_token_limit,
-                "estimatedHistoryTokens": result.estimated_after,
-                "extraInputTokens": extra_tokens, "transientInputTokens": transient_tokens,
-                "skillReferenceTokens": 0,
-            }
-            msg = (
-                "Context remains above the safe input limit after bounded compaction "
-                f"({result.estimated_after} estimated history tokens; history limit {history_token_limit}; "
-                f"total input limit {token_limit}; extra input {extra_tokens}; transient input {transient_tokens}; "
-                "Skill references not yet projected). "
-                "Start a new session or reduce active instructions/tool output before retrying."
-            )
-            if hook_mgr.hooks:
-                await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
-                await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
-            yield ErrorEvent(message=msg, is_fatal=True,
-                             error_code="CONTEXT_INPUT_BUDGET_EXCEEDED", error_category="context_length",
-                             error_details=budget_details)
-            yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
-            return
+        context_compacted = False
 
         # ── Near-limit wrap-up nudge (one-shot) ─────────────
         # Reserve the final few steps for synthesis: stop further
@@ -1332,7 +1318,7 @@ async def _run_agent_loop_impl(
             wrapup_injected = True
             wrapup_text = near_limit_wrapup_text(step, max_steps)
             messages.append(
-                Message(role="user", content=format_injected_message(wrapup_text))
+                Message(role="user", source="runtime", content=format_injected_message(wrapup_text))
             )
             yield InjectedMessageEvent(content=wrapup_text, injection_id=None, user_visible=False)
 
@@ -1349,7 +1335,7 @@ async def _run_agent_loop_impl(
             wrapup_injected = True
             stall_text = no_progress_wrapup_text(no_progress_steps)
             messages.append(
-                Message(role="user", content=format_injected_message(stall_text))
+                Message(role="user", source="runtime", content=format_injected_message(stall_text))
             )
             yield InjectedMessageEvent(content=stall_text, injection_id=None, user_visible=False)
 
@@ -1378,22 +1364,64 @@ async def _run_agent_loop_impl(
                 transient_message=transient_message,
                 transient_tokens=pending_transient_followup_tokens,
             )
-            recovery_blocked = False
-            if (projection.blocked_reason and getattr(projection, "budget_blocked", False)
-                    and not context_compacted):
-                # The final request includes schemas, overlays and guidance
-                # added after the regular history check. Retry this projection
-                # once, without replaying step hooks, tools or delivery commits.
-                result, summarization_event = await compact_context(
-                    max(1, token_limit - extra_tokens - transient_tokens - REQUEST_INPUT_HEADROOM_TOKENS),
-                    force=True, estimate_tools=budget_tools_by_name,
+            # A blocked projection means the complete request is over budget.
+            # Compact at a slightly tighter history limit to leave room for
+            # provider-side framing, then always rebind/reproject the live
+            # history before deciding whether to call the provider.
+            projection_budget_blocked = bool(
+                projection.blocked_reason
+                and getattr(projection, "budget_blocked", False)
+            )
+            estimated_history, _ = _estimate_context_from_latest_response(
+                messages,
+                budget_tools_by_name,
+                api_total_tokens=api_total_tokens,
+                api_prompt_tokens=api_prompt_tokens,
+            )
+            # Invoke the replaceable compaction policy only after the complete
+            # request has been prepared. It performs the cheap no-op decision
+            # when under budget; a projection-only overflow forces one bounded
+            # recovery pass so the request can then be prepared again.
+            force_compaction = projection_budget_blocked and estimated_history < history_token_limit
+            compaction_limit = (
+                max(1, history_token_limit - REQUEST_INPUT_HEADROOM_TOKENS)
+                if force_compaction else history_token_limit
+            )
+            result, summarization_event = await compact_context(
+                compaction_limit,
+                force=force_compaction,
+                estimate_tools=budget_tools_by_name,
+            )
+            context_compacted = result.messages is not None
+            if summarization_event is not None:
+                yield summarization_event
+            if cancelled():
+                yield await cancellation_done_event()
+                return
+            if result is not None and result.blocked:
+                budget_details = {
+                    "stage": "history_compaction", "totalLimitTokens": token_limit,
+                    "historyLimitTokens": compaction_limit,
+                    "estimatedHistoryTokens": result.estimated_after,
+                    "extraInputTokens": extra_tokens, "transientInputTokens": transient_tokens,
+                    "skillReferenceTokens": 0,
+                }
+                msg = (
+                    "Context remains above the safe context budget after bounded compaction "
+                    f"({result.estimated_after} estimated history tokens; history limit {compaction_limit}; "
+                    f"total input limit {token_limit}; extra input {extra_tokens}; transient input {transient_tokens}; "
+                    "Skill references not yet projected). "
+                    "Start a new session or reduce active instructions/tool output before retrying."
                 )
-                if summarization_event is not None:
-                    yield summarization_event
-                if cancelled():
-                    yield await cancellation_done_event()
-                    return
-                recovery_blocked = result.blocked
+                if hook_mgr.hooks:
+                    await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
+                    await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
+                yield ErrorEvent(message=msg, is_fatal=True,
+                                 error_code="CONTEXT_INPUT_BUDGET_EXCEEDED", error_category="context_length",
+                                 error_details=budget_details)
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
+            if context_compacted:
                 # Rebinding is mandatory: persistent read facts do not prove
                 # the corresponding tool text survived compaction.
                 projection = context_engine.prepare_request(
@@ -1403,7 +1431,7 @@ async def _run_agent_loop_impl(
                     transient_message=transient_message,
                     transient_tokens=pending_transient_followup_tokens,
                 )
-            if projection.blocked_reason or recovery_blocked:
+            if projection.blocked_reason:
                 msg = projection.blocked_reason or "Context remains above the safe input limit after bounded compaction."
                 if hook_mgr.hooks:
                     await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
@@ -1419,6 +1447,20 @@ async def _run_agent_loop_impl(
             on_response_received = getattr(projection, "on_response", None)
         else:
             # Legacy manually constructed service bundles may omit Context.
+            # Keep the historical estimate-driven compaction path for those
+            # bundles; the canonical path above is prepare-first.
+            result, summarization_event = await compact_context(
+                history_token_limit, estimate_tools=budget_tools_by_name,
+            )
+            context_compacted = result.messages is not None
+            if summarization_event is not None:
+                yield summarization_event
+            if result.blocked:
+                msg = "Context remains above the safe context budget after bounded compaction."
+                yield ErrorEvent(message=msg, is_fatal=True,
+                                 error_code="CONTEXT_INPUT_BUDGET_EXCEEDED", error_category="context_length")
+                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
+                return
             request_messages = [*messages, *request_context_messages]
             provider_request_messages = ([*request_messages, transient_message]
                                          if transient_message is not None else request_messages)
@@ -1460,29 +1502,31 @@ async def _run_agent_loop_impl(
                     },
                 },
             )
-            session_log.append(
-                "request/context",
-                {
-                    "turn": session_turn,
-                    "step": step + 1,
-                    "provider": request_provider,
-                    "model": request_model,
-                    "tokenLimit": token_limit,
-                    "skillReferences": list(skill_references),
-                    **(
-                        {
-                            "autoMemoryContext": {
-                                "sha256": hashlib.sha256(
-                                    str(auto_memory_context_message.content).encode("utf-8")
-                                ).hexdigest(),
-                                "chars": len(str(auto_memory_context_message.content)),
-                            }
+            request_context = {
+                "turn": session_turn,
+                "step": step + 1,
+                "provider": request_provider,
+                "model": request_model,
+                "tokenLimit": token_limit,
+                **(
+                    {
+                        "autoMemoryContext": {
+                            "sha256": hashlib.sha256(
+                                str(auto_memory_context_message.content).encode("utf-8")
+                            ).hexdigest(),
+                            "chars": len(str(auto_memory_context_message.content)),
                         }
-                        if auto_memory_context_message is not None
-                        else {}
-                    ),
-                },
-            )
+                    }
+                    if auto_memory_context_message is not None
+                    else {}
+                ),
+            }
+            # Explicit selections are durable runtime messages. Keep the
+            # legacy side-channel only for request-only/on-demand snapshots;
+            # emitting an empty field would falsely suggest dual persistence.
+            if skill_references:
+                request_context["skillReferences"] = list(skill_references)
+            session_log.append("request/context", request_context)
             session_log.flush()
 
         cache_fingerprint = build_cache_fingerprint(
@@ -1609,7 +1653,7 @@ async def _run_agent_loop_impl(
                     return
                 recovery_text = repetitive_recovery.request(step=step, max_steps=max_steps)
                 if recovery_text is not None:
-                    messages.append(Message(role="user", content=recovery_text))
+                    messages.append(Message(role="user", source="runtime", content=recovery_text))
                     yield InjectedMessageEvent(content=recovery_text, injection_id=None, user_visible=False)
                     yield ProgressEvent(step=step + 1, content="模型输出异常重复，正在重新生成（1/1）。")
                     elapsed = perf_counter() - step_start
@@ -1718,7 +1762,7 @@ async def _run_agent_loop_impl(
                     return
                 recovery_text = stream_recovery.request(step=step, max_steps=max_steps)
                 if recovery_text is not None:
-                    messages.append(Message(role="user", content=recovery_text))
+                    messages.append(Message(role="user", source="runtime", content=recovery_text))
                     yield InjectedMessageEvent(
                         content=recovery_text, injection_id=None, user_visible=False,
                     )
@@ -1968,7 +2012,7 @@ async def _run_agent_loop_impl(
                     "然后校验文件。"
                 )
                 messages.append(
-                    Message(role="user", content=format_injected_message(repair_text))
+                    Message(role="user", source="runtime", content=format_injected_message(repair_text))
                 )
                 yield InjectedMessageEvent(
                     content=repair_text,
@@ -2109,7 +2153,7 @@ async def _run_agent_loop_impl(
                 truncation_continuations += 1
                 tail = response.content.rstrip()[-40:]
                 cont_text = truncation_continuation_text(tail)
-                messages.append(Message(role="user", content=cont_text))
+                messages.append(Message(role="user", source="runtime", content=cont_text))
                 yield InjectedMessageEvent(
                     content=cont_text, injection_id=None, user_visible=False,
                 )
@@ -2298,7 +2342,7 @@ async def _run_agent_loop_impl(
                 truncation_continuations += 1
                 tail = response.content.rstrip()[-40:]
                 cont_text = truncation_continuation_text(tail)
-                messages.append(Message(role="user", content=cont_text))
+                messages.append(Message(role="user", source="runtime", content=cont_text))
                 yield InjectedMessageEvent(content=cont_text, injection_id=None, user_visible=False)
                 elapsed = perf_counter() - step_start
                 total = perf_counter() - run_start
@@ -2315,7 +2359,7 @@ async def _run_agent_loop_impl(
                     empty_final_answer_retry_injected = True
                     retry_text = empty_final_answer_retry_text(visible_tool_call_total)
                     messages.append(
-                        Message(role="user", content=format_injected_message(retry_text))
+                        Message(role="user", source="runtime", content=format_injected_message(retry_text))
                     )
                     yield InjectedMessageEvent(
                         content=retry_text,
@@ -2408,7 +2452,7 @@ async def _run_agent_loop_impl(
                 )
                 continue
             if continuation is not None:
-                messages.append(Message(role="user", content=continuation.prompt))
+                messages.append(Message(role="user", source="runtime", content=continuation.prompt))
                 yield InjectedMessageEvent(
                     content=continuation.prompt,
                     injection_id=None,
@@ -2543,7 +2587,7 @@ async def _run_agent_loop_impl(
         pending_transient_followup_blocks.extend(tool_summary.transient_blocks)
         pending_transient_followup_tokens += tool_summary.transient_tokens
         if tool_summary.repair_guidance:
-            messages.append(Message(role="user", content=format_injected_message(tool_summary.repair_guidance)))
+            messages.append(Message(role="user", source="runtime", content=format_injected_message(tool_summary.repair_guidance)))
             yield InjectedMessageEvent(content=tool_summary.repair_guidance, injection_id=None, user_visible=False)
 
         if completed_turn_ending_tool is not None:
@@ -2591,7 +2635,7 @@ async def _run_agent_loop_impl(
             return
 
         if tool_summary.search_guidance:
-            messages.append(Message(role="user", content=format_injected_message(tool_summary.search_guidance)))
+            messages.append(Message(role="user", source="runtime", content=format_injected_message(tool_summary.search_guidance)))
             yield InjectedMessageEvent(content=tool_summary.search_guidance, injection_id=None, user_visible=False)
 
         if (
@@ -2603,7 +2647,7 @@ async def _run_agent_loop_impl(
                 visible_tool_call_total,
                 final_summary_after_calls,
             )
-            messages.append(Message(role="user", content=format_injected_message(summary_text)))
+            messages.append(Message(role="user", source="runtime", content=format_injected_message(summary_text)))
             yield InjectedMessageEvent(content=summary_text, injection_id=None, user_visible=False)
 
         # ── Step end ────────────────────────────────────────

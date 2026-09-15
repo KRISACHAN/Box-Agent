@@ -174,7 +174,7 @@ def has_recent_successful_browser_context(messages: Sequence[Message]) -> bool:
 
 def _latest_user_text(messages: Sequence[Message]) -> str:
     for message in reversed(messages):
-        if message.role != "user":
+        if message.role != "user" or message.source != "user":
             continue
         if isinstance(message.content, str):
             return message.content

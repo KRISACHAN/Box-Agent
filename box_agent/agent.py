@@ -8,6 +8,7 @@ giving adapters one stable entry point for configuring and running a turn.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 import logging
 import sys
@@ -25,6 +26,7 @@ from .events import (
     DoneEvent,
     ErrorEvent,
     InjectedMessageEvent,
+    LLMOutputEvent,
     LogFileEvent,
     MemoryProposalEvent,
     PermissionRequestEvent,
@@ -607,6 +609,7 @@ class Agent:
         self.session_log = session_log
         self._pending_skill_restore: list[dict[str, Any]] = []
         self._skill_persistence_pending = False
+        self._persisted_active_skill_records: list[dict[str, Any]] = []
         self.session_id = session_id.strip()
         if self.session_log is not None:
             projection = self.session_log.replay()
@@ -621,9 +624,22 @@ class Agent:
             if callable(configure_todos):
                 configure_todos(self.session_log, projection.todos)
             self.restored_skills = projection.skills
+            self._persisted_active_skill_records = deepcopy(self.restored_skills)
             if self.restored_skills:
                 try:
                     self.skill_runtime.restore_records(self.restored_skills)
+                    restored_names = {
+                        row["name"] for row in self.skill_runtime.log_records()
+                    }
+                    expected_names = {row["name"] for row in self.restored_skills}
+                    if restored_names != expected_names:
+                        # Partial ACP restoration intentionally drops records
+                        # whose source is unavailable. Preserve the historical
+                        # snapshot as the durable state; an empty runtime is
+                        # not an explicit clear operation.
+                        self._persisted_active_skill_records = deepcopy(
+                            self.skill_runtime.log_records()
+                        )
                 except SkillDependencyError as exc:
                     if exc.code != "SKILL_PROVIDER_UNAVAILABLE":
                         raise
@@ -752,10 +768,15 @@ class Agent:
             self._skill_persistence_pending = True
             records = {row["name"]: row for row in self._pending_skill_restore}
             records.update((row["name"], row) for row in self.skill_runtime.log_records())
+            ordered = sorted(records.values(), key=lambda row: row["loadOrder"])
+            if ordered == self._persisted_active_skill_records:
+                self._skill_persistence_pending = False
+                return
             self.session_log.append("skill/change", {
-                "skills": sorted(records.values(), key=lambda row: row["loadOrder"]),
+                "skills": ordered,
             })
             self.session_log.flush()
+            self._persisted_active_skill_records = deepcopy(ordered)
             self._skill_persistence_pending = False
 
     def restore_active_skill_instructions(self, skills: list[tuple[str, str, str, int]]) -> None:
@@ -778,11 +799,29 @@ class Agent:
                 "estimated_tokens": estimated, "token_budget": _ACTIVE_SKILL_TOKEN_BUDGET,
                 "budget_exceeded": estimated > _ACTIVE_SKILL_TOKEN_BUDGET}
 
-    def add_user_message(self, content: str):
-        """Add a user message to history."""
+    def add_user_message(self, content: str) -> None:
+        """Add a user message and materialize selected Skills beside it."""
         if self.goal is not None and self.goal.status == "active":
             content = self._apply_goal_context(content)
+        # Explicit slash/host selection is resolved at the message boundary.
+        # The resulting runtime message becomes ordinary durable history, so
+        # ContextEngine does not need to rediscover Skill bodies per request.
+        materialize = getattr(self.skill_runtime, "materialize_selected_messages", None)
+        materialized = materialize(self.messages) if callable(materialize) else ()
         self.messages.append(Message(role="user", content=content))
+        if materialized:
+            skill_messages = []
+            for _name, skill_content in materialized:
+                skill_messages.append(Message(role="user", source="runtime", content=skill_content))
+            self.messages.extend(skill_messages)
+            if self.session_log is not None:
+                self._persist_unlogged_messages(
+                    turn=self._next_session_turn(), step=None,
+                )
+                self.session_log.flush()
+            defer_ack = getattr(self.skill_runtime, "defer_materialized_acknowledgement", None)
+            if callable(defer_ack):
+                defer_ack(skill_messages)
 
     def seed_continuation_messages(
         self, messages: tuple[ContinuationMessage, ...]
@@ -1014,8 +1053,19 @@ class Agent:
         if self._skill_persistence_pending:
             self._persist_active_skills()
         if self._pending_skill_restore:
-            self.skill_runtime.restore_records(self._pending_skill_restore)
+            pending = self._pending_skill_restore
+            self.skill_runtime.restore_records(pending)
             self._pending_skill_restore = []
+            # ACP may deliberately drop records whose source is unavailable.
+            # That is a partial restore, not an explicit user clear; keep the
+            # historical snapshot as the durable fact instead of appending an
+            # empty replacement at END_TURN.
+            pending_names = {row["name"] for row in pending}
+            restored_names = {row["name"] for row in self.skill_runtime.log_records()}
+            if restored_names != pending_names:
+                self._persisted_active_skill_records = deepcopy(
+                    self.skill_runtime.log_records()
+                )
         self._sync_child_system_prompt()
         self.skill_runtime.begin_turn()
         effective_options = options or self.default_run_options()
@@ -1141,6 +1191,20 @@ class Agent:
         events = run_agent_loop(**run_arguments)
         try:
             async for event in events:
+                # LLMOutputEvent is emitted only after the kernel has flushed
+                # request/context and invoked the projection commit callback.
+                # Acknowledge materialized Skill messages at this boundary so
+                # ACP can attribute preloaded usage before it handles the
+                # response, while cancelled or blocked requests remain
+                # unacknowledged.
+                if isinstance(event, LLMOutputEvent):
+                    acknowledge = getattr(
+                        self.skill_runtime,
+                        "acknowledge_pending_materialized",
+                        None,
+                    )
+                    if callable(acknowledge):
+                        acknowledge()
                 if self.session_log is not None and session_turn is not None:
                     if isinstance(event, (ContentEvent, ThinkingEvent)):
                         self.session_log.append(
@@ -1180,6 +1244,16 @@ class Agent:
                             self.session_log.flush()
                             session_step_open = False
                     elif isinstance(event, DoneEvent):
+                        if event.stop_reason is StopReason.END_TURN:
+                            acknowledge = getattr(
+                                self.skill_runtime,
+                                "acknowledge_pending_materialized",
+                                None,
+                            )
+                            if callable(acknowledge):
+                                acknowledge()
+                            if self.session_log is not None:
+                                self._persist_active_skills()
                         self._persist_unlogged_messages(
                             turn=session_turn,
                             step=session_step,

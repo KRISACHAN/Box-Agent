@@ -2537,7 +2537,7 @@ async def run_agent(
                                 print(f"{Colors.DIM}用法: /memory review — 审阅可升级到核心记忆的候选条目{Colors.RESET}\n")
                             continue
 
-                        else:
+                        elif resolve_explicit_skill_invocation(agent_session.skill_loader, user_input) is None:
                             print(f"{Colors.RED}❌ Unknown command: {user_input}{Colors.RESET}")
                             print(f"{Colors.DIM}Type /help to see available commands{Colors.RESET}\n")
                             continue

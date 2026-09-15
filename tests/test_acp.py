@@ -2094,10 +2094,13 @@ async def test_acp_skill_selection_is_ordinary_reference_not_automatic_system_bo
     assert len(supplied) == (1 if selection else 0)
     if supplied:
         assert supplied[0][0] == "user"
-        assert "Host-provided Skill reference" in str(supplied[0][1])
+        assert "[Skill reference]" in str(supplied[0][1])
+        assert '"kind": "runtime_skill_instructions"' in str(supplied[0][1])
     state = adapter._sessions[session.sessionId]
     assert ("get_skill" in state.agent.tools) is with_skill_tool
-    assert [m.content for m in state.agent.messages if m.role == "user"] == [original + _EMPTY_CONNECTOR_CONTEXT]
+    user_messages = [m for m in state.agent.messages if m.role == "user"]
+    assert user_messages[0].content == original + _EMPTY_CONNECTOR_CONTEXT
+    assert all(message.source != "runtime" for message in user_messages[1:]) is (selection is None)
     usage = [u.update.rawOutput for u in conn.updates
              if isinstance(getattr(u.update, "rawOutput", None), dict)
              and u.update.rawOutput.get("type") == "turn_usage"]
@@ -2107,7 +2110,9 @@ async def test_acp_skill_selection_is_ordinary_reference_not_automatic_system_bo
         assert usage[-1]["skillInvocations"][0]["usageRole"] == "primary"
     conn.updates.clear()
     await adapter.prompt(SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "hello"}]))
-    assert all("UNIQUE_SKILL_REFERENCE_BODY" not in str(content) for _, content in llm.calls[-1])
+    for role, content in llm.calls[-1]:
+        if role in ("system", "developer"):
+            assert "UNIQUE_SKILL_REFERENCE_BODY" not in str(content)
     assert state.preloaded_skill_names == []
 
 
@@ -2211,6 +2216,12 @@ async def test_acp_explicit_missing_required_diagnostic_does_not_report_successf
     session = await adapter.newSession(SimpleNamespace(cwd=None, field_meta={"session_mode": "general"}))
     await adapter.prompt(SimpleNamespace(sessionId=session.sessionId, prompt=[{"text": "/parent proceed"}]))
     assert llm.calls and all("NEVER_DELIVER_PARENT_BODY" not in str(c) for _, c in llm.calls[0])
+    diagnostic_contents = [
+        str(content)
+        for role, content in llm.calls[0]
+        if role == "user" and "runtime_skill_diagnostic" in str(content)
+    ]
+    assert diagnostic_contents and '"code": "SKILL_NOT_FOUND"' in diagnostic_contents[0]
     payloads = [u.update.rawOutput for u in conn.updates if isinstance(getattr(u.update, "rawOutput", None), dict)]
     assert not any(p.get("type") == "skills_usage" for p in payloads)
     assert all(p.get("skillInvocations", []) == [] for p in payloads if p.get("type") == "turn_usage")

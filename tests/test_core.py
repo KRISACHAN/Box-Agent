@@ -6246,7 +6246,17 @@ class _FakeSummaryLLM:
         return LLMResponse(content=self._response, thinking=None, tool_calls=None, finish_reason="stop")
 
     async def generate_stream(self, messages, tools=None, **_):
-        raise NotImplementedError
+        self.calls.append({
+            "n_messages": len(messages),
+            "messages": messages,
+            "tools": tools,
+            "thinking_enabled": _.get("thinking_enabled", False),
+            "session_id": _.get("session_id", ""),
+        })
+        if self._raise is not None:
+            raise self._raise
+        yield StreamEvent(type="text", delta=self._response)
+        yield StreamEvent(type="finish", finish_reason="stop")
 
 
 @pytest.mark.asyncio
@@ -6869,7 +6879,7 @@ def test_context_pressure_subtracts_consumed_request_only_image_estimate():
     assert estimated == 1_100
 
 
-def test_context_pressure_includes_tools_activated_after_latest_usage():
+def test_context_pressure_does_not_replace_api_usage_with_full_fallback():
     from box_agent.core import _estimate_context_from_latest_response
 
     class _LargeActivatedTool:
@@ -6888,7 +6898,9 @@ def test_context_pressure_includes_tools_activated_after_latest_usage():
     )
 
     assert source == "usage"
-    assert estimated > 10_000
+    # API usage is authoritative when present; a large local tool-schema
+    # fallback must not cause early compaction.
+    assert estimated == 110
 
 
 def test_context_pressure_without_usage_falls_back_to_characters_over_four():
@@ -7042,6 +7054,17 @@ def test_latest_user_text_ignores_post_compaction_runtime_state():
     ]
 
     assert _latest_user_text(messages) == "继续"
+
+
+def test_latest_user_text_ignores_runtime_user_messages():
+    from box_agent.core import _latest_user_text
+
+    messages = [
+        Message(role="user", content="真实请求", source="user"),
+        Message(role="user", content="内部恢复提示", source="runtime"),
+    ]
+
+    assert _latest_user_text(messages) == "真实请求"
 
 
 def test_goal_read_exposes_side_effect_free_compaction_state(tmp_path):
