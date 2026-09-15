@@ -1372,24 +1372,6 @@ async def _run_agent_loop_impl(
                 projection.blocked_reason
                 and getattr(projection, "budget_blocked", False)
             )
-            # A selected Skill that cannot fit and has no offered get_skill
-            # reader is an admission failure, not a history-compaction case.
-            # Stop before compact_context can call the summary provider.
-            if getattr(projection, "reader_required", False):
-                msg = projection.blocked_reason or (
-                    "Selected Skill material exceeds the context budget and requires an allowed Skill reader."
-                )
-                if hook_mgr.hooks:
-                    await hook_mgr.fire_error(message=msg, is_fatal=True, exception=None)
-                    await hook_mgr.fire_done(stop_reason=StopReason.ERROR, final_content=msg)
-                yield ErrorEvent(
-                    message=msg,
-                    is_fatal=True,
-                    error_code="SKILL_READER_REQUIRED",
-                    error_category="skill_context",
-                )
-                yield DoneEvent(stop_reason=StopReason.ERROR, final_content=msg)
-                return
             estimated_history, _ = _estimate_context_from_latest_response(
                 messages,
                 budget_tools_by_name,

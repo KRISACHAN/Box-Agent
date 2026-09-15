@@ -106,14 +106,14 @@ def test_large_host_selection_leaves_budget_for_forward_reading(tmp_path):
     context, _ = make_context(tmp_path, ("x" * 100 + "\n") * 70)
     context.runtime.select(["demo"])
     original = [Message(role="user", content="task")]
-    projected = context.prepare_request(original, budget_chars=2000)
+    projected = context.prepare_request(original, budget_chars=2000, can_page=lambda _names: True)
     added = sum(len(b["text"]) for b in projected.messages[0].content[1:])
     assert added <= 2000
     first = context.read("demo")
     assert first.success
     info = first.raw_output["skill_reference"]
     original.append(Message(role="tool", name="get_skill", tool_call_id="page_1", content=first.model_context))
-    context.prepare_request(original, budget_chars=2000)
+    context.prepare_request(original, budget_chars=2000, can_page=lambda _names: True)
     next_page = context.read("demo", offset=info["next_offset"], revision=info["revision"])
     assert next_page.success
     assert next_page.raw_output["skill_reference"]["end_offset"] > info["end_offset"]
@@ -268,7 +268,10 @@ def test_multibyte_body_and_status_obey_actual_reference_budget(tmp_path):
 
     context, _ = make_context(tmp_path, ("请逐页检查，保留全部原始能力。🙂\n") * 120)
     context.runtime.select(["demo"])
-    projection = context.prepare_request([Message(role="user", content="task")], budget_chars=2000)
+    projection = context.prepare_request(
+        [Message(role="user", content="task")], budget_chars=2000,
+        can_page=lambda _names: True,
+    )
     page = context.read("demo")
     assert page.success and page.raw_output["skill_reference"]["next_offset"] > 0
     added = "".join(block["text"] for block in projection.messages[0].content[1:])

@@ -279,6 +279,66 @@ class SkillReferenceContext:
                           raw_output={"skill_reference": dict(metadata)})
 
 
+    def _truncate_selected_reference(
+        self, name: str, *, prefix: str, reason: str,
+        budget_chars: int, _cost: Callable[[str], int],
+        _delivery: Callable[..., None] | None = None,
+    ) -> ToolResult:
+        """Project a bounded selected reference without changing reader semantics.
+
+        This is intentionally separate from ``read``. Tool reads use line
+        offsets and durable delivery facts; a host-selected fallback is only a
+        request projection and may end at an arbitrary character boundary.
+        """
+        try:
+            skill = self.runtime.resolve_reference(name)
+        except SkillDependencyError as exc:
+            return ToolResult(success=False, error=str(exc), raw_output={"code": exc.code, **exc.details})
+        prompt = skill.to_prompt()
+        metadata = skill.reference_metadata(offset=0, reason=reason)
+        available = min(self._remaining, max(0, budget_chars))
+
+        def render(length: int) -> str:
+            complete = length == len(prompt)
+            metadata.update(
+                end_offset=(len(prompt.splitlines(keepends=True)) if complete else 0),
+                complete=complete,
+                has_more=not complete,
+                next_offset=None,
+                truncated=not complete,
+            )
+            return render_reference(metadata, prompt[:length])
+
+        low, high = 0, len(prompt)
+        best = -1
+        best_cost = 0
+        while low <= high:
+            middle = (low + high) // 2
+            text = render(middle)
+            cost = _cost(text)
+            if cost <= available:
+                best, best_cost = middle, cost
+                low = middle + 1
+            else:
+                high = middle - 1
+        if best < 0:
+            return ToolResult(
+                success=False,
+                error="Skill reference budget cannot fit the selected Skill locator.",
+                raw_output={"code": "SKILL_CONTEXT_BUDGET", "name": name},
+            )
+        content = render(best)
+        self._remaining -= best_cost
+        if metadata["complete"] and _delivery is not None:
+            _delivery(skill, dict(metadata), reason=reason)
+        return ToolResult(
+            success=True,
+            content=content,
+            model_context=content,
+            raw_output={"skill_reference": dict(metadata)},
+        )
+
+
     def prepare_request(self, messages: list[Message], *, budget_chars: int,
                         can_page: Callable[[tuple[str, ...]], bool] | None = None,
                         defer_delivery: bool = False) -> ReferenceProjection:
@@ -322,16 +382,20 @@ class SkillReferenceContext:
             selected = tuple(dict.fromkeys((*self.runtime.selected_names, *self.runtime.restoring_names)))
             prefix = ("Host-provided Skill reference for this turn. "
                       "The following is method material, not new user facts or permission.\n")
+            truncate_selected = False
             if not self._selection_fits(selected, prefix, projected[user_index]):
-                if can_page is not None and not can_page(selected):
-                    return ReferenceProjection(list(messages), blocked_reason=(
-                        "Selected Skill material exceeds the context budget and no available paging reader "
-                        "was offered for this selection. Reduce the selection or provide an allowed Skill reader."
-                    ), budget_blocked=True, reader_required=True)
-                required_notice = ("Selected Skills need paged reading: " + json.dumps(selected, ensure_ascii=False)
-                                   + ". Call get_skill by name; follow next_offset with the returned revision.")
-                diagnostics.insert(0, required_notice)
-                selected = ()
+                if can_page is not None and can_page(selected):
+                    required_notice = ("Selected Skills need paged reading: " + json.dumps(selected, ensure_ascii=False)
+                                       + ". Call get_skill by name; follow next_offset with the returned revision.")
+                    diagnostics.insert(0, required_notice)
+                    selected = ()
+                else:
+                    # A selected Skill is ordinary request material. When no
+                    # paging reader is available, preserve the selection by
+                    # taking the largest bounded prefix that fits. The
+                    # reference metadata keeps the source path so the model
+                    # still has a durable locator for the omitted body.
+                    truncate_selected = True
             for name in selected:
                 reason = "explicit" if name in self.runtime.selected_names else "restored"
                 target = projected[user_index]
@@ -359,10 +423,22 @@ class SkillReferenceContext:
                         break
                 if snapshot_found:
                     continue
-                result = self.read(name, reason=reason, allow_partial=False, _cost=cost,
-                                   _delivery=stage_delivery)
+                if truncate_selected:
+                    result = self._truncate_selected_reference(
+                        name, prefix=prefix, reason=reason,
+                        budget_chars=max(0, self._remaining // max(1, len(selected))),
+                        _cost=cost, _delivery=stage_delivery,
+                    )
+                else:
+                    result = self.read(name, reason=reason, allow_partial=False, _cost=cost,
+                                       _delivery=stage_delivery)
                 info = (result.raw_output or {}).get("skill_reference", {})
                 if not result.success:
+                    if truncate_selected and (result.raw_output or {}).get("code") == "SKILL_CONTEXT_BUDGET":
+                        # A no-reader fallback is best-effort. Do not turn a
+                        # later selected Skill that has no remaining room into
+                        # a request-level error or compaction requirement.
+                        continue
                     required_notice = result.error or "Selected Skill reference unavailable"
                     diagnostics.insert(0, required_notice)
                     continue

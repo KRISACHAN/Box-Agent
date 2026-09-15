@@ -96,15 +96,14 @@ def test_host_projection_charges_serialized_blocks_and_original_user_escaping(ru
     assert "get_skill" in str(request.messages) or "[Skill reference]" in str(request.messages)
 
 
-def test_selected_material_blocks_request_when_even_reading_hint_cannot_fit(runtime):
+def test_selected_material_without_reader_is_bounded_when_no_body_fits(runtime):
     runtime.select(["demo"])
     engine = DefaultContextEngine()
     engine.configure_run(skill_engine=runtime)
     request = engine.prepare_request([Message(role="user", content="task")],
                                      prepared_tools=prepare_tools([]), token_limit=1024)
 
-    assert request.blocked_reason
-    assert "budget" in request.blocked_reason.lower()
+    assert request.blocked_reason is None
     assert runtime.read_facts == ()
     assert runtime.turn_deliveries == {}
 
@@ -181,7 +180,7 @@ async def test_context_budget_rejection_stops_kernel_before_provider(runtime):
 
     runtime.select(["demo"])
     events = [event async for event in run_agent_loop(
-        llm=Provider(), messages=[Message(role="system", content="BASE"), Message(role="user", content="task")],
+        llm=Provider(), messages=[Message(role="system", content="BASE " * 6000), Message(role="user", content="task")],
         tools={}, skill_engine=runtime, token_limit=1024, max_steps=1)]
     assert any(isinstance(event, ErrorEvent) and "budget" in event.message for event in events)
     assert any(isinstance(event, DoneEvent) and event.stop_reason == StopReason.ERROR for event in events)
@@ -263,7 +262,9 @@ def test_paging_requires_reader_access_to_selected_skills(runtime):
     engine.configure_run(skill_engine=runtime)
     messages = [Message(role="user", content="use the selected method")]
     denied = engine.prepare_request(messages, prepared_tools=prepare_tools([tool]), token_limit=5000)
-    assert denied.blocked_reason
+    assert denied.blocked_reason is None
+    assert "METHOD_BODY" in str(denied.messages)
+    assert str(runtime.loader.get_skill("demo").skill_path) in str(denied.messages)
     assert runtime.read_facts == ()
     allowed.add("demo")
     permitted = engine.prepare_request(messages, prepared_tools=prepare_tools([tool]), token_limit=5000)

@@ -8,6 +8,7 @@ giving adapters one stable entry point for configuring and running a turn.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 import logging
 import sys
@@ -607,6 +608,7 @@ class Agent:
         self.session_log = session_log
         self._pending_skill_restore: list[dict[str, Any]] = []
         self._skill_persistence_pending = False
+        self._persisted_active_skill_records: list[dict[str, Any]] = []
         self.session_id = session_id.strip()
         if self.session_log is not None:
             projection = self.session_log.replay()
@@ -621,9 +623,22 @@ class Agent:
             if callable(configure_todos):
                 configure_todos(self.session_log, projection.todos)
             self.restored_skills = projection.skills
+            self._persisted_active_skill_records = deepcopy(self.restored_skills)
             if self.restored_skills:
                 try:
                     self.skill_runtime.restore_records(self.restored_skills)
+                    restored_names = {
+                        row["name"] for row in self.skill_runtime.log_records()
+                    }
+                    expected_names = {row["name"] for row in self.restored_skills}
+                    if restored_names != expected_names:
+                        # Partial ACP restoration intentionally drops records
+                        # whose source is unavailable. Preserve the historical
+                        # snapshot as the durable state; an empty runtime is
+                        # not an explicit clear operation.
+                        self._persisted_active_skill_records = deepcopy(
+                            self.skill_runtime.log_records()
+                        )
                 except SkillDependencyError as exc:
                     if exc.code != "SKILL_PROVIDER_UNAVAILABLE":
                         raise
@@ -738,10 +753,15 @@ class Agent:
             self._skill_persistence_pending = True
             records = {row["name"]: row for row in self._pending_skill_restore}
             records.update((row["name"], row) for row in self.skill_runtime.log_records())
+            ordered = sorted(records.values(), key=lambda row: row["loadOrder"])
+            if ordered == self._persisted_active_skill_records:
+                self._skill_persistence_pending = False
+                return
             self.session_log.append("skill/change", {
-                "skills": sorted(records.values(), key=lambda row: row["loadOrder"]),
+                "skills": ordered,
             })
             self.session_log.flush()
+            self._persisted_active_skill_records = deepcopy(ordered)
             self._skill_persistence_pending = False
 
     def restore_active_skill_instructions(self, skills: list[tuple[str, str, str, int]]) -> None:
@@ -1018,8 +1038,19 @@ class Agent:
         if self._skill_persistence_pending:
             self._persist_active_skills()
         if self._pending_skill_restore:
-            self.skill_runtime.restore_records(self._pending_skill_restore)
+            pending = self._pending_skill_restore
+            self.skill_runtime.restore_records(pending)
             self._pending_skill_restore = []
+            # ACP may deliberately drop records whose source is unavailable.
+            # That is a partial restore, not an explicit user clear; keep the
+            # historical snapshot as the durable fact instead of appending an
+            # empty replacement at END_TURN.
+            pending_names = {row["name"] for row in pending}
+            restored_names = {row["name"] for row in self.skill_runtime.log_records()}
+            if restored_names != pending_names:
+                self._persisted_active_skill_records = deepcopy(
+                    self.skill_runtime.log_records()
+                )
         self._sync_child_system_prompt()
         self.skill_runtime.begin_turn()
         effective_options = options or self.default_run_options()
