@@ -330,6 +330,10 @@ function runPostRenderStage(stage, scriptName, args, reportPath) {
     console.log(`FINALIZE_PASS stage=${stage} warnings=${summary.warnings.length}`);
     return report;
   }
+  if (reportIsFresh && report?.editor?.paletteCompliance?.enforced
+    && report.editor.paletteCompliance.failures.length) {
+    fail("palette_contract", { status: 1, stdout: "", stderr: JSON.stringify(report.editor.paletteCompliance.failures.slice(0, 12)) });
+  }
 
   const diagnostic = tail(
     result.error
@@ -376,6 +380,8 @@ function main() {
     html: path.join(reportDir, "html_self_check.json"),
     runtime: path.join(reportDir, "runtime_probe.json"),
   };
+  const researchAudit = path.join(reportDir, "research_handoff_check.json");
+  if (fs.existsSync(researchAudit)) reports.research = researchAudit;
   fs.mkdirSync(reportDir, { recursive: true });
 
   // Assets can finish after the content patch. Bind them in this same compile

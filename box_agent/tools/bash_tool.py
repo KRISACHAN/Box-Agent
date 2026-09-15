@@ -33,6 +33,7 @@ from .runtime import bundled_win_bash
 from .shell_inspection import inspect_shell_command
 from .safety import (
     backup_file,
+    builtin_skill_command_write_error,
     detect_dangerous_command,
     detect_invalid_runtime_executable_syntax,
     detect_scope_escape,
@@ -1436,6 +1437,11 @@ Examples:
                     exit_code=1,
                 )
             # --- Safety checks ---
+            if source_error := builtin_skill_command_write_error(command, self.workspace_dir):
+                return BashOutputResult(
+                    success=False, error=source_error, stdout="", stderr=source_error,
+                    exit_code=1,
+                )
             bypass_error = detect_pptx_self_check_bypass(None, command)
             if bypass_error:
                 return BashOutputResult(

@@ -22,7 +22,7 @@ from .base import EventEmittingTool, Tool, ToolResult
 from .argument_limits import MAX_GENERATED_BODY_CHARS
 from .file.path_candidates import home_relative_path_candidates
 from .pptx_safety import detect_pptx_self_check_bypass
-from .safety import backup_file, validate_path_in_workspace
+from .safety import backup_file, builtin_skill_write_error, validate_path_in_workspace
 
 if TYPE_CHECKING:
     from .permissions import PermissionEngine
@@ -786,6 +786,8 @@ class WriteTool(Tool):
         ).resolve(strict=False)
 
     def _permission_error(self, target: Path) -> ToolResult | None:
+        if error := builtin_skill_write_error(target):
+            return ToolResult(success=False, error=error)
         if self._perm:
             decision = self._perm.check(
                 capability="filesystem.write",
@@ -1327,6 +1329,9 @@ class AppendTool(Tool):
                 relative_root_dir=self.relative_root_dir,
             )
 
+            if error := builtin_skill_write_error(file_path):
+                return ToolResult(success=False, error=error)
+
             if self._perm:
                 decision = self._perm.check(
                     capability="filesystem.write",
@@ -1445,6 +1450,8 @@ class EditTool(Tool):
                     file_path = workspace_candidate
 
             # Path validation
+            if error := builtin_skill_write_error(file_path):
+                return ToolResult(success=False, error=error)
             if self._perm:
                 decision = self._perm.check(
                     capability="filesystem.write",

@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from box_agent.user_paths import state_path
+from .safety import builtin_skill_write_error
 
 if TYPE_CHECKING:
     from box_agent.config import Config
@@ -251,6 +252,10 @@ class PermissionEngine:
         self, path: Path, scope: str, operation: str, tool_name: str | None = None
     ) -> PermissionDecision:
         resolved = self._resolve_for_check(path)
+
+        if operation == "write" and self._builtin_skills_dir:
+            if error := builtin_skill_write_error(resolved, self._builtin_skills_dir):
+                return PermissionDecision(allowed=False, reason=error)
 
         # Directory-level grants take precedence over scope checks. These are
         # recorded by the negotiator after the user approves a permission
