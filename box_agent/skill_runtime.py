@@ -76,7 +76,28 @@ class SkillRuntime:
         # Only explicit current-turn selection is materialized here. Legacy
         # restored references retain their existing deferred-delivery path.
         for name in self.state.selected:
-            skill = self.resolve_reference(name)
+            try:
+                skill = self.resolve_reference(name)
+            except SkillDependencyError as exc:
+                # An explicitly selected Skill must not abort the whole turn
+                # when one of its required Skills is unavailable. Preserve a
+                # structured, model-visible diagnostic while withholding the
+                # unusable Skill body. This keeps the request executable and
+                # prevents an unavailable Skill from being billed as used.
+                message = (
+                    f"Skill '{name}' is unavailable: {exc.message}\n"
+                    "Ask the user to fix or enable the missing Skill dependency before using it."
+                )
+                diagnostic = {
+                    "kind": "runtime_skill_diagnostic",
+                    "name": name,
+                    "revision": sha256(message.encode()).hexdigest(),
+                    "code": exc.code,
+                    "details": dict(exc.details),
+                    "notice": "Selected Skill is unavailable; do not infer or follow its instructions.",
+                }
+                materialized.append((name, render_reference(diagnostic, message)))
+                continue
             prompt = skill.prompt
             revision = skill.revision
             if (name, revision, skill.source, skill.path) in existing:
