@@ -736,7 +736,10 @@ async def test_new_skill_reference_log_is_readable_by_pr1_projection(tmp_path):
     agent.add_user_message("Review this input")
     await agent.run()
     expected = log.replay()
-    assert any(event["type"] == "request/context" and event["data"].get("skillReferences") for event in log.events)
+    # Explicit selections are durable runtime messages now.  They are replayable
+    # by the old reader through the normal user-message surface and no longer
+    # require the legacy request/context skillReferences side channel.
+    assert not any(event["type"] == "request/context" and event["data"].get("skillReferences") for event in log.events)
     before = log.path.read_bytes()
     log.close()
     script = """
