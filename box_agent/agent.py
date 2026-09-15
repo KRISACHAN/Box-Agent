@@ -623,7 +623,14 @@ class Agent:
             configure_todos = getattr(todo_tool, "configure_session_persistence", None)
             if callable(configure_todos):
                 configure_todos(self.session_log, projection.todos)
-            self.restored_skills = projection.skills
+            # Skill state is optional session data. A damaged or older log may
+            # contain null/non-object entries; ignore those entries instead of
+            # letting session construction crash before the conversation can
+            # continue.
+            self.restored_skills = [
+                row for row in projection.skills
+                if isinstance(row, dict) and isinstance(row.get("name"), str)
+            ]
             self._persisted_active_skill_records = deepcopy(self.restored_skills)
             if self.restored_skills:
                 try:
