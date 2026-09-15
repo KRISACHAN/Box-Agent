@@ -1572,7 +1572,7 @@ def test_distinctive_visual_briefs_reach_registered_theme(
     }
 
 
-def test_auto_theme_prompts_cover_every_registered_theme(tmp_path: Path) -> None:
+def test_auto_theme_prompts_cover_every_non_fallback_theme(tmp_path: Path) -> None:
     manifest = json.loads(
         (SKILL_DIR / "layouts" / "manifest.json").read_text(encoding="utf-8")
     )
@@ -1611,6 +1611,9 @@ def test_auto_theme_prompts_cover_every_registered_theme(tmp_path: Path) -> None
     for theme in manifest["themes"]:
         theme_id = theme["id"]
         selection = theme["selection"]
+        # Fallback selection is covered by test_pptx_theme_match.py.
+        if selection.get("fallback"):
+            continue
         prompt = distinctive_prompts.get(theme_id)
         if prompt is None:
             industries = "、".join(selection["industry_fit"][:3])
@@ -15527,7 +15530,12 @@ console.log(JSON.stringify({count}));
     result = subprocess.run([str(NODE), "-e", probe, str(SKILL_DIR)],
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["count"] == 52 * 4
+    manifest = json.loads(
+        (SKILL_DIR / "layouts" / "manifest.json").read_text(encoding="utf-8")
+    )
+    theme_count = len(manifest["themes"])
+    assert theme_count > 0
+    assert json.loads(result.stdout)["count"] == theme_count * 4
 
 
 def test_content_patch_preserves_expressive_variant_and_all_metric_values(tmp_path: Path) -> None:
