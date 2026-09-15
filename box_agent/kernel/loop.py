@@ -1502,29 +1502,31 @@ async def _run_agent_loop_impl(
                     },
                 },
             )
-            session_log.append(
-                "request/context",
-                {
-                    "turn": session_turn,
-                    "step": step + 1,
-                    "provider": request_provider,
-                    "model": request_model,
-                    "tokenLimit": token_limit,
-                    "skillReferences": list(skill_references),
-                    **(
-                        {
-                            "autoMemoryContext": {
-                                "sha256": hashlib.sha256(
-                                    str(auto_memory_context_message.content).encode("utf-8")
-                                ).hexdigest(),
-                                "chars": len(str(auto_memory_context_message.content)),
-                            }
+            request_context = {
+                "turn": session_turn,
+                "step": step + 1,
+                "provider": request_provider,
+                "model": request_model,
+                "tokenLimit": token_limit,
+                **(
+                    {
+                        "autoMemoryContext": {
+                            "sha256": hashlib.sha256(
+                                str(auto_memory_context_message.content).encode("utf-8")
+                            ).hexdigest(),
+                            "chars": len(str(auto_memory_context_message.content)),
                         }
-                        if auto_memory_context_message is not None
-                        else {}
-                    ),
-                },
-            )
+                    }
+                    if auto_memory_context_message is not None
+                    else {}
+                ),
+            }
+            # Explicit selections are durable runtime messages. Keep the
+            # legacy side-channel only for request-only/on-demand snapshots;
+            # emitting an empty field would falsely suggest dual persistence.
+            if skill_references:
+                request_context["skillReferences"] = list(skill_references)
+            session_log.append("request/context", request_context)
             session_log.flush()
 
         cache_fingerprint = build_cache_fingerprint(
