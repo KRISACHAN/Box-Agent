@@ -133,6 +133,20 @@ def read_auth_token_file(auth_file: str | Path | None) -> str:
     return _auth_token_from_state(data)
 
 
+def read_auth_org_code(auth_file: str | Path | None) -> str:
+    """Read the current desktop team identity; personal sessions have no org."""
+    _, data = _read_auth_state(auth_file)
+    identity = _coerce_token(data.get("office_identity"))
+    if (
+        not identity
+        or identity == "personal"
+        or not identity.isascii()
+        or any(ord(char) < 32 or ord(char) == 127 for char in identity)
+    ):
+        return ""
+    return identity
+
+
 async def refresh_hosted_auth_token_if_needed(
     api_base: str,
     auth_file: str | Path | None,
