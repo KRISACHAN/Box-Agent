@@ -57,6 +57,7 @@ from .tools.mcp_tool_search import (
 )
 from .skill_runtime import SkillRuntime
 from .skill_dependencies import SkillDependencyError
+from .skill_restore import select_restore_records
 from .tool_result_storage import ToolResultStorage
 from .cli_renderer import CliRenderer, Colors, _format_size, render_agent_events
 from .session_continuation import ContinuationMessage
@@ -626,12 +627,9 @@ class Agent:
             # Skill state is optional session data. A damaged or older log may
             # contain null/non-object entries; ignore those entries instead of
             # letting session construction crash before the conversation can
-            # continue. Object records still go through restore validation so
-            # invalid field types fail closed before session state is replaced.
-            self.restored_skills = [
-                row for row in projection.skills
-                if isinstance(row, dict)
-            ]
+            # continue. Object records that look like Skill facts still go
+            # through restore validation so invalid field types fail closed.
+            self.restored_skills = select_restore_records(projection.skills)
             self._persisted_active_skill_records = deepcopy(self.restored_skills)
             if self.restored_skills:
                 try:
@@ -639,7 +637,10 @@ class Agent:
                     restored_names = {
                         row["name"] for row in self.skill_runtime.log_records()
                     }
-                    expected_names = {row["name"] for row in self.restored_skills}
+                    expected_names = {
+                        row["name"] for row in self.restored_skills
+                        if isinstance(row.get("name"), str)
+                    }
                     if restored_names != expected_names:
                         # Partial ACP restoration intentionally drops records
                         # whose source is unavailable. Preserve the historical

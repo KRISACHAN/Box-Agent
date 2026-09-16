@@ -186,7 +186,7 @@ def test_invalid_skill_log_rejected_before_restore_replaces_state(tmp_path, bad_
         log.close()
 
 
-@pytest.mark.parametrize('junk', [None, 'legacy-name', 1, True])
+@pytest.mark.parametrize('junk', [None, 'legacy-name', 1, True, {}])
 def test_non_object_skill_log_entries_are_skipped_without_blocking_valid_restore(tmp_path, junk):
     loader = loader_at(tmp_path / 'skills')
     runtime = SkillRuntime(loader)
