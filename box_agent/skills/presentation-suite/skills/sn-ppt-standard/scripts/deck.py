@@ -48,6 +48,16 @@ from font_bundle import (
 )
 
 
+def _mark_intermediate_artifact(filename):
+    """Mark this exact QA output for Box-Agent automatic artifact discovery."""
+    from pathlib import Path
+
+    target = Path(filename)
+    target.with_name(f".{target.name}.artifact.json").write_text(
+        '{"type":"intermediate_asset"}\n', encoding="utf-8"
+    )
+
+
 def _detect_canvas(base_dir):
     """从工作区的 base.css 探测画布尺寸(--canvas-w/--canvas-h)。
     兼容旧版 --w/--h 和直接写在 .slide 上的像素尺寸；找不到时回退
@@ -1106,6 +1116,7 @@ def _build_contact(root: Path, expected: int | None = None, focus: str | None = 
         audit = {}
     if focus:
         path = render_dir / "contact-sheet-focus.png"
+        _mark_intermediate_artifact(path)
         _save_image_atomic(path, _make_sheet(render_dir, pages, min(3, len(pages)), 500,
                                              "REVIEW FOCUS · " + ", ".join(f"{page:02d}" for page in pages)))
         payload = {"mode": "focus", "pages": pages, "focus": path.relative_to(root).as_posix()}
@@ -1124,6 +1135,7 @@ def _build_contact(root: Path, expected: int | None = None, focus: str | None = 
         for index, start in enumerate(range(0, len(pages), group_size), 1):
             group = pages[start:start + group_size]
             path = render_dir / f"contact-sheet-review-{index:02d}.png"
+            _mark_intermediate_artifact(path)
             _save_image_atomic(path, _make_sheet(render_dir, group, min(4, len(group)), 400,
                                                    f"REVIEW GROUP {index:02d} · {group[0]:02d}–{group[-1]:02d}"))
             groups.append({"path": path.relative_to(root).as_posix(), "pages": group})

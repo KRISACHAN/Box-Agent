@@ -38,6 +38,16 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.expanduser("~/.cache/m
 #   加了反而把 shm 从「快 RAM」赶到「慢磁盘 overlay /tmp」→ 高并发磁盘 I/O 风暴 → D-state → 崩池。
 #   故按 /dev/shm 实际大小动态决定(env RENDER_FORCE_DISABLE_DEVSHM=1 强制加 / =0 强制不加)。
 #   ⚠️ 本补丁位于 skill 目录内,同步/覆盖 skill 会冲掉,覆盖后须重打(见 memory render-brokenpool-chromium-exhaustion)。
+def _mark_intermediate_artifact(filename):
+    """Mark this exact QA output for Box-Agent automatic artifact discovery."""
+    from pathlib import Path
+
+    target = Path(filename)
+    target.with_name(f".{target.name}.artifact.json").write_text(
+        '{"type":"intermediate_asset"}\n', encoding="utf-8"
+    )
+
+
 def _devshm_bytes():
     try:
         st = os.statvfs("/dev/shm")
@@ -1151,6 +1161,7 @@ def _render_once(session, html, out, w, h):
             rep["cjkTypography"] = pg.evaluate(_CJK_TYPOGRAPHY_JS) or []
         except Exception:
             rep["cjkTypography"] = []
+        _mark_intermediate_artifact(out)
         pg.screenshot(path=out)
     return rep
 

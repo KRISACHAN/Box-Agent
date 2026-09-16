@@ -392,6 +392,11 @@ async function main() {
   const previews = [];
   for (let i = 0; i < slideHandles.length; i += 1) {
     const imagePath = path.join(outDir, `slide-${String(i + 1).padStart(2, "0")}.png`);
+    // Source previews are QA inputs, not standalone user deliverables.
+    fs.writeFileSync(
+      path.join(outDir, `.${path.basename(imagePath)}.artifact.json`),
+      '{"type":"intermediate_asset"}\n'
+    );
     await slideHandles[i].screenshot({ path: imagePath });
     previews.push(imagePath);
   }

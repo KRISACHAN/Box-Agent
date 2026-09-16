@@ -14,6 +14,7 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import runpy
+import shutil
 import subprocess
 import tempfile
 
@@ -29,7 +30,8 @@ OVERLAYS = ["metadata.user_visible=false", "metadata.allow_override=false",
             "remove-image-only-output-policy", "legacy-static-task-resume",
             "dazzle-box-native-tools", "bundle-third-party-notices",
             "static-player-delivery-gate", "design-mode-delivery-wording",
-            "owned-renderer-lifecycle", "original-uploaded-font-family"]
+            "owned-renderer-lifecycle", "original-uploaded-font-family",
+            "intermediate-render-artifacts"]
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "box_agent/skills/presentation-suite"
 LICENSE_INPUT_PATH = "scripts/presentation_suite_licenses/echarts-5.5.0"
 LICENSE_INPUT_DIR = Path(__file__).resolve().parents[1] / LICENSE_INPUT_PATH
@@ -44,6 +46,7 @@ LICENSE_INPUT_HASHES = {
 RUNTIME_INPUT_DIR = Path(__file__).resolve().parent / "presentation_suite_overlays"
 _render_lifecycle_overlay = runpy.run_path(str(RUNTIME_INPUT_DIR / "render_lifecycle.py"))["apply"]
 _font_source_overlay = runpy.run_path(str(RUNTIME_INPUT_DIR / "font_source.py"))["apply"]
+_artifact_publication_overlay = runpy.run_path(str(RUNTIME_INPUT_DIR / "artifact_publication.py"))["apply"]
 
 
 def _apply_host_metadata(data: bytes) -> bytes:
@@ -89,6 +92,7 @@ def _apply_integration_overlay(relative: str, data: bytes) -> bytes:
     """Keep upstream production methods, adapting only the shipped route closure."""
     data = _render_lifecycle_overlay(relative, data)
     data = _font_source_overlay(relative, data)
+    data = _artifact_publication_overlay(relative, data)
     if relative == "skills/sn-ppt-standard/assets/vendor/echarts.min.js":
         if not re.search(rb'\.version=["\']5\.5\.0["\']', data):
             raise ValueError("ECharts runtime version needs review against pinned license inputs")
@@ -355,13 +359,60 @@ def sync_suite(source_checkout: Path, revision: str, output_dir: Path = OUTPUT_D
     return provenance
 
 
+def refresh_host_overlays(output_dir: Path) -> dict:
+    """Apply append-only overlays to a verified bundle without upstream access."""
+    provenance = json.loads((output_dir / "source.json").read_text())
+    applied = provenance.get("overlays", [])
+    incremental = {"intermediate-render-artifacts": _artifact_publication_overlay}
+    pending = OVERLAYS[len(applied):]
+    if (provenance.get("name") != BUNDLE_NAME
+            or provenance.get("revision") != PINNED_REVISION
+            or applied != OVERLAYS[:len(applied)]
+            or any(name not in incremental for name in pending)):
+        raise ValueError("Bundle requires a full sync from the pinned upstream checkout")
+    actual = {p.relative_to(output_dir).as_posix() for p in output_dir.rglob("*")
+              if p.is_file() and "__pycache__" not in p.parts}
+    if actual != set(provenance["files"]) | {"source.json"}:
+        raise ValueError("Bundle file set differs from its provenance")
+    replacements = {}
+    for relative, record in provenance["files"].items():
+        data = (output_dir / relative).read_bytes()
+        if hashlib.sha256(data).hexdigest() != record["sha256"]:
+            raise ValueError(f"Bundle file differs from its provenance: {relative}")
+        for name in pending:
+            data = incremental[name](relative, data)
+        replacements[relative] = data
+        record["sha256"] = hashlib.sha256(data).hexdigest()
+    if not pending:
+        return provenance
+    provenance["overlays"] = list(OVERLAYS)
+    with tempfile.TemporaryDirectory(prefix=".sn-suite-overlay-", dir=output_dir.parent) as temporary:
+        staged = Path(temporary) / "bundle"
+        shutil.copytree(output_dir, staged, ignore=shutil.ignore_patterns("__pycache__"))
+        for relative, data in replacements.items():
+            (staged / relative).write_bytes(data)
+        (staged / "source.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        previous = Path(temporary) / "previous"
+        output_dir.rename(previous)
+        try:
+            staged.rename(output_dir)
+        except OSError:
+            previous.rename(output_dir)
+            raise
+    return provenance
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-checkout", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--source-checkout", type=Path)
+    source.add_argument("--refresh-host-overlays", action="store_true",
+                        help="Apply pending append-only overlays to a hash-verified local bundle")
     parser.add_argument("--revision", default=PINNED_REVISION)
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     args = parser.parse_args()
-    result = sync_suite(args.source_checkout, args.revision, args.output_dir)
+    result = (refresh_host_overlays(args.output_dir) if args.refresh_host_overlays
+              else sync_suite(args.source_checkout, args.revision, args.output_dir))
     print(f"Synced {len(result['files'])} files from {result['revision']} and pinned license inputs")
     return 0
 

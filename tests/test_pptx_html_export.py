@@ -131,6 +131,24 @@ def _export_fixture(tmp_path: Path, *, marked: bool) -> tuple[dict, Path]:
     return _last_json_object(result.stdout), pptx_path
 
 
+def test_export_keeps_page_previews_without_publishing_them(tmp_path: Path) -> None:
+    from box_agent.tools.engine.artifact_results import (
+        _detect_tool_artifacts, _snapshot_workspace_signatures,
+    )
+
+    result, pptx = _export_fixture(tmp_path, marked=False)
+    preview = pptx.parent / "slides/slide-01.png"
+    assert preview.is_file()
+    assert result["slideCount"] == 1
+    events = _detect_tool_artifacts(
+        "export", "bash", f"[{preview.relative_to(tmp_path).as_posix()}]", None, {},
+        _snapshot_workspace_signatures(str(tmp_path)), str(tmp_path),
+    )
+    published = {event.abs_path for event in events}
+    assert str(pptx) in published
+    assert str(preview) not in published
+
+
 def _slide_picture_targets(
     archive: zipfile.ZipFile,
 ) -> tuple[list[str], list[str]]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -30,6 +31,23 @@ _ARTIFACT_REF_RE = re.compile(
     r"\[([^\]\n]{1,512}\.\w{1,10})\]",
     re.IGNORECASE,
 )
+
+
+def _is_intermediate_artifact(path: Path) -> bool:
+    """Honor producer-owned publication metadata, without guessing from names.
+
+    A portable producer can write ``.<filename>.artifact.json`` next to its
+    output with ``{"type": "intermediate_asset"}``. This affects automatic
+    discovery only; the file stays available for tools and explicit delivery.
+    """
+    metadata = path.with_name(f".{path.name}.artifact.json")
+    try:
+        if metadata.stat().st_size > 4096:
+            return False
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(value, dict) and value.get("type") == "intermediate_asset"
 
 
 def _detect_artifacts(
@@ -69,6 +87,8 @@ def _detect_artifacts(
             candidate = (out / filename).resolve()
             candidate.relative_to(out)
             if candidate in seen_paths or not candidate.is_file():
+                continue
+            if _is_intermediate_artifact(candidate):
                 continue
             artifact = _make_artifact(tool_call_id, candidate, ws)
         except (OSError, RuntimeError, UnicodeError, ValueError):
@@ -235,6 +255,8 @@ def _detect_new_files(
             continue
         if str(fpath.resolve()) in already_emitted:
             continue
+        if _is_intermediate_artifact(fpath):
+            continue
         artifacts.append(_make_artifact(tool_call_id, fpath, ws))
 
     return artifacts
@@ -268,6 +290,8 @@ def _detect_changed_files(
         ):
             continue
         if str(file_path.resolve()) in already_emitted:
+            continue
+        if _is_intermediate_artifact(file_path):
             continue
         artifacts.append(_make_artifact(tool_call_id, file_path, ws))
     return artifacts

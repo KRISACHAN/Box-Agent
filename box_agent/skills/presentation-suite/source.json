@@ -251,7 +251,7 @@
       "source_sha256": "61723cf249ce70e93df2ea23da926194af9df86b9b622ca6604337f494a747fb"
     },
     "skills/sn-ppt-dazzle/scripts/render_deck.py": {
-      "sha256": "a9da9f17d15dc067724b64677ace0f9cd7bf0073954a820735c31b99667cea60",
+      "sha256": "9e238f18b1ececdc29430f8d13875d656177dc4a35571b7c5b9226516f8f796c",
       "source_path": "skills/sn-ppt-dazzle/scripts/render_deck.py",
       "source_sha256": "a9da9f17d15dc067724b64677ace0f9cd7bf0073954a820735c31b99667cea60"
     },
@@ -387,7 +387,7 @@
       "source_sha256": "37892c704c3043c862673255a10ce6584e7a8378d2c7fcb28d6a206bdf393085"
     },
     "skills/sn-ppt-standard/scripts/deck.py": {
-      "sha256": "42f71d0ca543bdc25d4786abba7997361a10be6ee724edc13a8b1251e59a8234",
+      "sha256": "2c98ea5b829c8868cd99fbf03c2633bc245751dc282fc62e7a5f821d08f69c1d",
       "source_path": "skills/sn-ppt-standard/scripts/deck.py",
       "source_sha256": "016cbafe55c5430c3723e25f9de34a8d13a1f3072a9cf010362d9beaf6be9dbf"
     },
@@ -522,7 +522,7 @@
       "source_sha256": "0841090b40eab67ee3c6084f83f933554838b952ed9c1d5ed800806e2ac25db9"
     },
     "skills/sn-ppt-standard/scripts/render.py": {
-      "sha256": "27e357740670f01035e565682bc35c929f49e375629a9422baa04ea2ccfc9661",
+      "sha256": "0ce6a4d89bf99baa382da90133edbc0d666e0c0efb09bb29e8da67d5d569e4bb",
       "source_path": "skills/sn-ppt-standard/scripts/render.py",
       "source_sha256": "ef67a08f244cc2ac507bb4ebd5ebcd4dc1a09ef0538d70bc39f8aa1de4dc9069"
     },
@@ -620,7 +620,8 @@
     "static-player-delivery-gate",
     "design-mode-delivery-wording",
     "owned-renderer-lifecycle",
-    "original-uploaded-font-family"
+    "original-uploaded-font-family",
+    "intermediate-render-artifacts"
   ],
   "repository": "https://gitlab.sh.sensetime.com/stc-fvg/sensenova-presentation-int.git",
   "revision": "e187295633eb4cb201e6a2a5a206a419eb79990a",

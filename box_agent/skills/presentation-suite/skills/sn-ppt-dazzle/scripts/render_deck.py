@@ -68,6 +68,16 @@ MOTION_CELL_EPS = 4            # 格子灰度差 >= 此值算"变化格"（容�
 MOTION_MIN_CELLS = 5           # 变化格数 < 此值（/4096）视为无运动
 
 
+def _mark_intermediate_artifact(filename):
+    """Mark this exact QA output for Box-Agent automatic artifact discovery."""
+    from pathlib import Path
+
+    target = Path(filename)
+    target.with_name(f".{target.name}.artifact.json").write_text(
+        '{"type":"intermediate_asset"}\n', encoding="utf-8"
+    )
+
+
 def ensure_browser_libs() -> None:
     """把 $CONDA_PREFIX/lib 与 ~/pwdeps/lib 加进 LD_LIBRARY_PATH，让 chromium 找到系统库。
 
@@ -361,6 +371,7 @@ class DeckRenderer:
 
         s = self._sample_page(already_waited_ms=waited)
         out = self.out_dir / f"page_{n:02d}.png"
+        _mark_intermediate_artifact(out)
         out.write_bytes(s["png"])
         self._add_page_meta(n, out, s)
         self.meta["n_pages"] = max(self.meta["n_pages"], n)
@@ -426,6 +437,7 @@ class DeckRenderer:
         paths: list[Path] = []
         for i, s in enumerate(samples, start=1):
             out = self.out_dir / f"page_{i:02d}.png"
+            _mark_intermediate_artifact(out)
             out.write_bytes(s["png"])
             self._add_page_meta(i, out, s)
             paths.append(out)

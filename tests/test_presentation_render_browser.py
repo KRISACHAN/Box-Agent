@@ -93,6 +93,13 @@ def test_real_single_batch_and_player_audit_reap_owned_processes(runtime, deck, 
     assert hashlib.sha256(html.read_bytes()).hexdigest() == before
     report = json.loads((deck / "renders/render.json").read_text())
     assert set(report["pages"]) == {"01", "02"}
+    from box_agent.tools.engine.artifact_results import _detect_tool_artifacts, _snapshot_workspace_signatures
+    artifacts = _detect_tool_artifacts(
+        "render", "bash", "[renders/slide_01.png]", None, {},
+        _snapshot_workspace_signatures(str(deck)), str(deck),
+    )
+    assert not [artifact for artifact in artifacts if artifact.kind == "image"]
+    assert (deck / "renders/slide_01.png").is_file()
     assert all(not page["report"]["runtime"]["charts_missing"] for page in report["pages"].values())
     assert (deck / "renders/slide_01.png").stat().st_size > 1000
 

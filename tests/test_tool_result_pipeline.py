@@ -66,6 +66,63 @@ class _EchoTool(Tool):
         return ToolResult(success=True, content="echoed")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallel_safe", [False, True], ids=["serial", "parallel"])
+@pytest.mark.parametrize("success", [False, True], ids=["partial-failure", "success"])
+async def test_render_images_stay_on_disk_but_only_overview_is_published(
+    tmp_path, parallel_safe, success,
+) -> None:
+    class RenderTool(_EchoTool):
+        async def execute(self) -> ToolResult:
+            for name in ("slide-01.png", "contact-sheet-review-01.png", "deck-overview.png"):
+                target = tmp_path / name
+                if name != "deck-overview.png":
+                    target.with_name(f".{name}.artifact.json").write_text(
+                        '{"type":"intermediate_asset"}', encoding="utf-8",
+                    )
+                target.write_bytes(b"rendered image")
+            # Explicit text references and workspace-diff discovery must agree.
+            return ToolResult(success=success, content=(
+                "[slide-01.png] [contact-sheet-review-01.png] [deck-overview.png]"
+            ), error=None if success else "Optional QA failed after rendering")
+
+    tool = RenderTool(parallel_safe=parallel_safe)
+    events = [event async for event in run_agent_loop(
+        llm=_OneToolCallLLM(tool.name), messages=[Message(role="user", content="Make a deck")],
+        tools={tool.name: tool}, max_steps=2, workspace_dir=str(tmp_path),
+    )]
+    # Preserve the existing serial-failure behavior (no artifact publication).
+    expected = {"deck-overview.png"} if success or parallel_safe else set()
+    assert {event.filename for event in events if isinstance(event, ArtifactEvent)} == expected
+    assert (tmp_path / "slide-01.png").read_bytes() == b"rendered image"
+
+
+@pytest.mark.parametrize("metadata", [None, "invalid", "[]", '{"type":"artifact"}', "x" * 4097])
+def test_standalone_image_names_are_not_hidden_without_intermediate_metadata(tmp_path, metadata):
+    image = tmp_path / "slide-01.png"
+    image.write_bytes(b"user requested image")
+    if metadata is not None:
+        image.with_name(f".{image.name}.artifact.json").write_text(metadata)
+    events = artifact_results._detect_tool_artifacts(
+        "call", "bash", "[slide-01.png]", None, {},
+        artifact_results._snapshot_workspace_signatures(str(tmp_path)), str(tmp_path),
+    )
+    assert [event.filename for event in events] == [image.name]
+
+
+def test_modified_intermediate_image_is_not_republished_by_later_tools(tmp_path):
+    image = tmp_path / "任意名称.png"
+    image.write_bytes(b"first")
+    image.with_name(f".{image.name}.artifact.json").write_text('{"type":"intermediate_asset"}')
+    before = artifact_results._snapshot_workspace_signatures(str(tmp_path))
+    image.write_bytes(b"corrected render")
+    events = artifact_results._detect_tool_artifacts(
+        "later-call", "bash", "[任意名称.png]", None, before,
+        artifact_results._snapshot_workspace_signatures(str(tmp_path)), str(tmp_path),
+    )
+    assert events == []
+
+
 def test_pipeline_appends_tool_message_before_returning_result_events(tmp_path) -> None:
     messages = [Message(role="user", content="run it")]
 
