@@ -14211,6 +14211,34 @@ def test_sync_image_manifest_status_rejects_missing_generated_asset(
     assert json.loads(manifest.read_text())["image_plan"][0]["status"] == "pending"
 
 
+def test_sync_image_manifest_status_defers_optional_generated_asset(tmp_path: Path) -> None:
+    generated = tmp_path / "assets" / "generated"
+    generated.mkdir(parents=True)
+    manifest = generated / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "image_plan": [
+                    {
+                        "slide": 1,
+                        "decision": "generate",
+                        "required": False,
+                        "status": "pending",
+                        "output_path": "assets/generated/optional.png",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run("sync_image_manifest_status.js", str(manifest))
+
+    assert result.returncode == 0, result.stderr
+    assert "optional.png" in result.stdout
+    assert json.loads(manifest.read_text())["image_plan"][0]["status"] == "pending"
+
+
 def test_comparison_layout_uses_flat_editorial_rules() -> None:
     css = (SKILL_DIR / "runtime" / "deck.css").read_text(encoding="utf-8")
     column_block = css.split(".comparison-column {", 1)[1].split("}", 1)[0]

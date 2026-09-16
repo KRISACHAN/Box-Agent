@@ -33,9 +33,10 @@ reference detection and workspace-diff detection honor it; neither guesses from
 directory names or extensions. Missing, malformed, or oversized (>4 KiB) metadata
 does not suppress publication. Sidecars themselves are excluded from directory scans.
 
-The bundled HTML/PPTX exporter and SN renderers mark single-page screenshots and
-SN partial/focus review sheets this way. They leave the whole-deck overview and
-final HTML/PPTX unmarked. Tools can still read marked images for QA. If the user
+The bundled HTML/PPTX exporter, PPTX QA renderers (Poppler, pdf.js, and Quick Look),
+and SN renderers mark single-page screenshots and SN partial/focus review sheets
+this way, including partial images left by failed rendering. They leave the
+whole-deck overview and final HTML/PPTX unmarked. Tools can still read marked images for QA. If the user
 explicitly requests a screenshot as a deliverable, remove its sidecar after
 rendering and reference the file in tool output, or return a structured
 `type: "artifact"` result. Markers do not retract previously published messages.

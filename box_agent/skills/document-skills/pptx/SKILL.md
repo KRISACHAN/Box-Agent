@@ -214,11 +214,15 @@ with `SearchType: "image"` and `Count: 5`, once per unique query. Localize selec
 receipts with `scripts/localize_web_image.py`. Only after `exhausted` or
 `unavailable` may a web job use its labelled AI-concept fallback. Never fabricate
 a documentary image of a real subject. Call `generate_image` with
-`watermark: false` and `publish_artifact: false`; independent jobs may share a tool
-batch. Generation success is not insertion proof: the final manifest must bind
-the asset to the actual page and field.
+`watermark: false` and `publish_artifact: false`; use the manifest entry's
+`output_path` verbatim as the tool's `output_path` (never invent a short alias such
+as `cover-hero.png`). Independent jobs may share a tool batch. Generation success
+is not insertion proof: the final manifest must bind the asset to the actual page
+and field.
 
-Then synchronize once with one tightly scoped Bash-tool command. Use the exact
+Then synchronize once with one tightly scoped Bash-tool command. A missing optional
+generated asset is recorded as deferred and does not stop HTML delivery; an
+explicitly required asset remains an incomplete-delivery finding. Use the exact
 platform-specific directory prefix below; do not pass `workspaceDir` to the
 Box-Agent Bash tool. Do not use a legacy output
 environment variable in either the directory or manifest path. Copy the exact
@@ -530,6 +534,12 @@ Translate internal outcomes into user impact:
 - When HTML is usable but a requested PPTX/PDF export is unavailable, deliver
   the presentation and say only that the requested format has not been exported.
 - When no trustworthy HTML exists, do not claim completion.
+
+Format-specific QA is explicit: HTML delivery treats chart recoverability and
+dom-to-pptx compatibility findings as advisories; a requested native PPTX run
+must invoke `finalize_controlled_deck.js ... --require-pptx`, which promotes
+those findings to blocking export checks while preserving the HTML artifact for
+diagnosis.
 
 If a blocking structural, HTML, runtime, explicitly required image, or export
 step is blocked, explain the user-visible consequence in the active response

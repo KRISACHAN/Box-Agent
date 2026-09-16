@@ -12,14 +12,14 @@ const { reconcileReadyManifestMedia } = require("./apply_deck_patch.js");
 function usage() {
   console.error(
     "Usage: finalize_controlled_deck.js deck.json --out index.html " +
-    "[--manifest assets/generated/manifest.json]"
+    "[--manifest assets/generated/manifest.json] [--require-pptx]"
   );
   process.exit(2);
 }
 
 function parseArgs(argv) {
   if (!argv[0] || argv[0] === "--help" || argv[0] === "-h") usage();
-  const opts = { deck: argv[0], out: null, manifest: null };
+  const opts = { deck: argv[0], out: null, manifest: null, requirePptx: false };
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
     const value = argv[index + 1];
@@ -29,6 +29,8 @@ function parseArgs(argv) {
     } else if (arg === "--manifest" && value) {
       opts.manifest = value;
       index += 1;
+    } else if (arg === "--require-pptx") {
+      opts.requirePptx = true;
     } else {
       usage();
     }
@@ -300,7 +302,7 @@ function runAdvisoryStage(stage, scriptName, args, reportPath) {
   return normalized;
 }
 
-function runPostRenderStage(stage, scriptName, args, reportPath) {
+function runPostRenderStage(stage, scriptName, args, reportPath, strict = false) {
   let previousMtime = null;
   try {
     previousMtime = fs.statSync(reportPath).mtimeMs;
@@ -330,6 +332,7 @@ function runPostRenderStage(stage, scriptName, args, reportPath) {
     console.log(`FINALIZE_PASS stage=${stage} warnings=${summary.warnings.length}`);
     return report;
   }
+  if (strict) fail(stage, result, reportPath);
   if (reportIsFresh && report?.editor?.paletteCompliance?.enforced
     && report.editor.paletteCompliance.failures.length) {
     fail("palette_contract", { status: 1, stdout: "", stderr: JSON.stringify(report.editor.paletteCompliance.failures.slice(0, 12)) });
@@ -444,7 +447,8 @@ function main() {
       "--report",
       reports.html,
     ],
-    reports.html
+    reports.html,
+    opts.requirePptx
   );
   runAdvisoryStage(
     "truth",
@@ -472,18 +476,26 @@ function main() {
       || (runtimeReport.editor?.componentContrast?.failures?.length || 0) > 0
       ? "runtime_probe" : null,
   ].filter(Boolean);
+  const blockingImageIssues = Array.isArray(imageReport.blockingIssues)
+    ? imageReport.blockingIssues
+    : [];
   const degraded = degradedStages.length > 0;
+  const deliveryStatus = blockingImageIssues.length > 0
+    ? "incomplete"
+    : degraded ? "degraded" : "complete";
   console.log(
     JSON.stringify({
       ok: true,
       deck: deckPath,
       html: outputPath,
+      requested_format: opts.requirePptx ? "pptx" : "html",
       media_bindings: mediaBindings,
       qa_reports: Object.values(reports),
       warnings: warningCount,
       degraded,
       degraded_stages: degradedStages,
-      delivery_status: degraded ? "degraded" : "complete",
+      blocking_issues: blockingImageIssues,
+      delivery_status: deliveryStatus,
     })
   );
 }

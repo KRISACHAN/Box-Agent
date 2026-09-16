@@ -963,6 +963,10 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 2000
+                  },
+                  "advisory": {
+                    "type": "boolean",
+                    "description": "True when this check is informative and does not block delivery."
                   }
                 },
                 "required": [
