@@ -570,7 +570,18 @@ async def test_active_skill_restores_current_content_as_reference_after_upgrade(
         assert persisted[0]["sha256"] in str(llm.requests[0][-1].content)
         assert current_hash in str(llm.requests[0][-1].content)
         assert "historical" in str(llm.requests[0][-1].content)
-    assert restored.messages[-2].content == "continue review"
+    user_turns = [
+        message.content for message in restored.messages
+        if message.role == "user" and message.source != "runtime"
+    ]
+    assert user_turns[-1] == "continue review"
+    durable_skill_messages = [
+        str(message.content) for message in restored.messages
+        if message.role == "user" and message.source == "runtime"
+    ]
+    assert durable_skill_messages
+    assert any("another prompt" in body for body in durable_skill_messages)
+    assert all(current_prompt not in body for body in durable_skill_messages)
     restored_log.close()
 
 
