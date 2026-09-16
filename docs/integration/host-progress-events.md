@@ -53,7 +53,12 @@ may override the cached title with `_meta.title`, `_meta.session_title`, or
 Both streaming and non-streaming OpenAI-compatible and Anthropic requests use
 this domain restriction. Third-party hosts, personal servers, localhost, and IP
 addresses (including `10.158.136.99`) receive neither `X-RACCOON-*` correlation
-headers nor `x-client-*` metadata. Standard SDK headers and provider authentication
+headers nor `x-client-*` metadata. On allowed Raccoon domains, requests using the
+hosted-login API-key placeholders (rather than a user-configured API key) also
+send `X-Org-Code` when `auth.json` contains a safe, non-personal ASCII
+`office_identity` team code. The header is omitted for missing or personal team
+identity and for custom API keys, third-party hosts, personal servers, and IP
+addresses. Standard SDK headers and provider authentication
 remain in place; the existing hosted-login authentication rules are unchanged.
 
 Hosts may supply `_meta.client_info` during ACP initialize, session creation,
