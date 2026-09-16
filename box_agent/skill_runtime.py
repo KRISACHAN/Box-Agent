@@ -74,8 +74,12 @@ class SkillRuntime:
 
         materialized: list[tuple[str, str]] = []
         # Only explicit current-turn selection is materialized here. Legacy
-        # restored references retain their existing deferred-delivery path.
+        # restored references retain their existing deferred-delivery path,
+        # even if a later host activate/select also names them this turn.
+        pending_restore = set(self._restore_pending) | set(self._restoring)
         for name in self.state.selected:
+            if name in pending_restore:
+                continue
             try:
                 skill = self.resolve_reference(name)
             except SkillDependencyError as exc:
